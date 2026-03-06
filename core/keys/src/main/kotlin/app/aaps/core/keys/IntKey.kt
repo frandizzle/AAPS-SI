@@ -30,6 +30,9 @@ enum class IntKey(
     OverviewCageCritical("statuslights_cage_critical", 72, 24, 240, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewIageWarning("statuslights_iage_warning", 72, 24, 240, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewIageCritical("statuslights_iage_critical", 144, 24, 240, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
+    // SmartInsulin plugin
+    ApsSmartInsulinPredictionHorizonMins("si_prediction_horizon_mins", 60, 15, 60, defaultedBySM = true),
+    ApsSmartInsulinLowCarbThresholdG("si_low_carb_threshold_g", 20, 5, 50, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),

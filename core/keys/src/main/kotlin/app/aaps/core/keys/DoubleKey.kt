@@ -37,6 +37,10 @@ enum class DoubleKey(
     AbsorptionCutOff("absorption_cutoff", 6.0, 4.0, 10.0),
     AbsorptionMaxTime("absorption_maxtime", 6.0, 4.0, 10.0),
     AutosensMin("autosens_min", 0.7, 0.1, 1.0, defaultedBySM = true, hideParentScreenIfHidden = true),
+    // SmartInsulin plugin
+    ApsSmartInsulinLearningRate("si_learning_rate", 0.15, 0.05, 0.5, defaultedBySM = true),
+    ApsSmartInsulinLowGuardMmol("si_low_guard_mmol", 4.0, 3.0, 5.0, defaultedBySM = true),
+    ApsSmartInsulinWarnGuardMmol("si_warn_guard_mmol", 4.8, 3.5, 6.0, defaultedBySM = true),
     AutosensMax("autosens_max", 1.2, 0.5, 3.0, defaultedBySM = true),
     ApsAutoIsfMin("autoISF_min", 1.0, 0.3, 1.0, defaultedBySM = true),
     ApsAutoIsfMax("autoISF_max", 1.0, 1.0, 3.0, defaultedBySM = true),
