@@ -132,7 +132,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // target (curve floored at 39) is meaningful and must not be trimmed, otherwise
         // latestPredictionsTime ends up too short and the graph "now" line sits too far right.
         val targetForTrim = targetBg.coerceIn(39.0, 401.0).toInt()
-        for (i in rawPrediction.size - 1 downTo 13) {
+        for (i in rawPrediction.size - 1 downTo 25) {  // 25 = index 0 + 24 ticks = 2h minimum
             val v = rawPrediction[i]
             if (v <= targetForTrim) break          // stop trimming once we're at/below target
             if (rawPrediction[i - 1] != v) break   // stop trimming once values differ
