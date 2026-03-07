@@ -139,31 +139,40 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val isRising      = delta > DELTA_RISING_THRESHOLD_MGDL_PER_5MIN
                 val isAboveTarget = currentBg > targetBg
                 val iobHeadroom   = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
-                val iobOk         = iobHeadroom > 0.0
+                val minHeadroom   = (oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05)
+                val iobOk         = iobHeadroom >= minHeadroom
 
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
                     (isRising || isAboveTarget) &&
-                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
+                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
+                    predictedAt60 > targetBg  // existing IOB already sufficient if pred60 <= target
 
+                // Correction based on pred30 gap, but scaled down by how much IOB is already
+                // covering — if pred60 is close to target, existing insulin is doing the work
                 val correctionUnits = if (smbAllowed) {
-                    val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    val correction  = eventualGap / isfMgdl
-                    correction * SMB_DELIVERY_FRACTION
+                    val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
+                    // Only correct what pred60 says is still unhandled — if pred60 < pred30,
+                    // IOB is already working and we only top up the residual
+                    val effectiveGap = minOf(pred30Gap, pred60Gap)
+                    (effectiveGap / isfMgdl) * SMB_DELIVERY_FRACTION
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
                 val rawSmb     = if (correctionUnits > 0.0)
                     (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
-                // Clamp SMB to whichever is smaller: flat max or remaining IOB headroom
                 val smbCap         = minOf(maxSmbU, iobHeadroom)
-                val constrainedSmb = if (rawSmb >= bolusStep) rawSmb.coerceAtMost(smbCap) else 0.0
+                // Apply headroom cap first, then drop if result is below one pump step
+                val clampedSmb     = rawSmb.coerceAtMost(smbCap)
+                val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
 
                 // TBR: 0.00 U/h when IOB at or above max (let it decay).
                 // Elevated TBR only when there's headroom AND correction needed.
                 val totalCorrection = if (smbAllowed && iobOk) {
-                    val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    (eventualGap / isfMgdl).coerceAtLeast(0.0)
+                    val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
+                    minOf(pred30Gap, pred60Gap) / isfMgdl
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
