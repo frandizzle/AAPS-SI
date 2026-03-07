@@ -53,6 +53,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         warnGuardMmol:         Double,
         maxSmbU:               Double,
         microBolusAllowed:     Boolean,
+        inReboundWindow:       Boolean,
+        msSinceLastSuspend:    Long,
         currentTime:           Long
     ): APSResult {
 
@@ -110,6 +112,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
+        // Falling-into-low: dropping fast AND pred30 already below warnGuard
+        val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
+        val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
+
+        // Rebound protection: taper back to full operation over REBOUND_TAPER_MINS after a suspend
+        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
+        val reboundTaperFraction = if (inReboundWindow)
+            (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+        else 1.0  // 1.0 = full normal dosing
+
         var rateOut     = 0.0
         var durationOut = 0
         var smbOut      = 0.0
@@ -123,8 +135,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 tempRequested = true
             }
 
-            predictedMin < lowGuardMgdl -> {
-                sb.append("SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}")
+            predictedMin < lowGuardMgdl || fallingIntoLow -> {
+                val reason = if (fallingIntoLow && predictedMin >= lowGuardMgdl)
+                    "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format("%.1f", delta)}"
+                else
+                    "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
+                sb.append(reason)
                 rateOut       = 0.0
                 durationOut   = 30
                 tempRequested = true
@@ -189,26 +205,32 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRate = when {
-                    !iobOk           -> 0.0   // IOB at/above max — suspend basal
-                    iobSufficient    -> 0.0   // existing IOB sufficient — suspend basal to avoid stacking
+                    !iobOk           -> 0.0
+                    iobSufficient    -> 0.0
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
                     else             -> profileBasal
-                }
-                val needsTbr = !iobOk || iobSufficient || remainingU > 0.0
+                } * reboundTaperFraction  // scale back after a suspend
+
+                // Block SMBs entirely during rebound window, then taper back in
+                val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
+                val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
+
+                val needsTbr = !iobOk || iobSufficient || remainingU > 0.0 || inReboundWindow
 
                 val trigger = when {
-                    !iobOk         -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
-                    iobSufficient  -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
-                    !smbAllowed    -> "blocked"
-                    isAboveTarget  -> "aboveTarget"
-                    isRising       -> "rising"
-                    else           -> "none"
+                    !iobOk                -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
+                    iobSufficient         -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
+                    inReboundWindow       -> "rebound(${String.format("%.0f", reboundMins)}min taper=${String.format("%.2f", reboundTaperFraction)})"
+                    !smbAllowed           -> "blocked"
+                    isAboveTarget         -> "aboveTarget"
+                    isRising              -> "rising"
+                    else                  -> "none"
                 }
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(constrainedSmb, tbrRate))
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(finalSmb, tbrRate))
                 rateOut       = tbrRate
                 durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr
-                smbOut        = constrainedSmb
+                smbOut        = finalSmb
             }
         }
 
@@ -287,11 +309,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MMOL_TO_MGDL                         = 18.0
         private const val DELTA_FADE_MINS                       = 30.0  // momentum fades over 30 mins
         private const val MAX_MOMENTUM_MGDL_PER_MIN             = 2.0   // cap momentum contribution per minute
-        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
-        private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
-        private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of effective gap per cycle
-        private const val TBR_WINDOW_HOURS                      = 0.5   // spread remaining correction over 30 mins
-        private const val IOB_SUFFICIENCY_FACTOR                = 0.8   // IOB covers 80% of correction → stop dosing
+        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN       = 1.0   // don't SMB if falling faster than this
+        private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN  = 0.5   // delta above this = "rising" trigger
+        private const val FALLING_FAST_MGDL_PER_5MIN            = 2.0   // suspend early if falling faster than this
+        private const val SMB_DELIVERY_FRACTION                  = 0.5   // deliver 50% of effective gap per cycle
+        private const val TBR_WINDOW_HOURS                       = 0.5   // spread remaining correction over 30 mins
+        private const val IOB_SUFFICIENCY_FACTOR                 = 0.8   // IOB covers 80% of correction → stop dosing
+        private const val REBOUND_TAPER_MINS                     = 60.0  // ramp back to full dosing over 60 mins post-suspend
+        private const val REBOUND_SMB_GATE                       = 0.5   // block SMBs until 50% through rebound window
         private const val LN2                             = 0.693147
     }
 }

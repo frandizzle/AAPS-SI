@@ -104,6 +104,17 @@ open class SmartInsulinPlugin @Inject constructor(
     override val algorithm = APSResult.Algorithm.SMB
     override var lastAPSResult: APSResult? = null
 
+    // ── Suspend / rebound tracking ────────────────────────────────────────────
+    // Tracks the last time a SUSPEND or CAUTION zone was active so the NORMAL
+    // branch can apply graduated rebound protection after a low event.
+    var lastSuspendMs: Long = 0L
+    val msSinceLastSuspend: Long get() = System.currentTimeMillis() - lastSuspendMs
+    val inReboundWindow: Boolean get() = lastSuspendMs > 0L && msSinceLastSuspend < REBOUND_GUARD_MS
+
+    companion object {
+        const val REBOUND_GUARD_MS = 90 * 60 * 1000L  // 90 min rebound protection window
+    }
+
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         lastAPSResult = null
@@ -248,6 +259,13 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
+        // Debug: log IOB activity at key intervals to verify prediction engine inputs
+        val actAt15 = iobArray.getOrNull(15)?.activity ?: 0.0
+        val actAt30 = iobArray.getOrNull(30)?.activity ?: 0.0
+        val actAt60 = iobArray.getOrNull(60)?.activity ?: 0.0
+        val iobNow  = iobArray.firstOrNull()?.iob ?: 0.0
+        aapsLogger.debug(LTag.APS, "SmartInsulin IOB debug: iob=$iobNow activity@15=$actAt15 @30=$actAt30 @60=$actAt60")
+
         val apsResult = determineBasalSmartInsulin.determine_basal(
             glucoseStatus         = glucoseStatus,
             currentTemp           = currentTemp,
@@ -262,8 +280,17 @@ open class SmartInsulinPlugin @Inject constructor(
             warnGuardMmol         = warnGuardMmol,
             maxSmbU               = maxSmbU,
             microBolusAllowed     = microBolusAllowed,
+            inReboundWindow       = inReboundWindow,
+            msSinceLastSuspend    = msSinceLastSuspend,
             currentTime           = now
         )
+
+        // Track suspend state for rebound protection
+        val reason = apsResult.reason?.toString() ?: ""
+        if (reason.contains("SUSPEND") || reason.contains("CAUTION") || reason.contains("LGS_SUSPEND")) {
+            lastSuspendMs = now
+            aapsLogger.debug(LTag.APS, "SmartInsulin: suspend recorded at $now")
+        }
 
         apsResult.inputConstraints = inputConstraints
         apsResult.autosensResult   = autosensResult
