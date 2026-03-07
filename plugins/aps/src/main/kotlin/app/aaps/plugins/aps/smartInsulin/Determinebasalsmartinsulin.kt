@@ -91,8 +91,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictedAt60 = predictedBg.lastOrNull() ?: currentBg
 
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
-        val iobPrediction: List<Int> = (0 until predictedBg.size step 5).map {
-            predictedBg[it].coerceAtLeast(39.0).toInt()
+        // Index 0 = current BG (anchors curve at "now"), then 5-min steps forward
+        // DetermineBasalResult renders starting at i=1, so index 0 is the anchor point
+        val iobPrediction: List<Int> = buildList {
+            add(currentBg.coerceAtLeast(39.0).toInt())  // index 0 = now
+            (4 until predictedBg.size step 5).forEach { add(predictedBg[it].coerceAtLeast(39.0).toInt()) }
         }
 
         // ── Reason string ────────────────────────────────────────────────────
