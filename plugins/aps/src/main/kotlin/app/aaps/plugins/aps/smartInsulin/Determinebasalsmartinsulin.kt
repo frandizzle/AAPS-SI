@@ -120,9 +120,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         (4 until predictedBg.size step 5).forEach {
             rawPrediction.add(predictedBg[it].coerceIn(39.0, 401.0).toInt())
         }
-        // Trim trailing identical values down to minimum 13 points (matches AutoISF)
+        // Only trim trailing flat points that are ABOVE target — a flat tail at/below
+        // target (curve floored at 39) is meaningful and must not be trimmed, otherwise
+        // latestPredictionsTime ends up too short and the graph "now" line sits too far right.
+        val targetForTrim = targetBg.coerceIn(39.0, 401.0).toInt()
         for (i in rawPrediction.size - 1 downTo 13) {
-            if (rawPrediction[i - 1] != rawPrediction[i]) break
+            val v = rawPrediction[i]
+            if (v <= targetForTrim) break          // stop trimming once we're at/below target
+            if (rawPrediction[i - 1] != v) break   // stop trimming once values differ
             else rawPrediction.removeAt(rawPrediction.lastIndex)
         }
         val iobPrediction: List<Int> = rawPrediction
