@@ -99,6 +99,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
+        sb.append("act@1=%.4f @30=%.4f @60=%.4f arrSz=${iobArray.size} ".format(
+            iobArray.getOrNull(1)?.activity ?: 0.0,
+            iobArray.getOrNull(30)?.activity ?: 0.0,
+            iobArray.getOrNull(60)?.activity ?: 0.0
+        ))
 
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
@@ -241,8 +246,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val deltaPerMin  = delta / 5.0
 
         for (t in 1..predictionHorizonMins) {
-            // activity from iobArray is U absorbed per 5-min interval — divide by 5 for per-minute
-            val activity       = getActivityAtMinute(t, iobArray, learnedProfile) / 5.0
+            // activity is U/min absorbed; multiply by ISF (mg/dL per U) = mg/dL drop per minute
+            val activity       = getActivityAtMinute(t, iobArray, learnedProfile)
             val iobDelta       = -activity * isfMgdl
             // Momentum fades linearly over DELTA_FADE_MINS
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
@@ -260,15 +265,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         learnedProfile: LearnedInsulinProfile
     ): Double {
-        // iobArray is indexed at 5-minute intervals — convert minute offset to array index
-        val idx = minuteOffset / 5
-        if (idx < iobArray.size) {
-            return max(0.0, iobArray[idx].activity)
+        // iobArray is 1-minute intervals in AAPS APS algorithms
+        if (minuteOffset < iobArray.size) {
+            return max(0.0, iobArray[minuteOffset].activity)
         }
         val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
         if (lastActivity <= 0.0) return 0.0
         val halfLife     = learnedProfile.diaMinutes / 3.5
-        val extra        = minuteOffset - ((iobArray.size - 1) * 5)
+        val extra        = minuteOffset - (iobArray.size - 1)
         return lastActivity * exp(-extra * LN2 / halfLife)
     }
 
