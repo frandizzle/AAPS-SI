@@ -1,4 +1,5 @@
 package app.aaps.plugins.aps.smartInsulin
+import app.aaps.core.interfaces.smartInsulin.MealMode
 
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.SourceSensor

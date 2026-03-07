@@ -5,6 +5,8 @@ import app.aaps.plugins.aps.autotune.AutotunePlugin
 import app.aaps.plugins.aps.loop.LoopPlugin
 import app.aaps.plugins.aps.openAPSAMA.OpenAPSAMAPlugin
 import app.aaps.plugins.aps.openAPSAutoISF.OpenAPSAutoISFPlugin
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.plugins.aps.smartInsulin.MealOverrideManagerImpl
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
 import app.aaps.plugins.aps.openAPSSMB.OpenAPSSMBPlugin
 import app.aaps.plugins.automation.AutomationPlugin

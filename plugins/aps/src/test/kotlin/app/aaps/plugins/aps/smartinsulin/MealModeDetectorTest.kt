@@ -1,4 +1,5 @@
 package app.aaps.plugins.aps.smartInsulin
+import app.aaps.core.interfaces.smartInsulin.MealMode
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
