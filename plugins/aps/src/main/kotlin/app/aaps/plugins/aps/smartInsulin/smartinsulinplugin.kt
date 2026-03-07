@@ -295,7 +295,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Track suspend state for rebound protection
-        val reason = apsResult.reason?.toString() ?: ""
+        val reason = apsResult.reason
         if (reason.contains("SUSPEND") || reason.contains("CAUTION") || reason.contains("LGS_SUSPEND")) {
             lastSuspendMs = now
             aapsLogger.debug(LTag.APS, "SmartInsulin: suspend recorded at $now")

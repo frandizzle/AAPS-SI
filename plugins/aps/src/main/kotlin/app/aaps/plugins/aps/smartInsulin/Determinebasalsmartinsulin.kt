@@ -119,9 +119,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
         else 1.0  // 1.0 = full normal dosing
 
-        var rateOut       = 0.0
+        @Suppress("RedundantValueArgument") var rateOut       = 0.0   // always overwritten in when branches
         var durationOut   = 0
-        var smbOut        = 0.0
+        @Suppress("RedundantValueArgument") var smbOut        = 0.0   // always overwritten in when branches
         var tempRequested = false
 
         when {
@@ -155,7 +155,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
             else -> {
                 val bgAboveGuard  = currentBg - lowGuardMgdl
                 val isRising      = delta > DELTA_RISING_THRESHOLD_MGDL_PER_5MIN
-                val isAboveTarget = currentBg > targetBg
                 val iobHeadroom   = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
                 val minHeadroom   = (oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05)
                 val iobOk         = iobHeadroom >= minHeadroom

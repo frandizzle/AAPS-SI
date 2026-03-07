@@ -12,14 +12,6 @@ import java.util.Locale
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
-import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.DoubleKey
-import app.aaps.core.keys.StringKey
-import app.aaps.core.keys.interfaces.Preferences
-import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
