@@ -269,9 +269,6 @@ open class SmartInsulinPlugin @Inject constructor(
         rxBus.send(EventOpenAPSUpdateGui())
     }
 
-    override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
-        glucoseStatusProvider.getGlucoseStatusData(allowOldData)
-
     override fun configuration(): JSONObject =
         JSONObject()
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
