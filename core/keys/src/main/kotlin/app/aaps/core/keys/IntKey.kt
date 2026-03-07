@@ -31,8 +31,7 @@ enum class IntKey(
     OverviewIageWarning("statuslights_iage_warning", 72, 24, 240, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewIageCritical("statuslights_iage_critical", 144, 24, 240, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     // SmartInsulin plugin
-    ApsSmartInsulinPredictionHorizonMins("si_prediction_horizon_mins", 240, 15, 60, defaultedBySM = true),
-    ApsSmartInsulinLowCarbThresholdG("si_low_carb_threshold_g", 20, 5, 50, defaultedBySM = true),
+    ApsSmartInsulinPredictionHorizonMins("si_pred_horizon_mins", 240, 60, 240, defaultedBySM = true),    ApsSmartInsulinLowCarbThresholdG("si_low_carb_threshold_g", 20, 5, 50, defaultedBySM = true),
     ApsSmartInsulinBreakfastCarbsG("si_breakfast_carbs_g",   45, 10, 150, defaultedBySM = true),
     ApsSmartInsulinLunchCarbsG    ("si_lunch_carbs_g",       60, 10, 200, defaultedBySM = true),
     ApsSmartInsulinDinnerCarbsG   ("si_dinner_carbs_g",      70, 10, 200, defaultedBySM = true),
