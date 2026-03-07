@@ -25,6 +25,8 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
+import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
@@ -213,8 +215,6 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // ── Meal mode ────────────────────────────────────────────────────────
-        val lowCarbThresholdG  = preferences.get(IntKey.ApsSmartInsulinLowCarbThresholdG)
-        val lowCarbModeEnabled = preferences.get(BooleanKey.ApsSmartInsulinLowCarbMode)
         val mealMode = MealModeDetector.detect(
             mealData        = mealData,
             glucoseStatus   = glucoseStatus,

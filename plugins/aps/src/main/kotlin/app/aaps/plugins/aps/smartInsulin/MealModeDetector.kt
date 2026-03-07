@@ -1,4 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
+import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.MealData
