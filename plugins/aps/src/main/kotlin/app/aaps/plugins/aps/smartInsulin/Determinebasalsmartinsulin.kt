@@ -16,6 +16,7 @@ import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * Core basal/SMB determination for SmartInsulin.
@@ -86,18 +87,25 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val isMmol       = oapsProfile.out_units == "mmol/L"
         val currentBg    = glucoseStatus.glucose          // mg/dL
         val delta        = glucoseStatus.shortAvgDelta    // mg/dL
+        val minDelta     = minOf(glucoseStatus.delta, glucoseStatus.shortAvgDelta)
         val isfMgdl      = oapsProfile.sens               // already mg/dL (getIsfMgdl)
         val profileBasalRaw = oapsProfile.current_basal
         val profileBasal    = profileBasalRaw * basalMultiplier
         val targetBg     = oapsProfile.target_bg          // already mg/dL
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
+        // ci = current deviation from IOB-only prediction (matches AutoISF)
+        // bgi = expected BG change from current IOB activity alone
+        // ci = minDelta - bgi: positive = carbs/UAM pushing BG up, negative = activity/other pulling down
+        val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * isfMgdl * 5.0)
+        val ci  = minDelta - bgi
+
         // ── Build prediction curves ──────────────────────────────────────────
         // Always run to 240 mins for the graph (matches AutoISF 48-point convention).
         // Algorithm reads at fixed indices 30 and 60 — independent of graph horizon.
         val predictedBg = predictBgCurve(
             currentBg             = currentBg,
-            delta                 = delta,
+            ci                    = ci,
             iobArray              = iobArray,
             isfMgdl               = isfMgdl,
             learnedProfile        = learnedProfile,
@@ -289,7 +297,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     private fun predictBgCurve(
         currentBg:             Double,
-        delta:                 Double,
+        ci:                    Double,
         iobArray:              Array<IobTotal>,
         isfMgdl:               Double,
         learnedProfile:        LearnedInsulinProfile,
@@ -297,17 +305,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
     ): List<Double> {
         val predictions  = mutableListOf<Double>()
         var bg           = currentBg
-        val deltaPerMin  = delta / 5.0
-
         for (t in 1..predictionHorizonMins) {
             // Match AutoISF exactly: predBGI = -(activity * ISF * 5)
             // activity is already U/min decay rate — no IOB multiplication needed
             val activity   = getActivityAtMinute(t, iobArray, learnedProfile)
             val iobDelta   = -(activity * isfMgdl * 5.0)
-            // Momentum fades linearly over DELTA_FADE_MINS
-            val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
-            val momentumDelta  = (deltaPerMin * momentumWeight).coerceIn(-MAX_MOMENTUM_MGDL_PER_MIN, MAX_MOMENTUM_MGDL_PER_MIN)
-            bg += iobDelta + momentumDelta
+            // Deviation impact (ci) fades linearly to zero over 60 minutes — matches AutoISF IOB prediction
+            // This corrects for current BG deviating from pure IOB prediction (meals, activity, etc.)
+            val tickIndex  = predictions.size  // 0-based count of 5-min ticks so far
+            val predDev    = ci * (1.0 - minOf(1.0, tickIndex / (60.0 / 5.0)))
+            bg += iobDelta + predDev
             // Never predict below sensor floor
             bg = bg.coerceAtLeast(39.0)
             predictions.add(bg)
@@ -333,8 +340,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     companion object {
         private const val MMOL_TO_MGDL                         = 18.0
-        private const val DELTA_FADE_MINS                       = 15.0  // momentum fades over 15 mins
-        private const val MAX_MOMENTUM_MGDL_PER_MIN             = 1.0   // cap momentum contribution per minute
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN       = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN  = 0.5   // delta above this = "rising" trigger
         private const val FALLING_FAST_MGDL_PER_5MIN            = 2.0   // suspend early if falling faster than this
