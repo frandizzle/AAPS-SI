@@ -111,10 +111,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
         // Index 0 = current BG (anchors curve at "now"), then 5-min steps forward
         // DetermineBasalResult renders starting at i=1, so index 0 is the anchor point
-        val iobPrediction: List<Int> = buildList {
-            add(currentBg.coerceAtLeast(39.0).toInt())  // index 0 = now
-            (4 until predictedBg.size step 5).forEach { add(predictedBg[it].coerceAtLeast(39.0).toInt()) }
+        // Build prediction list matching AutoISF conventions:
+        //   - 48 points max (4 hours at 5-min intervals) — AAPS graph uses list length to place "now" line
+        //   - Clamp to [39, 401]
+        //   - Trim trailing flat points (min 13 kept) so curve doesn't extend forever at target
+        val rawPrediction: MutableList<Int> = mutableListOf()
+        rawPrediction.add(currentBg.coerceIn(39.0, 401.0).toInt())  // index 0 = now
+        (4 until predictedBg.size step 5).forEach {
+            rawPrediction.add(predictedBg[it].coerceIn(39.0, 401.0).toInt())
         }
+        // Trim trailing identical values down to minimum 13 points (matches AutoISF)
+        for (i in rawPrediction.size - 1 downTo 13) {
+            if (rawPrediction[i - 1] != rawPrediction[i]) break
+            else rawPrediction.removeAt(rawPrediction.lastIndex)
+        }
+        val iobPrediction: List<Int> = rawPrediction
 
         // ── Reason string ────────────────────────────────────────────────────
         fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(Locale.US, mgdl / MMOL_TO_MGDL) else "%.1f".format(Locale.US, mgdl)
