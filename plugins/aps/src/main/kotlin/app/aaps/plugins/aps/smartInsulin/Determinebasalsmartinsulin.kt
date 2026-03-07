@@ -197,14 +197,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
-                val tbrRate = when {
+                val tbrRateRaw = when {
                     !iobOk           -> 0.0
                     iobSufficient    -> 0.0
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
-                        .coerceAtMost(maxTbrU)       // hard user-configurable cap
+                        .coerceAtMost(maxTbrU)
                     else             -> profileBasal
-                } * reboundTaperFraction
+                }
+                val tbrRate = tbrRateRaw * reboundTaperFraction
 
                 // Block SMBs entirely during rebound window, then taper back in
                 val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
@@ -213,15 +214,24 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val needsTbr = !iobOk || iobSufficient || remainingU > 0.0 || inReboundWindow
 
                 val trigger = when {
-                    !iobOk                -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
-                    iobSufficient         -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
-                    inReboundWindow       -> "rebound(${String.format("%.0f", reboundMins)}min taper=${String.format("%.2f", reboundTaperFraction)})"
-                    !smbAllowed           -> "blocked"
-                    isAboveTarget         -> "aboveTarget"
-                    isRising              -> "rising"
-                    else                  -> "none"
+                    !iobOk        -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
+                    iobSufficient -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
+                    !smbAllowed   -> "blocked"
+                    isAboveTarget -> "aboveTarget"
+                    isRising      -> "rising"
+                    else          -> "none"
                 }
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(finalSmb, tbrRate))
+
+                // Rebound state — always shown when active regardless of trigger
+                val reboundStr = if (inReboundWindow) {
+                    val minsLeft = ((REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0))
+                    val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
+                    " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f→%.3f)".format(
+                        reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate
+                    )
+                } else ""
+
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))
                 rateOut       = tbrRate
                 durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr
