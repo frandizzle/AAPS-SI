@@ -33,6 +33,12 @@ enum class IntKey(
     // SmartInsulin plugin
     ApsSmartInsulinPredictionHorizonMins("si_prediction_horizon_mins", 60, 15, 60, defaultedBySM = true),
     ApsSmartInsulinLowCarbThresholdG("si_low_carb_threshold_g", 20, 5, 50, defaultedBySM = true),
+    ApsSmartInsulinBreakfastCarbsG("si_breakfast_carbs_g",   45, 10, 150, defaultedBySM = true),
+    ApsSmartInsulinLunchCarbsG    ("si_lunch_carbs_g",       60, 10, 200, defaultedBySM = true),
+    ApsSmartInsulinDinnerCarbsG   ("si_dinner_carbs_g",      70, 10, 200, defaultedBySM = true),
+    ApsSmartInsulinLowCarbCarbsG  ("si_lowcarb_carbs_g",     20,  5,  60, defaultedBySM = true),
+    ApsSmartInsulinExtendedCarbsG ("si_extended_carbs_g",    50, 10, 150, defaultedBySM = true),
+    ApsSmartInsulinModeWindowMins ("si_mode_window_mins",   180, 30, 480, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),

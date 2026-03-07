@@ -1,6 +1,5 @@
 package app.aaps.plugins.automation.elements
 
-import android.view.Gravity
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -8,53 +7,36 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import app.aaps.core.interfaces.resources.ResourceHelper
 
-class InputDropdownMenu(private val rh: ResourceHelper) : Element {
+/**
+ * Generic dropdown element for Automation action dialogs.
+ * Mirrors [InputDropdownOnOffMenu] but works with any list of items.
+ *
+ * Usage:
+ *   InputDropdownMenu(rh, MealMode.entries, { it.label }, MealMode.LUNCH)
+ */
+class InputDropdownMenu<T>(
+    private val rh:       ResourceHelper,
+    private val items:    List<T>,
+    private val labelFn:  (T) -> String,
+    initialValue:         T
+) : Element(rh) {
 
-    private var itemList: ArrayList<CharSequence> = ArrayList()
-    var value: String = ""
-
-    constructor(rh: ResourceHelper, name: String) : this(rh) {
-        value = name
-    }
-
-    @Suppress("unused")
-    constructor(rh: ResourceHelper, another: InputDropdownMenu) : this(rh) {
-        value = another.value
-    }
+    var value: T = initialValue
 
     override fun addToLayout(root: LinearLayout) {
-        root.addView(
-            Spinner(root.context).apply {
-                adapter = ArrayAdapter(root.context, app.aaps.core.ui.R.layout.spinner_centered, itemList).apply {
-                    setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        val spinner = Spinner(root.context).also { spinner ->
+            val labels  = items.map { labelFn(it) }
+            val adapter = ArrayAdapter(root.context, android.R.layout.simple_spinner_item, labels)
+            adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            spinner.adapter  = adapter
+            spinner.setSelection(items.indexOf(value).coerceAtLeast(0))
+            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                    value = items[position]
                 }
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
-                    it.setMargins(0, rh.dpToPx(4), 0, rh.dpToPx(4))
-                }
-
-                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                        setValue(itemList[position].toString())
-                    }
-
-                    override fun onNothingSelected(parent: AdapterView<*>?) {}
-                }
-                gravity = Gravity.CENTER_HORIZONTAL
-                for (i in 0 until itemList.size) if (itemList[i] == value) setSelection(i)
-            })
-    }
-
-    fun setValue(name: String): InputDropdownMenu {
-        value = name
-        return this
-    }
-
-    fun setList(values: ArrayList<CharSequence>) {
-        itemList = ArrayList(values)
-    }
-
-    // For testing only
-    fun add(item: String) {
-        itemList.add(item)
+                override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+            }
+        }
+        root.addView(spinner)
     }
 }

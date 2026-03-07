@@ -105,9 +105,9 @@ class BolusCurveTrackerTest {
 
     @Test fun `correct MealMode is forwarded to profileLearner`() {
         val modeCaptor = argumentCaptor<MealMode>()
-        simulateEvent(mode = MealMode.MEAL, startBg = 180.0, dropPerCycle = 4.0)
+        simulateEvent(mode = MealMode.LUNCH, startBg = 180.0, dropPerCycle = 4.0)
         verify(profileLearner).observeBolusCurve(modeCaptor.capture(), any(), any(), any())
-        assertEquals(MealMode.MEAL, modeCaptor.firstValue)
+        assertEquals(MealMode.LUNCH, modeCaptor.firstValue)
     }
 
     // ── Sequential events ─────────────────────────────────────────────────────

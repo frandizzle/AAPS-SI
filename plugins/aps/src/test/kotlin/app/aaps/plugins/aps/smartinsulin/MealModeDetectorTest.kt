@@ -1,128 +1,73 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Unit tests for [MealModeDetector] using the scalar convenience overload
- * so we don't need AAPS interface mocks.
- */
 class MealModeDetectorTest {
 
-    private val now = System.currentTimeMillis()
+    // ── FASTING ───────────────────────────────────────────────────────────────
 
-    // ── FASTING ──────────────────────────────────────────────────────────────
-
-    @Test fun `zero COB and no recent carbs returns FASTING`() {
-        val mode = MealModeDetector.detect(
-            cobGrams       = 0.0,
-            lastCarbTimeMs = 0L,
-            deltaMMol      = 0.0
-        )
-        assertEquals(MealMode.FASTING, mode)
+    @Test fun `zero COB and flat delta returns FASTING`() {
+        assertEquals(MealMode.FASTING, MealModeDetector.detect(cob = 0.0, shortAvgDelta = 0.0))
     }
 
-    @Test fun `old carb time beyond window returns FASTING`() {
-        val twoHoursAgo = now - 2 * 60 * 60_000L
-        val mode = MealModeDetector.detect(
-            cobGrams       = 0.0,
-            lastCarbTimeMs = twoHoursAgo,
-            deltaMMol      = 0.0
-        )
-        assertEquals(MealMode.FASTING, mode)
+    @Test fun `small COB below low-carb threshold returns FASTING`() {
+        assertEquals(MealMode.FASTING, MealModeDetector.detect(cob = 2.0, shortAvgDelta = 0.0))
     }
 
-    // ── LOW_CARB ─────────────────────────────────────────────────────────────
+    // ── LOW_CARB ──────────────────────────────────────────────────────────────
 
-    @Test fun `small COB below threshold returns LOW_CARB when enabled`() {
-        val mode = MealModeDetector.detect(
-            cobGrams         = 8.0,
-            lastCarbTimeMs   = now - 20 * 60_000L,
-            deltaMMol        = 0.1,
-            lowCarbThreshold = 20,
-            lowCarbEnabled   = true
-        )
-        assertEquals(MealMode.LOW_CARB, mode)
+    @Test fun `COB at low-carb threshold returns LOW_CARB`() {
+        assertEquals(MealMode.LOW_CARB, MealModeDetector.detect(cob = 5.0, shortAvgDelta = 0.0))
     }
 
-    @Test fun `small COB returns MEAL when low carb mode disabled`() {
-        val mode = MealModeDetector.detect(
-            cobGrams         = 8.0,
-            lastCarbTimeMs   = now - 20 * 60_000L,
-            deltaMMol        = 0.1,
-            lowCarbThreshold = 20,
-            lowCarbEnabled   = false
-        )
-        // Falls through to FASTING since COB < MEAL threshold (10g)
-        assertEquals(MealMode.FASTING, mode)
+    @Test fun `small COB with mild rise returns LOW_CARB`() {
+        assertEquals(MealMode.LOW_CARB, MealModeDetector.detect(cob = 3.0, shortAvgDelta = 2.5))
     }
 
-    @Test fun `recent carbs within window but fully absorbed returns LOW_CARB`() {
-        val thirtyMinsAgo = now - 30 * 60_000L
-        val mode = MealModeDetector.detect(
-            cobGrams         = 2.0,   // nearly absorbed
-            lastCarbTimeMs   = thirtyMinsAgo,
-            deltaMMol        = 0.0,
-            lowCarbThreshold = 20,
-            lowCarbEnabled   = true
-        )
-        assertEquals(MealMode.LOW_CARB, mode)
+    @Test fun `zero COB with mild rise returns LOW_CARB`() {
+        assertEquals(MealMode.LOW_CARB, MealModeDetector.detect(cob = 0.0, shortAvgDelta = 2.0))
     }
 
-    // ── MEAL ─────────────────────────────────────────────────────────────────
+    // ── LUNCH (generic meal) ──────────────────────────────────────────────────
 
-    @Test fun `COB at meal threshold returns MEAL`() {
-        val mode = MealModeDetector.detect(
-            cobGrams       = 10.0,
-            lastCarbTimeMs = now - 30 * 60_000L,
-            deltaMMol      = 0.1
-        )
-        assertEquals(MealMode.MEAL, mode)
+    @Test fun `COB at meal threshold returns LUNCH`() {
+        assertEquals(MealMode.LUNCH, MealModeDetector.detect(cob = 15.0, shortAvgDelta = 0.5))
     }
 
-    @Test fun `large COB with flat delta returns MEAL not EXTENDED`() {
-        val mode = MealModeDetector.detect(
-            cobGrams       = 35.0,
-            lastCarbTimeMs = now - 20 * 60_000L,
-            deltaMMol      = 0.1   // below EXTENDED_DELTA_THRESHOLD
-        )
-        assertEquals(MealMode.MEAL, mode)
+    @Test fun `large COB with slow delta returns LUNCH not EXTENDED`() {
+        // slow delta → EXTENDED requires shortAvgDelta < 3.0 AND COB >= 30
+        // COB=35 but delta=3.5 (above slow threshold) → still LUNCH
+        assertEquals(MealMode.LUNCH, MealModeDetector.detect(cob = 35.0, shortAvgDelta = 3.5))
     }
 
     // ── EXTENDED ─────────────────────────────────────────────────────────────
 
-    @Test fun `large COB with sustained rise returns EXTENDED`() {
-        val mode = MealModeDetector.detect(
-            cobGrams       = 35.0,
-            lastCarbTimeMs = now - 30 * 60_000L,
-            deltaMMol      = 0.4   // above EXTENDED_DELTA_THRESHOLD
-        )
-        assertEquals(MealMode.EXTENDED, mode)
+    @Test fun `large COB with slow delta returns EXTENDED`() {
+        // COB >= 30 AND delta < 3.0 → EXTENDED (flat BG despite high COB = slow absorption)
+        assertEquals(MealMode.EXTENDED, MealModeDetector.detect(cob = 35.0, shortAvgDelta = 1.0))
     }
 
     @Test fun `COB just below extended threshold does not return EXTENDED`() {
-        val mode = MealModeDetector.detect(
-            cobGrams       = 29.9,
-            lastCarbTimeMs = now - 15 * 60_000L,
-            deltaMMol      = 0.5
-        )
-        assertEquals(MealMode.MEAL, mode)
+        val mode = MealModeDetector.detect(cob = 29.9, shortAvgDelta = 1.0)
+        assertEquals(MealMode.LUNCH, mode)
     }
 
-    // ── Learning weight sanity ────────────────────────────────────────────────
+    // ── MealMode sanity checks ────────────────────────────────────────────────
 
     @Test fun `FASTING has highest learning weight`() {
-        assert(MealMode.FASTING.learningWeight > MealMode.LOW_CARB.learningWeight)
-        assert(MealMode.LOW_CARB.learningWeight > MealMode.MEAL.learningWeight)
-        assert(MealMode.MEAL.learningWeight > MealMode.EXTENDED.learningWeight)
+        assertTrue(MealMode.FASTING.learningWeight  > MealMode.LOW_CARB.learningWeight)
+        assertTrue(MealMode.LOW_CARB.learningWeight > MealMode.LUNCH.learningWeight)
+        assertTrue(MealMode.LUNCH.learningWeight    > MealMode.EXTENDED.learningWeight)
     }
 
     @Test fun `EXTENDED has DIA learning disabled`() {
         assertEquals(false, MealMode.EXTENDED.diaLearningEnabled)
     }
 
-    @Test fun `all other modes have DIA learning enabled`() {
-        listOf(MealMode.FASTING, MealMode.LOW_CARB, MealMode.MEAL).forEach {
+    @Test fun `all non-EXTENDED modes have DIA learning enabled`() {
+        listOf(MealMode.FASTING, MealMode.LOW_CARB, MealMode.BREAKFAST, MealMode.LUNCH, MealMode.DINNER).forEach {
             assertEquals(true, it.diaLearningEnabled)
         }
     }

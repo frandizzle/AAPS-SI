@@ -67,9 +67,9 @@ class ProfileLearnerTest {
 
     @Test fun `sample count increments on each observation`() {
         repeat(3) {
-            learner.observeBolusCurve(MealMode.MEAL, 70.0, 260.0, 0.15)
+            learner.observeBolusCurve(MealMode.LUNCH, 70.0, 260.0, 0.15)
         }
-        assertEquals(3, learner.getProfile(MealMode.MEAL).sampleCount)
+        assertEquals(3, learner.getProfile(MealMode.LUNCH).sampleCount)
     }
 
     // ── DIA learning gate ────────────────────────────────────────────────────
@@ -129,9 +129,9 @@ class ProfileLearnerTest {
     // ── Mode independence ────────────────────────────────────────────────────
 
     @Test fun `updating one mode does not affect another`() {
-        val mealBefore = learner.getProfile(MealMode.MEAL).peakMinutes
+        val mealBefore = learner.getProfile(MealMode.LUNCH).peakMinutes
         learner.observeBolusCurve(MealMode.FASTING, 55.0, 220.0, 0.15)
-        val mealAfter = learner.getProfile(MealMode.MEAL).peakMinutes
+        val mealAfter = learner.getProfile(MealMode.LUNCH).peakMinutes
         assertEquals(mealBefore, mealAfter, 0.001)
     }
 
@@ -165,14 +165,14 @@ class ProfileLearnerTest {
 
     @Test fun `JSON round-trip preserves all fields`() {
         val original = LearnedInsulinProfile(
-            mode          = MealMode.MEAL,
+            mode          = MealMode.LUNCH,
             peakMinutes   = 72.3,
             diaMinutes    = 255.7,
             confidence    = 0.65,
             sampleCount   = 12,
             lastUpdatedMs = 1_700_000_000_000L
         )
-        val restored = LearnedInsulinProfile.fromJson(original.toJson(), MealMode.MEAL)
+        val restored = LearnedInsulinProfile.fromJson(original.toJson(), MealMode.LUNCH)
         assertEquals(original.mode,          restored.mode)
         assertEquals(original.peakMinutes,   restored.peakMinutes,   0.001)
         assertEquals(original.diaMinutes,    restored.diaMinutes,    0.001)

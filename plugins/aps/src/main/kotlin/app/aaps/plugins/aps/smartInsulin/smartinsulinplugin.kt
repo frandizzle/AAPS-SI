@@ -69,6 +69,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val profileFunction: ProfileFunction,
     private val profileUtil: ProfileUtil,
     private val iobCobCalculator: IobCobCalculator,
+    private val mealOverrideManager: MealOverrideManager,
     private val glucoseStatusProvider: GlucoseStatusProvider,
     private val persistenceLayer: PersistenceLayer,
     private val processedTbrEbData: ProcessedTbrEbData,
@@ -215,10 +216,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowCarbThresholdG  = preferences.get(IntKey.ApsSmartInsulinLowCarbThresholdG)
         val lowCarbModeEnabled = preferences.get(BooleanKey.ApsSmartInsulinLowCarbMode)
         val mealMode = MealModeDetector.detect(
-            mealData         = mealData,
-            glucoseStatus    = glucoseStatus,
-            lowCarbThreshold = lowCarbThresholdG,
-            lowCarbEnabled   = lowCarbModeEnabled
+            mealData        = mealData,
+            glucoseStatus   = glucoseStatus,
+            overrideManager = mealOverrideManager
         )
 
         // ── Learned profile ──────────────────────────────────────────────────
@@ -229,6 +229,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode learnedProfile=$learnedProfile")
+
+        mealOverrideManager.onLoopCycle(
+            glucoseStatus = glucoseStatus,
+            iobArray      = iobArray,
+            maxIobU       = oapsProfile.max_iob
+        )
 
         // ── Run determine_basal ──────────────────────────────────────────────
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
