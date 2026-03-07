@@ -250,7 +250,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val learnedProfile    = profileLearner.getProfile(mealMode)
-        val predictionHorizon = preferences.get(IntKey.ApsSmartInsulinPredictionHorizonMins)
         val lowGuardMmol      = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
@@ -304,7 +303,6 @@ open class SmartInsulinPlugin @Inject constructor(
             profile               = profile,
             learnedProfile        = learnedProfile,
             mealMode              = mealMode,
-            predictionHorizonMins = predictionHorizon,
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
             maxSmbU               = maxSmbU,

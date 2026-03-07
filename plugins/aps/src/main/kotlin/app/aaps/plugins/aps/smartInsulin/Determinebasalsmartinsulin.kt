@@ -65,7 +65,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         profile:               Profile,
         learnedProfile:        LearnedInsulinProfile,
         mealMode:              MealMode,
-        predictionHorizonMins: Int,
         lowGuardMmol:          Double,
         warnGuardMmol:         Double,
         maxSmbU:               Double,
@@ -94,19 +93,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
         // ── Build prediction curves ──────────────────────────────────────────
-        // Decision curve: user-configured horizon (default 60 min) for zone logic
+        // Always run to 240 mins for the graph (matches AutoISF 48-point convention).
+        // Algorithm reads at fixed indices 30 and 60 — independent of graph horizon.
         val predictedBg = predictBgCurve(
             currentBg             = currentBg,
             delta                 = delta,
             iobArray              = iobArray,
             isfMgdl               = isfMgdl,
             learnedProfile        = learnedProfile,
-            predictionHorizonMins = predictionHorizonMins
+            predictionHorizonMins = 240
         )
 
         val predictedMin  = predictedBg.minOrNull() ?: currentBg
         val predictedAt30 = if (predictedBg.size > 30) predictedBg[30] else predictedBg.lastOrNull() ?: currentBg
-        val predictedAt60 = predictedBg.lastOrNull() ?: currentBg
+        val predictedAt60 = if (predictedBg.size > 60) predictedBg[60] else predictedBg.lastOrNull() ?: currentBg
 
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
         // Index 0 = current BG (anchors curve at "now"), then 5-min steps forward
