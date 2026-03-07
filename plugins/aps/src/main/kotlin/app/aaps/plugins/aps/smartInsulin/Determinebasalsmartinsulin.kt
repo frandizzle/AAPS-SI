@@ -186,8 +186,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr
                 smbOut        = constrainedSmb
-                tempRequested = remainingU > 0.0
-                smbOut        = constrainedSmb
             }
         }
 
