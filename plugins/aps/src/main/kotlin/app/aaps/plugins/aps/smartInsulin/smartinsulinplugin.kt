@@ -220,8 +220,9 @@ open class SmartInsulinPlugin @Inject constructor(
             allowSMB_with_high_temptarget   = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithHighTt),
             enableSMB_always                = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAlways),
             enableSMB_after_carbs           = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAfterCarbs),
-            maxSMBBasalMinutes              = preferences.get(IntKey.ApsMaxMinutesOfBasalToLimitSmb),
-            maxUAMSMBBasalMinutes           = preferences.get(IntKey.ApsUamMaxMinutesOfBasalToLimitSmb),
+            // maxSMBBasalMinutes: set to max so it never constrains our flat ApsSmartInsulinMaxSmb cap
+            maxSMBBasalMinutes              = Int.MAX_VALUE,
+            maxUAMSMBBasalMinutes           = Int.MAX_VALUE,
             bolus_increment                 = pump.pumpDescription.bolusStep,
             carbsReqThreshold               = preferences.get(IntKey.ApsCarbsRequestThreshold),
             current_basal                   = pump.baseBasalRate,
@@ -358,7 +359,6 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,                      title = R.string.openapssmb_max_iob_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxMinutesOfBasalToLimitSmb,       title = R.string.smb_max_minutes_summary))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))

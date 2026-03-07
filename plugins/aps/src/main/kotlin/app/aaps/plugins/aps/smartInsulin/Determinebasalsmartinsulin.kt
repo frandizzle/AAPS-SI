@@ -95,7 +95,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f ".format(delta, currentIob))
+        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
@@ -143,7 +143,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
                     (isRising || isAboveTarget) &&
-                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
+                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
+                    currentIob < oapsProfile.max_iob
 
                 // Size the SMB based on where BG is heading, not just where it is now.
                 // Use pred30 as the reference — cover the gap between pred30 and target,
