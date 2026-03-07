@@ -17,6 +17,31 @@
     <string name="resistance_lowers_target_summary">When resistance is detected, lower the target glucose</string>
     <string name="sensitivity_raises_target_title">Sensitivity raises target</string>
     <string name="sensitivity_raises_target_summary">When sensitivity is detected, raise the target glucose</string>
+
+    <!-- Plugin name / description -->
+    <string name="smart_insulin">SmartInsulin</string>
+    <string name="smart_insulin_short">SI</string>
+    <string name="smart_insulin_description">Adaptive insulin model with BG prediction and anti-rebound dosing</string>
+
+    <!-- Meal mode prefs -->
+    <string name="smart_insulin_low_carb_mode">Low carb mode</string>
+    <string name="smart_insulin_low_carb_mode_summary">Treat meals below threshold as low-carb for cleaner insulin learning</string>
+    <string name="smart_insulin_low_carb_threshold">Low carb threshold (g)</string>
+    <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
+
+    <!-- Learning prefs -->
+    <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
+    <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
+    <string name="smart_insulin_learning_rate">Learning rate</string>
+    <string name="smart_insulin_learning_rate_summary">How quickly the model adapts. Lower = more stable, higher = faster adaptation (0.05–0.5)</string>
+
+    <!-- Prediction / anti-rebound prefs -->
+    <string name="smart_insulin_prediction_horizon">Prediction horizon (min)</string>
+    <string name="smart_insulin_prediction_horizon_summary">How far ahead to predict BG when evaluating SMB safety</string>
+    <string name="smart_insulin_low_guard">Low guard threshold (mmol/L)</string>
+    <string name="smart_insulin_low_guard_summary">Predicted BG below this blocks SMB delivery entirely</string>
+    <string name="smart_insulin_warn_guard">Warning guard threshold (mmol/L)</string>
+    <string name="smart_insulin_warn_guard_summary">Predicted BG below this reduces SMB delivery proportionally</string>
     <string name="openapsma_disabled">Plugin is disabled</string>
     <string name="openapsma_no_glucose_data">No glucose data available</string>
     <string name="openaps_no_as_data">No autosens data available</string>
