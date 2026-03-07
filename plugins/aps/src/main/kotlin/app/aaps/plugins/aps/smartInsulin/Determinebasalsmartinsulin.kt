@@ -162,7 +162,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val requestedSmb   = (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0)
-                val constrainedSmb = requestedSmb.coerceAtMost(maxSmbU)
+                val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
+                // Round up to nearest pump step, then drop if still below one full step
+                val roundedSmb     = if (requestedSmb > 0.0)
+                    (Math.ceil(requestedSmb / bolusStep) * bolusStep) else 0.0
+                val constrainedSmb = if (roundedSmb >= bolusStep) roundedSmb.coerceAtMost(maxSmbU) else 0.0
 
                 val trigger = when {
                     !smbAllowed    -> "blocked"
