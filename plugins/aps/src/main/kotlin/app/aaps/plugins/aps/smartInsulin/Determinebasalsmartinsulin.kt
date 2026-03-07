@@ -1,15 +1,13 @@
 package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.smartInsulin.MealMode
 
-import app.aaps.core.data.model.GV
-import app.aaps.core.data.model.SourceSensor
-import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.CurrentTemp
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfile
+import app.aaps.core.interfaces.aps.Predictions
 import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.profile.Profile
 import javax.inject.Inject
@@ -59,19 +57,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val result = apsResultProvider.get()
 
-        // Must call with() before accessing predictionsAsGv or any property backed by lateinit result
-        result.with(
-            RT(
-                algorithm        = APSResult.Algorithm.SMB,
-                runningDynamicIsf = false,
-                timestamp        = currentTime,
-                bg               = glucoseStatus.glucose,
-                rate             = 0.0,
-                duration         = 0,
-                reason           = StringBuilder()
-            )
-        )
-
         val lowGuardMgdl  = lowGuardMmol  * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
@@ -96,19 +81,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictedAt30 = if (predictedBg.size > 30) predictedBg[30] else predictedBg.lastOrNull() ?: currentBg
         val predictedAt60 = predictedBg.lastOrNull() ?: currentBg
 
-        // ── Populate prediction GVs for home screen graph ────────────────────
-        result.predictionsAsGv.clear()
-        predictedBg.forEachIndexed { minuteOffset, bg ->
-            result.predictionsAsGv.add(
-                GV(
-                    timestamp    = currentTime + (minuteOffset + 1) * 60_000L,
-                    value        = bg.coerceAtLeast(39.0),   // AAPS clips below 39
-                    raw          = null,
-                    trendArrow   = TrendArrow.NONE,
-                    noise        = null,
-                    sourceSensor = SourceSensor.UNKNOWN
-                )
-            )
+        // ── Downsample per-minute curve to 5-min intervals for predBGs ────────
+        // AAPS expects List<Int> (mg/dL) at 5-min steps. Index 0 = current BG.
+        val iobPrediction: List<Int> = (0 until predictedBg.size step 5).map {
+            predictedBg[it].coerceAtLeast(39.0).toInt()
         }
 
         // ── Reason string ────────────────────────────────────────────────────
@@ -178,6 +154,23 @@ class DetermineBasalSmartInsulin @Inject constructor(
         result.targetBG     = targetBg
         result.deliverAt    = currentTime
         result.hasPredictions = true
+
+        result.with(
+            RT(
+                algorithm         = APSResult.Algorithm.SMB,
+                runningDynamicIsf = false,
+                timestamp         = currentTime,
+                bg                = currentBg,
+                eventualBG        = predictedAt60,
+                targetBG          = targetBg,
+                rate              = if (result.isTempBasalRequested) result.rate else null,
+                duration          = if (result.isTempBasalRequested) result.duration else null,
+                units             = result.smb.takeIf { it > 0.0 },
+                deliverAt         = currentTime,
+                reason            = sb,
+                predBGs           = Predictions(IOB = iobPrediction)
+            )
+        )
 
         return result
     }
