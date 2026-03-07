@@ -68,7 +68,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val targetBg     = oapsProfile.target_bg
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
-        // ── Build prediction curve ───────────────────────────────────────────
+        // ── Build prediction curves ──────────────────────────────────────────
+        // Decision curve: user-configured horizon (default 60 min) for zone logic
         val predictedBg = predictBgCurve(
             currentBg             = currentBg,
             delta                 = delta,
@@ -82,8 +83,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictedAt30 = if (predictedBg.size > 30) predictedBg[30] else predictedBg.lastOrNull() ?: currentBg
         val predictedAt60 = predictedBg.lastOrNull() ?: currentBg
 
-        // ── Downsample per-minute curve to 5-min intervals for predBGs ────────
-        // AAPS expects List<Int> (mg/dL) at 5-min steps. Index 0 = current BG.
+        // ── Downsample curve to 5-min intervals for predBGs ──────────────────
         val iobPrediction: List<Int> = (0 until predictedBg.size step 5).map {
             predictedBg[it].coerceAtLeast(39.0).toInt()
         }
@@ -135,8 +135,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             else -> {
+                // SmartInsulin manages its own SMB gating — don't require enableSMB_always.
+                // microBolusAllowed still enforces pump/safety constraints from constraintsChecker.
                 val smbAllowed = microBolusAllowed &&
-                    oapsProfile.enableSMB_always &&
                     currentBg > targetBg &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
