@@ -165,7 +165,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
                 // IOB is sufficient only if our prediction shows BG arriving at or below target
                 // without more insulin. Raw iobDrop math is kept for the reason string only.
-                val iobDrop       = currentIob * isfMgdl
                 val iobSufficient = predictedAt60 <= targetBg
 
                 val smbAllowed = microBolusAllowed &&
