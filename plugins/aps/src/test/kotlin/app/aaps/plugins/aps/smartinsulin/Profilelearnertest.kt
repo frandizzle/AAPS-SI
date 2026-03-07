@@ -100,7 +100,7 @@ class ProfileLearnerTest {
 
     // ── Rejection of implausible observations ────────────────────────────────
 
-    @Test fun `observation where peak >= DIA is rejected`() {
+    @Test fun `observation where peak is greater than or equal to DIA is rejected`() {
         val before = learner.getProfile(MealMode.FASTING)
         learner.observeBolusCurve(
             mode             = MealMode.FASTING,
