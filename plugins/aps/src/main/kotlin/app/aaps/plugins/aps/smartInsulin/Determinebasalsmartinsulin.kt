@@ -68,6 +68,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val targetBg     = oapsProfile.target_bg
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
+        // Debug: log IOB activity at key intervals to verify prediction inputs
+        val actAt15 = iobArray.getOrNull(15)?.activity ?: 0.0
+        val actAt30 = iobArray.getOrNull(30)?.activity ?: 0.0
+        val actAt60 = iobArray.getOrNull(60)?.activity ?: 0.0
+        aapsLogger.debug(LTag.APS, "SmartInsulin IOB debug: iob=$currentIob activity@15=${actAt15} @30=${actAt30} @60=${actAt60} isf=$isfMgdl")
+
         // ── Build prediction curves ──────────────────────────────────────────
         // Decision curve: user-configured horizon (default 60 min) for zone logic
         val predictedBg = predictBgCurve(
@@ -182,11 +188,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRate = when {
-                    !iobOk          -> 0.0   // IOB at/above max — suspend basal to let it decay
+                    !iobOk           -> 0.0   // IOB at/above max — suspend basal
+                    iobSufficient    -> 0.0   // existing IOB sufficient — suspend basal to avoid stacking
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
                     else             -> profileBasal
                 }
-                val needsTbr = !iobOk || remainingU > 0.0
+                val needsTbr = !iobOk || iobSufficient || remainingU > 0.0
 
                 val trigger = when {
                     !iobOk         -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
@@ -242,14 +249,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         for (t in 1..predictionHorizonMins) {
             val activity       = getActivityAtMinute(t, iobArray, learnedProfile)
             val iobDelta       = -activity * isfMgdl
-            // Momentum fades linearly over DELTA_FADE_MINS — but cap contribution
-            // per minute so a single large delta reading doesn't create a spike
+            // Momentum fades linearly over DELTA_FADE_MINS
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
             val momentumDelta  = (deltaPerMin * momentumWeight).coerceIn(-MAX_MOMENTUM_MGDL_PER_MIN, MAX_MOMENTUM_MGDL_PER_MIN)
-            // Clamp total step so prediction can't drop faster than MAX_DROP_MGDL_PER_MIN
-            val step           = (iobDelta + momentumDelta).coerceAtLeast(-MAX_DROP_MGDL_PER_MIN)
-            bg += step
-            // Never predict below 39 mg/dL (sensor floor)
+            bg += iobDelta + momentumDelta
+            // Never predict below sensor floor
             bg = bg.coerceAtLeast(39.0)
             predictions.add(bg)
         }
@@ -275,7 +279,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MMOL_TO_MGDL                         = 18.0
         private const val DELTA_FADE_MINS                       = 30.0  // momentum fades over 30 mins
         private const val MAX_MOMENTUM_MGDL_PER_MIN             = 2.0   // cap momentum contribution per minute
-        private const val MAX_DROP_MGDL_PER_MIN                 = 3.0   // cap how fast prediction can fall per minute
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
         private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of effective gap per cycle
