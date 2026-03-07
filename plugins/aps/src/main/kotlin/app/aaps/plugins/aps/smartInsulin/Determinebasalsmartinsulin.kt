@@ -170,7 +170,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     isRising       -> "rising"
                     else           -> "none"
                 }
-                sb.append("NORMAL targetBG=${fmt(targetBg)} trigger=$trigger smb=%.3f".format(constrainedSmb))
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f".format(constrainedSmb))
                 rateOut       = profileBasal
                 durationOut   = 0
                 tempRequested = false
