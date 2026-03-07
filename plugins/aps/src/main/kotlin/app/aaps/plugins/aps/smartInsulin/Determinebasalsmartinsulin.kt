@@ -135,17 +135,42 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             else -> {
-                // SmartInsulin manages its own SMB gating — don't require enableSMB_always.
-                // microBolusAllowed still enforces pump/safety constraints from constraintsChecker.
+                // SMB fires when BG is above lowGuard and rising (or stable above target).
+                // This gets ahead of meals: negative IOB + rising delta still warrants insulin
+                // as long as we're safely above the low guard threshold.
+                // Two triggers:
+                //   1. Rising: delta positive and BG above lowGuard → scale by delta momentum
+                //   2. Above target: BG already past target → scale by correction distance
+                val bgAboveGuard  = currentBg - lowGuardMgdl          // headroom above floor
+                val isRising      = delta > DELTA_RISING_THRESHOLD_MGDL_PER_5MIN
+                val isAboveTarget = currentBg > targetBg
+
                 val smbAllowed = microBolusAllowed &&
-                    currentBg > targetBg &&
+                    bgAboveGuard > 0.0 &&
+                    (isRising || isAboveTarget) &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
-                val correctionUnits = ((currentBg - targetBg) / isfMgdl).coerceAtLeast(0.0)
-                val requestedSmb    = if (smbAllowed) (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0) else 0.0
-                val constrainedSmb  = requestedSmb.coerceAtMost(maxSmbU)
+                val correctionUnits = if (smbAllowed) {
+                    if (isAboveTarget) {
+                        // Classic correction: distance above target / ISF
+                        (currentBg - targetBg) / isfMgdl
+                    } else {
+                        // Rising but not yet at target: scale by delta momentum only
+                        // Small pre-emptive dose proportional to rise rate
+                        (delta / isfMgdl) * RISING_SMB_DELTA_FRACTION
+                    }.coerceAtLeast(0.0)
+                } else 0.0
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} smbAllowed=$smbAllowed smb=%.3f".format(constrainedSmb))
+                val requestedSmb   = (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0)
+                val constrainedSmb = requestedSmb.coerceAtMost(maxSmbU)
+
+                val trigger = when {
+                    !smbAllowed    -> "blocked"
+                    isAboveTarget  -> "aboveTarget"
+                    isRising       -> "rising"
+                    else           -> "none"
+                }
+                sb.append("NORMAL targetBG=${fmt(targetBg)} trigger=$trigger smb=%.3f".format(constrainedSmb))
                 rateOut       = profileBasal
                 durationOut   = 0
                 tempRequested = false
@@ -217,8 +242,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
     companion object {
         private const val MMOL_TO_MGDL                   = 18.0
         private const val DELTA_FADE_MINS                 = 15.0
-        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN = 1.0
-        private const val SMB_CORRECTION_FRACTION         = 0.3
+        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN    = 1.0   // don't SMB if falling faster than this
+        private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5 // delta above this = "rising" trigger
+        private const val SMB_CORRECTION_FRACTION             = 0.3   // fraction of correction to deliver as SMB
+        private const val RISING_SMB_DELTA_FRACTION           = 2.0   // scale factor for pre-emptive rising dose
         private const val LN2                             = 0.693147
     }
 }
