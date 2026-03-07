@@ -105,6 +105,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("ISF=%.1f basal=%.3f ".format(isfMgdl, profileBasal))
         sb.append("peak=${learnedProfile.peakMinutes.toInt()}m dia=${learnedProfile.diaMinutes.toInt()}m ")
 
+        // ── LGS: hard suspend on current BG below threshold ─────────────────
+        // lgsThreshold is in mg/dL (converted from user's mmol preference by AAPS core)
+        val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
+        if (lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl) {
+            sb.append("LGS_SUSPEND currentBG=%.1f < lgs=%.1f".format(currentBg, lgsThresholdMgdl))
+            result.rate                 = 0.0
+            result.duration             = 30
+            result.isTempBasalRequested = true
+            result.smb                  = 0.0
+            result.reason               = sb.toString()
+            return result
+        }
+
         // ── Zone decision ────────────────────────────────────────────────────
         when {
             predictedMin < lowGuardMgdl -> {
