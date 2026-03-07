@@ -24,8 +24,18 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val activeMealMode: MealMode? get() {
         val s = _state ?: return null
-        return if (System.currentTimeMillis() < s.modeExpiryMs) s.mode
-        else { _state = null; null }
+        val now = System.currentTimeMillis()
+        val remainingMs = s.modeExpiryMs - now
+        return if (remainingMs > 0) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin activeMealMode=${s.mode.label} remaining=${remainingMs / 60_000}min")
+            s.mode
+        } else {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin mode ${s.mode.label} expired (modeExpiryMs=${s.modeExpiryMs} now=$now)")
+            _state = null
+            null
+        }
     }
 
     override val activeIsfMultiplier: Double get() = activeMealMode?.defaultIsfMultiplier ?: 1.0
@@ -48,7 +58,7 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "SmartInsulin override: mode=${mode.label} dose=${doseU}U " +
                              "carbs=${carbsG}g bolusTTL=${MealOverrideState.BOLUS_WINDOW_MS / 60_000}min " +
-                             "modeTTL=${modeWindowMs / 60_000}min")
+                             "modeTTL=${modeWindowMs / 60_000}min modeExpiryMs=${now + modeWindowMs}")
     }
 
     override fun cancelOverride() {
