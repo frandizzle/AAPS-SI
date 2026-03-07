@@ -42,7 +42,6 @@ import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
 import org.json.JSONObject
 import javax.inject.Inject
-import javax.inject.Provider
 import javax.inject.Singleton
 
 @Singleton
@@ -60,8 +59,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val dateUtil: DateUtil,
     private val determineBasalSmartInsulin: DetermineBasalSmartInsulin,
     private val profileLearner: ProfileLearner,
-    private val bolusCurveTracker: BolusCurveTracker,
-    private val apsResultProvider: Provider<APSResult>
+    private val bolusCurveTracker: BolusCurveTracker
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -118,8 +116,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Gather data ──────────────────────────────────────────────
         val now = dateUtil.now()
         val isTempTarget = persistenceLayer.getTemporaryTargetActiveAt(now) != null
-
-        // Matches the real IobCobCalculator.calculateIobArrayForSMB signature
         val autosensResult = AutosensResult()
         val iobArray = iobCobCalculator.calculateIobArrayForSMB(
             autosensResult,
@@ -155,7 +151,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol         = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         // ── Run determine_basal ──────────────────────────────────────
-        val resultJson = determineBasalSmartInsulin.determine_basal(
+        // determine_basal returns a pre-populated APSResult directly
+        val apsResult = determineBasalSmartInsulin.determine_basal(
             glucoseStatus         = glucoseStatus,
             iobArray              = iobArray,
             mealData              = mealData,
@@ -167,17 +164,12 @@ open class SmartInsulinPlugin @Inject constructor(
             warnGuardMmol         = warnGuardMmol,
             currentTime           = now
         )
-
-        // ── Wrap result ───────────────────────────────────────────────
-        // apsResultProvider.get() returns a fresh APSResult each time (Provider, not singleton)
-        val apsResult = apsResultProvider.get()
-        apsResult.json          = resultJson
         apsResult.glucoseStatus = glucoseStatus
         apsResult.iobData       = iobArray
         apsResult.mealData      = mealData
         lastAPSResult           = apsResult
         lastAPSRun              = now
-        aapsLogger.debug(LTag.APS, "SmartInsulin result: $resultJson")
+        aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
         rxBus.send(EventAPSCalculationFinished())
 
         // ── Post-cycle learning update ────────────────────────────────
