@@ -10,6 +10,7 @@ import app.aaps.core.interfaces.aps.OapsProfile
 import app.aaps.core.interfaces.aps.Predictions
 import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.profile.Profile
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
@@ -95,16 +96,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
 
         // ── Reason string ────────────────────────────────────────────────────
-        fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(mgdl / MMOL_TO_MGDL) else "%.1f".format(mgdl)
+        fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(Locale.US, mgdl / MMOL_TO_MGDL) else "%.1f".format(Locale.US, mgdl)
         val units  = if (isMmol) "mmol" else "mg/dL"
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(delta, currentIob, oapsProfile.max_iob))
+        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
-        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
+        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(Locale.US, profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
-        sb.append("aggr=%.2f $tirSummary ".format(aggressiveness))
+        sb.append("aggr=%.2f $tirSummary ".format(Locale.US, aggressiveness))
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
@@ -118,26 +119,24 @@ class DetermineBasalSmartInsulin @Inject constructor(
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
         else 1.0  // 1.0 = full normal dosing
 
-        var rateOut     = 0.0
-        var durationOut = 0
-        var smbOut      = 0.0
+        var rateOut       = 0.0
+        var durationOut   = 0
+        var smbOut        = 0.0
         var tempRequested = false
 
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
                 sb.append("LGS_SUSPEND BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
-                rateOut       = 0.0
                 durationOut   = 30
                 tempRequested = true
             }
 
             predictedMin < lowGuardMgdl || fallingIntoLow -> {
                 val reason = if (fallingIntoLow && predictedMin >= lowGuardMgdl)
-                    "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format("%.1f", delta)}"
+                    "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)}"
                 else
                     "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
                 sb.append(reason)
-                rateOut       = 0.0
                 durationOut   = 30
                 tempRequested = true
             }
@@ -147,7 +146,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val guardWindow = warnGuardMgdl - lowGuardMgdl
                 val scale       = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
                 val reduced     = (profileBasal * scale * 0.5).coerceAtLeast(0.0)
-                sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(scale, reduced))
+                sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(Locale.US, scale, reduced))
                 rateOut       = reduced
                 durationOut   = 30
                 tempRequested = true
@@ -168,7 +167,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
-                    (isRising || isAboveTarget) &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
                     predictedAt60 > targetBg &&
                     !iobSufficient
@@ -217,12 +215,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val needsTbr = !iobOk || iobSufficient || remainingU > 0.0 || inReboundWindow
 
                 val trigger = when {
-                    !iobOk        -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
-                    iobSufficient -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
+                    !iobOk        -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
+                    iobSufficient -> "iobSufficient(drop=${String.format(Locale.US, "%.0f", iobDrop)}>=gap=${String.format(Locale.US, "%.0f", bgAboveTarget)})"
                     !smbAllowed   -> "blocked"
-                    isAboveTarget -> "aboveTarget"
                     isRising      -> "rising"
-                    else          -> "none"
+                    else          -> "aboveTarget"
                 }
 
                 // Rebound state — always shown when active regardless of trigger
@@ -230,11 +227,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     val minsLeft = ((REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0))
                     val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
                     " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f→%.3f)".format(
-                        reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate
+                        Locale.US, reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate
                     )
                 } else ""
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(Locale.US, finalSmb, tbrRate, reboundStr))
                 rateOut       = tbrRate
                 durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr

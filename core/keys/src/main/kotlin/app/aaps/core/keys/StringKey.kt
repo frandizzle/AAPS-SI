@@ -115,5 +115,12 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
-
+    ApsSmartInsulinTrackerState(
+        "si_tracker_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = false
+    ),
 }
