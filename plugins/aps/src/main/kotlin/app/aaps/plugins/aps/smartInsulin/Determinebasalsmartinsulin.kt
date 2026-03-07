@@ -100,9 +100,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
         sb.append("act@1=%.4f @30=%.4f @60=%.4f arrSz=${iobArray.size} ".format(
-            iobArray.getOrNull(1)?.activity ?: 0.0,
-            iobArray.getOrNull(30)?.activity ?: 0.0,
-            iobArray.getOrNull(60)?.activity ?: 0.0
+            (iobArray.getOrNull(0)?.activity ?: 0.0) / 5.0,
+            (iobArray.getOrNull(6)?.activity ?: 0.0) / 5.0,
+            (iobArray.getOrNull(12)?.activity ?: 0.0) / 5.0
         ))
 
         // ── Decision: collect into local vars, call with() exactly once ──────
@@ -265,14 +265,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         learnedProfile: LearnedInsulinProfile
     ): Double {
-        // iobArray is 1-minute intervals in AAPS APS algorithms
-        if (minuteOffset < iobArray.size) {
-            return max(0.0, iobArray[minuteOffset].activity)
+        // iobArray entries are at 5-minute intervals; activity = U absorbed in that 5-min slot
+        // Convert to U/min by dividing by 5
+        val idx = minuteOffset / 5
+        if (idx < iobArray.size) {
+            return max(0.0, iobArray[idx].activity) / 5.0
         }
-        val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
+        // Beyond array: exponential decay from last known activity
+        val lastActivity = (iobArray.lastOrNull()?.activity ?: 0.0) / 5.0
         if (lastActivity <= 0.0) return 0.0
-        val halfLife     = learnedProfile.diaMinutes / 3.5
-        val extra        = minuteOffset - (iobArray.size - 1)
+        val halfLife = learnedProfile.diaMinutes / 3.5
+        val extra    = minuteOffset - ((iobArray.size - 1) * 5)
         return lastActivity * exp(-extra * LN2 / halfLife)
     }
 
