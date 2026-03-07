@@ -9,18 +9,24 @@ import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.ui.R
 import app.aaps.core.utils.JsonHelper
+import app.aaps.plugins.aps.smartInsulin.MealMode
+import app.aaps.plugins.aps.smartInsulin.MealOverrideManager
+import app.aaps.plugins.automation.R
+import app.aaps.plugins.automation.elements.InputDropdownMenu
+import app.aaps.plugins.automation.elements.InputDropdownOnOffMenu
+import app.aaps.plugins.automation.elements.LabelWithElement
+import app.aaps.plugins.automation.elements.LayoutBuilder
 import dagger.android.HasAndroidInjector
 import org.json.JSONObject
-import kotlin.text.get
+import javax.inject.Inject
 
 class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
 
     @Inject lateinit var mealOverrideManager: MealOverrideManager
-    @Inject lateinit var profileFunction: ProfileFunction
-    @Inject lateinit var iobCobCalculator: IobCobCalculator
-    @Inject lateinit var preferences: Preferences
+    @Inject lateinit var profileFunction:     ProfileFunction
+    @Inject lateinit var iobCobCalculator:    IobCobCalculator
+    @Inject lateinit var preferences:         Preferences
 
     // Dialog elements
     var mealModeInput = InputDropdownMenu(rh, MealMode.entries, { it.label }, MealMode.LUNCH)
@@ -28,7 +34,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
 
     override fun friendlyName(): Int          = R.string.smart_meal_action_name
     override fun shortDescription(): String   = rh.gs(R.string.smart_meal_action_short, mealModeInput.value.label)
-    @DrawableRes override fun icon(): Int     = R.drawable.ic_cp_bolus_meal
+    @DrawableRes override fun icon(): Int     = app.aaps.core.ui.R.drawable.ic_cp_bolus_meal
     override fun isValid(): Boolean           = true
     override fun hasDialog(): Boolean         = true
 
@@ -46,9 +52,8 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
         val modeWindowMs = preferences.get(IntKey.ApsSmartInsulinModeWindowMins).toLong() * 60_000L
         val doseU        = if (wantPrebolus) calculateDose(mode, carbsG) else null
 
-        aapsLogger.debug(
-            LTag.APS,
-            "SmartMeal: mode=${mode.label} prebolus=$wantPrebolus dose=$doseU carbs=$carbsG")
+        aapsLogger.debug(LTag.APS,
+                         "SmartMeal: mode=${mode.label} prebolus=$wantPrebolus dose=$doseU carbs=$carbsG")
 
         mealOverrideManager.activateOverride(
             mode         = mode,
@@ -57,7 +62,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
             modeWindowMs = modeWindowMs
         )
 
-        callback.result(pumpEnactResultProvider.get().success(true).comment(R.string.ok)).run()
+        callback.result(pumpEnactResultProvider.get().success(true).comment(app.aaps.core.ui.R.string.ok)).run()
     }
 
     // ── Dose calculation ──────────────────────────────────────────────────────
@@ -94,9 +99,8 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
         val maxBolus       = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
         val clamped        = rawDose.coerceIn(0.0, maxBolus)
 
-        aapsLogger.debug(
-            LTag.APS,
-            "SmartMeal dose: bg=$bg tgt=$target ic=$ic isf=$isf iob=$iob " +
+        aapsLogger.debug(LTag.APS,
+                         "SmartMeal dose: bg=$bg tgt=$target ic=$ic isf=$isf iob=$iob " +
                              "carbDose=$carbDose corr=$correctionDose raw=$rawDose →$clamped")
         return clamped
     }

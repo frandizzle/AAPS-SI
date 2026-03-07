@@ -50,6 +50,12 @@ enum class StringKey(
     NsClientApiSecret("nsclientinternal_api_secret", "", isPassword = true),
     NsClientWifiSsids("ns_wifi_ssids", "", dependency = BooleanKey.NsClientUseWifi),
     NsClientAccessToken("nsclient_token", "", isPassword = true),
+ApsSmartInsulinProfileFasting  ("si_profile_fasting",   defaultValue = "", showInApsMode = false, exportable = true),
+ApsSmartInsulinProfileLowCarb  ("si_profile_lowcarb",   defaultValue = "", showInApsMode = false, exportable = true),
+ApsSmartInsulinProfileBreakfast("si_profile_breakfast", defaultValue = "", showInApsMode = false, exportable = true),
+ApsSmartInsulinProfileLunch    ("si_profile_lunch",     defaultValue = "", showInApsMode = false, exportable = true),
+ApsSmartInsulinProfileDinner   ("si_profile_dinner",    defaultValue = "", showInApsMode = false, exportable = true),
+ApsSmartInsulinProfileExtended ("si_profile_extended",  defaultValue = "", showInApsMode = false, exportable = true),
 
     // Google Drive settings
     GoogleDriveStorageType("google_drive_storage_type", "local"),
@@ -58,37 +64,4 @@ enum class StringKey(
 
     PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
     PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
-    // SmartInsulin — learned insulin profiles (JSON, not user-visible)
-    ApsSmartInsulinProfileFasting(
-        "si_profile_fasting",
-        defaultValue        = "",
-        showInApsMode       = false,
-        showInNsClientMode  = false,
-        showInPumpControlMode = false,
-        exportable          = true
-    ),
-    ApsSmartInsulinProfileLowCarb(
-        "si_profile_low_carb",
-        defaultValue        = "",
-        showInApsMode       = false,
-        showInNsClientMode  = false,
-        showInPumpControlMode = false,
-        exportable          = true
-    ),
-    ApsSmartInsulinProfileMeal(
-        "si_profile_meal",
-        defaultValue        = "",
-        showInApsMode       = false,
-        showInNsClientMode  = false,
-        showInPumpControlMode = false,
-        exportable          = true
-    ),
-    ApsSmartInsulinProfileExtended(
-        "si_profile_extended",
-        defaultValue        = "",
-        showInApsMode       = false,
-        showInNsClientMode  = false,
-        showInPumpControlMode = false,
-        exportable          = true
-    ),
 }
