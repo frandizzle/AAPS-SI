@@ -32,6 +32,7 @@ enum class BooleanKey(
     OverviewUseBolusAdvisor("use_bolus_advisor", true, defaultedBySM = true),
     OverviewUseBolusReminder("use_bolus_reminder", true, defaultedBySM = true),
     OverviewUseSuperBolus("key_usersuperbolus", false, defaultedBySM = true, hideParentScreenIfHidden = true),
+    ApsSmartInsulinBasalLearningEnabled("si_basal_learning_enabled", true, defaultedBySM = true),
 
     PumpBtWatchdog("bt_watchdog", false, showInNsClientMode = false, hideParentScreenIfHidden = true),
 

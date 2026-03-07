@@ -123,4 +123,12 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = false
     ),
+    ApsSmartInsulinBasalState(
+        "si_basal_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
 }

@@ -88,6 +88,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         maxTbrU:               Double,
         aggressiveness:        Double,
         tirSummary:            String,
+        basalMultiplier:       Double,
         microBolusAllowed:     Boolean,
         inReboundWindow:       Boolean,
         msSinceLastSuspend:    Long,
@@ -103,7 +104,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val currentBg    = glucoseStatus.glucose          // mg/dL
         val delta        = glucoseStatus.shortAvgDelta    // mg/dL
         val isfMgdl      = oapsProfile.sens               // already mg/dL (getIsfMgdl)
-        val profileBasal = oapsProfile.current_basal
+        val profileBasalRaw = oapsProfile.current_basal
+        val profileBasal    = profileBasalRaw * basalMultiplier
         val targetBg     = oapsProfile.target_bg          // already mg/dL
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
@@ -138,7 +140,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label} ")
         sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
-        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(Locale.US, profileBasal))
+        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(×%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
         sb.append("aggr=%.2f $tirSummary ".format(Locale.US, aggressiveness))
         // ── Decision: collect into local vars, call with() exactly once ──────

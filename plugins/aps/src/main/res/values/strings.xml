@@ -127,6 +127,7 @@
     <string name="lgs_threshold_title">BG level below which low glucose suspend occurs</string>
     <string name="si_max_tbr_title">Max TBR above basal (U/h)</string>
     <string name="si_aggression_max_title">Aggressiveness ceiling (1.0=off, 1.5=moderate, 2.0=aggressive)</string>
+    <string name="si_basal_learning_title">Enable overnight basal learning</string>
     <!-- Max SMB flat cap -->
     <string name="si_max_smb_title">Max SMB (U)</string>
 

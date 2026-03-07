@@ -86,7 +86,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val determineBasalSmartInsulin: DetermineBasalSmartInsulin,
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
-    private val aggressionLearner: AggressionLearner
+    private val aggressionLearner: AggressionLearner,
+    private val basalLearner: BasalLearner
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -254,7 +255,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         // Record current BG zone for aggression learning
-        // TIR range = warnGuard..highThresh (we use 10 mmol / 180 mg/dL as high thresh)
         val highThreshMgdl = 180.0
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
@@ -263,6 +263,23 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val aggressiveness = aggressionLearner.aggressiveness
         val tirSummary     = aggressionLearner.tirSummary
+
+        // Feed basal learner — uses overnight fasting drift to adjust basal multiplier
+        val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
+        val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
+            ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
+            ?: Double.MAX_VALUE
+        if (basalLearningEnabled) {
+            basalLearner.onLoopCycle(
+                bgMgdl        = glucoseStatus.glucose,
+                cobG          = mealData.mealCOB,
+                minsLastBolus = minsLastBolus,
+                isfMgdl       = profile.getIsfMgdl("SmartInsulin") * isfMultiplier,
+                profileBasalU = profile.getBasal()
+            )
+        }
+        val basalMultiplier = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
+
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
         val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
 
@@ -288,6 +305,7 @@ open class SmartInsulinPlugin @Inject constructor(
             maxTbrU               = maxTbrU,
             aggressiveness        = aggressiveness,
             tirSummary            = tirSummary,
+            basalMultiplier       = basalMultiplier,
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
             msSinceLastSuspend    = msSinceLastSuspend,
@@ -399,6 +417,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
