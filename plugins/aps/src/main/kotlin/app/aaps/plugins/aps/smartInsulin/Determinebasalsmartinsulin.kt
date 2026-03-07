@@ -40,6 +40,38 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private val apsResultProvider: Provider<APSResult>
 ) {
 
+    /**
+     * Mirrors AutoISF setTempBasal() — always sets rate+duration on rT so isChangeRequested
+     * is always true and the reason string always shows in the Loop tab.
+     * Respects skip_neutral_temps: if true and rate == profile basal, cancels any running
+     * temp or does nothing (matching stock AAPS behaviour).
+     */
+    private fun setTempBasal(rate: Double, duration: Int, oapsProfile: OapsProfile, rT: RT, currentTemp: CurrentTemp): RT {
+        val safeRate = rate.coerceIn(0.0, oapsProfile.max_basal)
+        // Round to 0.01 U/hr — standard basal step for most pumps
+        val rounded  = (Math.round(safeRate * 100.0) / 100.0)
+
+        // If already running a close-enough temp, don't thrash the pump
+        if (currentTemp.duration > (duration - 10) && currentTemp.duration <= 120 &&
+            rounded <= currentTemp.rate * 1.2 && rounded >= currentTemp.rate * 0.8 && duration > 0
+        ) {
+            return rT  // no change needed, reason string already built
+        }
+
+        if (rounded == oapsProfile.current_basal) {
+            if (oapsProfile.skip_neutral_temps) {
+                if (currentTemp.duration > 0) {
+                    rT.duration = 0; rT.rate = 0.0  // cancel existing temp
+                } // else do nothing — rate/duration stay null, reason still shows via isBolusRequested or SMB
+            } else {
+                rT.duration = duration; rT.rate = rounded  // neutral temp — always visible
+            }
+        } else {
+            rT.duration = duration; rT.rate = rounded
+        }
+        return rT
+    }
+
     fun determine_basal(
         glucoseStatus:         GlucoseStatus,
         currentTemp:           CurrentTemp,
@@ -122,16 +154,25 @@ class DetermineBasalSmartInsulin @Inject constructor(
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
         else 1.0  // 1.0 = full normal dosing
 
-        @Suppress("RedundantValueArgument") var rateOut       = 0.0   // always overwritten in when branches
-        var durationOut   = 0
-        @Suppress("RedundantValueArgument") var smbOut        = 0.0   // always overwritten in when branches
-        var tempRequested = false
+        @Suppress("RedundantValueArgument") var smbOut = 0.0
+
+        // ── Build RT, then call setTempBasal to set rate/duration exactly as AutoISF does ──
+        val rT = RT(
+            algorithm         = APSResult.Algorithm.SMB,
+            runningDynamicIsf = false,
+            timestamp         = currentTime,
+            bg                = currentBg,
+            eventualBG        = predictedAt60,
+            targetBG          = targetBg,
+            deliverAt         = currentTime,
+            reason            = sb,
+            predBGs           = Predictions(IOB = iobPrediction)
+        )
 
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
                 sb.append("LGS_SUSPEND BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
-                durationOut   = 30
-                tempRequested = true
+                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
 
             predictedMin < lowGuardMgdl || fallingIntoLow -> {
@@ -140,8 +181,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 else
                     "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
                 sb.append(reason)
-                durationOut   = 30
-                tempRequested = true
+                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
 
             predictedMin < warnGuardMgdl -> {
@@ -150,9 +190,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val scale       = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
                 val reduced     = (profileBasal * scale * 0.5).coerceAtLeast(0.0)
                 sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(Locale.US, scale, reduced))
-                rateOut       = reduced
-                durationOut   = 30
-                tempRequested = true
+                setTempBasal(reduced, 30, oapsProfile, rT, currentTemp)
             }
 
             else -> {
@@ -234,30 +272,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else ""
 
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(Locale.US, finalSmb, tbrRate, reboundStr))
-                rateOut       = tbrRate
-                durationOut   = if (needsTbr) 30 else 0
-                tempRequested = needsTbr
-                smbOut        = finalSmb
+                smbOut = finalSmb
+                setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
         }
 
-        // ── Single with() call initialises lateinit RT and drives isChangeRequested
-        result.with(
-            RT(
-                algorithm         = APSResult.Algorithm.SMB,
-                runningDynamicIsf = false,
-                timestamp         = currentTime,
-                bg                = currentBg,
-                eventualBG        = predictedAt60,
-                targetBG          = targetBg,
-                rate              = if (tempRequested) rateOut else null,
-                duration          = if (tempRequested) durationOut else null,
-                units             = smbOut.takeIf { it > 0.0 },
-                deliverAt         = currentTime,
-                reason            = sb,
-                predBGs           = Predictions(IOB = iobPrediction)
-            )
-        )
+        rT.units = smbOut.takeIf { it > 0.0 }
+        result.with(rT)
 
         return result
     }
