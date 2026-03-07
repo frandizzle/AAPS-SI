@@ -48,27 +48,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
      */
     private fun setTempBasal(rate: Double, duration: Int, oapsProfile: OapsProfile, rT: RT, currentTemp: CurrentTemp): RT {
         val safeRate = rate.coerceIn(0.0, oapsProfile.max_basal)
-        // Round to 0.01 U/hr — standard basal step for most pumps
         val rounded  = (Math.round(safeRate * 100.0) / 100.0)
-
-        // If already running a close-enough temp, don't thrash the pump
-        if (currentTemp.duration > (duration - 10) && currentTemp.duration <= 120 &&
-            rounded <= currentTemp.rate * 1.2 && rounded >= currentTemp.rate * 0.8 && duration > 0
-        ) {
-            return rT  // no change needed, reason string already built
-        }
-
-        if (rounded == oapsProfile.current_basal) {
-            if (oapsProfile.skip_neutral_temps) {
-                if (currentTemp.duration > 0) {
-                    rT.duration = 0; rT.rate = 0.0  // cancel existing temp
-                } // else do nothing — rate/duration stay null, reason still shows via isBolusRequested or SMB
-            } else {
-                rT.duration = duration; rT.rate = rounded  // neutral temp — always visible
-            }
-        } else {
-            rT.duration = duration; rT.rate = rounded
-        }
+        // We construct a fresh rT every cycle so rate/duration MUST always be set --
+        // otherwise isChangeRequested stays false and the reason string never shows.
+        rT.duration = duration
+        rT.rate     = rounded
         return rT
     }
 
