@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
+import java.util.Locale
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -137,7 +138,7 @@ class ProfileLearner @Inject constructor(
             "ProfileLearner updated ${mode.label}: " +
                 "peak ${fmtChange(current.peakMinutes, newPeak)} " +
                 "dia ${fmtChange(current.diaMinutes, newDia)} " +
-                "α=${"%.3f".format(alpha)} n=$newSampleCount"
+                "α=${"%.3f".format(Locale.US, alpha)} n=$newSampleCount"
         )
     }
 
@@ -194,5 +195,5 @@ class ProfileLearner @Inject constructor(
     }
 
     private fun fmtChange(old: Double, new: Double): String =
-        "%.1f→%.1f".format(old, new)
+        "%.1f→%.1f".format(Locale.US, old, new)
 }

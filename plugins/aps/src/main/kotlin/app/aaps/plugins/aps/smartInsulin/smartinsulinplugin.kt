@@ -316,6 +316,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
+            aapsLogger.debug(LTag.APS, "SmartInsulin tracker: ${bolusCurveTracker.statusSummary()}")
         }
 
         rxBus.send(EventOpenAPSUpdateGui())

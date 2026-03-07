@@ -8,6 +8,15 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
+import java.util.Locale
+import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
+import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.interfaces.Preferences
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -42,6 +51,7 @@ class BolusCurveTracker @Inject constructor(
     private var bgNadir         = Double.MAX_VALUE
     private var nadirTimeMs     = 0L
     private var nadirConfirmed  = false
+    private var prevIob         = 0.0   // tracks IOB from last cycle to detect new bolus spikes
 
     init {
         restoreState()
@@ -49,6 +59,7 @@ class BolusCurveTracker @Inject constructor(
 
     companion object {
         private const val MIN_TRACK_IOB_U        = 1.0
+        private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
         private const val RECOVERY_MGDL          = 18.0   // ~1 mmol recovery above nadir
         private const val MIN_BG_DROP_MGDL       = 18.0   // ~1 mmol minimum drop to count
         private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
@@ -70,6 +81,20 @@ class BolusCurveTracker @Inject constructor(
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /**
+     * Human-readable one-liner for logcat — shows tracking state each loop cycle.
+     * Example: "tracking=true mode=Fasting iobAtStart=3.2 iobPeak=3.8 declineSeen=true nadir=6.1 nadirConfirmed=false elapsed=42min"
+     */
+    fun statusSummary(): String {
+        if (!tracking) return "tracking=false prevIob=%.2f".format(Locale.US, prevIob)
+        val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
+        val nadirStr = if (bgNadir == Double.MAX_VALUE) "none" else "%.1f".format(Locale.US, bgNadir)
+        return "tracking=true mode=${trackMode.label} " +
+            "iobAtStart=%.2f iobPeak=%.2f declineSeen=$iobDeclineSeen ".format(Locale.US, iobAtStart, iobPeak) +
+            "bgAtStart=%.1f nadir=$nadirStr nadirConfirmed=$nadirConfirmed ".format(Locale.US, bgAtStart) +
+            "elapsed=%.0fmin".format(Locale.US, elapsedMin)
+    }
+
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
         mealMode:      MealMode,
@@ -80,7 +105,11 @@ class BolusCurveTracker @Inject constructor(
         val nowMs      = System.currentTimeMillis()
 
         if (!tracking) {
-            if (currentIob >= MIN_TRACK_IOB_U) {
+            // Only start on a meaningful IOB spike — new bolus delivered
+            // Require IOB to have risen by at least MIN_BOLUS_SPIKE_U since last cycle
+            val iobSpike = currentIob - prevIob
+            prevIob = currentIob
+            if (iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U) {
                 tracking        = true
                 trackStartMs    = nowMs
                 trackMode       = mealMode
@@ -88,14 +117,18 @@ class BolusCurveTracker @Inject constructor(
                 bgAtStart       = currentBg
                 iobPeak         = currentIob
                 iobDeclineSeen  = false
-                bgNadir         = currentBg
+                bgNadir         = Double.MAX_VALUE   // will update to first BG reading below bgAtStart
                 nadirTimeMs     = nowMs
                 nadirConfirmed  = false
                 saveState()
-                aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob bg=$currentBg")
+                aapsLogger.debug(LTag.APS,
+                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg")
+            } else {
+                prevIob = currentIob
             }
             return
         }
+        prevIob = currentIob
 
         val elapsedMs = nowMs - trackStartMs
 
@@ -105,9 +138,11 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        // New bolus detected — restart
-        if (currentIob > iobAtStart * 1.2) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus iob=$currentIob > start=$iobAtStart)")
+        // New bolus detected while tracking — abandon current curve and restart
+        // Either IOB spikes up by MIN_BOLUS_SPIKE_U, or jumps well above where we started
+        val iobSpikeWhileTracking = currentIob - (prevIob.takeIf { it > 0.0 } ?: currentIob)
+        if (iobSpikeWhileTracking >= MIN_BOLUS_SPIKE_U || currentIob > iobPeak * 1.3) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
             reset(); return
         }
 
@@ -145,7 +180,7 @@ class BolusCurveTracker @Inject constructor(
                 LTag.APS,
                 "BolusCurveTracker: complete mode=${trackMode.label} " +
                     "peak=%.1fmin dia=%.1fmin bgDrop=%.1f".format(
-                        observedPeakMins, observedDiaMins, bgAtStart - bgNadir
+                        Locale.US, observedPeakMins, observedDiaMins, bgAtStart - bgNadir
                     )
             )
 
@@ -227,6 +262,7 @@ class BolusCurveTracker @Inject constructor(
         bgNadir         = Double.MAX_VALUE
         nadirTimeMs     = 0L
         nadirConfirmed  = false
+        // prevIob intentionally NOT reset — we still need continuity to detect next bolus spike
         try { preferences.put(StringKey.ApsSmartInsulinTrackerState, "") } catch (_: Exception) {}
     }
 }
