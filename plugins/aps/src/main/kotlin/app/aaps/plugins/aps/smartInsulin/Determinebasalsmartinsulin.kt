@@ -136,12 +136,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
             else -> {
                 // SMB fires when BG is above lowGuard and rising (or stable above target).
-                // This gets ahead of meals: negative IOB + rising delta still warrants insulin
-                // as long as we're safely above the low guard threshold.
-                // Two triggers:
-                //   1. Rising: delta positive and BG above lowGuard → scale by delta momentum
-                //   2. Above target: BG already past target → scale by correction distance
-                val bgAboveGuard  = currentBg - lowGuardMgdl          // headroom above floor
+                val bgAboveGuard  = currentBg - lowGuardMgdl
                 val isRising      = delta > DELTA_RISING_THRESHOLD_MGDL_PER_5MIN
                 val isAboveTarget = currentBg > targetBg
 
@@ -150,22 +145,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     (isRising || isAboveTarget) &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
+                // Size the SMB based on where BG is heading, not just where it is now.
+                // Use pred30 as the reference — cover the gap between pred30 and target,
+                // deliver SMB_DELIVERY_FRACTION of that correction per cycle so we don't
+                // over-deliver on a single reading.
                 val correctionUnits = if (smbAllowed) {
-                    if (isAboveTarget) {
-                        // Classic correction: distance above target / ISF
-                        (currentBg - targetBg) / isfMgdl
-                    } else {
-                        // Rising but not yet at target: scale by delta momentum only
-                        // Small pre-emptive dose proportional to rise rate
-                        (delta / isfMgdl) * RISING_SMB_DELTA_FRACTION
-                    }.coerceAtLeast(0.0)
+                    val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    val correction  = eventualGap / isfMgdl
+                    correction * SMB_DELIVERY_FRACTION
                 } else 0.0
 
-                val requestedSmb   = (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0)
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                // Round up to nearest pump step, then drop if still below one full step
-                val roundedSmb     = if (requestedSmb > 0.0)
-                    (Math.ceil(requestedSmb / bolusStep) * bolusStep) else 0.0
+                val roundedSmb     = if (correctionUnits > 0.0)
+                    (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
                 val constrainedSmb = if (roundedSmb >= bolusStep) roundedSmb.coerceAtMost(maxSmbU) else 0.0
 
                 val trigger = when {
@@ -246,10 +238,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
     companion object {
         private const val MMOL_TO_MGDL                   = 18.0
         private const val DELTA_FADE_MINS                 = 15.0
-        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN    = 1.0   // don't SMB if falling faster than this
-        private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5 // delta above this = "rising" trigger
-        private const val SMB_CORRECTION_FRACTION             = 0.3   // fraction of correction to deliver as SMB
-        private const val RISING_SMB_DELTA_FRACTION           = 2.0   // scale factor for pre-emptive rising dose
+        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
+        private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
+        private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of pred30 correction per cycle
         private const val LN2                             = 0.693147
     }
 }
