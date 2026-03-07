@@ -68,12 +68,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val targetBg     = oapsProfile.target_bg
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
-        // Debug: log IOB activity at key intervals to verify prediction inputs
-        val actAt15 = iobArray.getOrNull(15)?.activity ?: 0.0
-        val actAt30 = iobArray.getOrNull(30)?.activity ?: 0.0
-        val actAt60 = iobArray.getOrNull(60)?.activity ?: 0.0
-        aapsLogger.debug(LTag.APS, "SmartInsulin IOB debug: iob=$currentIob activity@15=${actAt15} @30=${actAt30} @60=${actAt60} isf=$isfMgdl")
-
         // ── Build prediction curves ──────────────────────────────────────────
         // Decision curve: user-configured horizon (default 60 min) for zone logic
         val predictedBg = predictBgCurve(
