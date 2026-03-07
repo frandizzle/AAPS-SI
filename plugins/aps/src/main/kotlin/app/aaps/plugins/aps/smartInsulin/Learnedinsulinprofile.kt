@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.smartInsulin.MealMode
 import org.json.JSONObject
 
 /**

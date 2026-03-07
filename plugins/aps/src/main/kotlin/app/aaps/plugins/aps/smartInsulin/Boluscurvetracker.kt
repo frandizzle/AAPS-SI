@@ -4,6 +4,7 @@ import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.iob.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.DoubleKey
 import javax.inject.Inject

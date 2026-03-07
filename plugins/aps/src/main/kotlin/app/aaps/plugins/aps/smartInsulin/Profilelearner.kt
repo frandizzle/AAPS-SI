@@ -1,15 +1,13 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 /**
  * Learns and persists per-[MealMode] insulin activity profiles using
