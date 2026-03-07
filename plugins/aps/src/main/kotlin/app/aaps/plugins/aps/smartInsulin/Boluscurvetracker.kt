@@ -1,13 +1,13 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.aps.GlucoseStatus
-import app.aaps.core.interfaces.iob.IobTotal
+import app.aaps.core.interfaces.aps.IobTotal
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Tracks post-bolus CGM curves and feeds observations to [ProfileLearner].
- * Stub — full implementation comes in next step.
+ * Watches post-bolus CGM response and feeds observations to [ProfileLearner].
+ * Stub until full bolus curve detection implementation.
  */
 @Singleton
 class BolusCurveTracker @Inject constructor(
@@ -15,9 +15,10 @@ class BolusCurveTracker @Inject constructor(
 ) {
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
-        mealMode:      MealMode,
-        iobArray:      Array<IobTotal>
+        mealMode: MealMode,
+        iobArray: Array<IobTotal>
     ) {
-        // Stub — full curve tracking implementation to follow
+        // Stub — full implementation will detect post-bolus BG peak
+        // and call profileLearner.observeBolusCurve(mealMode, peakMins, diaMins, learningRate)
     }
 }

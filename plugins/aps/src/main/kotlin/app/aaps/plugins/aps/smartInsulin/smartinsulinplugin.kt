@@ -114,7 +114,7 @@ open class SmartInsulinPlugin @Inject constructor(
         ) return
 
         // ── Gather data ──────────────────────────────────────────────
-        val now = dateUtil.now()
+        val now          = dateUtil.now()
         val isTempTarget = persistenceLayer.getTemporaryTargetActiveAt(now) != null
         val autosensResult = AutosensResult()
         val iobArray = iobCobCalculator.calculateIobArrayForSMB(
@@ -150,8 +150,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowGuardMmol          = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
         val warnGuardMmol         = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
-        // ── Run determine_basal ──────────────────────────────────────
-        // determine_basal returns a pre-populated APSResult directly
+        // ── Run determine_basal — returns APSResult directly ─────────
         val apsResult = determineBasalSmartInsulin.determine_basal(
             glucoseStatus         = glucoseStatus,
             iobArray              = iobArray,
@@ -164,6 +163,8 @@ open class SmartInsulinPlugin @Inject constructor(
             warnGuardMmol         = warnGuardMmol,
             currentTime           = now
         )
+
+        // ── Populate result inputs (field names from APSResult.kt) ───
         apsResult.glucoseStatus = glucoseStatus
         apsResult.iobData       = iobArray
         apsResult.mealData      = mealData
@@ -183,7 +184,7 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
         glucoseStatusProvider.getGlucoseStatusData(allowOldData)
 
-    // ── APS.configuration() — export plugin-specific settings ────────
+    // ── APS.configuration() ──────────────────────────────────────────
     override fun configuration(): JSONObject =
         JSONObject()
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
@@ -194,7 +195,7 @@ open class SmartInsulinPlugin @Inject constructor(
             .put(DoubleKey.ApsSmartInsulinLowGuardMmol, preferences)
             .put(DoubleKey.ApsSmartInsulinWarnGuardMmol, preferences)
 
-    // ── APS.applyConfiguration() — import plugin-specific settings ───
+    // ── APS.applyConfiguration() ─────────────────────────────────────
     override fun applyConfiguration(configuration: JSONObject) {
         configuration
             .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)

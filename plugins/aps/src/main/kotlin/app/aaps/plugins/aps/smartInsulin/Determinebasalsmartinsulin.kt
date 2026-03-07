@@ -2,8 +2,8 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.GlucoseStatus
+import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
-import app.aaps.core.interfaces.iob.IobTotal
 import app.aaps.core.interfaces.profile.Profile
 import javax.inject.Inject
 import javax.inject.Provider
@@ -11,7 +11,9 @@ import javax.inject.Singleton
 
 /**
  * Core basal determination worker for SmartInsulin.
- * Returns a fully populated [APSResult] — stub until full implementation.
+ * Returns a fully populated [APSResult] — stub until full BG prediction implementation.
+ *
+ * IobTotal lives in app.aaps.core.interfaces.aps (confirmed from IobCobCalculator.kt imports).
  */
 @Singleton
 class DetermineBasalSmartInsulin @Inject constructor(
