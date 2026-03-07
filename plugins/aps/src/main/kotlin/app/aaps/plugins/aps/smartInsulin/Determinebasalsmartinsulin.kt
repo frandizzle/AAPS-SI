@@ -95,27 +95,27 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("ISF=%.1f basal=%.3f ".format(isfMgdl, profileBasal))
         sb.append("peak=${learnedProfile.peakMinutes.toInt()}m dia=${learnedProfile.diaMinutes.toInt()}m ")
 
-        // ── LGS: hard suspend on current BG below threshold ─────────────────
-        // lgsThreshold is in mg/dL (converted from user's mmol preference by AAPS core)
+        // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
-        if (lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl) {
-            sb.append("LGS_SUSPEND currentBG=%.1f < lgs=%.1f".format(currentBg, lgsThresholdMgdl))
-            result.rate                 = 0.0
-            result.duration             = 30
-            result.isTempBasalRequested = true
-            result.smb                  = 0.0
-            result.reason               = sb.toString()
-            return result
-        }
 
-        // ── Zone decision ────────────────────────────────────────────────────
+        var rateOut     = 0.0
+        var durationOut = 0
+        var smbOut      = 0.0
+        var tempRequested = false
+
         when {
+            lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
+                sb.append("LGS_SUSPEND currentBG=%.1f < lgs=%.1f".format(currentBg, lgsThresholdMgdl))
+                rateOut       = 0.0
+                durationOut   = 30
+                tempRequested = true
+            }
+
             predictedMin < lowGuardMgdl -> {
                 sb.append("SUSPEND pred_min=%.1f < lowGuard=%.1f".format(predictedMin, lowGuardMgdl))
-                result.rate                 = 0.0
-                result.duration             = 30
-                result.isTempBasalRequested = true
-                result.smb                  = 0.0
+                rateOut       = 0.0
+                durationOut   = 30
+                tempRequested = true
             }
 
             predictedMin < warnGuardMgdl -> {
@@ -124,10 +124,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val scale       = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
                 val reduced     = (profileBasal * scale * 0.5).coerceAtLeast(0.0)
                 sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(scale, reduced))
-                result.rate                 = reduced
-                result.duration             = 30
-                result.isTempBasalRequested = true
-                result.smb                  = 0.0
+                rateOut       = reduced
+                durationOut   = 30
+                tempRequested = true
             }
 
             else -> {
@@ -136,25 +135,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     currentBg > targetBg &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
-                val correctionUnits   = ((currentBg - targetBg) / isfMgdl).coerceAtLeast(0.0)
-                val requestedSmb      = if (smbAllowed) (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0) else 0.0
-                val constrainedSmb    = requestedSmb.coerceAtMost(
-                    profileBasal / 60.0 * oapsProfile.maxSMBBasalMinutes
-                )
+                val correctionUnits = ((currentBg - targetBg) / isfMgdl).coerceAtLeast(0.0)
+                val requestedSmb    = if (smbAllowed) (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0) else 0.0
+                val constrainedSmb  = requestedSmb.coerceAtMost(profileBasal / 60.0 * oapsProfile.maxSMBBasalMinutes)
 
                 sb.append("NORMAL targetBG=%.1f smbAllowed=$smbAllowed smb=%.3f".format(targetBg, constrainedSmb))
-                result.rate                 = profileBasal
-                result.duration             = 0
-                result.isTempBasalRequested = false
-                result.smb                  = constrainedSmb
+                rateOut       = profileBasal
+                durationOut   = 0
+                tempRequested = false
+                smbOut        = constrainedSmb
             }
         }
 
-        result.reason       = sb.toString()
-        result.targetBG     = targetBg
-        result.deliverAt    = currentTime
-        result.hasPredictions = true
-
+        // ── Single with() call initialises lateinit RT and drives isChangeRequested
         result.with(
             RT(
                 algorithm         = APSResult.Algorithm.SMB,
@@ -163,9 +156,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 bg                = currentBg,
                 eventualBG        = predictedAt60,
                 targetBG          = targetBg,
-                rate              = if (result.isTempBasalRequested) result.rate else null,
-                duration          = if (result.isTempBasalRequested) result.duration else null,
-                units             = result.smb.takeIf { it > 0.0 },
+                rate              = if (tempRequested) rateOut else null,
+                duration          = if (tempRequested) durationOut else null,
+                units             = smbOut.takeIf { it > 0.0 },
                 deliverAt         = currentTime,
                 reason            = sb,
                 predBGs           = Predictions(IOB = iobPrediction)
