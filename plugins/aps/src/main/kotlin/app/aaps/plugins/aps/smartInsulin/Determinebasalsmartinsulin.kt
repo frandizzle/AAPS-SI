@@ -241,7 +241,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val deltaPerMin  = delta / 5.0
 
         for (t in 1..predictionHorizonMins) {
-            val activity       = getActivityAtMinute(t, iobArray, learnedProfile)
+            // activity from iobArray is U absorbed per 5-min interval — divide by 5 for per-minute
+            val activity       = getActivityAtMinute(t, iobArray, learnedProfile) / 5.0
             val iobDelta       = -activity * isfMgdl
             // Momentum fades linearly over DELTA_FADE_MINS
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
@@ -259,13 +260,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         learnedProfile: LearnedInsulinProfile
     ): Double {
-        if (minuteOffset < iobArray.size) {
-            return max(0.0, iobArray[minuteOffset].activity)
+        // iobArray is indexed at 5-minute intervals — convert minute offset to array index
+        val idx = minuteOffset / 5
+        if (idx < iobArray.size) {
+            return max(0.0, iobArray[idx].activity)
         }
         val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
         if (lastActivity <= 0.0) return 0.0
         val halfLife     = learnedProfile.diaMinutes / 3.5
-        val extra        = minuteOffset - (iobArray.size - 1)
+        val extra        = minuteOffset - ((iobArray.size - 1) * 5)
         return lastActivity * exp(-extra * LN2 / halfLife)
     }
 
