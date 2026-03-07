@@ -29,7 +29,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
     @Inject lateinit var preferences:         Preferences
 
     var mealModeInput = InputDropdownMenuTyped(rh, MealMode.entries.toList(), { it.label }, MealMode.LUNCH)
-    var prebolusInput = InputDropdownOnOffMenu(rh, false)
+    var prebolusInput = InputDropdownOnOffMenu(rh, true)  // default on; safety handled by calculateDose + onLoopCycle
 
     override fun friendlyName(): Int        = R.string.smart_meal_action_name
     override fun shortDescription(): String = rh.gs(R.string.smart_meal_action_short, mealModeInput.value.label)
@@ -47,17 +47,16 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
     override fun doAction(callback: Callback) {
         val mode         = mealModeInput.value
         val wantPrebolus = prebolusInput.value
-        val carbsG       = carbsForMode(mode)
         val modeWindowMs = preferences.get(IntKey.ApsSmartInsulinModeWindowMins).toLong() * 60_000L
-        val doseU        = if (wantPrebolus) calculateDose(mode, carbsG) else null
+        val doseU        = if (wantPrebolus) preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus) else null
 
         aapsLogger.debug(LTag.APS,
-                         "SmartMeal: mode=${mode.label} prebolus=$wantPrebolus dose=$doseU carbs=$carbsG")
+                         "SmartMeal: mode=${mode.label} prebolus=$wantPrebolus dose=$doseU")
 
         mealOverrideManager.activateOverride(
             mode         = mode,
-            doseU        = if (doseU != null && doseU > 0.0) doseU else null,
-            carbsG       = carbsG,
+            doseU        = doseU,
+            carbsG       = 0,
             modeWindowMs = modeWindowMs
         )
 
