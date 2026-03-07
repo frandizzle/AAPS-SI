@@ -58,4 +58,37 @@ enum class StringKey(
 
     PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
     PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
+    // SmartInsulin — learned insulin profiles (JSON, not user-visible)
+    ApsSmartInsulinProfileFasting(
+        "si_profile_fasting",
+        defaultValue        = "",
+        showInApsMode       = false,
+        showInNsClientMode  = false,
+        showInPumpControlMode = false,
+        exportable          = true
+    ),
+    ApsSmartInsulinProfileLowCarb(
+        "si_profile_low_carb",
+        defaultValue        = "",
+        showInApsMode       = false,
+        showInNsClientMode  = false,
+        showInPumpControlMode = false,
+        exportable          = true
+    ),
+    ApsSmartInsulinProfileMeal(
+        "si_profile_meal",
+        defaultValue        = "",
+        showInApsMode       = false,
+        showInNsClientMode  = false,
+        showInPumpControlMode = false,
+        exportable          = true
+    ),
+    ApsSmartInsulinProfileExtended(
+        "si_profile_extended",
+        defaultValue        = "",
+        showInApsMode       = false,
+        showInNsClientMode  = false,
+        showInPumpControlMode = false,
+        exportable          = true
+    ),
 }
