@@ -5,13 +5,18 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.interfaces.Preferences
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
+ *
+ * State is persisted to SharedPreferences on every cycle so AAPS restarts
+ * mid-track do not lose the baseline BG/IOB reference.
  *
  * Strategy:
  *   1. Detect when IOB starts declining from its peak
@@ -26,6 +31,7 @@ class BolusCurveTracker @Inject constructor(
     private val preferences:    Preferences,
     private val aapsLogger:     AAPSLogger
 ) {
+    // ── In-memory state ───────────────────────────────────────────────────────
     private var tracking        = false
     private var trackStartMs    = 0L
     private var trackMode       = MealMode.FASTING
@@ -37,14 +43,32 @@ class BolusCurveTracker @Inject constructor(
     private var nadirTimeMs     = 0L
     private var nadirConfirmed  = false
 
+    init {
+        restoreState()
+    }
+
     companion object {
         private const val MIN_TRACK_IOB_U        = 1.0
-        private const val RECOVERY_MGDL          = 18.0  // ~1 mmol recovery above nadir
-        private const val MIN_BG_DROP_MGDL       = 18.0  // ~1 mmol minimum drop to count
+        private const val RECOVERY_MGDL          = 18.0   // ~1 mmol recovery above nadir
+        private const val MIN_BG_DROP_MGDL       = 18.0   // ~1 mmol minimum drop to count
         private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
         private const val MIN_NADIR_DELAY_MS     = 30 * 60 * 1000L
         private const val IOB_DECLINE_FRACTION   = 0.05
+
+        // JSON keys
+        private const val K_TRACKING         = "tracking"
+        private const val K_START_MS         = "trackStartMs"
+        private const val K_MODE             = "trackMode"
+        private const val K_IOB_AT_START     = "iobAtStart"
+        private const val K_BG_AT_START      = "bgAtStart"
+        private const val K_IOB_PEAK         = "iobPeak"
+        private const val K_IOB_DECLINE_SEEN = "iobDeclineSeen"
+        private const val K_BG_NADIR         = "bgNadir"
+        private const val K_NADIR_TIME_MS    = "nadirTimeMs"
+        private const val K_NADIR_CONFIRMED  = "nadirConfirmed"
     }
+
+    // ── Public API ────────────────────────────────────────────────────────────
 
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
@@ -57,16 +81,17 @@ class BolusCurveTracker @Inject constructor(
 
         if (!tracking) {
             if (currentIob >= MIN_TRACK_IOB_U) {
-                tracking       = true
-                trackStartMs   = nowMs
-                trackMode      = mealMode
-                iobAtStart     = currentIob
-                bgAtStart      = currentBg
-                iobPeak        = currentIob
-                iobDeclineSeen = false
-                bgNadir        = currentBg
-                nadirTimeMs    = nowMs
-                nadirConfirmed = false
+                tracking        = true
+                trackStartMs    = nowMs
+                trackMode       = mealMode
+                iobAtStart      = currentIob
+                bgAtStart       = currentBg
+                iobPeak         = currentIob
+                iobDeclineSeen  = false
+                bgNadir         = currentBg
+                nadirTimeMs     = nowMs
+                nadirConfirmed  = false
+                saveState()
                 aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob bg=$currentBg")
             }
             return
@@ -74,6 +99,7 @@ class BolusCurveTracker @Inject constructor(
 
         val elapsedMs = nowMs - trackStartMs
 
+        // Abandon if tracking too long
         if (elapsedMs > MAX_TRACK_DURATION_MS) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (timeout)")
             reset(); return
@@ -81,15 +107,17 @@ class BolusCurveTracker @Inject constructor(
 
         // New bolus detected — restart
         if (currentIob > iobAtStart * 1.2) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus iob=$currentIob)")
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus iob=$currentIob > start=$iobAtStart)")
             reset(); return
         }
 
         // Track IOB peak and confirm decline
         if (currentIob > iobPeak) {
             iobPeak = currentIob
+            saveState()
         } else if (!iobDeclineSeen && currentIob < iobPeak * (1.0 - IOB_DECLINE_FRACTION)) {
             iobDeclineSeen = true
+            saveState()
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB peak confirmed at $iobPeak")
         }
 
@@ -97,19 +125,19 @@ class BolusCurveTracker @Inject constructor(
 
         // Update BG nadir
         if (currentBg < bgNadir) {
-            bgNadir   = currentBg
+            bgNadir     = currentBg
             nadirTimeMs = nowMs
+            saveState()
         }
 
         // Check recovery
-        val nadirElapsedMs = nadirTimeMs - trackStartMs
         if (!nadirConfirmed &&
             (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
             currentBg > bgNadir + RECOVERY_MGDL &&
             bgNadir < bgAtStart - MIN_BG_DROP_MGDL
         ) {
             nadirConfirmed = true
-            val observedPeakMins = nadirElapsedMs.toDouble() / 60_000.0
+            val observedPeakMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
             val observedDiaMins  = elapsedMs.toDouble() / 60_000.0
             val learningRate     = preferences.get(DoubleKey.ApsSmartInsulinLearningRate)
 
@@ -131,9 +159,74 @@ class BolusCurveTracker @Inject constructor(
         }
     }
 
+    // ── Persistence ───────────────────────────────────────────────────────────
+
+    private fun saveState() {
+        try {
+            val json = JSONObject().apply {
+                put(K_TRACKING,         tracking)
+                put(K_START_MS,         trackStartMs)
+                put(K_MODE,             trackMode.name)
+                put(K_IOB_AT_START,     iobAtStart)
+                put(K_BG_AT_START,      bgAtStart)
+                put(K_IOB_PEAK,         iobPeak)
+                put(K_IOB_DECLINE_SEEN, iobDeclineSeen)
+                put(K_BG_NADIR,         if (bgNadir == Double.MAX_VALUE) -1.0 else bgNadir)
+                put(K_NADIR_TIME_MS,    nadirTimeMs)
+                put(K_NADIR_CONFIRMED,  nadirConfirmed)
+            }
+            preferences.put(StringKey.ApsSmartInsulinTrackerState, json.toString())
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to save state: ${e.message}")
+        }
+    }
+
+    private fun restoreState() {
+        try {
+            val raw = preferences.get(StringKey.ApsSmartInsulinTrackerState)
+            if (raw.isBlank()) return
+            val json = JSONObject(raw)
+            if (!json.optBoolean(K_TRACKING, false)) return
+
+            // Validate restored state — abandon if start time is impossibly old
+            val restoredStartMs = json.getLong(K_START_MS)
+            if (System.currentTimeMillis() - restoredStartMs > MAX_TRACK_DURATION_MS) {
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: restored state expired, discarding")
+                preferences.put(StringKey.ApsSmartInsulinTrackerState, "")
+                return
+            }
+
+            tracking        = true
+            trackStartMs    = restoredStartMs
+            trackMode       = MealMode.valueOf(json.getString(K_MODE))
+            iobAtStart      = json.getDouble(K_IOB_AT_START)
+            bgAtStart       = json.getDouble(K_BG_AT_START)
+            iobPeak         = json.getDouble(K_IOB_PEAK)
+            iobDeclineSeen  = json.getBoolean(K_IOB_DECLINE_SEEN)
+            val nadirRaw    = json.getDouble(K_BG_NADIR)
+            bgNadir         = if (nadirRaw < 0) Double.MAX_VALUE else nadirRaw
+            nadirTimeMs     = json.getLong(K_NADIR_TIME_MS)
+            nadirConfirmed  = json.getBoolean(K_NADIR_CONFIRMED)
+
+            aapsLogger.debug(LTag.APS,
+                             "BolusCurveTracker: restored state mode=${trackMode.label} " +
+                                 "iobAtStart=$iobAtStart bgAtStart=$bgAtStart declineSeen=$iobDeclineSeen")
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to restore state: ${e.message}")
+            reset()
+        }
+    }
+
     private fun reset() {
-        tracking = false; trackStartMs = 0L; iobAtStart = 0.0; bgAtStart = 0.0
-        iobPeak = 0.0; iobDeclineSeen = false; bgNadir = Double.MAX_VALUE
-        nadirTimeMs = 0L; nadirConfirmed = false
+        tracking        = false
+        trackStartMs    = 0L
+        iobAtStart      = 0.0
+        bgAtStart       = 0.0
+        iobPeak         = 0.0
+        iobDeclineSeen  = false
+        bgNadir         = Double.MAX_VALUE
+        nadirTimeMs     = 0L
+        nadirConfirmed  = false
+        try { preferences.put(StringKey.ApsSmartInsulinTrackerState, "") } catch (_: Exception) {}
     }
 }

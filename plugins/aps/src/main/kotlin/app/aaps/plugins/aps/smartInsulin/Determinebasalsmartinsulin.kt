@@ -52,6 +52,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         lowGuardMmol:          Double,
         warnGuardMmol:         Double,
         maxSmbU:               Double,
+        maxTbrU:               Double,
         microBolusAllowed:     Boolean,
         inReboundWindow:       Boolean,
         msSinceLastSuspend:    Long,
@@ -101,14 +102,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
-        sb.append("act@1=%.4f @30=%.4f @60=%.4f iob@30=%.2f iob@60=%.2f arrSz=${iobArray.size} ".format(
-            (iobArray.getOrNull(0)?.activity ?: 0.0),
-            (iobArray.getOrNull(6)?.activity ?: 0.0),
-            (iobArray.getOrNull(12)?.activity ?: 0.0),
-            (iobArray.getOrNull(6)?.iob ?: 0.0),
-            (iobArray.getOrNull(12)?.iob ?: 0.0)
-        ))
-
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
@@ -207,9 +200,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val tbrRate = when {
                     !iobOk           -> 0.0
                     iobSufficient    -> 0.0
-                    remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
+                    remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
+                        .coerceAtMost(oapsProfile.max_basal)
+                        .coerceAtMost(maxTbrU)       // hard user-configurable cap
                     else             -> profileBasal
-                } * reboundTaperFraction  // scale back after a suspend
+                } * reboundTaperFraction
 
                 // Block SMBs entirely during rebound window, then taper back in
                 val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE

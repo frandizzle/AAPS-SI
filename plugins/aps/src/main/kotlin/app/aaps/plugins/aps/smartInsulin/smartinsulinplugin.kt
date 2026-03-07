@@ -252,19 +252,13 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowGuardMmol      = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
+        val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode isfMultiplier=$isfMultiplier learnedProfile=$learnedProfile")
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
-
-        // Debug: log IOB activity at key intervals to verify prediction engine inputs
-        val actAt15 = iobArray.getOrNull(15)?.activity ?: 0.0
-        val actAt30 = iobArray.getOrNull(30)?.activity ?: 0.0
-        val actAt60 = iobArray.getOrNull(60)?.activity ?: 0.0
-        val iobNow  = iobArray.firstOrNull()?.iob ?: 0.0
-        aapsLogger.debug(LTag.APS, "SmartInsulin IOB debug: iob=$iobNow activity@15=$actAt15 @30=$actAt30 @60=$actAt60")
 
         val apsResult = determineBasalSmartInsulin.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -279,6 +273,7 @@ open class SmartInsulinPlugin @Inject constructor(
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
             maxSmbU               = maxSmbU,
+            maxTbrU               = maxTbrU,
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
             msSinceLastSuspend    = msSinceLastSuspend,
@@ -387,6 +382,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
