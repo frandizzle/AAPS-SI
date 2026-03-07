@@ -1,37 +1,38 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.data.model.GV
+import app.aaps.core.data.model.SourceSensor
+import app.aaps.core.data.model.TrendArrow
 import app.aaps.core.interfaces.aps.APSResult
+import app.aaps.core.interfaces.aps.CurrentTemp
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
+import app.aaps.core.interfaces.aps.OapsProfile
 import app.aaps.core.interfaces.profile.Profile
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.exp
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * Core basal/SMB determination for SmartInsulin.
  *
  * ## BG Prediction
- * Projects BG forward using a simple physiological model:
- *   - Current IOB is decayed forward using the learned activity curve
- *   - Each future minute: ΔBG = -activity[t] * ISF
- *   - Delta momentum (shortAvgDelta) is blended in for the first 15 min
- *     then fades to zero so pure IOB governs the tail
+ * Projects glucose forward using:
+ *   - IOB activity curve from iobArray (U/min * ISF = mg/dL/min drop)
+ *   - Delta momentum from shortAvgDelta, fading linearly to zero by t=15 min
+ *   - Exponential tail extrapolation beyond iobArray length
  *
  * ## SMB / Basal gating
- * Three zones based on the minimum predicted BG across the horizon:
- *   - predictedMin < lowGuard  → suspend: zero basal, block all SMBs
- *   - predictedMin < warnGuard → caution: reduce basal 50%, scale SMB by headroom fraction
- *   - predictedMin >= warnGuard → normal: pass through profile basal, allow SMB
+ *   - predictedMin < lowGuard  → SUSPEND: zero TBR, block SMBs
+ *   - predictedMin < warnGuard → CAUTION: scaled TBR, block SMBs
+ *   - predictedMin >= warnGuard → NORMAL: profile basal, SMBs allowed
  *
- * ## Learned profile usage
- * The learnedProfile's peakMinutes/diaMinutes are used to shape the
- * insulin activity curve that drives the prediction, replacing the
- * static profile DIA.
+ * ## Prediction graph
+ * Populates result.predictionsAsGv with one GV per minute for display
+ * on the AAPS home screen prediction curve.
  */
 @Singleton
 class DetermineBasalSmartInsulin @Inject constructor(
@@ -40,7 +41,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     fun determine_basal(
         glucoseStatus:         GlucoseStatus,
+        currentTemp:           CurrentTemp,
         iobArray:              Array<IobTotal>,
+        oapsProfile:           OapsProfile,
         mealData:              MealData,
         profile:               Profile,
         learnedProfile:        LearnedInsulinProfile,
@@ -48,23 +51,23 @@ class DetermineBasalSmartInsulin @Inject constructor(
         predictionHorizonMins: Int,
         lowGuardMmol:          Double,
         warnGuardMmol:         Double,
+        microBolusAllowed:     Boolean,
         currentTime:           Long
     ): APSResult {
 
         val result = apsResultProvider.get()
 
-        // ── Convert guard thresholds to mg/dL ───────────────────────
         val lowGuardMgdl  = lowGuardMmol  * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
-        // ── Current state ────────────────────────────────────────────
-        val currentBg     = glucoseStatus.glucose          // mg/dL
-        val delta         = glucoseStatus.shortAvgDelta    // mg/dL per 5 min
-        val isfMgdl       = profile.getIsfMgdl("SmartInsulin")
-        val profileBasal  = profile.getBasal()             // U/hr at current time
-        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
+        val currentBg    = glucoseStatus.glucose
+        val delta        = glucoseStatus.shortAvgDelta
+        val isfMgdl      = oapsProfile.sens
+        val profileBasal = oapsProfile.current_basal
+        val targetBg     = oapsProfile.target_bg
+        val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
-        // ── Build predicted BG curve ─────────────────────────────────
+        // ── Build prediction curve ───────────────────────────────────────────
         val predictedBg = predictBgCurve(
             currentBg             = currentBg,
             delta                 = delta,
@@ -74,82 +77,85 @@ class DetermineBasalSmartInsulin @Inject constructor(
             predictionHorizonMins = predictionHorizonMins
         )
 
-        val predictedMin = predictedBg.minOrNull() ?: currentBg
+        val predictedMin  = predictedBg.minOrNull() ?: currentBg
         val predictedAt30 = if (predictedBg.size > 30) predictedBg[30] else predictedBg.lastOrNull() ?: currentBg
         val predictedAt60 = predictedBg.lastOrNull() ?: currentBg
 
-        // ── Build reason string ──────────────────────────────────────
+        // ── Populate prediction GVs for home screen graph ────────────────────
+        result.predictionsAsGv.clear()
+        predictedBg.forEachIndexed { minuteOffset, bg ->
+            result.predictionsAsGv.add(
+                GV(
+                    timestamp    = currentTime + (minuteOffset + 1) * 60_000L,
+                    value        = bg.coerceAtLeast(39.0),   // AAPS clips below 39
+                    raw          = null,
+                    trendArrow   = TrendArrow.NONE,
+                    noise        = null,
+                    sourceSensor = SourceSensor.UNKNOWN
+                )
+            )
+        }
+
+        // ── Reason string ────────────────────────────────────────────────────
         val sb = StringBuilder()
-        sb.append("SmartInsulin mode=${mealMode.label} ")
-        sb.append("BG=%.1f delta=%.2f IOB=%.2f ".format(currentBg, delta, currentIob))
+        sb.append("SI mode=${mealMode.label} ")
+        sb.append("BG=%.1f Δ=%.2f IOB=%.2f ".format(currentBg, delta, currentIob))
         sb.append("pred_min=%.1f pred30=%.1f pred60=%.1f ".format(predictedMin, predictedAt30, predictedAt60))
         sb.append("ISF=%.1f basal=%.3f ".format(isfMgdl, profileBasal))
         sb.append("peak=${learnedProfile.peakMinutes.toInt()}m dia=${learnedProfile.diaMinutes.toInt()}m ")
 
-        // ── Zone decision ────────────────────────────────────────────
+        // ── Zone decision ────────────────────────────────────────────────────
         when {
-            // ── SUSPEND zone: predicted trough below hard low guard ──
             predictedMin < lowGuardMgdl -> {
                 sb.append("SUSPEND pred_min=%.1f < lowGuard=%.1f".format(predictedMin, lowGuardMgdl))
-                result.rate              = 0.0
-                result.duration          = 30
+                result.rate                 = 0.0
+                result.duration             = 30
                 result.isTempBasalRequested = true
-                result.smb               = 0.0
-                result.reason            = sb.toString()
+                result.smb                  = 0.0
             }
 
-            // ── CAUTION zone: predicted trough below warn guard ──────
             predictedMin < warnGuardMgdl -> {
-                // Scale basal down proportionally to how close we are to the hard floor
-                val headroom     = predictedMin - lowGuardMgdl
-                val guardWindow  = warnGuardMgdl - lowGuardMgdl
-                val scaleFactor  = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
-                val reducedBasal = (profileBasal * scaleFactor * 0.5).coerceAtLeast(0.0)
-
-                sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(scaleFactor, reducedBasal))
-                result.rate              = reducedBasal
-                result.duration          = 30
+                val headroom    = predictedMin - lowGuardMgdl
+                val guardWindow = warnGuardMgdl - lowGuardMgdl
+                val scale       = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
+                val reduced     = (profileBasal * scale * 0.5).coerceAtLeast(0.0)
+                sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(scale, reduced))
+                result.rate                 = reduced
+                result.duration             = 30
                 result.isTempBasalRequested = true
-                result.smb               = 0.0   // no SMB in caution zone
-                result.reason            = sb.toString()
+                result.smb                  = 0.0
             }
 
-            // ── NORMAL zone: headroom above warn guard ───────────────
             else -> {
-                // Allow SMB only if BG is above target and trending level/up
-                val targetBg  = profile.getTargetMgdl()
-                val smbAllowed = currentBg > targetBg && delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
+                val smbAllowed = microBolusAllowed &&
+                    oapsProfile.enableSMB_always &&
+                    currentBg > targetBg &&
+                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
-                // SMB size: fraction of remaining correction need, capped by profile limits
-                val correctionNeeded   = (currentBg - targetBg) / isfMgdl   // units needed
-                val maxSmbFraction     = 0.3   // never deliver more than 30% of correction as SMB
-                val requestedSmb       = if (smbAllowed) (correctionNeeded * maxSmbFraction).coerceAtLeast(0.0) else 0.0
+                val correctionUnits   = ((currentBg - targetBg) / isfMgdl).coerceAtLeast(0.0)
+                val requestedSmb      = if (smbAllowed) (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0) else 0.0
+                val constrainedSmb    = requestedSmb.coerceAtMost(
+                    profileBasal / 60.0 * oapsProfile.maxSMBBasalMinutes
+                )
 
-                sb.append("NORMAL targetBG=%.1f smbAllowed=$smbAllowed requestedSMB=%.3f".format(targetBg, requestedSmb))
-                result.rate              = profileBasal
-                result.duration          = 0      // 0 = cancel any running TBR, use profile basal
+                sb.append("NORMAL targetBG=%.1f smbAllowed=$smbAllowed smb=%.3f".format(targetBg, constrainedSmb))
+                result.rate                 = profileBasal
+                result.duration             = 0
                 result.isTempBasalRequested = false
-                result.smb               = requestedSmb
-                result.reason            = sb.toString()
+                result.smb                  = constrainedSmb
             }
         }
 
-        result.targetBG        = profile.getTargetMgdl()
-        result.deliverAt       = currentTime
-        result.hasPredictions  = true
+        result.reason       = sb.toString()
+        result.targetBG     = targetBg
+        result.deliverAt    = currentTime
+        result.hasPredictions = true
 
         return result
     }
 
     // ── BG prediction engine ─────────────────────────────────────────────────
 
-    /**
-     * Projects BG forward [predictionHorizonMins] minutes using:
-     *   1. IOB activity decay from iobArray (each slot = 1 minute, value = U/min)
-     *   2. Delta momentum fading from 100% at t=0 to 0% at t=15min
-     *
-     * Returns a list of predicted BG values, one per minute from t=1 to t=horizon.
-     */
     private fun predictBgCurve(
         currentBg:             Double,
         delta:                 Double,
@@ -158,56 +164,41 @@ class DetermineBasalSmartInsulin @Inject constructor(
         learnedProfile:        LearnedInsulinProfile,
         predictionHorizonMins: Int
     ): List<Double> {
-        val predictions = mutableListOf<Double>()
-        var bg = currentBg
-
-        // delta is mg/dL per 5 min — convert to per minute
-        val deltaPerMin = delta / 5.0
+        val predictions  = mutableListOf<Double>()
+        var bg           = currentBg
+        val deltaPerMin  = delta / 5.0
 
         for (t in 1..predictionHorizonMins) {
-            // IOB-driven BG change: activity[t] (U/min) * ISF (mg/dL/U) = mg/dL/min drop
-            val activityAtT = getActivityAtMinute(t, iobArray, learnedProfile)
-            val iobDelta    = -activityAtT * isfMgdl
-
-            // Delta momentum: linear fade from full at t=1 to zero at t=DELTA_FADE_MINS
+            val activity       = getActivityAtMinute(t, iobArray, learnedProfile)
+            val iobDelta       = -activity * isfMgdl
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
             val momentumDelta  = deltaPerMin * momentumWeight
-
             bg += iobDelta + momentumDelta
             predictions.add(bg)
         }
-
         return predictions
     }
 
-    /**
-     * Returns the insulin activity (U/min) at [minuteOffset] minutes from now.
-     *
-     * Uses iobArray slots if available (each slot covers 1 minute starting at index 0 = now).
-     * If t is beyond the iobArray length, uses a synthetic exponential decay
-     * shaped by the learnedProfile's DIA.
-     */
     private fun getActivityAtMinute(
         minuteOffset:   Int,
         iobArray:       Array<IobTotal>,
         learnedProfile: LearnedInsulinProfile
     ): Double {
-        // iobArray is indexed by minutes; index 0 = now, index 1 = 1 min from now
         if (minuteOffset < iobArray.size) {
             return max(0.0, iobArray[minuteOffset].activity)
         }
-        // Beyond array: extrapolate using exponential decay from last known activity
         val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
         if (lastActivity <= 0.0) return 0.0
-        val decayHalfLifeMins = learnedProfile.diaMinutes / 3.5  // ~3.5 half-lives in one DIA
-        val extraMinutes      = minuteOffset - (iobArray.size - 1)
-        return lastActivity * exp(-extraMinutes * LN2 / decayHalfLifeMins)
+        val halfLife     = learnedProfile.diaMinutes / 3.5
+        val extra        = minuteOffset - (iobArray.size - 1)
+        return lastActivity * exp(-extra * LN2 / halfLife)
     }
 
     companion object {
-        private const val MMOL_TO_MGDL              = 18.0
-        private const val DELTA_FADE_MINS            = 15.0   // delta momentum fully gone by 15 min
-        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN = 1.0  // don't SMB if falling > 1 mg/dL/5min
-        private const val LN2                        = 0.693147
+        private const val MMOL_TO_MGDL                   = 18.0
+        private const val DELTA_FADE_MINS                 = 15.0
+        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN = 1.0
+        private const val SMB_CORRECTION_FRACTION         = 0.3
+        private const val LN2                             = 0.693147
     }
 }
