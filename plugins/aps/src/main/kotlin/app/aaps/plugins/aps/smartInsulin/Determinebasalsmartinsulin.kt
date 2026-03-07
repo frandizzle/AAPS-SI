@@ -163,7 +163,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // iobDrop = how many mmol/mgdl existing IOB will deliver
                 val iobDrop       = currentIob * isfMgdl  // mg/dL drop from existing IOB
                 val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
-                val iobSufficient = iobDrop >= bgAboveTarget * IOB_SUFFICIENCY_FACTOR
+                // IOB is sufficient only if our prediction shows BG arriving at or below target
+                // without more insulin. Raw iobDrop math is kept for the reason string only.
+                val iobDrop       = currentIob * isfMgdl
+                val iobSufficient = predictedAt60 <= targetBg
 
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
@@ -319,7 +322,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val FALLING_FAST_MGDL_PER_5MIN            = 2.0   // suspend early if falling faster than this
         private const val SMB_DELIVERY_FRACTION                  = 0.5   // deliver 50% of effective gap per cycle
         private const val TBR_WINDOW_HOURS                       = 0.5   // spread remaining correction over 30 mins
-        private const val IOB_SUFFICIENCY_FACTOR                 = 0.8   // IOB covers 80% of correction → stop dosing
         private const val REBOUND_TAPER_MINS                     = 60.0  // ramp back to full dosing over 60 mins post-suspend
         private const val REBOUND_SMB_GATE                       = 0.5   // block SMBs until 50% through rebound window
         private const val LN2                             = 0.693147
