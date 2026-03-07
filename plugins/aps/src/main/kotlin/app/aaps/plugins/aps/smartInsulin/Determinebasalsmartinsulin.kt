@@ -226,9 +226,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         for (t in 1..predictionHorizonMins) {
             val activity       = getActivityAtMinute(t, iobArray, learnedProfile)
             val iobDelta       = -activity * isfMgdl
+            // Momentum fades linearly over DELTA_FADE_MINS — but cap contribution
+            // per minute so a single large delta reading doesn't create a spike
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
-            val momentumDelta  = deltaPerMin * momentumWeight
-            bg += iobDelta + momentumDelta
+            val momentumDelta  = (deltaPerMin * momentumWeight).coerceIn(-MAX_MOMENTUM_MGDL_PER_MIN, MAX_MOMENTUM_MGDL_PER_MIN)
+            // Clamp total step so prediction can't drop faster than MAX_DROP_MGDL_PER_MIN
+            val step           = (iobDelta + momentumDelta).coerceAtLeast(-MAX_DROP_MGDL_PER_MIN)
+            bg += step
+            // Never predict below 39 mg/dL (sensor floor)
+            bg = bg.coerceAtLeast(39.0)
             predictions.add(bg)
         }
         return predictions
@@ -250,8 +256,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
     }
 
     companion object {
-        private const val MMOL_TO_MGDL                   = 18.0
-        private const val DELTA_FADE_MINS                 = 15.0
+        private const val MMOL_TO_MGDL                         = 18.0
+        private const val DELTA_FADE_MINS                       = 30.0  // momentum fades over 30 mins
+        private const val MAX_MOMENTUM_MGDL_PER_MIN             = 2.0   // cap momentum contribution per minute
+        private const val MAX_DROP_MGDL_PER_MIN                 = 3.0   // cap how fast prediction can fall per minute
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
         private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of pred30 correction per cycle
