@@ -10,6 +10,7 @@ import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfile
+import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.profile.Profile
 import javax.inject.Inject
 import javax.inject.Provider
@@ -57,6 +58,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
     ): APSResult {
 
         val result = apsResultProvider.get()
+
+        // Must call with() before accessing predictionsAsGv or any property backed by lateinit result
+        result.with(
+            RT(
+                algorithm        = APSResult.Algorithm.SMB,
+                runningDynamicIsf = false,
+                timestamp        = currentTime,
+                bg               = glucoseStatus.glucose,
+                rate             = 0.0,
+                duration         = 0,
+                reason           = StringBuilder()
+            )
+        )
 
         val lowGuardMgdl  = lowGuardMmol  * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
