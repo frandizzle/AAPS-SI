@@ -66,7 +66,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
         val now        = System.currentTimeMillis()
         val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
-        val bg         = glucoseStatus.glucose
+        val bg         = glucoseStatus.glucose   // always mg/dL internally
         val delta      = glucoseStatus.shortAvgDelta
 
         if (now > state.expiryMs) {
@@ -76,16 +76,23 @@ class MealOverrideManagerImpl @Inject constructor(
             return
         }
 
-        val safeIob    = maxIobU * SAFE_IOB_FRACTION
-        val bgRising   = delta      >= RISING_DELTA_MGDL
-        val iobSafe    = currentIob <= safeIob
-        val bgAboveMin = bg         >= MealOverrideManager.MIN_BG_MGDL
+        // Safety gates for intentional pre-bolus:
+        //   1. BG above hard low guard (90 mg/dL / 5 mmol) — never bolus into a low
+        //   2. Not falling fast — don't add insulin if already dropping
+        //   3. IOB headroom — don't stack on top of a lot of active insulin
+        val bgSafe     = bg    >= MealOverrideManager.MIN_BG_MGDL
+        val notFalling = delta >= -FALLING_DELTA_MGDL_CUTOFF
+        val iobSafe    = currentIob <= maxIobU * SAFE_IOB_FRACTION
 
         aapsLogger.debug(LTag.APS,
-                         "SmartInsulin safety: bg=$bg Δ=$delta iob=$currentIob safeIob=$safeIob " +
-                             "rising=$bgRising iobOk=$iobSafe bgOk=$bgAboveMin")
+                         "SmartInsulin pre-bolus check: bg=$bg Δ=$delta iob=$currentIob safeIob=${maxIobU * SAFE_IOB_FRACTION} " +
+                             "bgSafe=$bgSafe notFalling=$notFalling iobSafe=$iobSafe")
 
-        if (!bgRising || !iobSafe || !bgAboveMin) return
+        if (!bgSafe || !notFalling || !iobSafe) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin pre-bolus safety blocked: bgSafe=$bgSafe notFalling=$notFalling iobSafe=$iobSafe")
+            return
+        }
 
         val dose = state.lockedDoseU ?: return
         val detail = DetailedBolusInfo().also {
@@ -112,7 +119,7 @@ class MealOverrideManagerImpl @Inject constructor(
     }
 
     companion object {
-        private const val RISING_DELTA_MGDL = 2.0
-        private const val SAFE_IOB_FRACTION = 0.4
+        private const val FALLING_DELTA_MGDL_CUTOFF = 2.0   // mg/dL per 5min — block if falling faster
+        private const val SAFE_IOB_FRACTION          = 0.4   // fraction of maxIob allowed before blocking
     }
 }
