@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
+import app.aaps.core.data.aps.SMBDefaults
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.aps.APS
 import app.aaps.core.interfaces.aps.APSResult
