@@ -113,8 +113,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         )
 
         val predictedMin  = predictedBg.minOrNull() ?: currentBg
-        val predictedAt30 = if (predictedBg.size > 30) predictedBg[30] else predictedBg.lastOrNull() ?: currentBg
-        val predictedAt60 = if (predictedBg.size > 60) predictedBg[60] else predictedBg.lastOrNull() ?: currentBg
+        // List is now 5-min ticks: index 6 = 30 mins, index 12 = 60 mins
+        val predictedAt30 = if (predictedBg.size > 6)  predictedBg[6]  else predictedBg.lastOrNull() ?: currentBg
+        val predictedAt60 = if (predictedBg.size > 12) predictedBg[12] else predictedBg.lastOrNull() ?: currentBg
 
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
         // Index 0 = current BG (anchors curve at "now"), then 5-min steps forward
@@ -123,11 +124,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         //   - 48 points max (4 hours at 5-min intervals) — AAPS graph uses list length to place "now" line
         //   - Clamp to [39, 401]
         //   - Trim trailing flat points (min 13 kept) so curve doesn't extend forever at target
+        // List is already 5-min ticks — just prepend index 0 (now) and use all points
         val rawPrediction: MutableList<Int> = mutableListOf()
         rawPrediction.add(currentBg.coerceIn(39.0, 401.0).toInt())  // index 0 = now
-        (4 until predictedBg.size step 5).forEach {
-            rawPrediction.add(predictedBg[it].coerceIn(39.0, 401.0).toInt())
-        }
+        predictedBg.forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         // Only trim trailing flat points that are ABOVE target — a flat tail at/below
         // target (curve floored at 39) is meaningful and must not be trimmed, otherwise
         // latestPredictionsTime ends up too short and the graph "now" line sits too far right.
@@ -303,19 +303,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
         learnedProfile:        LearnedInsulinProfile,
         predictionHorizonMins: Int
     ): List<Double> {
+        // Iterate in 5-min ticks matching AutoISF convention.
+        // predBGI = -(activity * ISF * 5) where activity is U/min — gives mg/dL per 5-min tick.
+        // predDev (ci) fades linearly to zero over 12 ticks (60 mins) — matches AutoISF IOB curve.
+        val ticks = predictionHorizonMins / 5
         val predictions  = mutableListOf<Double>()
         var bg           = currentBg
-        for (t in 1..predictionHorizonMins) {
-            // Match AutoISF exactly: predBGI = -(activity * ISF * 5)
-            // activity is already U/min decay rate — no IOB multiplication needed
-            val activity   = getActivityAtMinute(t, iobArray, learnedProfile)
+        for (tick in 1..ticks) {
+            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile)
             val iobDelta   = -(activity * isfMgdl * 5.0)
-            // Deviation impact (ci) fades linearly to zero over 60 minutes — matches AutoISF IOB prediction
-            // This corrects for current BG deviating from pure IOB prediction (meals, activity, etc.)
-            val tickIndex  = predictions.size  // 0-based count of 5-min ticks so far
-            val predDev    = ci * (1.0 - minOf(1.0, tickIndex / (60.0 / 5.0)))
+            val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
             bg += iobDelta + predDev
-            // Never predict below sensor floor
             bg = bg.coerceAtLeast(39.0)
             predictions.add(bg)
         }
