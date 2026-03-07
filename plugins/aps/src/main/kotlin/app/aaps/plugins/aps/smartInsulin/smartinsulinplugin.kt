@@ -168,6 +168,16 @@ open class SmartInsulinPlugin @Inject constructor(
             overrideManager = mealOverrideManager
         )
 
+        // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
+        val isfMultiplier = when (mealMode) {
+            MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsfMultiplier)
+            MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsfMultiplier)
+            MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsfMultiplier)
+            MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsfMultiplier)
+            MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsfMultiplier)
+            MealMode.FASTING   -> 1.0
+        }
+
         // ── Tick the override manager — fires queued bolus when safe ──────────
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
@@ -188,7 +198,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = targetBg,
             carb_ratio                      = profile.getIc(),
-            sens                            = profile.getIsfMgdl("SmartInsulinPlugin") * mealOverrideManager.activeIsfMultiplier,
+            sens                            = profile.getIsfMgdl("SmartInsulinPlugin") * isfMultiplier,
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
@@ -231,7 +241,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode learnedProfile=$learnedProfile")
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode isfMultiplier=$isfMultiplier learnedProfile=$learnedProfile")
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)

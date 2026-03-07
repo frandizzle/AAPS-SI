@@ -160,16 +160,29 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
                 val constrainedSmb = if (roundedSmb >= bolusStep) roundedSmb.coerceAtMost(maxSmbU) else 0.0
 
+                // TBR to cover the remaining correction not delivered by SMB.
+                // totalCorrection = full pred30 gap / ISF (before delivery fraction).
+                // remainingU = totalCorrection - constrainedSmb (what SMB won't cover).
+                // Express as a 30-min TBR rate: remainingU / 0.5h + profileBasal.
+                val totalCorrection = if (smbAllowed) {
+                    val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    (eventualGap / isfMgdl).coerceAtLeast(0.0)
+                } else 0.0
+                val remainingU     = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
+                val tbrRate        = if (remainingU > 0.0)
+                    (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
+                else profileBasal
+
                 val trigger = when {
                     !smbAllowed    -> "blocked"
                     isAboveTarget  -> "aboveTarget"
                     isRising       -> "rising"
                     else           -> "none"
                 }
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f".format(constrainedSmb))
-                rateOut       = profileBasal
-                durationOut   = 0
-                tempRequested = false
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(constrainedSmb, tbrRate))
+                rateOut       = tbrRate
+                durationOut   = if (remainingU > 0.0) 30 else 0
+                tempRequested = remainingU > 0.0
                 smbOut        = constrainedSmb
             }
         }
@@ -241,6 +254,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
         private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of pred30 correction per cycle
+        private const val TBR_WINDOW_HOURS                      = 0.5   // spread remaining correction over 30 mins via TBR
         private const val LN2                             = 0.693147
     }
 }
