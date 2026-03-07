@@ -1,39 +1,23 @@
 package app.aaps.plugins.aps.smartInsulin
-import app.aaps.core.interfaces.smartInsulin.MealMode
 
 import app.aaps.core.interfaces.aps.GlucoseStatus
-import app.aaps.core.interfaces.aps.IobTotal
+import app.aaps.core.interfaces.iob.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.keys.DoubleKey
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.abs
 
 /**
- * Watches post-bolus CGM response and feeds peak/DIA observations to [ProfileLearner].
+ * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
  *
- * ## Detection strategy
- *
- * A bolus "event" is opened when IOB rises above [MIN_IOB_TO_TRACK] U.
- * Each loop cycle, we record (timestamp, BG, IOB) into a rolling window.
- * The event closes when IOB falls back below [MIN_IOB_TO_TRACK].
- *
- * From the window we derive:
- *   - observedPeakMins: time from bolus detection to maximum BG *drop rate*
- *     (the inflection point, where insulin effect was strongest)
- *   - observedDiaMins: time from bolus detection until IOB drops below
- *     [DIA_IOB_TAIL_THRESHOLD] — approximates end of insulin action
- *
- * ## Noise filtering
- * At least [MIN_WINDOW_SAMPLES] samples are required before attempting a fit.
- * Events with a total BG drop < [MIN_BG_DROP_MGDL] are discarded as
- * insufficient signal (e.g. correction bolus into rising meal — too much noise).
- *
- * ## Learning hand-off
- * Valid observations are passed to [ProfileLearner.observeBolusCurve].
- * The learner applies its own EWMA blending and hard-limit clamping.
+ * Strategy:
+ *   1. Detect when IOB starts declining from its peak
+ *   2. Track BG nadir from that point
+ *   3. Once BG recovers [RECOVERY_MGDL] above nadir, the bolus is "complete"
+ *   4. Derive observedPeakMins (start→nadir) and observedDiaMins (start→recovery)
+ *   5. Feed to ProfileLearner
  */
 @Singleton
 class BolusCurveTracker @Inject constructor(
@@ -41,150 +25,114 @@ class BolusCurveTracker @Inject constructor(
     private val preferences:    Preferences,
     private val aapsLogger:     AAPSLogger
 ) {
-    // ── Tracking state ───────────────────────────────────────────────────────
+    private var tracking        = false
+    private var trackStartMs    = 0L
+    private var trackMode       = MealMode.FASTING
+    private var iobAtStart      = 0.0
+    private var bgAtStart       = 0.0
+    private var iobPeak         = 0.0
+    private var iobDeclineSeen  = false
+    private var bgNadir         = Double.MAX_VALUE
+    private var nadirTimeMs     = 0L
+    private var nadirConfirmed  = false
 
-    /** A single CGM+IOB sample captured during bolus tracking */
-    private data class Sample(
-        val timestampMs: Long,
-        val bgMgdl:      Double,
-        val iob:         Double,
-        val activity:    Double
-    )
+    companion object {
+        private const val MIN_TRACK_IOB_U        = 1.0
+        private const val RECOVERY_MGDL          = 18.0  // ~1 mmol recovery above nadir
+        private const val MIN_BG_DROP_MGDL       = 18.0  // ~1 mmol minimum drop to count
+        private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
+        private const val MIN_NADIR_DELAY_MS     = 30 * 60 * 1000L
+        private const val IOB_DECLINE_FRACTION   = 0.05
+    }
 
-    private val window        = mutableListOf<Sample>()
-    private var trackingActive = false
-    private var bolusStartMs   = 0L
-    private var peakIob        = 0.0
-
-    // ── Public API ───────────────────────────────────────────────────────────
-
-    /**
-     * Called once per loop cycle. Feeds the current state into the tracker.
-     * When a complete bolus event is detected, derives peak/DIA estimates
-     * and hands them off to [ProfileLearner].
-     */
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
         mealMode:      MealMode,
         iobArray:      Array<IobTotal>
     ) {
-        val currentIob      = iobArray.firstOrNull()?.iob      ?: 0.0
-        val currentActivity = iobArray.firstOrNull()?.activity ?: 0.0
-        val now             = glucoseStatus.date
+        val currentIob = iobArray.firstOrNull()?.iob ?: return
+        val currentBg  = glucoseStatus.glucose
+        val nowMs      = System.currentTimeMillis()
 
-        when {
-            // ── Open a new tracking window ───────────────────────────
-            !trackingActive && currentIob >= MIN_IOB_TO_TRACK -> {
-                trackingActive = true
-                bolusStartMs   = now
-                peakIob        = currentIob
-                window.clear()
-                window.add(Sample(now, glucoseStatus.glucose, currentIob, currentActivity))
-                aapsLogger.debug(LTag.APS, "BolusCurveTracker: opened window IOB=%.2f".format(currentIob))
+        if (!tracking) {
+            if (currentIob >= MIN_TRACK_IOB_U) {
+                tracking       = true
+                trackStartMs   = nowMs
+                trackMode      = mealMode
+                iobAtStart     = currentIob
+                bgAtStart      = currentBg
+                iobPeak        = currentIob
+                iobDeclineSeen = false
+                bgNadir        = currentBg
+                nadirTimeMs    = nowMs
+                nadirConfirmed = false
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob bg=$currentBg")
             }
-
-            // ── Accumulate samples ───────────────────────────────────
-            trackingActive && currentIob >= MIN_IOB_TO_TRACK -> {
-                if (currentIob > peakIob) peakIob = currentIob
-                window.add(Sample(now, glucoseStatus.glucose, currentIob, currentActivity))
-
-                // Safety: cap window to avoid unbounded memory growth
-                if (window.size > MAX_WINDOW_SAMPLES) {
-                    window.removeAt(0)
-                    bolusStartMs = window.first().timestampMs
-                }
-            }
-
-            // ── Close window and attempt fit ─────────────────────────
-            trackingActive && currentIob < MIN_IOB_TO_TRACK -> {
-                window.add(Sample(now, glucoseStatus.glucose, currentIob, currentActivity))
-                trackingActive = false
-                aapsLogger.debug(
-                    LTag.APS,
-                    "BolusCurveTracker: closed window n=${window.size} peakIOB=%.2f".format(peakIob)
-                )
-                attemptFitAndLearn(mealMode)
-                window.clear()
-                peakIob = 0.0
-            }
-
-            // ── No bolus active, nothing to do ───────────────────────
-            else -> { /* idle */ }
-        }
-    }
-
-    // ── Curve fitting ────────────────────────────────────────────────────────
-
-    private fun attemptFitAndLearn(mealMode: MealMode) {
-        if (window.size < MIN_WINDOW_SAMPLES) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: discarding — insufficient samples (${window.size})")
             return
         }
 
-        val startBg   = window.first().bgMgdl
-        val minBg     = window.minOf { it.bgMgdl }
-        val totalDrop = startBg - minBg
+        val elapsedMs = nowMs - trackStartMs
 
-        if (totalDrop < MIN_BG_DROP_MGDL) {
+        if (elapsedMs > MAX_TRACK_DURATION_MS) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (timeout)")
+            reset(); return
+        }
+
+        // New bolus detected — restart
+        if (currentIob > iobAtStart * 1.2) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus iob=$currentIob)")
+            reset(); return
+        }
+
+        // Track IOB peak and confirm decline
+        if (currentIob > iobPeak) {
+            iobPeak = currentIob
+        } else if (!iobDeclineSeen && currentIob < iobPeak * (1.0 - IOB_DECLINE_FRACTION)) {
+            iobDeclineSeen = true
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB peak confirmed at $iobPeak")
+        }
+
+        if (!iobDeclineSeen) return
+
+        // Update BG nadir
+        if (currentBg < bgNadir) {
+            bgNadir   = currentBg
+            nadirTimeMs = nowMs
+        }
+
+        // Check recovery
+        val nadirElapsedMs = nadirTimeMs - trackStartMs
+        if (!nadirConfirmed &&
+            (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
+            currentBg > bgNadir + RECOVERY_MGDL &&
+            bgNadir < bgAtStart - MIN_BG_DROP_MGDL
+        ) {
+            nadirConfirmed = true
+            val observedPeakMins = nadirElapsedMs.toDouble() / 60_000.0
+            val observedDiaMins  = elapsedMs.toDouble() / 60_000.0
+            val learningRate     = preferences.get(DoubleKey.ApsSmartInsulinLearningRate)
+
             aapsLogger.debug(
                 LTag.APS,
-                "BolusCurveTracker: discarding — BG drop %.1f < %.1f minimum".format(totalDrop, MIN_BG_DROP_MGDL)
+                "BolusCurveTracker: complete mode=${trackMode.label} " +
+                    "peak=%.1fmin dia=%.1fmin bgDrop=%.1f".format(
+                        observedPeakMins, observedDiaMins, bgAtStart - bgNadir
+                    )
             )
-            return
+
+            profileLearner.observeBolusCurve(
+                mode             = trackMode,
+                observedPeakMins = observedPeakMins,
+                observedDiaMins  = observedDiaMins,
+                learningRate     = learningRate
+            )
+            reset()
         }
-
-        // ── Peak activity time ───────────────────────────────────────
-        // Find the sample with maximum insulin activity — this is the
-        // inflection point of the BG drop curve, representing peak insulin effect.
-        val peakSample       = window.maxByOrNull { it.activity } ?: return
-        val peakOffsetMs     = peakSample.timestampMs - bolusStartMs
-        val observedPeakMins = (peakOffsetMs / MS_PER_MIN).coerceAtLeast(1.0)
-
-        // ── DIA estimate ─────────────────────────────────────────────
-        // Find first sample where IOB has dropped to the tail threshold.
-        // If the window ends before that, use the full window duration as a lower bound.
-        val diaSample = window.firstOrNull { it.iob <= DIA_IOB_TAIL_THRESHOLD }
-        val diaOffsetMs = if (diaSample != null) {
-            diaSample.timestampMs - bolusStartMs
-        } else {
-            window.last().timestampMs - bolusStartMs
-        }
-        val observedDiaMins = (diaOffsetMs / MS_PER_MIN).coerceAtLeast(observedPeakMins + 30.0)
-
-        aapsLogger.debug(
-            LTag.APS,
-            "BolusCurveTracker: fit mode=${mealMode.label} " +
-                "peak=%.1fmin dia=%.1fmin drop=%.1fmgdl n=${window.size}".format(
-                    observedPeakMins, observedDiaMins, totalDrop
-                )
-        )
-
-        val learningRate = preferences.get(DoubleKey.ApsSmartInsulinLearningRate)
-
-        profileLearner.observeBolusCurve(
-            mode             = mealMode,
-            observedPeakMins = observedPeakMins,
-            observedDiaMins  = observedDiaMins,
-            learningRate     = learningRate
-        )
     }
 
-    companion object {
-        /** IOB threshold to start/stop tracking a bolus event (units) */
-        private const val MIN_IOB_TO_TRACK          = 0.1
-
-        /** IOB threshold below which we consider insulin "tail" complete */
-        private const val DIA_IOB_TAIL_THRESHOLD    = 0.05
-
-        /** Minimum BG drop (mg/dL) required to treat the window as a valid signal */
-        private const val MIN_BG_DROP_MGDL          = 10.0
-
-        /** Minimum number of samples before attempting a fit */
-        private const val MIN_WINDOW_SAMPLES        = 6
-
-        /** Maximum samples to retain (guards against very long events) */
-        private const val MAX_WINDOW_SAMPLES        = 600  // ~10 hours at 1-min loops
-
-        private const val MS_PER_MIN                = 60_000.0
+    private fun reset() {
+        tracking = false; trackStartMs = 0L; iobAtStart = 0.0; bgAtStart = 0.0
+        iobPeak = 0.0; iobDeclineSeen = false; bgNadir = Double.MAX_VALUE
+        nadirTimeMs = 0L; nadirConfirmed = false
     }
 }
