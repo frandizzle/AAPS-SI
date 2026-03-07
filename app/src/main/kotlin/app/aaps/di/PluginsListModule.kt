@@ -77,6 +77,7 @@ import dagger.multibindings.IntKey
 import dagger.multibindings.IntoMap
 import info.nightscout.pump.combov2.ComboV2Plugin
 import javax.inject.Qualifier
+import javax.inject.Singleton
 
 @Suppress("unused")
 @Module
@@ -261,6 +262,10 @@ abstract class PluginsListModule {
     @IntoMap
     @IntKey(230)
     abstract fun bindSmartInsulinPlugin(plugin: SmartInsulinPlugin): PluginBase
+
+    @Binds
+    @Singleton
+    abstract fun bindMealOverrideManager(impl: MealOverrideManagerImpl): MealOverrideManager
 
     @Binds
     @AllConfigs

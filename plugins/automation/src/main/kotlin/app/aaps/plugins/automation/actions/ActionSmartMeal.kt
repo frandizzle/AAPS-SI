@@ -33,7 +33,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
 
     override fun friendlyName(): Int        = R.string.smart_meal_action_name
     override fun shortDescription(): String = rh.gs(R.string.smart_meal_action_short, mealModeInput.value.label)
-    @DrawableRes override fun icon(): Int   = app.aaps.core.ui.R.drawable.ic_cp_bolus_wizard
+    @DrawableRes override fun icon(): Int   = app.aaps.core.ui.R.drawable.ic_generic_icon
     override fun isValid(): Boolean         = true
     override fun hasDialog(): Boolean       = true
 
