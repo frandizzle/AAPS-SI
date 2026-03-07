@@ -25,8 +25,6 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
-import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.profile.ProfileFunction
@@ -34,6 +32,8 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventAPSCalculationFinished
+import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.interfaces.utils.Round
@@ -49,10 +49,10 @@ import app.aaps.core.objects.extensions.plannedRemainingMinutes
 import app.aaps.core.objects.extensions.put
 import app.aaps.core.objects.extensions.store
 import app.aaps.core.objects.extensions.target
+import app.aaps.core.utils.MidnightUtils
 import app.aaps.core.validators.preferences.AdaptiveDoublePreference
 import app.aaps.core.validators.preferences.AdaptiveIntPreference
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
-import app.aaps.core.utils.MidnightUtils
 import app.aaps.plugins.aps.OpenAPSFragment
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
@@ -97,7 +97,6 @@ open class SmartInsulinPlugin @Inject constructor(
     aapsLogger, rh
 ), APS, PluginConstraints {
 
-    // ── APS interface ────────────────────────────────────────────────────────
     override var lastAPSRun: Long = 0
     override val algorithm = APSResult.Algorithm.SMB
     override var lastAPSResult: APSResult? = null
@@ -106,7 +105,6 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         lastAPSResult = null
 
-        // ── Guard clauses ────────────────────────────────────────────────────
         val profile = profileFunction.getProfile() ?: run {
             rxBus.send(EventResetOpenAPSGui(rh.gs(app.aaps.core.ui.R.string.no_profile_set)))
             return
@@ -120,7 +118,6 @@ open class SmartInsulinPlugin @Inject constructor(
             return
         }
 
-        // ── Hard limits ──────────────────────────────────────────────────────
         if (!hardLimits.checkHardLimits(profile.dia, app.aaps.core.ui.R.string.profile_dia, hardLimits.minDia(), hardLimits.maxDia())) return
         if (!hardLimits.checkHardLimits(
                 profile.getIcTimeFromMidnight(MidnightUtils.secondsFromMidnight()),
@@ -131,10 +128,8 @@ open class SmartInsulinPlugin @Inject constructor(
         if (!hardLimits.checkHardLimits(profile.getIsfMgdl("SmartInsulinPlugin"), app.aaps.core.ui.R.string.profile_sensitivity_value, HardLimits.MIN_ISF, HardLimits.MAX_ISF)) return
         if (!hardLimits.checkHardLimits(profile.getMaxDailyBasal(), app.aaps.core.ui.R.string.profile_max_daily_basal_value, 0.02, hardLimits.maxBasal())) return
 
-        // ── Gather constraints (for inputConstraints audit trail) ────────────
         val inputConstraints = ConstraintObject(0.0, aapsLogger)
 
-        // ── Current temp basal ───────────────────────────────────────────────
         val now = dateUtil.now()
         val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
         val currentTemp = CurrentTemp(
@@ -143,7 +138,6 @@ open class SmartInsulinPlugin @Inject constructor(
             minutesrunning = tb?.getPassedDurationToTimeInMinutes(now)
         )
 
-        // ── Targets ──────────────────────────────────────────────────────────
         var minBg    = hardLimits.verifyHardLimits(Round.roundTo(profile.getTargetLowMgdl(), 0.1),  app.aaps.core.ui.R.string.profile_low_target,  HardLimits.LIMIT_MIN_BG[0],    HardLimits.LIMIT_MIN_BG[1])
         var maxBg    = hardLimits.verifyHardLimits(Round.roundTo(profile.getTargetHighMgdl(), 0.1), app.aaps.core.ui.R.string.profile_high_target, HardLimits.LIMIT_MAX_BG[0],    HardLimits.LIMIT_MAX_BG[1])
         var targetBg = hardLimits.verifyHardLimits(profile.getTargetMgdl(),                         app.aaps.core.ui.R.string.temp_target_value,   HardLimits.LIMIT_TARGET_BG[0], HardLimits.LIMIT_TARGET_BG[1])
@@ -155,7 +149,6 @@ open class SmartInsulinPlugin @Inject constructor(
             targetBg = hardLimits.verifyHardLimits(tt.target(),   app.aaps.core.ui.R.string.temp_target_value,       HardLimits.LIMIT_TEMP_TARGET_BG[0], HardLimits.LIMIT_TEMP_TARGET_BG[1])
         }
 
-        // ── IOB / meal data ──────────────────────────────────────────────────
         val autosensResult = AutosensResult()
         val iobArray = iobCobCalculator.calculateIobArrayForSMB(
             autosensResult,
@@ -165,7 +158,21 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
 
-        // ── Build OapsProfile (required for result display + downstream) ─────
+        // ── Meal mode — check override first, fall back to auto-detect ────────
+        val mealMode = MealModeDetector.detect(
+            mealData        = mealData,
+            glucoseStatus   = glucoseStatus,
+            overrideManager = mealOverrideManager
+        )
+
+        // ── Tick the override manager — fires queued bolus when safe ──────────
+        mealOverrideManager.onLoopCycle(
+            glucoseStatus = glucoseStatus,
+            iobArray      = iobArray,
+            maxIobU       = constraintsChecker.getMaxIOBAllowed().value()
+        )
+
+        // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
         val oapsProfile = OapsProfile(
@@ -178,7 +185,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = targetBg,
             carb_ratio                      = profile.getIc(),
-            sens                            = profile.getIsfMgdl("SmartInsulinPlugin"),
+            sens                            = profile.getIsfMgdl("SmartInsulinPlugin") * mealOverrideManager.activeIsfMultiplier,
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
@@ -214,14 +221,6 @@ open class SmartInsulinPlugin @Inject constructor(
             TDD                             = 0.0
         )
 
-        // ── Meal mode ────────────────────────────────────────────────────────
-        val mealMode = MealModeDetector.detect(
-            mealData        = mealData,
-            glucoseStatus   = glucoseStatus,
-            overrideManager = mealOverrideManager
-        )
-
-        // ── Learned profile ──────────────────────────────────────────────────
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val learnedProfile    = profileLearner.getProfile(mealMode)
         val predictionHorizon = preferences.get(IntKey.ApsSmartInsulinPredictionHorizonMins)
@@ -230,13 +229,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode learnedProfile=$learnedProfile")
 
-        mealOverrideManager.onLoopCycle(
-            glucoseStatus = glucoseStatus,
-            iobArray      = iobArray,
-            maxIobU       = oapsProfile.max_iob
-        )
-
-        // ── Run determine_basal ──────────────────────────────────────────────
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
@@ -257,7 +249,6 @@ open class SmartInsulinPlugin @Inject constructor(
             currentTime           = now
         )
 
-        // ── Populate result inputs ───────────────────────────────────────────
         apsResult.inputConstraints = inputConstraints
         apsResult.autosensResult   = autosensResult
         apsResult.iobData          = iobArray
@@ -271,7 +262,6 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
         rxBus.send(EventAPSCalculationFinished())
 
-        // ── Post-cycle learning ──────────────────────────────────────────────
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
         }
@@ -282,30 +272,22 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
         glucoseStatusProvider.getGlucoseStatusData(allowOldData)
 
-    // ── APS.configuration() ──────────────────────────────────────────────────
     override fun configuration(): JSONObject =
         JSONObject()
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .put(BooleanKey.ApsSmartInsulinLowCarbMode, preferences)
-            .put(IntKey.ApsSmartInsulinLowCarbThresholdG, preferences)
             .put(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
             .put(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .put(DoubleKey.ApsSmartInsulinLowGuardMmol, preferences)
             .put(DoubleKey.ApsSmartInsulinWarnGuardMmol, preferences)
 
-    // ── APS.applyConfiguration() ─────────────────────────────────────────────
     override fun applyConfiguration(configuration: JSONObject) {
         configuration
             .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .store(BooleanKey.ApsSmartInsulinLowCarbMode, preferences)
-            .store(IntKey.ApsSmartInsulinLowCarbThresholdG, preferences)
             .store(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
             .store(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .store(DoubleKey.ApsSmartInsulinLowGuardMmol, preferences)
             .store(DoubleKey.ApsSmartInsulinWarnGuardMmol, preferences)
     }
-
-    // ── Constraints ──────────────────────────────────────────────────────────
 
     override fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
         if (isEnabled()) {
@@ -344,8 +326,6 @@ open class SmartInsulinPlugin @Inject constructor(
         return value
     }
 
-    // ── Preferences UI ───────────────────────────────────────────────────────
-
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
         if (requiredKey != null && requiredKey != "smart_insulin_settings") return
         val category = PreferenceCategory(context)
@@ -364,13 +344,23 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxMinutesOfBasalToLimitSmb,       title = R.string.smb_max_minutes_summary))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinLowCarbMode,       title = R.string.smart_insulin_low_carb_mode))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinLowCarbThresholdG,     title = R.string.smart_insulin_low_carb_threshold))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowGuardMmol,       title = R.string.smart_insulin_low_guard))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinWarnGuardMmol,      title = R.string.smart_insulin_warn_guard))
+            // Per-meal ISF multipliers
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsfMultiplier, title = R.string.si_breakfast_isf_mult_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsfMultiplier,     title = R.string.si_lunch_isf_mult_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDinnerIsfMultiplier,    title = R.string.si_dinner_isf_mult_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowCarbIsfMultiplier,   title = R.string.si_lowcarb_isf_mult_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinExtendedIsfMultiplier,  title = R.string.si_extended_isf_mult_title))
+            // Per-meal carb defaults
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinBreakfastCarbsG, title = R.string.si_breakfast_carbs_g_title))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinLunchCarbsG,     title = R.string.si_lunch_carbs_g_title))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinDinnerCarbsG,    title = R.string.si_dinner_carbs_g_title))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,  title = R.string.si_mode_window_mins_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus, title = R.string.si_max_prebolus_title))
         }
     }
 }

@@ -1,15 +1,13 @@
 package app.aaps.core.interfaces.smartInsulin
 
+import app.aaps.core.data.model.BS
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
-import app.aaps.core.data.model.BS
 import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /**
  * Owns the active [MealOverrideState] and fires the queued bolus when safe.
@@ -24,7 +22,7 @@ import javax.inject.Singleton
 @Singleton
 class MealOverrideManager @Inject constructor(
     private val commandQueue: CommandQueue,
-    private val aapsLogger:   AAPSLogger
+    private val aapsLogger: AAPSLogger
 ) {
 
     @Volatile private var _state: MealOverrideState? = null
@@ -56,8 +54,9 @@ class MealOverrideManager @Inject constructor(
             expiryMs      = now + MealOverrideState.BOLUS_WINDOW_MS,
             modeExpiryMs  = now + modeWindowMs
         )
-        aapsLogger.debug(LTag.APS,
-                         "SmartInsulin override: mode=${mode.label} dose=${doseU}U " +
+        aapsLogger.debug(
+            LTag.APS,
+            "SmartInsulin override: mode=${mode.label} dose=${doseU}U " +
                              "carbs=${carbsG}g bolusTTL=${MealOverrideState.BOLUS_WINDOW_MS / 60_000}min " +
                              "modeTTL=${modeWindowMs / 60_000}min")
     }
@@ -85,8 +84,9 @@ class MealOverrideManager @Inject constructor(
         val delta      = glucoseStatus.shortAvgDelta
 
         if (now > state.expiryMs) {
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: bolus window expired for ${state.mode.label} — dropping bolus, keeping mode")
+            aapsLogger.debug(
+                LTag.APS,
+                "SmartInsulin: bolus window expired for ${state.mode.label} — dropping bolus, keeping mode")
             _state = state.copy(lockedDoseU = null)
             return
         }
@@ -96,8 +96,9 @@ class MealOverrideManager @Inject constructor(
         val iobSafe    = currentIob <= safeIob
         val bgAboveMin = bg         >= MIN_BG_MGDL
 
-        aapsLogger.debug(LTag.APS,
-                         "SmartInsulin safety: bg=$bg Δ=$delta iob=$currentIob safeIob=$safeIob " +
+        aapsLogger.debug(
+            LTag.APS,
+            "SmartInsulin safety: bg=$bg Δ=$delta iob=$currentIob safeIob=$safeIob " +
                              "rising=$bgRising iobOk=$iobSafe bgOk=$bgAboveMin")
 
         if (!bgRising || !iobSafe || !bgAboveMin) return
@@ -110,8 +111,9 @@ class MealOverrideManager @Inject constructor(
             it.deliverAtTheLatest = now + 60_000L  // deliver within 1 minute
         }
 
-        aapsLogger.debug(LTag.APS,
-                         "SmartInsulin firing pre-bolus: ${dose}U for ${state.mode.label} " +
+        aapsLogger.debug(
+            LTag.APS,
+            "SmartInsulin firing pre-bolus: ${dose}U for ${state.mode.label} " +
                              "(bg=$bg Δ=$delta iob=$currentIob)")
 
         commandQueue.bolus(detail, object : Callback() {
