@@ -51,6 +51,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         predictionHorizonMins: Int,
         lowGuardMmol:          Double,
         warnGuardMmol:         Double,
+        maxSmbU:               Double,
         microBolusAllowed:     Boolean,
         currentTime:           Long
     ): APSResult {
@@ -88,12 +89,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
 
         // ── Reason string ────────────────────────────────────────────────────
+        val isMmol = oapsProfile.out_units == "mmol/L"
+        fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(mgdl / MMOL_TO_MGDL) else "%.1f".format(mgdl)
+        val units  = if (isMmol) "mmol" else "mg/dL"
+
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=%.1f Δ=%.2f IOB=%.2f ".format(currentBg, delta, currentIob))
-        sb.append("pred_min=%.1f pred30=%.1f pred60=%.1f ".format(predictedMin, predictedAt30, predictedAt60))
-        sb.append("ISF=%.1f basal=%.3f ".format(isfMgdl, profileBasal))
-        sb.append("peak=${learnedProfile.peakMinutes.toInt()}m dia=${learnedProfile.diaMinutes.toInt()}m ")
+        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f ".format(delta, currentIob))
+        sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
+        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
+        sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
 
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
@@ -105,14 +110,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
-                sb.append("LGS_SUSPEND currentBG=%.1f < lgs=%.1f".format(currentBg, lgsThresholdMgdl))
+                sb.append("LGS_SUSPEND BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
                 rateOut       = 0.0
                 durationOut   = 30
                 tempRequested = true
             }
 
             predictedMin < lowGuardMgdl -> {
-                sb.append("SUSPEND pred_min=%.1f < lowGuard=%.1f".format(predictedMin, lowGuardMgdl))
+                sb.append("SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}")
                 rateOut       = 0.0
                 durationOut   = 30
                 tempRequested = true
@@ -137,9 +142,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 val correctionUnits = ((currentBg - targetBg) / isfMgdl).coerceAtLeast(0.0)
                 val requestedSmb    = if (smbAllowed) (correctionUnits * SMB_CORRECTION_FRACTION).coerceAtLeast(0.0) else 0.0
-                val constrainedSmb  = requestedSmb.coerceAtMost(profileBasal / 60.0 * oapsProfile.maxSMBBasalMinutes)
+                val constrainedSmb  = requestedSmb.coerceAtMost(maxSmbU)
 
-                sb.append("NORMAL targetBG=%.1f smbAllowed=$smbAllowed smb=%.3f".format(targetBg, constrainedSmb))
+                sb.append("NORMAL targetBG=${fmt(targetBg)} smbAllowed=$smbAllowed smb=%.3f".format(constrainedSmb))
                 rateOut       = profileBasal
                 durationOut   = 0
                 tempRequested = false

@@ -229,6 +229,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val predictionHorizon = preferences.get(IntKey.ApsSmartInsulinPredictionHorizonMins)
         val lowGuardMmol      = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
+        val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode learnedProfile=$learnedProfile")
 
@@ -248,6 +249,7 @@ open class SmartInsulinPlugin @Inject constructor(
             predictionHorizonMins = predictionHorizon,
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
+            maxSmbU               = maxSmbU,
             microBolusAllowed     = microBolusAllowed,
             currentTime           = now
         )
@@ -347,6 +349,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxMinutesOfBasalToLimitSmb,       title = R.string.smb_max_minutes_summary))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
