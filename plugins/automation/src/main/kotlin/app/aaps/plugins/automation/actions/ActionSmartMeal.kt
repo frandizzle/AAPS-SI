@@ -13,7 +13,7 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.utils.JsonHelper
 import app.aaps.plugins.automation.R
-import app.aaps.plugins.automation.elements.InputDropdownMenu
+import app.aaps.plugins.automation.elements.InputDropdownMenuTyped
 import app.aaps.plugins.automation.elements.InputDropdownOnOffMenu
 import app.aaps.plugins.automation.elements.LabelWithElement
 import app.aaps.plugins.automation.elements.LayoutBuilder
@@ -28,7 +28,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
     @Inject lateinit var iobCobCalculator:    IobCobCalculator
     @Inject lateinit var preferences:         Preferences
 
-    var mealModeInput = InputDropdownMenu(rh, MealMode.entries.toList(), { it.label }, MealMode.LUNCH)
+    var mealModeInput = InputDropdownMenuTyped(rh, MealMode.entries.toList(), { it.label }, MealMode.LUNCH)
     var prebolusInput = InputDropdownOnOffMenu(rh, false)
 
     override fun friendlyName(): Int        = R.string.smart_meal_action_name
