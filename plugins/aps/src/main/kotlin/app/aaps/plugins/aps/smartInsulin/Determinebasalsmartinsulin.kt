@@ -53,6 +53,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         warnGuardMmol:         Double,
         maxSmbU:               Double,
         maxTbrU:               Double,
+        aggressiveness:        Double,
+        tirSummary:            String,
         microBolusAllowed:     Boolean,
         inReboundWindow:       Boolean,
         msSinceLastSuspend:    Long,
@@ -102,6 +104,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f ".format(profileBasal))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
+        sb.append("aggr=%.2f $tirSummary ".format(aggressiveness))
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
@@ -165,6 +168,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
                 // IOB is sufficient only if our prediction shows BG arriving at or below target
                 // without more insulin. Raw iobDrop math is kept for the reason string only.
+                val iobDrop       = currentIob * isfMgdl
                 val iobSufficient = predictedAt60 <= targetBg
 
                 val smbAllowed = microBolusAllowed &&
@@ -176,10 +180,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 // Correction based on min of pred30/pred60 gap so we taper as IOB works
                 val correctionUnits = if (smbAllowed) {
-                    val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
+                    val pred30Gap    = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    val pred60Gap    = (predictedAt60 - targetBg).coerceAtLeast(0.0)
                     val effectiveGap = minOf(pred30Gap, pred60Gap)
-                    (effectiveGap / isfMgdl) * SMB_DELIVERY_FRACTION
+                    // aggressiveness scales delivery fraction: 1.0=50%, 1.5=75%, 0.5=25%
+                    (effectiveGap / isfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -195,7 +200,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val totalCorrection = if (smbAllowed && iobOk) {
                     val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
-                    minOf(pred30Gap, pred60Gap) / isfMgdl
+                    // aggressiveness scales how much of the gap we try to cover via TBR
+                    (minOf(pred30Gap, pred60Gap) / isfMgdl) * aggressiveness
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
@@ -233,9 +239,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     )
                 } else ""
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))
-                rateOut       = tbrRate
-                durationOut   = if (needsTbr) 30 else 0
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))                rateOut       = tbrRate
+                    durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr
                 smbOut        = finalSmb
             }

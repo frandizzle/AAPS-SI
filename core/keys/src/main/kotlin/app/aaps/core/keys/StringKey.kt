@@ -107,15 +107,13 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
-    // SmartInsulin — BolusCurveTracker in-progress state (JSON)
-    // Survives AAPS restarts so mid-bolus tracking is not lost
-    ApsSmartInsulinTrackerState(
-        "si_tracker_state",
+    ApsSmartInsulinAggressionState(
+        "si_aggression_state",
         defaultValue          = "",
         showInApsMode         = false,
         showInNsClientMode    = false,
         showInPumpControlMode = false,
-        exportable            = false  // transient — no value exporting mid-track
+        exportable            = true
     ),
 
 }

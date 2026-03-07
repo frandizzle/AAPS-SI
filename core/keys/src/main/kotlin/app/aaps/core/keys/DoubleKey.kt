@@ -53,6 +53,7 @@ enum class DoubleKey(
     ApsAutoIsfSmbMaxRangeExtension("openapsama_smb_max_range_extension", 1.0, 1.0, 5.0, defaultedBySM = true),
     ApsSmartInsulinMaxSmb("si_max_smb_u", 3.0, 0.1, 20.0, defaultedBySM = true),
     ApsSmartInsulinMaxTbr("si_max_tbr_u", 3.0, 0.5, 10.0, defaultedBySM = true),
+    ApsSmartInsulinAggressionMax("si_aggression_max", 1.5, 1.0, 2.5, defaultedBySM = true),
     ApsSmartInsulinBreakfastIsfMultiplier("si_breakfast_isf_mult", 0.95, 0.5, 1.5, defaultedBySM = true),
     ApsSmartInsulinLunchIsfMultiplier("si_lunch_isf_mult", 1.00, 0.5, 1.5, defaultedBySM = true),
     ApsSmartInsulinDinnerIsfMultiplier("si_dinner_isf_mult", 1.05, 0.5, 1.5, defaultedBySM = true),
