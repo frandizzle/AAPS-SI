@@ -264,16 +264,22 @@ open class SmartInsulinPlugin @Inject constructor(
         val aggressiveness = aggressionLearner.aggressiveness
         val tirSummary     = aggressionLearner.tirSummary
 
-        // Feed basal learner — uses overnight fasting drift to adjust basal multiplier
+        // Feed basal learner -- learns from any clean fasting window, day or night.
+        // Overnight observations are confidence-weighted higher than daytime ones.
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
+        val basalOnlyIob  = iobArray.firstOrNull()?.basaliob ?: 0.0
+        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
         if (basalLearningEnabled) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
+                deltaMgdl     = glucoseStatus.delta,
                 cobG          = mealData.mealCOB,
                 minsLastBolus = minsLastBolus,
+                basalOnlyIobU = basalOnlyIob,
+                currentIobU   = currentIob,
                 isfMgdl       = profile.getIsfMgdl("SmartInsulin") * isfMultiplier,
                 profileBasalU = profile.getBasal()
             )
