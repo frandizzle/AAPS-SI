@@ -284,14 +284,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val deltaPerMin  = delta / 5.0
 
         for (t in 1..predictionHorizonMins) {
-            // iobArray[idx].activity is the insulin activity coefficient at that time point
-            // iobArray[idx].iob is the remaining IOB at that time point
-            // BG drop per minute = iob_at_t * activity_coefficient * ISF / 5
-            // (divide by 5 because iobArray slots are 5-min intervals)
-            val idx      = t / 5
-            val iobAtT   = if (idx < iobArray.size) iobArray[idx].iob else 0.0
-            val actCoeff = getActivityAtMinute(t, iobArray, learnedProfile)
-            val iobDelta = -(iobAtT * actCoeff * isfMgdl) / 5.0
+            // Match AutoISF exactly: predBGI = -(activity * ISF * 5)
+            // activity is already U/min decay rate — no IOB multiplication needed
+            val activity   = getActivityAtMinute(t, iobArray, learnedProfile)
+            val iobDelta   = -(activity * isfMgdl * 5.0)
             // Momentum fades linearly over DELTA_FADE_MINS
             val momentumWeight = max(0.0, 1.0 - t.toDouble() / DELTA_FADE_MINS)
             val momentumDelta  = (deltaPerMin * momentumWeight).coerceIn(-MAX_MOMENTUM_MGDL_PER_MIN, MAX_MOMENTUM_MGDL_PER_MIN)
@@ -321,8 +317,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     companion object {
         private const val MMOL_TO_MGDL                         = 18.0
-        private const val DELTA_FADE_MINS                       = 30.0  // momentum fades over 30 mins
-        private const val MAX_MOMENTUM_MGDL_PER_MIN             = 2.0   // cap momentum contribution per minute
+        private const val DELTA_FADE_MINS                       = 15.0  // momentum fades over 15 mins
+        private const val MAX_MOMENTUM_MGDL_PER_MIN             = 1.0   // cap momentum contribution per minute
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN       = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN  = 0.5   // delta above this = "rising" trigger
         private const val FALLING_FAST_MGDL_PER_5MIN            = 2.0   // suspend early if falling faster than this
