@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import android.text.Spanned
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.model.TrendArrow
@@ -10,11 +11,14 @@ import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.MealData
 import app.aaps.core.interfaces.aps.OapsProfile
+import app.aaps.core.interfaces.aps.OapsProfileAutoIsf
+import app.aaps.core.interfaces.aps.Predictions
+import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.profile.Profile
-import android.text.Spanned
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -27,51 +31,52 @@ class DetermineBasalSmartInsulinTest {
     // ── Fake APSResult — avoids Mockito setter limitations ───────────────────
 
     private inner class FakeAPSResult : APSResult {
-        override var date: Long = 0
-        override var reason: String = ""
-        override var rate: Double = 0.0
-        override var percent: Int = 0
-        override var duration: Int = 0
-        override var smb: Double = 0.0
-        override var usePercent: Boolean = false
-        override var carbsReq: Int = 0
-        override var carbsReqWithin: Int = 0
-        override var deliverAt: Long = 0
-        override var targetBG: Double = 0.0
-        override var hasPredictions: Boolean = false
-        override var variableSens: Double? = null
-        override var isfMgdlForCarbs: Double? = null
-        override var scriptDebug: List<String>? = null
-        override val predictionsAsGv: MutableList<GV> = mutableListOf()
-        override val latestPredictionsTime: Long = 0
-        override val isChangeRequested: Boolean = false
-        override var isTempBasalRequested: Boolean = false
-        override val carbsRequiredText: String = ""
-        override var inputConstraints: Constraint<Double>? = null
-        override var rateConstraint: Constraint<Double>? = null
-        override var percentConstraint: Constraint<Int>? = null
-        override var smbConstraint: Constraint<Double>? = null
-        override var algorithm: APSResult.Algorithm = APSResult.Algorithm.SMB
-        override var autosensResult: AutosensResult? = null
-        override var iobData: Array<IobTotal>? = null
-        override var glucoseStatus: GlucoseStatus? = null
-        override var currentTemp: CurrentTemp? = null
-        override var oapsProfile: OapsProfile? = null
-        override var oapsProfileAutoIsf: app.aaps.core.interfaces.aps.OapsProfileAutoIsf? = null
-        override var mealData: MealData? = null
-        override fun with(result: APSResult): APSResult = this
-        override fun resultAsString(): String = reason
-        override fun resultAsSpanned(): Spanned = mock()
-        override fun newAndClone(): APSResult = FakeAPSResult()
-        override fun json(): JSONObject? = null
-        override fun predictions(): APSResult.Predictions? = null
-        override fun rawData(): Any = ""
+        override var date: Long                          = 0
+        override var reason: String                      = ""
+        override var rate: Double                        = 0.0
+        override var percent: Int                        = 0
+        override var duration: Int                       = 0
+        override var smb: Double                         = 0.0
+        override var usePercent: Boolean                 = false
+        override var carbsReq: Int                       = 0
+        override var carbsReqWithin: Int                 = 0
+        override var deliverAt: Long                     = 0
+        override var targetBG: Double                    = 0.0
+        override var hasPredictions: Boolean             = false
+        override var variableSens: Double?               = null
+        override var isfMgdlForCarbs: Double?            = null
+        override var scriptDebug: List<String>?          = null
+        override val predictionsAsGv: MutableList<GV>   = mutableListOf()
+        override val latestPredictionsTime: Long         = 0
+        override val isChangeRequested: Boolean          = false
+        override var isTempBasalRequested: Boolean       = false
+        override val carbsRequiredText: String           = ""
+        override var inputConstraints: Constraint<Double>?  = null
+        override var rateConstraint: Constraint<Double>?    = null
+        override var percentConstraint: Constraint<Int>?    = null
+        override var smbConstraint: Constraint<Double>?     = null
+        override var algorithm: APSResult.Algorithm      = APSResult.Algorithm.SMB
+        override var autosensResult: AutosensResult?     = null
+        override var iobData: Array<IobTotal>?           = null
+        override var glucoseStatus: GlucoseStatus?       = null
+        override var currentTemp: CurrentTemp?           = null
+        override var oapsProfile: OapsProfile?           = null
+        override var oapsProfileAutoIsf: OapsProfileAutoIsf? = null
+        override var mealData: MealData?                 = null
+
+        override fun with(result: RT): APSResult         = this
+        override fun resultAsString(): String            = reason
+        override fun resultAsSpanned(): Spanned          = mock()
+        override fun newAndClone(): APSResult            = FakeAPSResult()
+        override fun json(): JSONObject?                 = null
+        override fun predictions(): Predictions?         = null
+        override fun rawData(): Any                      = ""
     }
 
     // ── Mocks ────────────────────────────────────────────────────────────────
 
     private val glucoseStatus: GlucoseStatus = mock()
-    private val currentTemp   = CurrentTemp(duration = 0, rate = 0.0, minutesrunning = null)
+    private val currentTemp = CurrentTemp(duration = 0, rate = 0.0, minutesrunning = null)
     private val mealData: MealData           = mock()
     private val oapsProfile: OapsProfile     = mock()
     private val profile: Profile             = mock()
@@ -81,8 +86,7 @@ class DetermineBasalSmartInsulinTest {
 
     @Before fun setUp() {
         fakeResult = FakeAPSResult()
-        val provider = Provider<APSResult> { fakeResult }
-        sut = DetermineBasalSmartInsulin(provider)
+        sut = DetermineBasalSmartInsulin(Provider { fakeResult })
 
         whenever(oapsProfile.sens).thenReturn(50.0)
         whenever(oapsProfile.current_basal).thenReturn(1.0)
@@ -108,12 +112,12 @@ class DetermineBasalSmartInsulinTest {
         LearnedInsulinProfile.defaultFor(mode)
 
     private fun invoke(
-        iobArray:          Array<IobTotal>       = flatIobArray(0.0, 0.0),
-        learnedProfile:    LearnedInsulinProfile  = defaultLearned(),
-        lowGuardMmol:      Double                 = 3.9,
-        warnGuardMmol:     Double                 = 4.5,
-        microBolusAllowed: Boolean                = true,
-        horizonMins:       Int                    = 60
+        iobArray:          Array<IobTotal>      = flatIobArray(0.0, 0.0),
+        learnedProfile:    LearnedInsulinProfile = defaultLearned(),
+        lowGuardMmol:      Double               = 3.9,
+        warnGuardMmol:     Double               = 4.5,
+        microBolusAllowed: Boolean              = true,
+        horizonMins:       Int                  = 60
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -138,10 +142,10 @@ class DetermineBasalSmartInsulinTest {
     @Test fun `SUSPEND when predicted BG drops below low guard`() {
         whenever(glucoseStatus.glucose).thenReturn(90.0)
         val r = invoke(iobArray = flatIobArray(iob = 2.0, activity = 0.05))
-        assertEquals(0.0,  r.rate,     0.001)
-        assertEquals(30,   r.duration)
+        assertEquals(0.0, r.rate,     0.001)
+        assertEquals(30,  r.duration)
         assertTrue(r.isTempBasalRequested)
-        assertEquals(0.0,  r.smb,      0.001)
+        assertEquals(0.0, r.smb,      0.001)
         assertTrue(r.reason.contains("SUSPEND"))
     }
 
@@ -156,7 +160,7 @@ class DetermineBasalSmartInsulinTest {
     @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
         whenever(glucoseStatus.glucose).thenReturn(85.0)
         val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.015))
-        assertTrue("Reduced basal should be <= 0.5U/hr", r.rate <= 0.5)
+        assertTrue("Reduced basal should be <= 0.5 U/hr", r.rate <= 0.5)
         assertTrue("Reduced basal should be non-negative", r.rate >= 0.0)
         assertEquals(0.0, r.smb, 0.001)
         assertTrue(r.reason.contains("CAUTION"))
@@ -176,7 +180,7 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(iobArray = flatIobArray(iob = 0.0, activity = 0.0))
         assertEquals(1.0, r.rate, 0.001)
         assertEquals(0,   r.duration)
-        assertTrue(!r.isTempBasalRequested)
+        assertFalse(r.isTempBasalRequested)
     }
 
     @Test fun `NORMAL zone allows SMB above target when microBolusAllowed`() {
@@ -202,13 +206,13 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `SMB is capped by maxSMBBasalMinutes`() {
-        // cap = 1.0 U/hr / 60 * 30 = 0.5 U
+        // cap = 1.0 U/hr / 60 * 30 min = 0.5 U
         whenever(oapsProfile.current_basal).thenReturn(1.0)
         whenever(oapsProfile.maxSMBBasalMinutes).thenReturn(30)
         whenever(glucoseStatus.glucose).thenReturn(300.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(2.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
-        assertTrue("SMB must be <= 0.5U cap", r.smb <= 0.5)
+        assertTrue("SMB must be <= 0.5 U cap", r.smb <= 0.5)
     }
 
     // ── Prediction graph ─────────────────────────────────────────────────────
@@ -219,7 +223,11 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `predictions are cleared and repopulated each call`() {
-        fakeResult.predictionsAsGv.add(GV(timestamp = 0L, value = 99.0, raw = null, trendArrow = TrendArrow.NONE, noise = null, sourceSensor = SourceSensor.UNKNOWN))
+        fakeResult.predictionsAsGv.add(
+            GV(timestamp = 0L, value = 99.0, raw = null,
+               trendArrow = TrendArrow.NONE, noise = null,
+               sourceSensor = SourceSensor.UNKNOWN)
+        )
         val r = invoke(horizonMins = 30)
         assertEquals(30, r.predictionsAsGv.size)
     }
