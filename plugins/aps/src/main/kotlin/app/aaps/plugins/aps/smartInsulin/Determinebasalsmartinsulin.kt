@@ -135,17 +135,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             else -> {
-                // SMB fires when BG is above lowGuard and rising (or stable above target).
                 val bgAboveGuard  = currentBg - lowGuardMgdl
                 val isRising      = delta > DELTA_RISING_THRESHOLD_MGDL_PER_5MIN
                 val isAboveTarget = currentBg > targetBg
-                val iobOk         = currentIob < oapsProfile.max_iob
+                val iobHeadroom   = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
+                val iobOk         = iobHeadroom > 0.0
 
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
                     (isRising || isAboveTarget) &&
-                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
-                    iobOk
+                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN
 
                 val correctionUnits = if (smbAllowed) {
                     val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
@@ -153,36 +152,39 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     correction * SMB_DELIVERY_FRACTION
                 } else 0.0
 
-                val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val roundedSmb     = if (correctionUnits > 0.0)
+                val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
+                val rawSmb     = if (correctionUnits > 0.0)
                     (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
-                val constrainedSmb = if (roundedSmb >= bolusStep) roundedSmb.coerceAtMost(maxSmbU) else 0.0
+                // Clamp SMB to whichever is smaller: flat max or remaining IOB headroom
+                val smbCap         = minOf(maxSmbU, iobHeadroom)
+                val constrainedSmb = if (rawSmb >= bolusStep) rawSmb.coerceAtMost(smbCap) else 0.0
 
-                // TBR: only set elevated rate when IOB is also within limits.
-                // When IOB exceeded, explicitly cancel any running TBR by requesting profile rate.
+                // TBR: 0.00 U/h when IOB at or above max (let it decay).
+                // Elevated TBR only when there's headroom AND correction needed.
                 val totalCorrection = if (smbAllowed && iobOk) {
                     val eventualGap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     (eventualGap / isfMgdl).coerceAtLeast(0.0)
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
-                val tbrRate     = if (remainingU > 0.0)
-                    (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
-                else profileBasal
 
-                // If IOB exceeded and a TBR is running, cancel it (request profile rate for 0 duration)
-                val cancelTbr   = !iobOk && currentTemp.rate > profileBasal
+                val tbrRate = when {
+                    !iobOk          -> 0.0   // IOB at/above max — suspend basal to let it decay
+                    remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS).coerceAtMost(oapsProfile.max_basal)
+                    else             -> profileBasal
+                }
+                val needsTbr = !iobOk || remainingU > 0.0
 
                 val trigger = when {
-                    !iobOk         -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
-                    !smbAllowed    -> "blocked"
-                    isAboveTarget  -> "aboveTarget"
-                    isRising       -> "rising"
-                    else           -> "none"
+                    !iobOk      -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
+                    !smbAllowed -> "blocked"
+                    isAboveTarget -> "aboveTarget"
+                    isRising    -> "rising"
+                    else        -> "none"
                 }
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(constrainedSmb, tbrRate))
-                rateOut       = if (cancelTbr) profileBasal else tbrRate
-                durationOut   = if (remainingU > 0.0) 30 else if (cancelTbr) 0 else 0
-                tempRequested = remainingU > 0.0 || cancelTbr
+                rateOut       = tbrRate
+                durationOut   = if (needsTbr) 30 else 0
+                tempRequested = needsTbr
                 smbOut        = constrainedSmb
                 tempRequested = remainingU > 0.0
                 smbOut        = constrainedSmb
