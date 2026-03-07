@@ -142,19 +142,24 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val minHeadroom   = (oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05)
                 val iobOk         = iobHeadroom >= minHeadroom
 
+                // IOB sufficiency check: if existing IOB will drop BG by more than
+                // (currentBg - target), it's already enough — don't add more.
+                // iobDrop = how many mmol/mgdl existing IOB will deliver
+                val iobDrop       = currentIob * isfMgdl  // mg/dL drop from existing IOB
+                val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
+                val iobSufficient = iobDrop >= bgAboveTarget * IOB_SUFFICIENCY_FACTOR
+
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
                     (isRising || isAboveTarget) &&
                     delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
-                    predictedAt60 > targetBg  // existing IOB already sufficient if pred60 <= target
+                    predictedAt60 > targetBg &&
+                    !iobSufficient
 
-                // Correction based on pred30 gap, but scaled down by how much IOB is already
-                // covering — if pred60 is close to target, existing insulin is doing the work
+                // Correction based on min of pred30/pred60 gap so we taper as IOB works
                 val correctionUnits = if (smbAllowed) {
                     val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
-                    // Only correct what pred60 says is still unhandled — if pred60 < pred30,
-                    // IOB is already working and we only top up the residual
                     val effectiveGap = minOf(pred30Gap, pred60Gap)
                     (effectiveGap / isfMgdl) * SMB_DELIVERY_FRACTION
                 } else 0.0
@@ -184,11 +189,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val needsTbr = !iobOk || remainingU > 0.0
 
                 val trigger = when {
-                    !iobOk      -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
-                    !smbAllowed -> "blocked"
-                    isAboveTarget -> "aboveTarget"
-                    isRising    -> "rising"
-                    else        -> "none"
+                    !iobOk         -> "maxIOB(${String.format("%.2f", currentIob)}/${String.format("%.2f", oapsProfile.max_iob)})"
+                    iobSufficient  -> "iobSufficient(drop=${String.format("%.0f", iobDrop)}>=gap=${String.format("%.0f", bgAboveTarget)})"
+                    !smbAllowed    -> "blocked"
+                    isAboveTarget  -> "aboveTarget"
+                    isRising       -> "rising"
+                    else           -> "none"
                 }
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f".format(constrainedSmb, tbrRate))
                 rateOut       = tbrRate
@@ -272,8 +278,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MAX_DROP_MGDL_PER_MIN                 = 3.0   // cap how fast prediction can fall per minute
         private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN      = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN = 0.5   // delta above this = "rising" trigger
-        private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of pred30 correction per cycle
-        private const val TBR_WINDOW_HOURS                      = 0.5   // spread remaining correction over 30 mins via TBR
+        private const val SMB_DELIVERY_FRACTION                 = 0.5   // deliver 50% of effective gap per cycle
+        private const val TBR_WINDOW_HOURS                      = 0.5   // spread remaining correction over 30 mins
+        private const val IOB_SUFFICIENCY_FACTOR                = 0.8   // IOB covers 80% of correction → stop dosing
         private const val LN2                             = 0.693147
     }
 }
