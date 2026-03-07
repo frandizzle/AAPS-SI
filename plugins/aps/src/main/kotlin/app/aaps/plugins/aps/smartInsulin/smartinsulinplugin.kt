@@ -20,6 +20,7 @@ import app.aaps.core.interfaces.constraints.PluginConstraints
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.iob.GlucoseStatusProvider
+import app.aaps.plugins.aps.openAPSSMB.GlucoseStatusCalculatorSMB
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -73,6 +74,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val iobCobCalculator: IobCobCalculator,
     private val mealOverrideManager: MealOverrideManager,
     private val glucoseStatusProvider: GlucoseStatusProvider,
+    private val glucoseStatusCalculatorSMB: GlucoseStatusCalculatorSMB,
     private val persistenceLayer: PersistenceLayer,
     private val processedTbrEbData: ProcessedTbrEbData,
     private val hardLimits: HardLimits,
@@ -268,6 +270,9 @@ open class SmartInsulinPlugin @Inject constructor(
 
         rxBus.send(EventOpenAPSUpdateGui())
     }
+
+    override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
+        glucoseStatusCalculatorSMB.getGlucoseStatusData(allowOldData)
 
     override fun configuration(): JSONObject =
         JSONObject()
