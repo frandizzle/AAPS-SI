@@ -9,7 +9,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.roundToInt
 
 /**
  * Adaptive aggressiveness learner.
@@ -22,7 +21,7 @@ import kotlin.math.roundToInt
  *   - > 1.0 = more aggressive (bigger SMBs, higher TBR) — when spending too much time high
  *   - < 1.0 = more conservative (smaller SMBs, lower TBR) — when spending too much time low
  *
- * The user-configured [aggressionMax] dial acts as a hard ceiling/floor.
+ * The user-configured aggressionMax dial acts as a hard ceiling/floor.
  * Setting it to 1.0 disables learning entirely (score stays at 1.0).
  *
  * Learning is asymmetric: lows pull the score down faster than highs push it up,

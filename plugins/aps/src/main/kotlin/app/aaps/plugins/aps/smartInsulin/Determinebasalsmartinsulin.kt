@@ -161,14 +161,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val minHeadroom   = (oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05)
                 val iobOk         = iobHeadroom >= minHeadroom
 
-                // IOB sufficiency check: if existing IOB will drop BG by more than
-                // (currentBg - target), it's already enough — don't add more.
-                // iobDrop = how many mmol/mgdl existing IOB will deliver
-                val iobDrop       = currentIob * isfMgdl  // mg/dL drop from existing IOB
+                val iobDrop       = currentIob * isfMgdl  // for reason string display only
                 val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
-                // IOB is sufficient only if our prediction shows BG arriving at or below target
-                // without more insulin. Raw iobDrop math is kept for the reason string only.
-                val iobDrop       = currentIob * isfMgdl
+                // IOB is sufficient if prediction shows BG arriving at or below target without more insulin
                 val iobSufficient = predictedAt60 <= targetBg
 
                 val smbAllowed = microBolusAllowed &&
@@ -239,8 +234,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     )
                 } else ""
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))                rateOut       = tbrRate
-                    durationOut   = if (needsTbr) 30 else 0
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(finalSmb, tbrRate, reboundStr))
+                rateOut       = tbrRate
+                durationOut   = if (needsTbr) 30 else 0
                 tempRequested = needsTbr
                 smbOut        = finalSmb
             }
