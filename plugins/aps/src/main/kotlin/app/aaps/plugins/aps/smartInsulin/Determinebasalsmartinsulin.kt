@@ -62,12 +62,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
         val isMmol       = oapsProfile.out_units == "mmol/L"
-        val unitFactor   = if (isMmol) MMOL_TO_MGDL else 1.0
-        val currentBg    = glucoseStatus.glucose                          // always mg/dL
-        val delta        = glucoseStatus.shortAvgDelta                    // always mg/dL
-        val isfMgdl      = oapsProfile.sens * unitFactor                  // normalise to mg/dL
+        val currentBg    = glucoseStatus.glucose          // mg/dL
+        val delta        = glucoseStatus.shortAvgDelta    // mg/dL
+        val isfMgdl      = oapsProfile.sens               // already mg/dL (getIsfMgdl)
         val profileBasal = oapsProfile.current_basal
-        val targetBg     = oapsProfile.target_bg * unitFactor             // normalise to mg/dL
+        val targetBg     = oapsProfile.target_bg          // already mg/dL
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
         // ── Build prediction curves ──────────────────────────────────────────
