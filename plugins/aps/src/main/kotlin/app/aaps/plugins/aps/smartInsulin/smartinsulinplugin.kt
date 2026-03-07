@@ -311,13 +311,13 @@ open class SmartInsulinPlugin @Inject constructor(
         lastAPSResult              = apsResult
         lastAPSRun                 = now
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
-        rxBus.send(EventAPSCalculationFinished())
-
+        // Append learning status to reason so it's visible in the Loop tab
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
-            aapsLogger.debug(LTag.APS, "SmartInsulin tracker: ${bolusCurveTracker.statusSummary()}")
+            apsResult.reason += " | ${bolusCurveTracker.statusSummary()}"
         }
+
+        aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
         rxBus.send(EventOpenAPSUpdateGui())
     }

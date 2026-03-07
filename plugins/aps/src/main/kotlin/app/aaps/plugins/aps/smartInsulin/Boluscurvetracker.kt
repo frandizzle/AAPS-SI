@@ -78,13 +78,16 @@ class BolusCurveTracker @Inject constructor(
      * Example: "tracking=true mode=Fasting iobAtStart=3.2 iobPeak=3.8 declineSeen=true nadir=6.1 nadirConfirmed=false elapsed=42min"
      */
     fun statusSummary(): String {
-        if (!tracking) return "tracking=false prevIob=%.2f".format(Locale.US, prevIob)
+        if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
-        val nadirStr = if (bgNadir == Double.MAX_VALUE) "none" else "%.1f".format(Locale.US, bgNadir)
-        return "tracking=true mode=${trackMode.label} " +
-            "iobAtStart=%.2f iobPeak=%.2f declineSeen=$iobDeclineSeen ".format(Locale.US, iobAtStart, iobPeak) +
-            "bgAtStart=%.1f nadir=$nadirStr nadirConfirmed=$nadirConfirmed ".format(Locale.US, bgAtStart) +
-            "elapsed=%.0fmin".format(Locale.US, elapsedMin)
+        val nadirStr   = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
+        val phase = when {
+            !iobDeclineSeen -> "waiting_peak"
+            !nadirConfirmed -> "tracking_nadir"
+            else            -> "confirming"
+        }
+        return "tracker=$phase mode=${trackMode.label} " +
+            "peak=%.1fm nadir=$nadirStr elapsed=%.0fm".format(Locale.US, iobPeak, elapsedMin)
     }
 
     fun onLoopCycle(
