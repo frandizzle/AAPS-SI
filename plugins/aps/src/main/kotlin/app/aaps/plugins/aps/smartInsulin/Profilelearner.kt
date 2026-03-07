@@ -24,7 +24,7 @@ import javax.inject.Singleton
  *
  *   new_value = (1 - α) * old_value + α * observed_value
  *
- * where α = [learningRate] * [MealMode.learningWeight]
+ * where α = learningRate * [MealMode.learningWeight]
  *
  * This means FASTING corrections update the profile faster than MEAL boluses,
  * since FASTING has a cleaner signal (no carb absorption competing with insulin).

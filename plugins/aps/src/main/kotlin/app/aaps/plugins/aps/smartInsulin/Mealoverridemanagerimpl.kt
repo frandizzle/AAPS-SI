@@ -38,7 +38,7 @@ class MealOverrideManagerImpl @Inject constructor(
         }
     }
 
-    override val activeIsfMultiplier: Double get() = activeMealMode?.defaultIsfMultiplier ?: 1.0
+    override val activeIsfMultiplier: Double get() = 1.0  // actual multiplier read from prefs in SmartInsulinPlugin
 
     override fun activateOverride(
         mode:         MealMode,
