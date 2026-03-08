@@ -74,7 +74,8 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
         val bg     = lastBg.value
         val target = profile.getTargetMgdl()
         val ic     = profile.getIc()
-        val isf    = profile.getIsfMgdl(caller = "SmartMeal") * isfMultiplierForMode(mode)
+        val modeIsfMmol = modeIsfForMode(mode)
+        val isf    = if (modeIsfMmol > 0.0) modeIsfMmol * 18.0 else profile.getIsfMgdl(caller = "SmartMeal")
         val iob    = iobCobCalculator.calculateIobFromBolus().iob
 
         if (bg < MealOverrideManager.MIN_BG_MGDL) {
@@ -103,12 +104,12 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
         MealMode.FASTING   -> 0
     }
 
-    private fun isfMultiplierForMode(mode: MealMode): Double = when (mode) {
-        MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsfMultiplier)
-        MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsfMultiplier)
-        MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsfMultiplier)
-        MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsfMultiplier)
-        MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsfMultiplier)
+    private fun modeIsfForMode(mode: MealMode): Double = when (mode) {
+        MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+        MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+        MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+        MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+        MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
         MealMode.FASTING   -> 1.0
     }
 
