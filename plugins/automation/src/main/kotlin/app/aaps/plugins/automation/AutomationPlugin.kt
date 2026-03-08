@@ -46,6 +46,7 @@ import app.aaps.plugins.automation.actions.ActionSMBChange
 import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
 import app.aaps.plugins.automation.actions.ActionSmartMeal
+import app.aaps.plugins.automation.actions.ActionSmartMealCancel
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
 import app.aaps.plugins.automation.actions.ActionStopProcessing
 import app.aaps.plugins.automation.actions.ActionStopTempTarget
@@ -396,6 +397,7 @@ class AutomationPlugin @Inject constructor(
             ActionStartTempTarget(injector),
             ActionStopTempTarget(injector),
             ActionSmartMeal(injector),
+            ActionSmartMealCancel(injector),
             ActionNotification(injector),
             ActionAlarm(injector),
             ActionSettingsExport(injector),
