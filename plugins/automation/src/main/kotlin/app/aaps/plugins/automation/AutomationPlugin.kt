@@ -45,6 +45,7 @@ import app.aaps.plugins.automation.actions.ActionRunAutotune
 import app.aaps.plugins.automation.actions.ActionSMBChange
 import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
+import app.aaps.plugins.automation.actions.ActionSmartInsulinReset
 import app.aaps.plugins.automation.actions.ActionSmartMeal
 import app.aaps.plugins.automation.actions.ActionSmartMealCancel
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
@@ -398,6 +399,7 @@ class AutomationPlugin @Inject constructor(
             ActionStopTempTarget(injector),
             ActionSmartMeal(injector),
             ActionSmartMealCancel(injector),
+            ActionSmartInsulinReset(injector),
             ActionNotification(injector),
             ActionAlarm(injector),
             ActionSettingsExport(injector),
