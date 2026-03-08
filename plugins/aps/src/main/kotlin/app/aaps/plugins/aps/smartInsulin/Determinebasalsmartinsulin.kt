@@ -77,7 +77,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         microBolusAllowed:     Boolean,
         inReboundWindow:       Boolean,
         msSinceLastSuspend:    Long,
-        currentTime:           Long
+        currentTime:           Long,
+        isTempTarget:          Boolean,
+        profileTargetMgdl:     Double,         // unmodified profile target — for high temp target SMB suppression
+        dawnWindowStartHour:   Int,
+        dawnWindowEndHour:     Int,
+        dawnSmbReduction:      Double          // fraction 0.1–1.0; 0.5 = 50% of normal SMB
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -92,8 +97,24 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val isfMgdl      = oapsProfile.sens               // already mg/dL (getIsfMgdl)
         val profileBasalRaw = oapsProfile.current_basal
         val profileBasal    = profileBasalRaw * basalMultiplier
-        val targetBg     = oapsProfile.target_bg          // already mg/dL
+        val targetBg     = oapsProfile.target_bg          // already mg/dL (may be temp target)
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
+
+        // ── High temp target → suppress SMBs (matches stock AAPS behaviour) ──
+        val highTempTargetActive = isTempTarget && targetBg > profileTargetMgdl
+
+        // ── Dawn / fasting rise window detection ─────────────────────────────
+        // If fasting mode + time in user-defined window + BG rising → apply SMB reduction
+        val cal = java.util.Calendar.getInstance().also { it.timeInMillis = currentTime }
+        val currentHour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val inDawnWindow = mealMode == MealMode.FASTING && delta > 0 && run {
+            if (dawnWindowStartHour <= dawnWindowEndHour)
+                currentHour in dawnWindowStartHour until dawnWindowEndHour
+            else  // wraps midnight e.g. 22–06
+                currentHour >= dawnWindowStartHour || currentHour < dawnWindowEndHour
+        }
+        // Effective SMB fraction: if dawn window active use dawnSmbReduction, else full 1.0
+        val dawnFraction = if (inDawnWindow) dawnSmbReduction else 1.0
 
         // ci = current deviation from IOB-only prediction (matches AutoISF)
         // bgi = expected BG change from current IOB activity alone
@@ -119,15 +140,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictedAt60 = if (predictedBg.size > 12) predictedBg[12] else predictedBg.lastOrNull() ?: currentBg
 
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
-        // Index 0 = current BG (anchors curve at "now"), then 5-min steps forward
-        // DetermineBasalResult renders starting at i=1, so index 0 is the anchor point
-        // Build prediction list matching AutoISF conventions:
-        //   - 48 points max (4 hours at 5-min intervals) — AAPS graph uses list length to place "now" line
-        //   - Clamp to [39, 401]
-        //   - Trim trailing flat points (min 13 kept) so curve doesn't extend forever at target
-        // Build prediction list capped at 25 points (index 0 + 24 ticks = exactly 2h).
-        // This keeps latestPredictionsTime fixed at 2h ahead regardless of BG level,
-        // so the graph "now" line always sits at 2/3 from the left on a 6h view.
         val rawPrediction: MutableList<Int> = mutableListOf()
         rawPrediction.add(currentBg.coerceIn(39.0, 401.0).toInt())  // index 0 = now
         predictedBg.take(24).forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
@@ -141,9 +153,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label} ")
         sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
+        sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
         sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
         sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
+        if (inDawnWindow) sb.append("dawnWindow(reduction=%.0f%%) ".format(Locale.US, dawnSmbReduction * 100))
+        if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
         sb.append("$tirSummary ")
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
@@ -212,18 +227,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val iobSufficient = predictedAt60 <= targetBg
 
                 // SMB gated purely on predictions — if pred60 is above target, dose.
+                // High temp target (> profile target) suppresses SMBs entirely.
                 // Delta is already baked into the prediction curve, no separate delta gate needed.
                 val smbAllowed = microBolusAllowed &&
+                    !highTempTargetActive &&
                     bgAboveGuard > 0.0 &&
                     predictedAt60 > targetBg &&
                     !iobSufficient
 
-                // Correction based on min of pred30/pred60 gap so we taper as IOB works
+                // Correction based on pred30 gap, scaled by dawn reduction fraction if in dawn window
                 val correctionUnits = if (smbAllowed) {
-                    // Size SMB from pred30 gap — more reliable horizon, responds faster
                     val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     // aggressiveness scales delivery fraction: 1.0=50%, 1.5=75%, 0.5=25%
-                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
+                    // dawnFraction further scales down during dawn/fasting rise window
+                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05

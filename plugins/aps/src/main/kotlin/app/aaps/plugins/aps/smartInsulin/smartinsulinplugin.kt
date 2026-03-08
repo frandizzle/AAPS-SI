@@ -182,11 +182,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
 
         // ── Meal mode — check override first, fall back to auto-detect ────────
-        val mealMode = MealModeDetector.detect(
-            mealData        = mealData,
-            glucoseStatus   = glucoseStatus,
-            overrideManager = mealOverrideManager
-        )
+        val mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
 
         // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
         // Absolute ISF override per meal mode — 0.0 means not set, fall back to profile ISF
@@ -299,6 +295,10 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
         val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
+        val dawnWindowStart   = preferences.get(IntKey.ApsSmartInsulinDawnWindowStartHour)
+        val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
+        val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
+        val profileTargetMgdl = profile.getTargetMgdl()
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMmol > 0.0) modeIsfMmol else null} dosingIsfMgdl=$dosingIsfMgdl learnedProfile=$learnedProfile")
 
@@ -326,7 +326,12 @@ open class SmartInsulinPlugin @Inject constructor(
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
             msSinceLastSuspend    = msSinceLastSuspend,
-            currentTime           = now
+            currentTime           = now,
+            isTempTarget          = isTempTarget,
+            profileTargetMgdl     = profileTargetMgdl,
+            dawnWindowStartHour   = dawnWindowStart,
+            dawnWindowEndHour     = dawnWindowEnd,
+            dawnSmbReduction      = dawnSmbReduction
         )
 
         // Track suspend state for rebound protection
@@ -461,6 +466,9 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowGuardMmol,       title = R.string.smart_insulin_low_guard))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinWarnGuardMmol,      title = R.string.smart_insulin_warn_guard))
             addPreference(AdaptiveUnitPreference(ctx = context, unitKey = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowStartHour,   title = R.string.si_dawn_start_hour_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowEndHour,     title = R.string.si_dawn_end_hour_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDawnSmbReduction,   title = R.string.si_dawn_smb_reduction_title))
             // Per-meal ISF multipliers
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf, title = R.string.si_breakfast_isf_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,     title = R.string.si_lunch_isf_title))

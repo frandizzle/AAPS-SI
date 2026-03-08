@@ -145,6 +145,12 @@
     <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol to dose as if ISF is 1.0 mmol for this meal mode.</string>
     <!-- Max SMB flat cap -->
     <string name="si_max_smb_title">Max SMB (U)</string>
+    <string name="si_dawn_start_hour_title">Dawn window start hour (0-23)</string>
+    <string name="si_dawn_start_hour_summary">SMB reduction starts from this hour (default 3 = 3:00 AM)</string>
+    <string name="si_dawn_end_hour_title">Dawn window end hour (0-23)</string>
+    <string name="si_dawn_end_hour_summary">SMB reduction ends at this hour (default 9 = 9:00 AM)</string>
+    <string name="si_dawn_smb_reduction_title">Dawn window SMB reduction (0.1-1.0)</string>
+    <string name="si_dawn_smb_reduction_summary">Fraction of normal SMB size during fasting rise window. 0.5 = 50% of normal. 1.0 = no reduction.</string>
 
     <string name="increasing_max_basal">Increasing max basal value because setting is lower than your max basal in profile</string>
     <string name="max_basal_multiplier">max basal multiplier</string>
