@@ -32,7 +32,8 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.rx.events.EventAPSCalculationFinished
+import app.aaps.core.interfaces.overview.OverviewData
+import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.utils.DateUtil
@@ -87,7 +88,9 @@ open class SmartInsulinPlugin @Inject constructor(
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
     private val aggressionLearner: AggressionLearner,
-    private val basalLearner: BasalLearner
+    private val basalLearner: BasalLearner,
+    private val calculationWorkflow: CalculationWorkflow,
+    private val overviewData: OverviewData
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -370,7 +373,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
-        rxBus.send(EventAPSCalculationFinished())
+        calculationWorkflow.runOnReceivedPredictions(overviewData)
         rxBus.send(EventOpenAPSUpdateGui())
     }
 
