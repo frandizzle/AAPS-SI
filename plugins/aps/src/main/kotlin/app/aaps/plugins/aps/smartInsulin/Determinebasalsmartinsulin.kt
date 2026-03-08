@@ -153,7 +153,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // Rebound protection: taper back to full operation over REBOUND_TAPER_MINS after a suspend
         // Cancel rebound guard early if BG is still high and rising — suspension clearly didn't cause a drop
-        val reboundCancelled     = inReboundWindow && currentBg > warnGuardMgdl && delta > 0.0
+        val reboundCancelled     = inReboundWindow && (currentBg > warnGuardMgdl && delta > 0.0 || predictedMin > warnGuardMgdl)
         val reboundMins          = if (inReboundWindow && !reboundCancelled) (msSinceLastSuspend / 60_000.0) else 0.0
         val reboundTaperFraction = if (inReboundWindow && !reboundCancelled)
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
@@ -219,11 +219,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 // Correction based on min of pred30/pred60 gap so we taper as IOB works
                 val correctionUnits = if (smbAllowed) {
-                    val pred30Gap    = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    val pred60Gap    = (predictedAt60 - targetBg).coerceAtLeast(0.0)
-                    val effectiveGap = minOf(pred30Gap, pred60Gap)
+                    // Size SMB from pred30 gap — more reliable horizon, responds faster
+                    val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     // aggressiveness scales delivery fraction: 1.0=50%, 1.5=75%, 0.5=25%
-                    (effectiveGap / isfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
+                    (pred30Gap / isfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -237,10 +236,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // TBR: 0.00 U/h when IOB at or above max (let it decay).
                 // Elevated TBR only when there's headroom AND correction needed.
                 val totalCorrection = if (smbAllowed && iobOk) {
-                    val pred30Gap  = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    val pred60Gap  = (predictedAt60 - targetBg).coerceAtLeast(0.0)
-                    // aggressiveness scales how much of the gap we try to cover via TBR
-                    (minOf(pred30Gap, pred60Gap) / isfMgdl) * aggressiveness
+                    // Size TBR correction from pred30 gap — consistent with SMB sizing
+                    val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
+                    (pred30Gap / isfMgdl) * aggressiveness
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
