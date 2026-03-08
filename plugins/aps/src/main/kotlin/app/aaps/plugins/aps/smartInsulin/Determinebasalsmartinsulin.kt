@@ -146,7 +146,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
+        sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
@@ -276,7 +276,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val reboundStr = if (inReboundWindow) {
                     val minsLeft = ((REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0))
                     val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
-                    " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f→%.3f)".format(
+                    " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f->%.3f)".format(
                         Locale.US, reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate
                     )
                 } else ""

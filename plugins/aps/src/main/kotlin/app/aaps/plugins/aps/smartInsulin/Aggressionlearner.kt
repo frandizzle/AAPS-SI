@@ -146,7 +146,7 @@ class AggressionLearner @Inject constructor(
 
         if (score != prevScore) {
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%%".format(
+                             "AggressionLearner: score %.3f->%.3f tir=%.0f%% high=%.0f%% low=%.0f%%".format(
                                  prevScore, score,
                                  stats.inRangePct, stats.highPct, stats.lowPct
                              )
