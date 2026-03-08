@@ -122,7 +122,7 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     companion object {
-        const val REBOUND_GUARD_MS = 90 * 60 * 1000L  // 90 min rebound protection window
+        const val REBOUND_GUARD_MS = 45 * 60 * 1000L  // 90 min rebound protection window
     }
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
