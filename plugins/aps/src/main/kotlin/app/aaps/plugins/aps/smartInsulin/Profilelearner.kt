@@ -203,7 +203,7 @@ class ProfileLearner @Inject constructor(
      * Clears all learned profiles and re-seeds from the current profile DIA and insulin peak.
      * Call this after changing insulin type or if learned values have drifted badly.
      */
-    fun resetProfiles() {
+    override fun resetProfiles() {
         val profile  = profileFunction.getProfile()
         val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
         val peakMins = activePlugin.activeInsulin.peak.toDouble()
