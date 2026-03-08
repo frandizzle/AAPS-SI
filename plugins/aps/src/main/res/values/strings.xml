@@ -128,6 +128,21 @@
     <string name="si_max_tbr_title">Max TBR above basal (U/h)</string>
     <string name="si_aggression_max_title">Aggressiveness ceiling (1.0=off, 1.5=moderate, 2.0=aggressive)</string>
     <string name="si_basal_learning_title">Enable overnight basal learning</string>
+    <!-- ActionSmartMeal -->
+    <string name="smart_meal_action_name">SmartInsulin: Set Meal Mode</string>
+    <string name="smart_meal_action_short">Meal: %1$s</string>
+    <string name="smart_meal_select_mode">Meal type</string>
+    <string name="smart_meal_prebolus">Pre-bolus now (when safe)</string>
+    <string name="si_lowcarb_carbs_g_title">Low Carb default carbs (g)</string>
+    <string name="si_extended_carbs_g_title">Extended meal default carbs (g)</string>
+    <string name="si_mode_window_mins_summary">How long the selected meal mode stays active</string>
+    <string name="si_max_prebolus_summary">Safety cap on automatic pre-bolus dose</string>
+    <string name="si_breakfast_isf_title">Breakfast ISF override (mmol, 0 = use profile)</string>
+    <string name="si_lunch_isf_title">Lunch ISF override (mmol, 0 = use profile)</string>
+    <string name="si_dinner_isf_title">Dinner ISF override (mmol, 0 = use profile)</string>
+    <string name="si_lowcarb_isf_title">Low Carb ISF override (mmol, 0 = use profile)</string>
+    <string name="si_extended_isf_title">Extended meal ISF override (mmol, 0 = use profile)</string>
+    <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol to dose as if ISF is 1.0 mmol for this meal mode.</string>
     <!-- Max SMB flat cap -->
     <string name="si_max_smb_title">Max SMB (U)</string>
 

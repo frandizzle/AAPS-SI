@@ -186,14 +186,18 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
-        val isfMultiplier = when (mealMode) {
-            MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsfMultiplier)
-            MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsfMultiplier)
-            MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsfMultiplier)
-            MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsfMultiplier)
-            MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsfMultiplier)
-            MealMode.FASTING   -> 1.0
+        // Absolute ISF override per meal mode — 0.0 means not set, fall back to profile ISF
+        // When set, this fully replaces profile ISF for both prediction and dosing
+        val modeIsfMmol = when (mealMode) {
+            MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+            MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+            MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+            MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+            MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
+        val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
+        val dosingIsfMgdl = if (modeIsfMmol > 0.0) modeIsfMmol * 18.0 else trueIsfMgdl
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
         mealOverrideManager.onLoopCycle(
@@ -215,7 +219,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = targetBg,
             carb_ratio                      = profile.getIc(),
-            sens                            = profile.getIsfMgdl("SmartInsulinPlugin"),  // true ISF — prediction uses physiological reality
+            sens                            = dosingIsfMgdl,  // meal mode ISF if set, else true profile ISF
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
@@ -284,7 +288,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 minsLastBolus = minsLastBolus,
                 basalOnlyIobU = basalOnlyIob,
                 currentIobU   = currentIob,
-                isfMgdl       = profile.getIsfMgdl("SmartInsulin"),
+                isfMgdl       = trueIsfMgdl,
                 profileBasalU = profile.getBasal()
             )
         }
@@ -293,7 +297,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
         val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode isfMultiplier=$isfMultiplier learnedProfile=$learnedProfile")
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMmol > 0.0) modeIsfMmol else null} dosingIsfMgdl=$dosingIsfMgdl learnedProfile=$learnedProfile")
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
@@ -315,7 +319,7 @@ open class SmartInsulinPlugin @Inject constructor(
             aggressiveness        = aggressiveness,
             tirSummary            = tirSummary,
             basalMultiplier       = basalMultiplier,
-            dosingIsfMgdl         = profile.getIsfMgdl("SmartInsulin") * isfMultiplier,
+            dosingIsfMgdl         = dosingIsfMgdl,
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
             msSinceLastSuspend    = msSinceLastSuspend,
@@ -454,11 +458,11 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinWarnGuardMmol,      title = R.string.smart_insulin_warn_guard))
             addPreference(AdaptiveUnitPreference(ctx = context, unitKey = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
             // Per-meal ISF multipliers
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsfMultiplier, title = R.string.si_breakfast_isf_mult_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsfMultiplier,     title = R.string.si_lunch_isf_mult_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDinnerIsfMultiplier,    title = R.string.si_dinner_isf_mult_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowCarbIsfMultiplier,   title = R.string.si_lowcarb_isf_mult_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinExtendedIsfMultiplier,  title = R.string.si_extended_isf_mult_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf, title = R.string.si_breakfast_isf_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,     title = R.string.si_lunch_isf_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDinnerIsf,    title = R.string.si_dinner_isf_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowCarbIsf,   title = R.string.si_lowcarb_isf_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinExtendedIsf,  title = R.string.si_extended_isf_title))
             // Per-meal carb defaults
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinBreakfastCarbsG, title = R.string.si_breakfast_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinLunchCarbsG,     title = R.string.si_lunch_carbs_g_title))
