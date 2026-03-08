@@ -17,6 +17,7 @@ import app.aaps.plugins.automation.actions.ActionRunAutotune
 import app.aaps.plugins.automation.actions.ActionSMBChange
 import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
+import app.aaps.plugins.automation.actions.ActionSmartInsulinReset
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
 import app.aaps.plugins.automation.actions.ActionStopProcessing
 import app.aaps.plugins.automation.actions.ActionStopTempTarget
@@ -115,6 +116,7 @@ abstract class AutomationModule {
     @ContributesAndroidInjector abstract fun actionProfileSwitchInjector(): ActionProfileSwitch
     @ContributesAndroidInjector abstract fun actionSmartMealInjector(): ActionSmartMeal
     @ContributesAndroidInjector abstract fun actionSmartMealCancelInjector(): ActionSmartMealCancel
+    @ContributesAndroidInjector abstract fun actionSmartInsulinReset(): ActionSmartInsulinReset
     @ContributesAndroidInjector abstract fun actionProfileSwitchPercentInjector(): ActionProfileSwitchPercent
     @ContributesAndroidInjector abstract fun actionRunAutotuneInjector(): ActionRunAutotune
     @ContributesAndroidInjector abstract fun actionSendSMSInjector(): ActionSendSMS
