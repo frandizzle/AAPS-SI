@@ -77,7 +77,7 @@ class BolusCurveTracker @Inject constructor(
      * Human-readable one-liner for logcat — shows tracking state each loop cycle.
      * Example: "tracking=true mode=Fasting iobAtStart=3.2 iobPeak=3.8 declineSeen=true nadir=6.1 nadirConfirmed=false elapsed=42min"
      */
-    fun statusSummary(): String {
+    fun statusSummary(currentMode: MealMode? = null): String {
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
         val nadirStr   = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
@@ -86,7 +86,12 @@ class BolusCurveTracker @Inject constructor(
             !nadirConfirmed -> "tracking_nadir"
             else            -> "confirming"
         }
-        return "tracker=$phase mode=${trackMode.label} " +
+        // Only show tracked mode if it matches current mode — otherwise label as historical
+        val modeStr = if (currentMode == null || currentMode == trackMode)
+            trackMode.label
+        else
+            "${trackMode.label}(historical)"
+        return "tracker=$phase mode=$modeStr " +
             "peak=%.1fm nadir=$nadirStr elapsed=%.0fm".format(Locale.US, iobPeak, elapsedMin)
     }
 

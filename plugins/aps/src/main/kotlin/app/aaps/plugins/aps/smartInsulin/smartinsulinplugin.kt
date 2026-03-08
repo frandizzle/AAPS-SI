@@ -353,7 +353,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Append learning status to reason so it's visible in the Loop tab
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
-            apsResult.reason += " | ${bolusCurveTracker.statusSummary()}"
+            apsResult.reason += " | ${bolusCurveTracker.statusSummary(mealMode)}"
         }
 
         // Append mode time remaining if an override is active

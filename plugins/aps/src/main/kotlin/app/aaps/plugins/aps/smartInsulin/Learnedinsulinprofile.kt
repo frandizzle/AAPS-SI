@@ -77,13 +77,28 @@ data class LearnedInsulinProfile(
          * MEAL      — peak slightly later due to competing carb absorption
          * EXTENDED  — longest DIA, most uncertainty
          */
-        fun defaultFor(mode: MealMode): LearnedInsulinProfile = when (mode) {
-            MealMode.FASTING   -> LearnedInsulinProfile(mode, peakMinutes = 65.0, diaMinutes = 240.0, confidence = 0.3, sampleCount = 0, lastUpdatedMs = 0L)
-            MealMode.LOW_CARB  -> LearnedInsulinProfile(mode, peakMinutes = 70.0, diaMinutes = 250.0, confidence = 0.2, sampleCount = 0, lastUpdatedMs = 0L)
-            MealMode.BREAKFAST -> LearnedInsulinProfile(mode, peakMinutes = 75.0, diaMinutes = 270.0, confidence = 0.2, sampleCount = 0, lastUpdatedMs = 0L)
-            MealMode.LUNCH     -> LearnedInsulinProfile(mode, peakMinutes = 75.0, diaMinutes = 270.0, confidence = 0.2, sampleCount = 0, lastUpdatedMs = 0L)
-            MealMode.DINNER    -> LearnedInsulinProfile(mode, peakMinutes = 80.0, diaMinutes = 280.0, confidence = 0.2, sampleCount = 0, lastUpdatedMs = 0L)
-            MealMode.EXTENDED  -> LearnedInsulinProfile(mode, peakMinutes = 90.0, diaMinutes = 300.0, confidence = 0.1, sampleCount = 0, lastUpdatedMs = 0L)
+        const val FALLBACK_PEAK_MINS = 75.0   // used if no profile available at seed time
+        const val FALLBACK_DIA_MINS  = 300.0  // used if no profile available at seed time
+
+        /**
+         * Seed defaults from the actual profile DIA/peak rather than hardcoded values.
+         * Meal modes get a small upward offset on DIA since carb absorption extends apparent action.
+         */
+        fun defaultFor(mode: MealMode, profilePeakMins: Double = FALLBACK_PEAK_MINS, profileDiaMins: Double = FALLBACK_DIA_MINS): LearnedInsulinProfile {
+            val (peak, dia) = when (mode) {
+                MealMode.FASTING   -> Pair(profilePeakMins,        profileDiaMins)
+                MealMode.LOW_CARB  -> Pair(profilePeakMins,        profileDiaMins + 30.0)
+                MealMode.BREAKFAST -> Pair(profilePeakMins + 5.0,  profileDiaMins + 60.0)
+                MealMode.LUNCH     -> Pair(profilePeakMins + 5.0,  profileDiaMins + 60.0)
+                MealMode.DINNER    -> Pair(profilePeakMins + 10.0, profileDiaMins + 90.0)
+                MealMode.EXTENDED  -> Pair(profilePeakMins + 15.0, profileDiaMins + 120.0)
+            }
+            val confidence = when (mode) {
+                MealMode.FASTING -> 0.3
+                else             -> 0.2
+            }
+            return LearnedInsulinProfile(mode, peakMinutes = peak, diaMinutes = dia,
+                                         confidence = confidence, sampleCount = 0, lastUpdatedMs = 0L)
         }
 
         /**
