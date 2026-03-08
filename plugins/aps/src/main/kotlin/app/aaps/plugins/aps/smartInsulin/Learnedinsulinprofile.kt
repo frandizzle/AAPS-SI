@@ -85,19 +85,11 @@ data class LearnedInsulinProfile(
          * Meal modes get a small upward offset on DIA since carb absorption extends apparent action.
          */
         fun defaultFor(mode: MealMode, profilePeakMins: Double = FALLBACK_PEAK_MINS, profileDiaMins: Double = FALLBACK_DIA_MINS): LearnedInsulinProfile {
-            val (peak, dia) = when (mode) {
-                MealMode.FASTING   -> Pair(profilePeakMins,        profileDiaMins)
-                MealMode.LOW_CARB  -> Pair(profilePeakMins,        profileDiaMins + 30.0)
-                MealMode.BREAKFAST -> Pair(profilePeakMins + 5.0,  profileDiaMins + 60.0)
-                MealMode.LUNCH     -> Pair(profilePeakMins + 5.0,  profileDiaMins + 60.0)
-                MealMode.DINNER    -> Pair(profilePeakMins + 10.0, profileDiaMins + 90.0)
-                MealMode.EXTENDED  -> Pair(profilePeakMins + 15.0, profileDiaMins + 120.0)
-            }
             val confidence = when (mode) {
                 MealMode.FASTING -> 0.3
                 else             -> 0.2
             }
-            return LearnedInsulinProfile(mode, peakMinutes = peak, diaMinutes = dia,
+            return LearnedInsulinProfile(mode, peakMinutes = profilePeakMins, diaMinutes = profileDiaMins,
                                          confidence = confidence, sampleCount = 0, lastUpdatedMs = 0L)
         }
 
