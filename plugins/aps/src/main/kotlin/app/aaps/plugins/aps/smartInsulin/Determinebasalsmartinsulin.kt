@@ -151,11 +151,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
         val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
 
-        // Rebound protection: taper back to full operation over REBOUND_TAPER_MINS after a suspend
-        // Cancel rebound guard early if BG is still high and rising — suspension clearly didn't cause a drop
-        val reboundCancelled     = inReboundWindow && (currentBg > warnGuardMgdl && delta > 0.0 || predictedMin > warnGuardMgdl)
-        val reboundMins          = if (inReboundWindow && !reboundCancelled) (msSinceLastSuspend / 60_000.0) else 0.0
-        val reboundTaperFraction = if (inReboundWindow && !reboundCancelled)
+        // Rebound protection: only active if BG actually went under 4.7 mmol during a suspend
+        // (inReboundWindow is false if BG never crossed the threshold — see SmartInsulinPlugin)
+        val reboundCancelled     = false  // cancellation now handled upstream via bgWentLowDuringSuspend
+        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
+        val reboundTaperFraction = if (inReboundWindow)
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
         else 1.0  // 1.0 = full normal dosing
 

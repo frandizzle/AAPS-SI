@@ -107,11 +107,15 @@ open class SmartInsulinPlugin @Inject constructor(
     override var lastAPSResult: APSResult? = null
 
     // ── Suspend / rebound tracking ────────────────────────────────────────────
-    // Tracks the last time a SUSPEND or CAUTION zone was active so the NORMAL
-    // branch can apply graduated rebound protection after a low event.
+    // Rebound protection only activates if BG actually went under the low threshold
+    // during a suspend. A precautionary suspend that never caused a real low does
+    // NOT trigger the rebound window.
     var lastSuspendMs: Long = 0L
+    var bgWentLowDuringSuspend: Boolean = false          // true if BG crossed < 4.7 mmol during suspend
     val msSinceLastSuspend: Long get() = System.currentTimeMillis() - lastSuspendMs
-    val inReboundWindow: Boolean get() = lastSuspendMs > 0L && msSinceLastSuspend < REBOUND_GUARD_MS
+    val inReboundWindow: Boolean get() = lastSuspendMs > 0L &&
+        bgWentLowDuringSuspend &&
+        msSinceLastSuspend < REBOUND_GUARD_MS
 
     companion object {
         const val REBOUND_GUARD_MS = 90 * 60 * 1000L  // 90 min rebound protection window
@@ -318,10 +322,22 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Track suspend state for rebound protection
+        // Only arm the rebound window if BG actually goes under 4.7 mmol (84.6 mg/dL) during the suspend
         val reason = apsResult.reason
-        if (reason.contains("SUSPEND") || reason.contains("CAUTION") || reason.contains("LGS_SUSPEND")) {
-            lastSuspendMs = now
-            aapsLogger.debug(LTag.APS, "SmartInsulin: suspend recorded at $now")
+        val isSuspending = reason.contains("SUSPEND") || reason.contains("CAUTION") || reason.contains("LGS_SUSPEND")
+        val REBOUND_LOW_THRESHOLD_MGDL = 4.7 * 18.0  // 84.6 mg/dL
+        if (isSuspending) {
+            if (lastSuspendMs == 0L) lastSuspendMs = now  // record start of suspend period
+            if (glucoseStatus.glucose < REBOUND_LOW_THRESHOLD_MGDL) {
+                bgWentLowDuringSuspend = true             // BG actually crossed the threshold
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low during suspend, rebound window armed")
+            }
+        } else {
+            // Exiting suspend — reset for next time once rebound window expires
+            if (!inReboundWindow) {
+                lastSuspendMs = 0L
+                bgWentLowDuringSuspend = false
+            }
         }
 
         apsResult.inputConstraints = inputConstraints
