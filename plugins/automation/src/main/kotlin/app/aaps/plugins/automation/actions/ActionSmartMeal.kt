@@ -56,7 +56,7 @@ class ActionSmartMeal(injector: HasAndroidInjector) : Action(injector) {
         mealOverrideManager.activateOverride(
             mode         = mode,
             doseU        = doseU,
-            carbsG       = 0,
+            carbsG       = if (wantPrebolus) carbsForMode(mode) else 0,
             modeWindowMs = modeWindowMs
         )
 
