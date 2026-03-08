@@ -148,7 +148,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label} ")
         sb.append("BG=${fmt(currentBg)} Δ=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
-        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(×%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
+        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
         sb.append("aggr=%.2f $tirSummary ".format(Locale.US, aggressiveness))
         // ── Decision: collect into local vars, call with() exactly once ──────

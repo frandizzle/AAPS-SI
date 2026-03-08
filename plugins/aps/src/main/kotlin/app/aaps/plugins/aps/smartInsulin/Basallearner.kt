@@ -91,7 +91,7 @@ class BasalLearner @Inject constructor(
         get() = multiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
 
     val reasonSummary: String
-        get() = "basal×%.2f".format(Locale.US, multiplierClamped)
+        get() = "basal_x%.2f".format(Locale.US, multiplierClamped)
 
     /**
      * @param bgMgdl         Current BG mg/dL
