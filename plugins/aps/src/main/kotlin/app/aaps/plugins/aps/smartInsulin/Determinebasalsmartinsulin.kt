@@ -216,9 +216,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // IOB is sufficient if prediction shows BG arriving at or below target without more insulin
                 val iobSufficient = predictedAt60 <= targetBg
 
+                // SMB gated purely on predictions — if pred60 is above target, dose.
+                // Delta is already baked into the prediction curve, no separate delta gate needed.
                 val smbAllowed = microBolusAllowed &&
                     bgAboveGuard > 0.0 &&
-                    delta >= -DELTA_SMB_CUTOFF_MGDL_PER_5MIN &&
                     predictedAt60 > targetBg &&
                     !iobSufficient
 
@@ -340,7 +341,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     companion object {
         private const val MMOL_TO_MGDL                         = 18.0
-        private const val DELTA_SMB_CUTOFF_MGDL_PER_5MIN       = 1.0   // don't SMB if falling faster than this
         private const val DELTA_RISING_THRESHOLD_MGDL_PER_5MIN  = 0.5   // delta above this = "rising" trigger
         private const val FALLING_FAST_MGDL_PER_5MIN            = 2.0   // suspend early if falling faster than this
         private const val SMB_DELIVERY_FRACTION                  = 0.5   // deliver 50% of effective gap per cycle
