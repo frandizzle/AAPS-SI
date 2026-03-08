@@ -254,11 +254,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         // Record current BG zone for aggression learning
-        val highThreshMgdl = 180.0
+        // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
+        // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
-            lowThreshMgdl   = lowGuardMmol * 18.0,
-            highThreshMgdl  = highThreshMgdl
+            lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
+            highThreshMgdl  = 180.0   // 10.0 mmol — clinical TIR high threshold
         )
         val aggressiveness = aggressionLearner.aggressiveness
         val tirSummary     = aggressionLearner.tirSummary
