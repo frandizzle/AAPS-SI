@@ -124,20 +124,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         //   - 48 points max (4 hours at 5-min intervals) — AAPS graph uses list length to place "now" line
         //   - Clamp to [39, 401]
         //   - Trim trailing flat points (min 13 kept) so curve doesn't extend forever at target
-        // List is already 5-min ticks — just prepend index 0 (now) and use all points
+        // Build prediction list capped at 25 points (index 0 + 24 ticks = exactly 2h).
+        // This keeps latestPredictionsTime fixed at 2h ahead regardless of BG level,
+        // so the graph "now" line always sits at 2/3 from the left on a 6h view.
         val rawPrediction: MutableList<Int> = mutableListOf()
         rawPrediction.add(currentBg.coerceIn(39.0, 401.0).toInt())  // index 0 = now
-        predictedBg.forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
-        // Only trim trailing flat points that are ABOVE target — a flat tail at/below
-        // target (curve floored at 39) is meaningful and must not be trimmed, otherwise
-        // latestPredictionsTime ends up too short and the graph "now" line sits too far right.
-        val targetForTrim = targetBg.coerceIn(39.0, 401.0).toInt()
-        for (i in rawPrediction.size - 1 downTo 25) {  // 25 = index 0 + 24 ticks = 2h minimum
-            val v = rawPrediction[i]
-            if (v <= targetForTrim) break          // stop trimming once we're at/below target
-            if (rawPrediction[i - 1] != v) break   // stop trimming once values differ
-            else rawPrediction.removeAt(rawPrediction.lastIndex)
-        }
+        predictedBg.take(24).forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         val iobPrediction: List<Int> = rawPrediction
 
         // ── Reason string ────────────────────────────────────────────────────
@@ -160,8 +152,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
 
         // Rebound protection: taper back to full operation over REBOUND_TAPER_MINS after a suspend
-        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
-        val reboundTaperFraction = if (inReboundWindow)
+        // Cancel rebound guard early if BG is still high and rising — suspension clearly didn't cause a drop
+        val reboundCancelled     = inReboundWindow && currentBg > warnGuardMgdl && delta > 0.0
+        val reboundMins          = if (inReboundWindow && !reboundCancelled) (msSinceLastSuspend / 60_000.0) else 0.0
+        val reboundTaperFraction = if (inReboundWindow && !reboundCancelled)
             (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
         else 1.0  // 1.0 = full normal dosing
 
@@ -275,7 +269,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 }
 
                 // Rebound state — always shown when active regardless of trigger
-                val reboundStr = if (inReboundWindow) {
+                val reboundStr = if (reboundCancelled) {
+                    "reboundCancelled(BG=${fmt(currentBg)} rising)"
+                } else if (inReboundWindow) {
                     val minsLeft = ((REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0))
                     val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
                     " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f->%.3f)".format(
