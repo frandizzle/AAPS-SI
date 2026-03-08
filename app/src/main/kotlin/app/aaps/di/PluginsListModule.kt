@@ -268,6 +268,10 @@ abstract class PluginsListModule {
     abstract fun bindMealOverrideManager(impl: MealOverrideManagerImpl): MealOverrideManager
 
     @Binds
+    @Singleton
+    abstract fun bindSmartInsulinLearner(impl: ProfileLearner): SmartInsulinLearner
+
+    @Binds
     @AllConfigs
     @IntoMap
     @IntKey(240)

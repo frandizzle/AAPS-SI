@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import java.util.Locale
@@ -48,7 +49,7 @@ class ProfileLearner @Inject constructor(
     private val preferences:     Preferences,
     private val profileFunction: ProfileFunction,
     private val activePlugin:    ActivePlugin
-) {
+) : SmartInsulinLearner {
 
     // ── In-memory cache of learned profiles ──────────────────────────────────
     private val profiles: MutableMap<MealMode, LearnedInsulinProfile> = mutableMapOf()
