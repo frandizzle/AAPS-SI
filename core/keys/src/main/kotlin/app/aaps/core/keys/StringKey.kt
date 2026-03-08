@@ -59,6 +59,14 @@ enum class StringKey(
     PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
     PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
 
+    // ── Additions to StringKey.kt ────────────────────────────────────────────────
+//
+// Add these entries to the existing StringKey enum in:
+//   core/keys/src/main/kotlin/app/aaps/core/keys/StringKey.kt
+//
+// Paste before the closing } of the enum:
+
+    // SmartInsulin — learned insulin profiles (JSON, not user-visible)
     ApsSmartInsulinProfileFasting(
         "si_profile_fasting",
         defaultValue          = "",
@@ -107,6 +115,25 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — BolusCurveTracker in-progress state (JSON)
+    // Survives AAPS restarts so mid-bolus tracking is not lost
+    ApsSmartInsulinOverrideState(
+        "si_override_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = false
+    ),
+    ApsSmartInsulinTrackerState(
+        "si_tracker_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = false  // transient — no value exporting mid-track
+    ),
+    // SmartInsulin — AggressionLearner rolling TIR and score state (JSON)
     ApsSmartInsulinAggressionState(
         "si_aggression_state",
         defaultValue          = "",
@@ -115,14 +142,7 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
-    ApsSmartInsulinTrackerState(
-        "si_tracker_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
-        showInPumpControlMode = false,
-        exportable            = false
-    ),
+    // SmartInsulin — BasalLearner multiplier and sample state (JSON)
     ApsSmartInsulinBasalState(
         "si_basal_state",
         defaultValue          = "",
