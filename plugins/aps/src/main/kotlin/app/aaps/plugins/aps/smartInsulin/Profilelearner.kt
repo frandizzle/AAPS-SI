@@ -198,6 +198,23 @@ class ProfileLearner @Inject constructor(
         }
     }
 
+    /**
+     * Clears all learned profiles and re-seeds from the current profile DIA and insulin peak.
+     * Call this after changing insulin type or if learned values have drifted badly.
+     */
+    fun resetProfiles() {
+        val profile  = profileFunction.getProfile()
+        val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
+        val peakMins = activePlugin.activeInsulin.peak.toDouble()
+        aapsLogger.debug(LTag.APS,
+                         "ProfileLearner: resetting all modes — seeding peak=${peakMins}m dia=${diaMins}m from current profile/insulin")
+        MealMode.entries.forEach { mode ->
+            val seeded = LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
+            profiles[mode] = seeded
+            saveProfile(seeded)
+        }
+    }
+
     private fun saveProfile(profile: LearnedInsulinProfile) {
         try {
             preferences.put(prefKeyFor(profile.mode), profile.toJson().toString())
