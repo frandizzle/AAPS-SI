@@ -370,6 +370,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
+        rxBus.send(EventAPSCalculationFinished())
         rxBus.send(EventOpenAPSUpdateGui())
     }
 
