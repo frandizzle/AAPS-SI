@@ -150,7 +150,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
-        sb.append("aggr=%.2f $tirSummary ".format(Locale.US, aggressiveness))
+        sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
+        sb.append("$tirSummary ")
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
@@ -281,7 +282,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     )
                 } else ""
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger smb=%.3f tbr=%.3f%s".format(Locale.US, finalSmb, tbrRate, reboundStr))
+                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger ".format())
+                sb.append("smb=%.3f tbr=%.3f%s".format(Locale.US, finalSmb, tbrRate, reboundStr))
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
