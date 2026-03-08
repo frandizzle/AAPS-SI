@@ -16,6 +16,9 @@ interface MealOverrideManager {
     /** ISF multiplier for current loop cycle — 1.0 if no override active */
     val activeIsfMultiplier: Double
 
+    /** Milliseconds remaining in the active mode window, or 0 if no override active */
+    val modeTimeRemainingMs: Long
+
     fun activateOverride(
         mode:         MealMode,
         doseU:        Double?,

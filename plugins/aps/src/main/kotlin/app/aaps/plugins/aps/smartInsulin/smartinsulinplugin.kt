@@ -356,6 +356,13 @@ open class SmartInsulinPlugin @Inject constructor(
             apsResult.reason += " | ${bolusCurveTracker.statusSummary()}"
         }
 
+        // Append mode time remaining if an override is active
+        val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
+        if (modeRemainingMs > 0L) {
+            val modeRemainingMins = modeRemainingMs / 60_000
+            apsResult.reason += " | Time left in ${mealMode.label} mode: ${modeRemainingMins}min"
+        }
+
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
         rxBus.send(EventOpenAPSUpdateGui())

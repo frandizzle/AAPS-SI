@@ -40,6 +40,11 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val activeIsfMultiplier: Double get() = 1.0  // actual multiplier read from prefs in SmartInsulinPlugin
 
+    override val modeTimeRemainingMs: Long get() {
+        val s = _state ?: return 0L
+        return (s.modeExpiryMs - System.currentTimeMillis()).coerceAtLeast(0L)
+    }
+
     override fun activateOverride(
         mode:         MealMode,
         doseU:        Double?,
