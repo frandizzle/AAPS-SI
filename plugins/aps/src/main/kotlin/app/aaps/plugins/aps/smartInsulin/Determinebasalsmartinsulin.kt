@@ -73,6 +73,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         aggressiveness:        Double,
         tirSummary:            String,
         basalMultiplier:       Double,
+        dosingIsfMgdl:         Double,         // ISF × mode multiplier — used ONLY for dose sizing, not prediction
         microBolusAllowed:     Boolean,
         inReboundWindow:       Boolean,
         msSinceLastSuspend:    Long,
@@ -140,7 +141,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label} ")
         sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
         sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
-        sb.append("ISF=${fmt(isfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
+        sb.append("ISF=${fmt(isfMgdl)}(dosing=${fmt(dosingIsfMgdl)}) basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
         sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
         sb.append("$tirSummary ")
@@ -222,7 +223,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     // Size SMB from pred30 gap — more reliable horizon, responds faster
                     val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     // aggressiveness scales delivery fraction: 1.0=50%, 1.5=75%, 0.5=25%
-                    (pred30Gap / isfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
+                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9)
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -238,7 +239,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val totalCorrection = if (smbAllowed && iobOk) {
                     // Size TBR correction from pred30 gap — consistent with SMB sizing
                     val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    (pred30Gap / isfMgdl) * aggressiveness
+                    (pred30Gap / dosingIsfMgdl) * aggressiveness
                 } else 0.0
                 val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 

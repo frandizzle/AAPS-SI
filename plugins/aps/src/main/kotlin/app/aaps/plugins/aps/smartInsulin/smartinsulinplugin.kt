@@ -215,7 +215,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = targetBg,
             carb_ratio                      = profile.getIc(),
-            sens                            = profile.getIsfMgdl("SmartInsulinPlugin") * isfMultiplier,
+            sens                            = profile.getIsfMgdl("SmartInsulinPlugin"),  // true ISF — prediction uses physiological reality
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
@@ -284,7 +284,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 minsLastBolus = minsLastBolus,
                 basalOnlyIobU = basalOnlyIob,
                 currentIobU   = currentIob,
-                isfMgdl       = profile.getIsfMgdl("SmartInsulin") * isfMultiplier,
+                isfMgdl       = profile.getIsfMgdl("SmartInsulin"),
                 profileBasalU = profile.getBasal()
             )
         }
@@ -315,6 +315,7 @@ open class SmartInsulinPlugin @Inject constructor(
             aggressiveness        = aggressiveness,
             tirSummary            = tirSummary,
             basalMultiplier       = basalMultiplier,
+            dosingIsfMgdl         = profile.getIsfMgdl("SmartInsulin") * isfMultiplier,
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
             msSinceLastSuspend    = msSinceLastSuspend,
