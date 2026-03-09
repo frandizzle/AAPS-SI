@@ -179,6 +179,16 @@ class AggressionLearner @Inject constructor(
 
     // ── Persistence ───────────────────────────────────────────────────────────
 
+    // ── Reset ─────────────────────────────────────────────────────────────────
+
+    fun reset() {
+        samples.clear()
+        score        = 1.0
+        lastUpdateMs = 0L
+        preferences.put(StringKey.ApsSmartInsulinAggressionState, "")
+        aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
+    }
+
     private fun saveState() {
         try {
             val arr = JSONArray()

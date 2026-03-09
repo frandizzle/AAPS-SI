@@ -318,6 +318,19 @@ class CircadianLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
 
+    fun resetBasal() {
+        basalState = CircadianState()
+        persist()
+        aapsLogger.debug(LTag.APS, "CircadianLearner basal state reset")
+    }
+
+    fun resetAggr() {
+        aggrState = CircadianState()
+        bgHistory.clear()
+        persist()
+        aapsLogger.debug(LTag.APS, "CircadianLearner aggr state reset")
+    }
+
     // ── Status summary for tab UI ─────────────────────────────────────────────
 
     fun statusSummary(hour: Int = currentHour()): String =

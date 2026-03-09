@@ -56,7 +56,7 @@ import app.aaps.core.validators.preferences.AdaptiveDoublePreference
 import app.aaps.core.validators.preferences.AdaptiveUnitPreference
 import app.aaps.core.validators.preferences.AdaptiveIntPreference
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
-import app.aaps.plugins.aps.OpenAPSFragment
+import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
@@ -96,7 +96,7 @@ open class SmartInsulinPlugin @Inject constructor(
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
-        .fragmentClass(OpenAPSFragment::class.java.name)
+        .fragmentClass(SmartInsulinFragment::class.java.name)
         .pluginIcon(app.aaps.core.ui.R.drawable.ic_generic_icon)
         .pluginName(R.string.smart_insulin)
         .shortName(R.string.smart_insulin_short)
@@ -125,6 +125,72 @@ open class SmartInsulinPlugin @Inject constructor(
 
     companion object {
         const val REBOUND_GUARD_MS = 90 * 60 * 1000L  // 90 min rebound protection window
+    }
+
+    // ── Reset all learners ────────────────────────────────────────────────────
+
+    fun resetAllLearners() {
+        aggressionLearner.reset()
+        basalLearner.reset()
+        circadianLearner.reset()
+        profileLearner.resetProfiles()
+        bgWentLow          = false
+        previousBgMgdl     = 0.0
+        reboundWindowStartMs = 0L
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
+    }
+
+    fun resetAggression() {
+        aggressionLearner.reset()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: aggression reset")
+    }
+
+    fun resetBasal() {
+        basalLearner.reset()
+        circadianLearner.resetBasal()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: basal learners reset")
+    }
+
+    fun resetCircadian() {
+        circadianLearner.reset()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: circadian reset")
+    }
+
+    fun resetProfiles() {
+        profileLearner.resetProfiles()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: profiles reset")
+    }
+
+    // ── Status summary for tab UI ─────────────────────────────────────────────
+
+    fun statusSummary(): String {
+        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return buildString {
+            appendLine("=== SmartInsulin Learner Status ===")
+            appendLine()
+            appendLine("⏰ Current hour: $hour:00")
+            appendLine()
+            appendLine("📊 Aggressiveness")
+            appendLine("  Score:  ${"%.3f".format(aggressionLearner.aggressiveness)}")
+            appendLine("  ${aggressionLearner.tirSummary}")
+            appendLine()
+            appendLine("🌙 Circadian (h=$hour)")
+            appendLine("  ISF mult:   ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
+            appendLine("  Basal mult: ${"%.3f".format(circadianLearner.basalMultiplier(hour))}")
+            appendLine("  Aggr ceil:  ${"%.3f".format(circadianLearner.aggrCeiling(hour))}")
+            appendLine()
+            appendLine("💉 Basal multiplier: ${"%.3f".format(basalLearner.multiplierClamped)}")
+            appendLine()
+            appendLine("🔄 Rebound")
+            appendLine("  Active: $inReboundWindow")
+            if (inReboundWindow) appendLine("  Elapsed: ${msSinceLastSuspend / 60_000}min")
+            appendLine()
+            appendLine("📈 Profiles")
+            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
+                val p = profileLearner.getProfile(mode)
+                appendLine("  ${mode.label}: peak=${p.peakMinutes.toInt()}m dia=${p.diaMinutes.toInt()}m n=${p.sampleCount}")
+            }
+        }.trimEnd()
     }
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {

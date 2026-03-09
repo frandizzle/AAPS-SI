@@ -170,6 +170,16 @@ class BasalLearner @Inject constructor(
                              ))
     }
 
+    // ── Reset ─────────────────────────────────────────────────────────────────
+
+    fun reset() {
+        window.clear()
+        multiplier  = 1.0
+        lastLearnMs = 0L
+        preferences.put(StringKey.ApsSmartInsulinBasalState, "")
+        aapsLogger.debug(LTag.APS, "BasalLearner: reset to 1.0")
+    }
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
     private fun pruneWindow(nowMs: Long) {
