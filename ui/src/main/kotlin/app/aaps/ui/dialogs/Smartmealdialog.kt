@@ -228,10 +228,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         preferences.put(key, isfValue)
                     }
 
-                    // Activate the meal mode override
+                    // Activate the meal mode override — doseU=null because we deliver
+                    // the pre-bolus directly below, not via onLoopCycle()
                     mealOverrideManager.activateOverride(
                         mode         = selectedMode,
-                        doseU        = if (prebolusAfterConstraints > 0.0) prebolusAfterConstraints else null,
+                        doseU        = null,
                         carbsG       = 0,
                         modeWindowMs = durationMs
                     )
