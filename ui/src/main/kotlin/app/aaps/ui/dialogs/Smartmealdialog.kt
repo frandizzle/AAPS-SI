@@ -172,7 +172,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         }
 
         // ── OK / Cancel ───────────────────────────────────────────────────────
-        binding.okcancel.ok.setOnClickListener { if (submit()) dismiss() }
+        binding.okcancel.ok.setOnClickListener { submit() }
         binding.okcancel.cancel.setOnClickListener { dismiss() }
     }
 
@@ -255,10 +255,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         })
                     }
                     ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins))
+                    dismiss()  // dismiss only after user confirms
                 }
             )
         }
-        return true
+        return false  // never auto-dismiss — confirmation dialog handles it
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
