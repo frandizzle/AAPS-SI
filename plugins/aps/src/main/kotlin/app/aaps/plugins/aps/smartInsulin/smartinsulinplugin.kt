@@ -113,11 +113,11 @@ open class SmartInsulinPlugin @Inject constructor(
     // Rebound protection only activates if BG actually went under the low threshold
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
-    var lastSuspendMs: Long = 0L
     var bgWentLow: Boolean = false               // true once BG crossed below lowGuardMmol during suspend
     var previousBgMgdl: Double = 0.0             // BG from previous loop cycle for crossing detection
-    val msSinceLastSuspend: Long get() = System.currentTimeMillis() - lastSuspendMs
-    val inReboundWindow: Boolean get() = lastSuspendMs > 0L &&
+    var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
+    val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
+    val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
         bgWentLow &&
         msSinceLastSuspend < REBOUND_GUARD_MS
 
@@ -318,19 +318,21 @@ open class SmartInsulinPlugin @Inject constructor(
         } ?: false
 
         if (wasSuspending) {
-            if (lastSuspendMs == 0L) lastSuspendMs = now
+            // Track that BG went low — but do NOT start the rebound countdown yet.
+            // The window only starts once BG recovers above the threshold.
             if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
                 bgWentLow = true
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl}), watching for rebound crossing")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), will watch for crossing")
             }
         } else {
-            // Check if BG just crossed back up through threshold — arm window NOW
+            // Not suspending — check if BG just crossed back UP through threshold
             if (bgWentLow && previousBgMgdl < REBOUND_LOW_THRESHOLD_MGDL && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
-                lastSuspendMs = now
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG crossed back above threshold — rebound window armed")
+                // Arm the window NOW — from the crossing moment, not from when suspend started
+                reboundWindowStartMs = now
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG crossed back above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL — rebound window armed")
             }
             if (!inReboundWindow) {
-                lastSuspendMs = 0L
+                reboundWindowStartMs = 0L
                 bgWentLow = false
             }
         }
