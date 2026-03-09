@@ -89,6 +89,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val bolusCurveTracker: BolusCurveTracker,
     private val aggressionLearner: AggressionLearner,
     private val basalLearner: BasalLearner,
+    private val circadianLearner: CircadianLearner,
+    private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData
 ) : PluginBase(
@@ -198,7 +200,12 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
-        val dosingIsfMgdl = if (modeIsfMmol > 0.0) modeIsfMmol * 18.0 else trueIsfMgdl
+        // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
+        // Meal mode ISF overrides are user-set — don't touch them
+        val dosingIsfMgdl = when {
+            modeIsfMmol > 0.0 -> modeIsfMmol * 18.0           // user meal-mode override
+            else              -> trueIsfMgdl * circIsfMult     // profile ISF × circadian learned multiplier
+        }
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
         mealOverrideManager.onLoopCycle(
@@ -270,7 +277,11 @@ open class SmartInsulinPlugin @Inject constructor(
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0   // 10.0 mmol — clinical TIR high threshold
         )
-        val aggressiveness = aggressionLearner.aggressiveness
+        // Circadian aggressiveness ceiling — clamp global aggression downward per hour-of-day
+        val circIsfMult    = circadianLearner.isfMultiplier()
+        val circBasalMult  = circadianLearner.basalMultiplier()
+        val circAggrCeil   = circadianLearner.aggrCeiling()
+        val aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         val tirSummary     = aggressionLearner.tirSummary
 
         // Feed basal learner -- learns from any clean fasting window, day or night.
@@ -293,7 +304,10 @@ open class SmartInsulinPlugin @Inject constructor(
                 profileBasalU = profile.getBasal()
             )
         }
-        val basalMultiplier = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
+        // Blend flat BasalLearner with circadian per-hour learning
+        // Circadian takes over proportionally as its confidence grows
+        val flatBasalMult  = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
+        val basalMultiplier = flatBasalMult * circBasalMult
 
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
         val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
@@ -386,6 +400,44 @@ open class SmartInsulinPlugin @Inject constructor(
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
             apsResult.reason += " | ${bolusCurveTracker.statusSummary(mealMode)}"
         }
+
+        // ── Circadian learner update ──────────────────────────────────────────
+        circadianLearner.update(
+            glucoseStatus  = glucoseStatus,
+            iobArray       = iobArray,
+            mealMode       = mealMode,
+            cobG           = mealData.mealCOB,
+            profileIsfMgdl = trueIsfMgdl,
+            profileBasalUh = profile.getBasal(),
+            targetMgdl     = oapsProfile.target_bg.toDouble()
+        )
+
+        // ── CSV logging ───────────────────────────────────────────────────────
+        val zone = when {
+            apsResult.reason.contains("LGS_SUSPEND") -> "LGS_SUSPEND"
+            apsResult.reason.contains("SUSPEND")     -> "SUSPEND"
+            apsResult.reason.contains("CAUTION")     -> "CAUTION"
+            else                                     -> "NORMAL"
+        }
+        csvLogger.log(LoopCsvLogger.LogRow(
+            timestampMs       = now,
+            bgMmol            = glucoseStatus.glucose / 18.0,
+            delta             = glucoseStatus.shortAvgDelta / 18.0,
+            iob               = iobArray.firstOrNull()?.iob ?: 0.0,
+            cob               = mealData.mealCOB,
+            mealMode          = mealMode.name,
+            isfUsedMmol       = dosingIsfMgdl / 18.0,
+            basalUsed         = profile.getBasal() * basalMultiplier,
+            aggrUsed          = aggressiveness,
+            circIsfMult       = circIsfMult,
+            circBasalMult     = circBasalMult,
+            circAggrCeil      = circAggrCeil,
+            smbU              = apsResult.units ?: 0.0,
+            tbrRate           = apsResult.rate ?: profile.getBasal(),
+            zone              = zone,
+            reboundActive     = inReboundWindow,
+            reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
+        ))
 
         // Append mode time remaining if an override is active
         val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
