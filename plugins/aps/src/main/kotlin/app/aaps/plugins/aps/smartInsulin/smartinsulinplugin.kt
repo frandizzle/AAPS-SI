@@ -114,7 +114,7 @@ open class SmartInsulinPlugin @Inject constructor(
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
     var lastSuspendMs: Long = 0L
-    var bgWentLow: Boolean = false               // true once BG crossed < 4.7 mmol during suspend
+    var bgWentLow: Boolean = false               // true once BG crossed below lowGuardMmol during suspend
     var previousBgMgdl: Double = 0.0             // BG from previous loop cycle for crossing detection
     val msSinceLastSuspend: Long get() = System.currentTimeMillis() - lastSuspendMs
     val inReboundWindow: Boolean get() = lastSuspendMs > 0L &&
@@ -307,7 +307,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
-        val REBOUND_LOW_THRESHOLD_MGDL = 4.7 * 18.0  // 84.6 mg/dL
+        // Uses lowGuardMmol so rebound tracking matches the suspend threshold exactly.
+        val REBOUND_LOW_THRESHOLD_MGDL = lowGuardMmol * 18.0
         val currentBgMgdl = glucoseStatus.glucose
 
         // During any suspend/caution, track if BG went low
