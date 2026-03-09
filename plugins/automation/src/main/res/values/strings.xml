@@ -16,10 +16,6 @@
     <string name="alreadyenabled">Already enabled</string>
     <string name="alreadydisabled">Already disabled</string>
     <string name="alreadysuspended">Already suspended</string>
-    <string name="smart_meal_action_name">SmartInsulin: Set Meal Mode</string>
-    <string name="smart_meal_action_short">Meal: %1$s</string>
-    <string name="smart_meal_select_mode">Meal type</string>
-    <string name="smart_meal_prebolus">Pre-bolus when safe</string>
     <string name="notsuspended">Not suspended</string>
     <string name="suspendloopforXmin">Suspend loop for %1$d min</string>
     <string name="notification_message">Notification: %1$s</string>
@@ -108,10 +104,8 @@
     <string name="triggerReservoirLevelDesc">Reservoir level %1$s %2$.0f</string>
     <string name="triggerPumpBatteryLevelLabel">Pump battery level</string>
     <string name="triggerPumpBatteryLevelDesc">Pump battery level %1$s %2$.0f</string>
-    <string name="smart_meal_cancel_action_name">SmartInsulin: Cancel Meal Mode</string>
     <string name="si_reset_action_name">SmartInsulin: Reset Learned Profiles</string>
     <string name="si_reset_action_short">Reset learned DIA and peak to profile defaults</string>
-    <string name="smart_meal_cancel_action_short">Cancel active meal mode</string>
     <string name="iob_u">IOB [U]:</string>
     <string name="distance_short">Dist [m]:</string>
     <string name="recurringTime">Recurring time</string>

@@ -15,8 +15,8 @@ import javax.inject.Singleton
 
 @Singleton
 class MealOverrideManagerImpl @Inject constructor(
-    private val aapsLogger:   AAPSLogger,
-    private val preferences:  Preferences
+    private val aapsLogger:  AAPSLogger,
+    private val preferences: Preferences
 ) : MealOverrideManager {
 
     @Volatile private var _state: MealOverrideState? = null
@@ -35,12 +35,8 @@ class MealOverrideManagerImpl @Inject constructor(
         }
         val json = JSONObject().apply {
             put("mode",          s.mode.name)
-            put("lockedDoseU",   s.lockedDoseU ?: JSONObject.NULL)
-            put("lockedCarbsG",  s.lockedCarbsG)
             put("triggerTimeMs", s.triggerTimeMs)
-            put("expiryMs",      s.expiryMs)
             put("modeExpiryMs",  s.modeExpiryMs)
-            put("bolusFired",    s.bolusFired)
         }
         preferences.put(StringKey.ApsSmartInsulinOverrideState, json.toString())
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -50,11 +46,10 @@ class MealOverrideManagerImpl @Inject constructor(
         val raw = preferences.get(StringKey.ApsSmartInsulinOverrideState)
         if (raw.isBlank()) return
         try {
-            val json = JSONObject(raw)
-            val mode = MealMode.valueOf(json.getString("mode"))
-            val now  = System.currentTimeMillis()
+            val json        = JSONObject(raw)
+            val mode        = MealMode.valueOf(json.getString("mode"))
+            val now         = System.currentTimeMillis()
             val modeExpiryMs = json.getLong("modeExpiryMs")
-            // Discard if mode window already expired
             if (modeExpiryMs <= now) {
                 preferences.put(StringKey.ApsSmartInsulinOverrideState, "")
                 aapsLogger.debug(LTag.APS, "SmartInsulin: persisted override expired on restore, discarding")
@@ -62,12 +57,8 @@ class MealOverrideManagerImpl @Inject constructor(
             }
             _state = MealOverrideState(
                 mode          = mode,
-                lockedDoseU   = if (json.isNull("lockedDoseU")) null else json.getDouble("lockedDoseU"),
-                lockedCarbsG  = json.getInt("lockedCarbsG"),
                 triggerTimeMs = json.getLong("triggerTimeMs"),
-                expiryMs      = json.getLong("expiryMs"),
-                modeExpiryMs  = modeExpiryMs,
-                bolusFired    = json.getBoolean("bolusFired")
+                modeExpiryMs  = modeExpiryMs
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining")
@@ -80,10 +71,9 @@ class MealOverrideManagerImpl @Inject constructor(
     // ── Interface ─────────────────────────────────────────────────────────────
 
     override val activeMealMode: MealMode? get() {
-        val s = _state ?: return null
+        val s   = _state ?: return null
         val now = System.currentTimeMillis()
-        val remainingMs = s.modeExpiryMs - now
-        return if (remainingMs > 0) {
+        return if (s.modeExpiryMs > now) {
             s.mode
         } else {
             aapsLogger.debug(LTag.APS, "SmartInsulin mode ${s.mode.label} expired")
@@ -93,7 +83,7 @@ class MealOverrideManagerImpl @Inject constructor(
         }
     }
 
-    override val activeIsfMultiplier: Double get() = 1.0  // actual multiplier read from prefs in SmartInsulinPlugin
+    override val activeIsfMultiplier: Double get() = 1.0
 
     override val modeTimeRemainingMs: Long get() {
         val s = _state ?: return 0L
@@ -102,23 +92,19 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override fun activateOverride(
         mode:         MealMode,
-        doseU:        Double?,
-        carbsG:       Int,
+        doseU:        Double?,   // retained in signature for API compat, ignored here
+        carbsG:       Int,       // retained in signature for API compat, ignored here
         modeWindowMs: Long
     ) {
         val now = System.currentTimeMillis()
         _state = MealOverrideState(
             mode          = mode,
-            lockedDoseU   = doseU,
-            lockedCarbsG  = carbsG,
             triggerTimeMs = now,
-            expiryMs      = now + MealOverrideState.BOLUS_WINDOW_MS,
             modeExpiryMs  = now + modeWindowMs
         )
         persistState()
         aapsLogger.debug(LTag.APS,
-                         "SmartInsulin override: mode=${mode.label} dose=${doseU}U " +
-                             "carbs=${carbsG}g modeTTL=${modeWindowMs / 60_000}min")
+                         "SmartInsulin override: mode=${mode.label} modeTTL=${modeWindowMs / 60_000}min")
     }
 
     override fun cancelOverride() {
@@ -132,13 +118,7 @@ class MealOverrideManagerImpl @Inject constructor(
         iobArray:      Array<IobTotal>,
         maxIobU:       Double
     ) {
-        // Pre-bolus is now delivered directly by SmartMealDialog.
+        // Pre-bolus is delivered directly by SmartMealDialog.
         // onLoopCycle() intentionally does nothing.
-    }
-
-    companion object {
-        // companions retained in case onLoopCycle logic is re-introduced later
-        private const val FALLING_DELTA_MGDL_CUTOFF = 2.0
-        private const val SAFE_IOB_FRACTION          = 0.4
     }
 }

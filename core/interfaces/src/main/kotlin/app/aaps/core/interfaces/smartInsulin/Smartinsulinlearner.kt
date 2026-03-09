@@ -1,10 +1,9 @@
 package app.aaps.core.interfaces.smartInsulin
 
 /**
- * Exposes learning controls to the automation module without
- * creating a dependency on plugins/aps internals.
+ * Exposes learning controls for the SmartInsulin tab UI.
  */
 interface SmartInsulinLearner {
-    /** Reset all learned profiles back to current profile/insulin defaults. */
+    /** Reset all learned profiles back to defaults. */
     fun resetProfiles()
 }
