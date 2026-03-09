@@ -200,6 +200,10 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
+        // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
+        val circIsfMult   = circadianLearner.isfMultiplier()
+        val circBasalMult = circadianLearner.basalMultiplier()
+        val circAggrCeil  = circadianLearner.aggrCeiling()
         // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
         // Meal mode ISF overrides are user-set — don't touch them
         val dosingIsfMgdl = when {
@@ -277,10 +281,6 @@ open class SmartInsulinPlugin @Inject constructor(
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0   // 10.0 mmol — clinical TIR high threshold
         )
-        // Circadian aggressiveness ceiling — clamp global aggression downward per hour-of-day
-        val circIsfMult    = circadianLearner.isfMultiplier()
-        val circBasalMult  = circadianLearner.basalMultiplier()
-        val circAggrCeil   = circadianLearner.aggrCeiling()
         val aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         val tirSummary     = aggressionLearner.tirSummary
 
@@ -432,7 +432,7 @@ open class SmartInsulinPlugin @Inject constructor(
             circIsfMult       = circIsfMult,
             circBasalMult     = circBasalMult,
             circAggrCeil      = circAggrCeil,
-            smbU              = apsResult.units ?: 0.0,
+            smbU              = apsResult.smb,
             tbrRate           = apsResult.rate ?: profile.getBasal(),
             zone              = zone,
             reboundActive     = inReboundWindow,

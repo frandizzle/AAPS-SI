@@ -5,7 +5,7 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.keys.Preferences
 import app.aaps.core.keys.StringKey
 import org.json.JSONArray
 import org.json.JSONObject
@@ -256,9 +256,14 @@ class CircadianLearner @Inject constructor(
         }
     }
 
-    private fun stateToJson(s: CircadianState): JSONObject = JSONObject().apply {
-        put("values",     JSONArray(s.values.toTypedArray()))
-        put("confidence", JSONArray(s.confidence.toTypedArray()))
+    private fun stateToJson(s: CircadianState): JSONObject {
+        val vArr = JSONArray()
+        val cArr = JSONArray()
+        for (i in 0..23) { vArr.put(s.values[i]); cArr.put(s.confidence[i]) }
+        return JSONObject().apply {
+            put("values",     vArr)
+            put("confidence", cArr)
+        }
     }
 
     private fun jsonToState(obj: JSONObject): CircadianState {
