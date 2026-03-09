@@ -10,7 +10,6 @@ import app.aaps.plugins.automation.actions.ActionCarePortalEvent
 import app.aaps.plugins.automation.actions.ActionDummy
 import app.aaps.plugins.automation.actions.ActionNotification
 import app.aaps.plugins.automation.actions.ActionProfileSwitch
-import app.aaps.plugins.automation.actions.ActionSmartMeal
 import app.aaps.plugins.automation.actions.ActionSmartMealCancel
 import app.aaps.plugins.automation.actions.ActionProfileSwitchPercent
 import app.aaps.plugins.automation.actions.ActionRunAutotune
