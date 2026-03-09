@@ -35,6 +35,7 @@ import app.aaps.ui.dialogs.LoopDialog
 import app.aaps.ui.dialogs.ProfileSwitchDialog
 import app.aaps.ui.dialogs.ProfileViewerDialog
 import app.aaps.ui.dialogs.SiteRotationDialog
+import app.aaps.ui.dialogs.SmartMealDialog
 import app.aaps.ui.dialogs.TempBasalDialog
 import app.aaps.ui.dialogs.TempTargetDialog
 import app.aaps.ui.dialogs.TreatmentDialog
@@ -78,6 +79,9 @@ class UiInteractionImpl @Inject constructor(
 
     override fun updateWidget(context: Context, from: String) {
         Widget.updateWidget(context, from)
+    }
+    override fun runSmartMealDialog(fragmentManager: FragmentManager) {
+        SmartMealDialog().show(fragmentManager, "SmartMealDialog")
     }
 
     override fun runWizardDialog(fragmentManager: FragmentManager, carbs: Int?, name: String?) {
