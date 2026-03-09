@@ -82,11 +82,29 @@ class CircadianLearner @Inject constructor(
     ) {
         val hour = currentHour()
         val bg   = glucoseStatus.glucose
-        val delta = glucoseStatus.shortAvgDelta
-        val now  = System.currentTimeMillis()
+        val delta  = glucoseStatus.shortAvgDelta
+        val now    = System.currentTimeMillis()
+        val iob    = iobArray.firstOrNull()?.iob      ?: 0.0
+        val activity = iobArray.firstOrNull()?.activity ?: 0.0
+        val basalIob = iobArray.firstOrNull()?.basaliob ?: 0.0
+        val rollercoaster = if (bgHistory.size >= MIN_HISTORY_FOR_ROLLER) detectRollercoaster(targetMgdl) else false
 
-        // Only learn during fasting with no active carbs
-        if (mealMode != MealMode.FASTING || cobG > COB_THRESHOLD_G) return
+        // Guard skip reason logged before early return
+        val skipReason = when {
+            mealMode != MealMode.FASTING -> "skip: mode=$mealMode"
+            cobG > COB_THRESHOLD_G       -> "skip: cob=${"%.1f".format(cobG)}g"
+            else                         -> null
+        }
+
+        aapsLogger.debug(LTag.APS,
+                         "CircadianLearner h=$hour bg=${"%.1f".format(bg)} δ=${"%.2f".format(delta)} " +
+                             "iob=${"%.2f".format(iob)} activity=${"%.4f".format(activity)} basalIob=${"%.2f".format(basalIob)} " +
+                             "cob=${"%.1f".format(cobG)} mode=$mealMode target=${"%.0f".format(targetMgdl)} " +
+                             "roller=$rollercoaster histSize=${bgHistory.size} " +
+                             "→ ISF×${"%.3f".format(isfMultiplier(hour))} basal×${"%.3f".format(basalMultiplier(hour))} aggrCeil=${"%.3f".format(aggrCeiling(hour))}" +
+                             (skipReason?.let { " | $it" } ?: ""))
+
+        if (skipReason != null) return
 
         // Maintain BG history for rollercoaster detection
         bgHistory.addLast(now to bg)
@@ -114,14 +132,22 @@ class CircadianLearner @Inject constructor(
         iobArray:       Array<IobTotal>,
         profileIsfMgdl: Double
     ) {
-        val activity = iobArray.firstOrNull()?.activity ?: return
-        if (abs(activity) < MIN_ACTIVITY) return   // not enough insulin activity to learn from
+        val activity = iobArray.firstOrNull()?.activity ?: run {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return
+        }
+        if (abs(activity) < MIN_ACTIVITY) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity=${"%.5f".format(activity)} < $MIN_ACTIVITY")
+            return
+        }
 
         // Expected delta from IOB activity: bgi = -(activity × ISF × 5min)
         val expectedDelta = -(activity * profileIsfMgdl * 5.0)
         val actualDelta   = glucoseStatus.shortAvgDelta
 
-        if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) return
+        if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: expectedΔ=${"%.2f".format(expectedDelta)} < $MIN_EXPECTED_DELTA_MGDL")
+            return
+        }
 
         // Ratio: if actual < expected → ISF is too low (over-aggressive) → mult > 1
         // if actual > expected → ISF is too high (under-aggressive) → mult < 1
@@ -146,10 +172,17 @@ class CircadianLearner @Inject constructor(
         iobArray:       Array<IobTotal>,
         profileBasalUh: Double
     ) {
-        val basalIob = iobArray.firstOrNull()?.basaliob ?: return
-        // Net basal IOB near zero = fasting drift is mostly from basal rate
-        if (abs(basalIob) > MAX_BASAL_IOB_FOR_LEARNING) return
-        if (abs(delta) < MIN_DELTA_FOR_BASAL) return
+        val basalIob = iobArray.firstOrNull()?.basaliob ?: run {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: no iobArray"); return
+        }
+        if (abs(basalIob) > MAX_BASAL_IOB_FOR_LEARNING) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: basalIob=${"%.2f".format(basalIob)} > $MAX_BASAL_IOB_FOR_LEARNING")
+            return
+        }
+        if (abs(delta) < MIN_DELTA_FOR_BASAL) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: delta=${"%.2f".format(delta)} < $MIN_DELTA_FOR_BASAL")
+            return
+        }
 
         // Positive drift → basal too low → multiplier > 1
         // Negative drift → basal too high → multiplier < 1
