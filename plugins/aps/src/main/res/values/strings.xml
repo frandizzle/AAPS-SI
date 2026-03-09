@@ -151,6 +151,14 @@
     <string name="si_dawn_end_hour_summary">SMB reduction ends at this hour (default 9 = 9:00 AM)</string>
     <string name="si_dawn_smb_reduction_title">Dawn window SMB reduction (0.1-1.0)</string>
     <string name="si_dawn_smb_reduction_summary">Fraction of normal SMB size during fasting rise window. 0.5 = 50% of normal. 1.0 = no reduction.</string>
+    <string name="si_dialog_title">Smart Meal</string>
+    <string name="si_mode_label">Meal mode</string>
+    <string name="si_duration_label">Duration (mins)</string>
+    <string name="si_prebolus_label">Pre-bolus</string>
+    <string name="si_cancel_mode_label">Cancel %1$s mode</string>
+    <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
+    <string name="si_mode_cancelled">Meal mode cancelled</string>
+    <string name="si_mode_activated">%1$s mode active for %2$d mins</string>
 
     <string name="increasing_max_basal">Increasing max basal value because setting is lower than your max basal in profile</string>
     <string name="max_basal_multiplier">max basal multiplier</string>
