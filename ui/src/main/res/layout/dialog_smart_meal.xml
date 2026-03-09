@@ -38,7 +38,19 @@
             android:layout_gravity="center_horizontal"
             android:layout_marginBottom="16dp" />
 
-        <!-- Pre-bolus toggle -->
+        <!-- ISF override picker -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ISF override (mmol, 0 = use profile)"
+            android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+        <app.aaps.core.ui.elements.NumberPicker
+            android:id="@+id/isf_amount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="16dp" />
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

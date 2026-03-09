@@ -20,6 +20,7 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DecimalFormatter
+import app.aaps.core.keys.DoubleKey
 import app.aaps.core.objects.extensions.formatColor
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.toast.ToastUtils
@@ -60,6 +61,22 @@ class SmartMealDialog : DialogFragmentWithDate() {
         MealMode.EXTENDED
     )
 
+    /** Returns the DoubleKey for the ISF pref of the given mode (null for FASTING) */
+    private fun isfKeyFor(mode: MealMode): DoubleKey? = when (mode) {
+        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastIsf
+        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchIsf
+        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerIsf
+        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbIsf
+        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedIsf
+        else               -> null
+    }
+
+    /** Load the stored ISF for the current mode into the picker */
+    private fun loadIsfForMode(mode: MealMode) {
+        val key = isfKeyFor(mode) ?: return
+        binding.isfAmount.value = preferences.get(key)
+    }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         onCreateViewGeneral()
         _binding = DialogSmartMealBinding.inflate(inflater, container, false)
@@ -69,8 +86,9 @@ class SmartMealDialog : DialogFragmentWithDate() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val maxInsulin = constraintChecker.getMaxBolusAllowed().value()
-        val bolusStep  = activePlugin.activePump.pumpDescription.bolusStep
+        // Use MaxPreBolus pref, not the general SMB constraint
+        val maxPreBolus = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
+        val bolusStep   = activePlugin.activePump.pumpDescription.bolusStep
 
         // ── Mode spinner ─────────────────────────────────────────────────────
         val modeLabels = modeList.map { it.label }
@@ -81,6 +99,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         binding.modeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                 selectedMode = modeList[position]
+                loadIsfForMode(selectedMode)   // update ISF picker when mode changes
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -96,6 +115,16 @@ class SmartMealDialog : DialogFragmentWithDate() {
             DecimalFormat("0"), false, binding.okcancel.ok, null
         )
 
+        // ── ISF picker ────────────────────────────────────────────────────────
+        // Range 0.0–20.0 mmol, step 0.1. 0.0 = use profile ISF (same as prefs)
+        binding.isfAmount.setParams(
+            savedInstanceState?.getDouble("isfAmount") ?: preferences.get(isfKeyFor(selectedMode) ?: DoubleKey.ApsSmartInsulinLunchIsf),
+            0.0, 20.0, 0.1,
+            DecimalFormat("0.0"), false, binding.okcancel.ok, null
+        )
+        // Load correct ISF for initial mode if not restoring state
+        if (savedInstanceState == null) loadIsfForMode(selectedMode)
+
         // ── Pre-bolus toggle ──────────────────────────────────────────────────
         binding.preBolusSwitch.isChecked = false
         binding.preBolusLayout.visibility = View.GONE
@@ -106,26 +135,27 @@ class SmartMealDialog : DialogFragmentWithDate() {
         // ── Pre-bolus amount picker ───────────────────────────────────────────
         binding.preBolusAmount.setParams(
             savedInstanceState?.getDouble("preBolusAmount") ?: 0.0,
-            0.0, maxInsulin, bolusStep,
+            0.0, maxPreBolus, bolusStep,
             decimalFormatter.pumpSupportedBolusFormat(bolusStep),
             false, binding.okcancel.ok, null
         )
 
         // Quick-add buttons
         binding.bolus1.setOnClickListener {
-            binding.preBolusAmount.value = (binding.preBolusAmount.value + 1.0).coerceAtMost(maxInsulin)
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 1.0).coerceAtMost(maxPreBolus)
         }
         binding.bolus2.setOnClickListener {
-            binding.preBolusAmount.value = (binding.preBolusAmount.value + 2.0).coerceAtMost(maxInsulin)
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 2.0).coerceAtMost(maxPreBolus)
         }
         binding.bolus3.setOnClickListener {
-            binding.preBolusAmount.value = (binding.preBolusAmount.value + 3.0).coerceAtMost(maxInsulin)
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 3.0).coerceAtMost(maxPreBolus)
         }
 
         // ── Cancel active mode button ─────────────────────────────────────────
         val activeMode = mealOverrideManager.activeMealMode
         if (activeMode != null) {
             binding.cancelModeButton.visibility = View.VISIBLE
+            binding.cancelModeButton.text = "Cancel ${activeMode.label} mode"
             binding.cancelModeButton.setOnClickListener {
                 activity?.let { act ->
                     OKDialog.showConfirmation(act,
@@ -152,9 +182,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val wantsPreBolus = binding.preBolusSwitch.isChecked
         val preBolus      = if (wantsPreBolus) binding.preBolusAmount.value else 0.0
         val bolusStep     = activePlugin.activePump.pumpDescription.bolusStep
+        val maxPreBolus   = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
+        val isfValue      = binding.isfAmount.value
 
         val prebolusAfterConstraints = if (preBolus > 0.0)
-            constraintChecker.getMaxBolusAllowed().value().coerceAtMost(preBolus)
+            maxPreBolus.coerceAtMost(preBolus)
         else 0.0
 
         val actions: LinkedList<String?> = LinkedList()
@@ -165,6 +197,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
         actions.add(
             rh.gs(R.string.si_duration_label) + ": " +
                 rh.gs(app.aaps.core.ui.R.string.format_mins, durationMins)
+                    .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
+        )
+        actions.add(
+            rh.gs(R.string.si_isf_label) + ": " +
+                (if (isfValue > 0.0) "${isfValue} mmol" else "Profile ISF")
                     .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
         if (prebolusAfterConstraints > 0.0) {
@@ -186,12 +223,20 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 rh.gs(R.string.si_dialog_title),
                 HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
                 {
+                    // Save updated ISF back to preferences
+                    isfKeyFor(selectedMode)?.let { key ->
+                        preferences.put(key, isfValue)
+                    }
+
+                    // Activate the meal mode override
                     mealOverrideManager.activateOverride(
                         mode         = selectedMode,
                         doseU        = if (prebolusAfterConstraints > 0.0) prebolusAfterConstraints else null,
                         carbsG       = 0,
                         modeWindowMs = durationMs
                     )
+
+                    // Deliver pre-bolus immediately if requested
                     if (prebolusAfterConstraints > 0.0) {
                         val detailedBolusInfo = DetailedBolusInfo()
                         detailedBolusInfo.insulin   = prebolusAfterConstraints
@@ -221,6 +266,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         outState.putInt("modeIndex", modeList.indexOf(selectedMode))
         outState.putDouble("modeDuration", binding.modeDuration.value)
         outState.putDouble("preBolusAmount", binding.preBolusAmount.value)
+        outState.putDouble("isfAmount", binding.isfAmount.value)
     }
 
     override fun onResume() {

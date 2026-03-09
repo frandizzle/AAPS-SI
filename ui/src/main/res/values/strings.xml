@@ -45,6 +45,7 @@
     <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
     <string name="si_mode_cancelled">Meal mode cancelled</string>
     <string name="si_mode_activated">%1$s mode active for %2$d mins</string>
+    <string name="si_isf_label">ISF override</string>
 
     <!-- WizardDialog -->
     <string name="format_bg_isf">%1$s ISF: %2$.1f</string>
