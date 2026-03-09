@@ -151,4 +151,12 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    ApsSmartInsulinCircadianState(
+        "si_circadian_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
 }
