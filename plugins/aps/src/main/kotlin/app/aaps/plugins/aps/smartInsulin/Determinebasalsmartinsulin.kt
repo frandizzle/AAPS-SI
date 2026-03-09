@@ -146,6 +146,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         predictedBg.take(24).forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         val iobPrediction: List<Int> = rawPrediction
 
+        // ── Rebound taper state (computed early — used in reason string and decision) ──
+        val reboundCancelled     = false  // cancellation handled upstream via bgWentLow flag
+        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
+        val reboundTaperFraction = if (inReboundWindow)
+            (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+        else 1.0  // 1.0 = full normal dosing
+
         // ── Reason string ────────────────────────────────────────────────────
         fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(Locale.US, mgdl / MMOL_TO_MGDL) else "%.1f".format(Locale.US, mgdl)
         val units  = if (isMmol) "mmol" else "mg/dL"
@@ -174,13 +181,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
         val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
 
-        // Rebound protection: only active if BG actually went under 4.7 mmol during a suspend
+        // Rebound protection: only active if BG actually went under 4.7 mmol and has since crossed back up
         // (inReboundWindow is false if BG never crossed the threshold — see SmartInsulinPlugin)
-        val reboundCancelled     = false  // cancellation now handled upstream via bgWentLowDuringSuspend
-        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
-        val reboundTaperFraction = if (inReboundWindow)
-            (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
-        else 1.0  // 1.0 = full normal dosing
 
         @Suppress("RedundantValueArgument") var smbOut = 0.0
 
