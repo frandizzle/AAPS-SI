@@ -159,8 +159,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
-        sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
+        sb.append("BG=${fmt(currentBg)} Delta=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
+        sb.append("pred_min=${fmt(predictedMin)} pred30m=${fmt(predictedAt30)} pred60m=${fmt(predictedAt60)} $units ")
         sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
         sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
