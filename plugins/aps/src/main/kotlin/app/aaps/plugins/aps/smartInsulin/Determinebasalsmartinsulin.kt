@@ -82,7 +82,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         profileTargetMgdl:     Double,         // unmodified profile target — for high temp target SMB suppression
         dawnWindowStartHour:   Int,
         dawnWindowEndHour:     Int,
-        dawnSmbReduction:      Double          // fraction 0.1–1.0; 0.5 = 50% of normal SMB
+        dawnSmbReduction:      Double,         // fraction 0.1–1.0; 0.5 = 50% of normal SMB
+        bgWentLow:             Boolean         // true if BG crossed below threshold during suspend — for reason string
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -151,14 +152,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} Delta=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
-        sb.append("pred_min=${fmt(predictedMin)} pred30m=${fmt(predictedAt30)} pred60m=${fmt(predictedAt60)} $units ")
-        sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(Temp)" else ""} ")
+        sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
+        sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
+        sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
         sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
-        sb.append("aggressive factor=%.2f ".format(Locale.US, aggressiveness))
+        sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
         if (inDawnWindow) sb.append("dawnWindow(reduction=%.0f%%) ".format(Locale.US, dawnSmbReduction * 100))
         if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
+        if (inReboundWindow) {
+            val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
+            sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
+        } else if (bgWentLow) {
+            sb.append("rebound=watching ")  // went low but BG hasn't crossed back up yet
+        }
         sb.append("$tirSummary ")
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()

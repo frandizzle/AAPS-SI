@@ -127,6 +127,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
+        val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
         lastAPSResult = null
 
         val profile = profileFunction.getProfile() ?: run {
@@ -311,7 +312,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // During any suspend/caution, track if BG went low
         // We check the previous result's reason to know if we were suspending last cycle
-        val wasSuspending = lastAPSResult?.reason?.let {
+        val wasSuspending = previousAPSResult?.reason?.let {
             it.contains("SUSPEND") || it.contains("CAUTION") || it.contains("LGS_SUSPEND")
         } ?: false
 
@@ -363,7 +364,8 @@ open class SmartInsulinPlugin @Inject constructor(
             profileTargetMgdl     = profileTargetMgdl,
             dawnWindowStartHour   = dawnWindowStart,
             dawnWindowEndHour     = dawnWindowEnd,
-            dawnSmbReduction      = dawnSmbReduction
+            dawnSmbReduction      = dawnSmbReduction,
+            bgWentLow             = bgWentLow
         )
 
         apsResult.inputConstraints = inputConstraints
