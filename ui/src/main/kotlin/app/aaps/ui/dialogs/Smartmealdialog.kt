@@ -160,12 +160,12 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val actions: LinkedList<String?> = LinkedList()
         actions.add(
             rh.gs(R.string.si_mode_label) + ": " +
-                selectedMode.label.formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary)
+                selectedMode.label.formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
         actions.add(
             rh.gs(R.string.si_duration_label) + ": " +
                 rh.gs(app.aaps.core.ui.R.string.format_mins, durationMins)
-                    .formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary)
+                    .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
         if (prebolusAfterConstraints > 0.0) {
             actions.add(
