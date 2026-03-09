@@ -1,13 +1,9 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import app.aaps.core.data.model.BS
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.pump.DetailedBolusInfo
-import app.aaps.core.interfaces.queue.Callback
-import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
@@ -19,7 +15,6 @@ import javax.inject.Singleton
 
 @Singleton
 class MealOverrideManagerImpl @Inject constructor(
-    private val commandQueue: CommandQueue,
     private val aapsLogger:   AAPSLogger,
     private val preferences:  Preferences
 ) : MealOverrideManager {
@@ -137,57 +132,12 @@ class MealOverrideManagerImpl @Inject constructor(
         iobArray:      Array<IobTotal>,
         maxIobU:       Double
     ) {
-        val state = _state ?: return
-        if (!state.hasPendingBolus) return
-
-        val now        = System.currentTimeMillis()
-        val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
-        val bg         = glucoseStatus.glucose
-        val delta      = glucoseStatus.shortAvgDelta
-
-        if (now > state.expiryMs) {
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: bolus window expired for ${state.mode.label} — dropping bolus, keeping mode")
-            _state = state.copy(lockedDoseU = null)
-            persistState()
-            return
-        }
-
-        val bgSafe     = bg    >= MealOverrideManager.MIN_BG_MGDL
-        val notFalling = delta >= -FALLING_DELTA_MGDL_CUTOFF
-        val iobSafe    = currentIob <= maxIobU * SAFE_IOB_FRACTION
-
-        if (!bgSafe || !notFalling || !iobSafe) {
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin pre-bolus safety blocked: bgSafe=$bgSafe notFalling=$notFalling iobSafe=$iobSafe")
-            return
-        }
-
-        val dose = state.lockedDoseU ?: return
-        val detail = DetailedBolusInfo().also {
-            it.insulin            = dose
-            it.carbs              = state.lockedCarbsG.toDouble()
-            it.bolusType          = BS.Type.NORMAL
-            it.deliverAtTheLatest = now + 60_000L
-        }
-
-        aapsLogger.debug(LTag.APS,
-                         "SmartInsulin firing pre-bolus: ${dose}U for ${state.mode.label} (bg=$bg)")
-
-        commandQueue.bolus(detail, object : Callback() {
-            override fun run() {
-                if (result.success) {
-                    aapsLogger.debug(LTag.APS, "SmartInsulin pre-bolus delivered: ${dose}U")
-                    _state = state.copy(bolusFired = true)
-                    persistState()
-                } else {
-                    aapsLogger.error(LTag.APS, "SmartInsulin pre-bolus FAILED: ${result.comment}")
-                }
-            }
-        })
+        // Pre-bolus is now delivered directly by SmartMealDialog.
+        // onLoopCycle() intentionally does nothing.
     }
 
     companion object {
+        // companions retained in case onLoopCycle logic is re-introduced later
         private const val FALLING_DELTA_MGDL_CUTOFF = 2.0
         private const val SAFE_IOB_FRACTION          = 0.4
     }
