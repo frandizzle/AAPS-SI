@@ -56,6 +56,7 @@ interface UiInteraction {
     fun runProfileSwitchDialog(fragmentManager: FragmentManager, profileName: String? = null)
     fun runTempBasalDialog(fragmentManager: FragmentManager)
     fun runTreatmentDialog(fragmentManager: FragmentManager)
+    fun runSmartMealDialog()
     fun runInsulinDialog(fragmentManager: FragmentManager)
     fun runCalibrationDialog(fragmentManager: FragmentManager)
     fun runCarbsDialog(fragmentManager: FragmentManager)
