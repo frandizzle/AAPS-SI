@@ -101,7 +101,7 @@
             android:drawableTop="@drawable/ic_cp_bolus_carbs"
             android:ellipsize="end"
             android:singleLine="true"
-            android:text="@string/si_dialog_title"
+            android:text="Smart Meal"
             android:textColor="?attr/icBolusCarbsColor"
             app:iconPadding="-4dp" />
 

@@ -2,7 +2,6 @@
 <!--  res/layout/dialog_smart_meal.xml
       Place in:  ui/src/main/res/layout/dialog_smart_meal.xml  -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content">
 
@@ -12,20 +11,11 @@
         android:orientation="vertical"
         android:padding="16dp">
 
-        <!-- ── Header ──────────────────────────────────────────────────── -->
+        <!-- Mode spinner -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/si_dialog_title"
-            android:textAppearance="@style/TextAppearance.AppCompat.Large"
-            android:textStyle="bold"
-            android:layout_marginBottom="16dp" />
-
-        <!-- ── Meal mode spinner ────────────────────────────────────────── -->
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/si_mode_label"
+            android:text="Meal Mode"
             android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
 
         <Spinner
@@ -34,11 +24,11 @@
             android:layout_height="wrap_content"
             android:layout_marginBottom="16dp" />
 
-        <!-- ── Mode duration ────────────────────────────────────────────── -->
+        <!-- Duration picker -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/si_duration_label"
+            android:text="Duration (mins)"
             android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
 
         <app.aaps.core.ui.elements.NumberPicker
@@ -48,7 +38,7 @@
             android:layout_gravity="center_horizontal"
             android:layout_marginBottom="16dp" />
 
-        <!-- ── Pre-bolus toggle ─────────────────────────────────────────── -->
+        <!-- Pre-bolus toggle -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -60,16 +50,17 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="@string/si_prebolus_label"
+                android:text="Pre-bolus"
                 android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
 
             <com.google.android.material.switchmaterial.SwitchMaterial
                 android:id="@+id/pre_bolus_switch"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content" />
+
         </LinearLayout>
 
-        <!-- ── Pre-bolus amount (shown only when toggle is on) ──────────── -->
+        <!-- Pre-bolus amount (shown only when toggle on) -->
         <LinearLayout
             android:id="@+id/pre_bolus_layout"
             android:layout_width="match_parent"
@@ -85,7 +76,6 @@
                 android:layout_gravity="center_horizontal"
                 android:layout_marginBottom="8dp" />
 
-            <!-- Quick-add buttons -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -97,37 +87,39 @@
                     style="@style/Widget.AppCompat.Button.Borderless"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="+1" />
+                    android:text="+1U" />
 
                 <Button
                     android:id="@+id/bolus2"
                     style="@style/Widget.AppCompat.Button.Borderless"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="+2" />
+                    android:text="+2U" />
 
                 <Button
                     android:id="@+id/bolus3"
                     style="@style/Widget.AppCompat.Button.Borderless"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="+3" />
+                    android:text="+3U" />
 
             </LinearLayout>
         </LinearLayout>
 
-        <!-- ── Cancel active mode ───────────────────────────────────────── -->
+        <!-- Cancel active mode button (shown only if mode active) -->
         <Button
             android:id="@+id/cancel_mode_button"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="8dp"
             android:backgroundTint="?attr/warningColor"
-            android:text="@string/si_cancel_mode_label"
+            android:text="Cancel active mode"
             android:visibility="gone" />
 
-        <!-- ── OK / Cancel ──────────────────────────────────────────────── -->
-        <include layout="@layout/okcancel" />
+        <!-- OK / Cancel -->
+        <include
+            android:id="@+id/okcancel"
+            layout="@layout/okcancel" />
 
     </LinearLayout>
 </ScrollView>

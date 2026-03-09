@@ -13,7 +13,6 @@ import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
-import app.aaps.core.interfaces.pump.defs.determineCorrectBolusStepSize
 import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
@@ -29,6 +28,7 @@ import app.aaps.ui.R
 import app.aaps.ui.databinding.DialogSmartMealBinding
 import com.google.common.base.Joiner
 import java.text.DecimalFormat
+import java.util.LinkedList
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.math.abs
@@ -52,7 +52,6 @@ class SmartMealDialog : DialogFragmentWithDate() {
 
     private var selectedMode: MealMode = MealMode.LUNCH
 
-    // Ordered list shown in spinner — FASTING excluded (that's just "cancel")
     private val modeList = listOf(
         MealMode.BREAKFAST,
         MealMode.LUNCH,
@@ -85,8 +84,6 @@ class SmartMealDialog : DialogFragmentWithDate() {
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
-
-        // Restore spinner state after rotation
         savedInstanceState?.getInt("modeIndex")?.let {
             binding.modeSpinner.setSelection(it)
             selectedMode = modeList[it]
@@ -102,7 +99,6 @@ class SmartMealDialog : DialogFragmentWithDate() {
         // ── Pre-bolus toggle ──────────────────────────────────────────────────
         binding.preBolusSwitch.isChecked = false
         binding.preBolusLayout.visibility = View.GONE
-
         binding.preBolusSwitch.setOnCheckedChangeListener { _, checked ->
             binding.preBolusLayout.visibility = if (checked) View.VISIBLE else View.GONE
         }
@@ -115,27 +111,25 @@ class SmartMealDialog : DialogFragmentWithDate() {
             false, binding.okcancel.ok, null
         )
 
-        // Quick-add buttons (+1, +2, +3 U)
-        listOf(
-            binding.bolus1 to 1.0,
-            binding.bolus2 to 2.0,
-            binding.bolus3 to 3.0
-        ).forEach { (btn, amount) ->
-            btn.text = "+${decimalFormatter.toPumpSupportedBolus(amount, bolusStep)}"
-            btn.setOnClickListener {
-                val newVal = (binding.preBolusAmount.value + amount).coerceAtMost(maxInsulin)
-                binding.preBolusAmount.value = newVal
-            }
+        // Quick-add buttons
+        binding.bolus1.setOnClickListener {
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 1.0).coerceAtMost(maxInsulin)
+        }
+        binding.bolus2.setOnClickListener {
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 2.0).coerceAtMost(maxInsulin)
+        }
+        binding.bolus3.setOnClickListener {
+            binding.preBolusAmount.value = (binding.preBolusAmount.value + 3.0).coerceAtMost(maxInsulin)
         }
 
         // ── Cancel active mode button ─────────────────────────────────────────
         val activeMode = mealOverrideManager.activeMealMode
         if (activeMode != null) {
             binding.cancelModeButton.visibility = View.VISIBLE
-            binding.cancelModeButton.text = rh.gs(R.string.si_cancel_mode_label, activeMode.label)
             binding.cancelModeButton.setOnClickListener {
                 activity?.let { act ->
-                    OKDialog.showConfirmation(act, rh.gs(R.string.si_dialog_title),
+                    OKDialog.showConfirmation(act,
+                                              rh.gs(R.string.si_dialog_title),
                                               rh.gs(R.string.si_cancel_mode_confirm, activeMode.label), {
                                                   mealOverrideManager.cancelOverride()
                                                   ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_cancelled))
@@ -147,43 +141,43 @@ class SmartMealDialog : DialogFragmentWithDate() {
             binding.cancelModeButton.visibility = View.GONE
         }
 
-        // ── OK button ─────────────────────────────────────────────────────────
-        binding.okcancel.ok.setOnClickListener { onClickOk() }
+        // ── OK / Cancel ───────────────────────────────────────────────────────
+        binding.okcancel.ok.setOnClickListener { if (submit()) dismiss() }
         binding.okcancel.cancel.setOnClickListener { dismiss() }
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putInt("modeIndex", modeList.indexOf(selectedMode))
-        outState.putDouble("modeDuration", binding.modeDuration.value)
-        outState.putDouble("preBolusAmount", binding.preBolusAmount.value)
-    }
-
-    private fun onClickOk(): Boolean {
-        val durationMins = binding.modeDuration.value.toInt()
-        val durationMs   = TimeUnit.MINUTES.toMillis(durationMins.toLong())
+    override fun submit(): Boolean {
+        val durationMins  = binding.modeDuration.value.toInt()
+        val durationMs    = TimeUnit.MINUTES.toMillis(durationMins.toLong())
         val wantsPreBolus = binding.preBolusSwitch.isChecked
-        val preBolus     = if (wantsPreBolus) binding.preBolusAmount.value else 0.0
-        val bolusStep    = activePlugin.activePump.pumpDescription.bolusStep
+        val preBolus      = if (wantsPreBolus) binding.preBolusAmount.value else 0.0
+        val bolusStep     = activePlugin.activePump.pumpDescription.bolusStep
 
         val prebolusAfterConstraints = if (preBolus > 0.0)
             constraintChecker.getMaxBolusAllowed().value().coerceAtMost(preBolus)
         else 0.0
 
-        val actions = LinkedList<String>()
-        actions.add(rh.gs(R.string.si_mode_label) + ": " +
-                        selectedMode.label.formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary))
-        actions.add(rh.gs(R.string.si_duration_label) + ": " +
-                        rh.gs(app.aaps.core.ui.R.string.format_mins, durationMins)
-                            .formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary))
-
+        val actions: LinkedList<String?> = LinkedList()
+        actions.add(
+            rh.gs(R.string.si_mode_label) + ": " +
+                selectedMode.label.formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary)
+        )
+        actions.add(
+            rh.gs(R.string.si_duration_label) + ": " +
+                rh.gs(app.aaps.core.ui.R.string.format_mins, durationMins)
+                    .formatColor(context, rh, app.aaps.core.ui.R.attr.colorPrimary)
+        )
         if (prebolusAfterConstraints > 0.0) {
-            actions.add(rh.gs(app.aaps.core.ui.R.string.bolus) + ": " +
-                            decimalFormatter.toPumpSupportedBolus(prebolusAfterConstraints, bolusStep)
-                                .formatColor(context, rh, app.aaps.core.ui.R.attr.bolusColor))
+            actions.add(
+                rh.gs(app.aaps.core.ui.R.string.bolus) + ": " +
+                    decimalFormatter.toPumpSupportedBolus(prebolusAfterConstraints, bolusStep)
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.bolusColor)
+            )
             if (abs(prebolusAfterConstraints - preBolus) > bolusStep)
-                actions.add(rh.gs(R.string.bolus_constraint_applied_warn, preBolus, prebolusAfterConstraints)
-                                .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor))
+                actions.add(
+                    rh.gs(app.aaps.core.ui.R.string.bolus_constraint_applied_warn, preBolus, prebolusAfterConstraints)
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor)
+                )
         }
 
         activity?.let { activity ->
@@ -192,40 +186,41 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 rh.gs(R.string.si_dialog_title),
                 HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
                 {
-                    // 1. Activate the meal mode override
                     mealOverrideManager.activateOverride(
                         mode         = selectedMode,
                         doseU        = if (prebolusAfterConstraints > 0.0) prebolusAfterConstraints else null,
                         carbsG       = 0,
                         modeWindowMs = durationMs
                     )
-
-                    // 2. Deliver pre-bolus immediately if requested
                     if (prebolusAfterConstraints > 0.0) {
                         val detailedBolusInfo = DetailedBolusInfo()
-                        detailedBolusInfo.insulin  = prebolusAfterConstraints
-                        detailedBolusInfo.context  = context
-                        detailedBolusInfo.notes    = "SmartMeal ${selectedMode.label} pre-bolus"
+                        detailedBolusInfo.insulin   = prebolusAfterConstraints
+                        detailedBolusInfo.context   = context
+                        detailedBolusInfo.notes     = "SmartMeal ${selectedMode.label} pre-bolus"
                         detailedBolusInfo.timestamp = dateUtil.now()
                         commandQueue.bolus(detailedBolusInfo, object : Callback() {
                             override fun run() {
-                                if (!result.success) {
+                                if (!result.success)
                                     uiInteraction.runAlarm(
                                         result.comment,
                                         rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror),
                                         app.aaps.core.ui.R.raw.boluserror
                                     )
-                                }
                             }
                         })
                     }
-
                     ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins))
-                    dismiss()
                 }
             )
         }
         return true
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("modeIndex", modeList.indexOf(selectedMode))
+        outState.putDouble("modeDuration", binding.modeDuration.value)
+        outState.putDouble("preBolusAmount", binding.preBolusAmount.value)
     }
 
     override fun onResume() {
