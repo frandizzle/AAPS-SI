@@ -161,11 +161,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val iobPrediction: List<Int> = rawPrediction
 
         // ── Rebound taper state (computed early — used in reason string and decision) ──
-        val reboundCancelled     = false  // cancellation handled upstream via bgWentLow flag
-        val reboundMins          = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
-        val reboundTaperFraction = if (inReboundWindow)
-            (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
-        else 1.0  // 1.0 = full normal dosing
+        // Three phases:
+        //   1. "watching"  — bgWentLow=true, window not armed (BG still below threshold or just exiting)
+        //                    taper=0.0, SMBs blocked entirely, TBR zeroed
+        //   2. "windowed"  — inReboundWindow=true (BG crossed back up, window ticking)
+        //                    taper ramps 0.0→1.0 over REBOUND_TAPER_MINS
+        //   3. "clear"     — neither: full normal dosing
+        val reboundMins = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
+        val reboundTaperFraction = when {
+            inReboundWindow -> (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+            bgWentLow       -> 0.0   // watching phase — BG still recovering, block everything
+            else            -> 1.0   // clear — full normal dosing
+        }
 
         // ── Reason string ────────────────────────────────────────────────────
         fun fmt(mgdl: Double) = if (isMmol) "%.1f".format(Locale.US, mgdl / MMOL_TO_MGDL) else "%.1f".format(Locale.US, mgdl)
@@ -183,9 +190,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
         if (inReboundWindow) {
             val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
-            sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
+            sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f SMBs+TBR gated) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
         } else if (bgWentLow) {
-            sb.append("rebound=watching ")  // went low but BG hasn't crossed back up yet
+            sb.append("rebound=watching(SMBs+TBR blocked) ")  // went low, BG hasn't crossed back up yet
         }
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append("activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol) ")
@@ -311,9 +318,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 }
 
                 // Rebound state — always shown when active regardless of trigger
-                val reboundStr = if (reboundCancelled) {
-                    "reboundCancelled(BG=${fmt(currentBg)} rising)"
-                } else if (inReboundWindow) {
+                val reboundStr = if (inReboundWindow) {
                     val minsLeft = ((REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0))
                     val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
                     " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f->%.3f)".format(
@@ -329,9 +334,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // CGM block reason: show in reason if SMBs were reduced/blocked by warmup or artefact
                 val cgmBlockStr = when {
                     !cgmDeltaPlausible -> " cgm=smbBlocked(artefactDelta)"
-                    cgmSmbFraction == 0.0 -> " cgm=smbBlocked(warmup<12h)"
-                    cgmSmbFraction < 1.0  -> " cgm=smb×${(cgmSmbFraction * 100).toInt()}%(warmup)"
-                    else -> ""
+                    cgmSmbFraction == 0.0 -> " cgm=smbSkipped(warmup)"
+                    else -> ""  // cgmWarmupReason already shown in reason header
                 }
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger ".format())
                 sb.append("smb=%.3f tbr=%.3f%s%s%s".format(Locale.US, finalSmb, tbrRate, reboundStr, activityStr, cgmBlockStr))

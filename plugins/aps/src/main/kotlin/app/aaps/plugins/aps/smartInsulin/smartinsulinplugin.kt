@@ -500,22 +500,28 @@ open class SmartInsulinPlugin @Inject constructor(
         } ?: false
 
         if (wasSuspending) {
-            // Track that BG went low — but do NOT start the rebound countdown yet.
+            // Track that BG went low — do NOT start the rebound countdown yet.
             // The window only starts once BG recovers above the threshold.
             if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
                 bgWentLow = true
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), will watch for crossing")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), watching for recovery")
             }
         } else {
             // Not suspending — check if BG just crossed back UP through threshold
             if (bgWentLow && previousBgMgdl < REBOUND_LOW_THRESHOLD_MGDL && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
-                // Arm the window NOW — from the crossing moment, not from when suspend started
+                // Arm the rebound window from the crossing moment
                 reboundWindowStartMs = now
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG crossed back above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL — rebound window armed")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG crossed above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL — rebound window armed")
             }
-            if (!inReboundWindow) {
+            // Only clear bgWentLow once the full rebound window has expired, OR if BG
+            // never went low in the first place. Do NOT clear it while still "watching"
+            // (bgWentLow=true but window not armed yet) — that phase is pre-crossing and
+            // SMBs must stay blocked until the window arms and fully tapers.
+            if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
+                // Window was armed and has now fully elapsed — reset
                 reboundWindowStartMs = 0L
                 bgWentLow = false
+                aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
             }
         }
         previousBgMgdl = currentBgMgdl
