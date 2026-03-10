@@ -5,7 +5,7 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.keys.Preferences
 import app.aaps.core.keys.StringKey
 import org.json.JSONArray
 import org.json.JSONObject
@@ -364,6 +364,12 @@ class CircadianLearner @Inject constructor(
     }
 
     // ── Status summary for tab UI ─────────────────────────────────────────────
+
+    /** Average confidence across ISF/basal/aggr for a given hour, as 0–100 */
+    fun confidencePct(hour: Int): Double {
+        val h = hour.coerceIn(0, 23)
+        return ((isfState.getConfidence(h) + basalState.getConfidence(h) + aggrState.getConfidence(h)) / 3.0) * 100.0
+    }
 
     fun statusSummary(hour: Int = currentHour()): String =
         "h=$hour ISF×%.2f basal×%.2f aggrCeil=%.2f (conf isf=%.0f%% basal=%.0f%% aggr=%.0f%%)"

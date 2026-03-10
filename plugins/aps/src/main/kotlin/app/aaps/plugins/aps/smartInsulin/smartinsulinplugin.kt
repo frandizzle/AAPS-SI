@@ -166,29 +166,38 @@ open class SmartInsulinPlugin @Inject constructor(
     fun statusSummary(): String {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         return buildString {
-            appendLine("=== SmartInsulin Learner Status ===")
+            appendLine("=== SmartInsulin Status ===")
             appendLine()
-            appendLine("⏰ Current hour: $hour:00")
-            appendLine()
-            appendLine("📊 Aggressiveness")
-            appendLine("  Score:  ${"%.3f".format(aggressionLearner.aggressiveness)}")
+
+            // ── Active cycle values ───────────────────────────────────────────
+            appendLine("── Active (h=${hour}:00) ─────────────────")
+            appendLine("  Aggressiveness : ${"%.3f".format(aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)))} " +
+                           "(raw=${"%.3f".format(aggressionLearner.aggressiveness)} ceil=${"%.3f".format(circadianLearner.aggrCeiling(hour))})")
+            appendLine("  ISF mult       : ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
+            appendLine("  Basal mult     : ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
+                           "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
+            if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
             appendLine()
-            appendLine("🌙 Circadian (h=$hour)")
-            appendLine("  ISF mult:   ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
-            appendLine("  Basal mult: ${"%.3f".format(circadianLearner.basalMultiplier(hour))}")
-            appendLine("  Aggr ceil:  ${"%.3f".format(circadianLearner.aggrCeiling(hour))}")
+
+            // ── Circadian tables ──────────────────────────────────────────────
+            appendLine("── Circadian 24h ─────────────────────")
+            appendLine("  h   ISF×   Bas×   Ceil   Conf%")
+            for (h in 0..23) {
+                val marker = if (h == hour) "▶" else " "
+                appendLine("$marker ${h.toString().padStart(2)}  " +
+                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
+                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
+                               "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
+                               "${"%.0f".format(circadianLearner.confidencePct(h))}%")
+            }
             appendLine()
-            appendLine("💉 Basal multiplier: ${"%.3f".format(basalLearner.multiplierClamped)}")
-            appendLine()
-            appendLine("🔄 Rebound")
-            appendLine("  Active: $inReboundWindow")
-            if (inReboundWindow) appendLine("  Elapsed: ${msSinceLastSuspend / 60_000}min")
-            appendLine()
-            appendLine("📈 Profiles")
+
+            // ── Profiles ──────────────────────────────────────────────────────
+            appendLine("── Insulin Profiles ──────────────────")
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
                 val p = profileLearner.getProfile(mode)
-                appendLine("  ${mode.label}: peak=${p.peakMinutes.toInt()}m dia=${p.diaMinutes.toInt()}m n=${p.sampleCount}")
+                appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }.trimEnd()
     }
@@ -472,6 +481,14 @@ open class SmartInsulinPlugin @Inject constructor(
             profileIsfMgdl = trueIsfMgdl,
             targetMgdl     = oapsProfile.target_bg.toDouble()
         )
+
+        // Append per-cycle learner summary to reason — visible in Loop tab
+        // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
+        val circHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
+            " basal×${"%.2f".format(basalMultiplier)}" +
+            " aggr=${"%.2f".format(aggressiveness)}/${"%.2f".format(aggressionLearner.aggressiveness)}" +
+            if (inReboundWindow) " rebound=${msSinceLastSuspend / 60_000}min" else ""
 
         // ── CSV logging ───────────────────────────────────────────────────────
         val zone = when {
