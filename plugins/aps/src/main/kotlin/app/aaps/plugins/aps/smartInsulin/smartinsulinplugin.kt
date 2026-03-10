@@ -171,8 +171,11 @@ open class SmartInsulinPlugin @Inject constructor(
 
             // ── Active cycle values ───────────────────────────────────────────
             appendLine("── Active (h=${hour}:00) ─────────────────")
-            appendLine("  Aggressiveness : ${"%.3f".format(aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)))} " +
-                           "(raw=${"%.3f".format(aggressionLearner.aggressiveness)} ceil=${"%.3f".format(circadianLearner.aggrCeiling(hour))})")
+            val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
+            appendLine("  Aggressiveness : ${"%.3f".format(effectiveAggr)}")
+            appendLine("    TIR score    : ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
+            appendLine("    Circ ceiling : ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
+            appendLine("    Meal mode    : aggressiveness locked to 1.0 during any non-fasting mode")
             appendLine("  ISF mult       : ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
             appendLine("  Basal mult     : ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
                            "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
@@ -357,7 +360,10 @@ open class SmartInsulinPlugin @Inject constructor(
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
             mealMode        = mealMode
         )
-        val aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
+        // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
+        // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
+        val aggressiveness = if (mealMode != MealMode.FASTING) 1.0
+        else aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         val tirSummary     = aggressionLearner.tirSummary
 
         // Feed basal learner — fasting only, no high temp target
