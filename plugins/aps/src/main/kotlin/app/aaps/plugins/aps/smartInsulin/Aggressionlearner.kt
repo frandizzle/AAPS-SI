@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -13,65 +14,62 @@ import javax.inject.Singleton
 /**
  * Adaptive aggressiveness learner.
  *
- * Watches BG zone distribution over a rolling 24-hour window and adjusts
- * an aggressiveness score that scales SMB delivery fraction and TBR correction.
+ * Maintains TWO sample sets:
+ *
+ *  - [allSamples]     — full 24h rolling window, all modes. Used only for tirSummary display.
+ *  - [fastingSamples] — fasting-only samples. Used exclusively for score calculation.
+ *
+ * Why separate? A post-dinner spike at 6pm looks like "too much time high" to a naive
+ * TIR-based score, pushing aggressiveness up. Next day at 6pm (pre-dinner, still fasting)
+ * that inflated score causes over-dosing. By scoring only on fasting samples, meal-related
+ * highs don't pollute the aggressiveness signal. Meal bolus tuning belongs in BolusCurveTracker.
  *
  * Score range: [1/aggressionMax .. aggressionMax]
- *   - 1.0 = neutral (default SMB fraction, default TBR correction)
- *   - > 1.0 = more aggressive (bigger SMBs, higher TBR) — when spending too much time high
- *   - < 1.0 = more conservative (smaller SMBs, lower TBR) — when spending too much time low
+ *   - 1.0 = neutral
+ *   - > 1.0 = more aggressive — fasting BG spending too much time high
+ *   - < 1.0 = more conservative — fasting BG spending too much time low
  *
- * The user-configured aggressionMax dial acts as a hard ceiling/floor.
- * Setting it to 1.0 disables learning entirely (score stays at 1.0).
- *
- * Learning is asymmetric: lows pull the score down faster than highs push it up,
- * because the cost of a low is higher than the cost of a high.
+ * Learning is asymmetric: lows pull score down faster than highs push it up.
  */
 @Singleton
 class AggressionLearner @Inject constructor(
     private val preferences: Preferences,
     private val aapsLogger:  AAPSLogger
 ) {
-    // ── BG sample record ─────────────────────────────────────────────────────
-    private data class BgSample(val timestampMs: Long, val zone: Zone)
+    private data class BgSample(val timestampMs: Long, val zone: Zone, val fasting: Boolean)
 
     private enum class Zone { LOW, IN_RANGE, HIGH }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private val samples = ArrayDeque<BgSample>()   // rolling 24h window
-    private var score   = 1.0                       // current aggressiveness score
-    private var lastUpdateMs = 0L
+    private val allSamples     = ArrayDeque<BgSample>()  // all modes — display TIR only
+    private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score
+    private var score          = 1.0
+    private var lastUpdateMs   = 0L
 
     init { restoreState() }
 
     companion object {
-        private const val WINDOW_MS            = 24 * 60 * 60 * 1000L  // 24h rolling window
-        private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L       // recalculate score hourly
-        private const val MIN_SAMPLES_TO_LEARN = 24                    // need at least 2h of data
+        private const val WINDOW_MS            = 24 * 60 * 60 * 1000L
+        private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
+        private const val MIN_SAMPLES_TO_LEARN = 24   // ~2h of fasting data
 
-        // Target TIR thresholds — score nudges toward these
-        private const val TARGET_TIR_PCT       = 70.0  // aim for ≥70% time in range
-        private const val MAX_LOW_PCT          = 4.0   // tolerate ≤4% time low
-        private const val MAX_HIGH_PCT         = 26.0  // tolerate ≤26% time high
+        private const val TARGET_TIR_PCT       = 70.0
+        private const val MAX_LOW_PCT          = 4.0
+        private const val MAX_HIGH_PCT         = 26.0
 
-        // Learning step sizes per hour
-        private const val STEP_UP              = 0.02  // nudge up when too high (cautious)
-        private const val STEP_DOWN            = 0.05  // nudge down when too low (aggressive)
+        private const val STEP_UP              = 0.02
+        private const val STEP_DOWN            = 0.05
 
-        // JSON persistence keys
         private const val K_SCORE        = "score"
         private const val K_LAST_UPDATE  = "lastUpdateMs"
         private const val K_SAMPLES      = "samples"
         private const val K_TS           = "ts"
         private const val K_ZONE         = "zone"
+        private const val K_FASTING      = "fasting"
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /**
-     * Current aggressiveness score, clamped to [1/max .. max].
-     * Use this to scale SMB delivery fraction and TBR correction.
-     */
     val aggressiveness: Double
         get() {
             val max = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
@@ -79,30 +77,39 @@ class AggressionLearner @Inject constructor(
         }
 
     /**
-     * Current rolling TIR stats as a human-readable string for the reason output.
+     * TIR summary shows full 24h all-mode stats for display,
+     * plus fasting-only stats so you can see the split.
      */
     val tirSummary: String
         get() {
-            val stats = computeTir() ?: return "tir=insufficient_data"
-            return "tir=%.0f%%in/%.0f%%hi/%.0f%%lo score=%.2f".format(
-                stats.inRangePct, stats.highPct, stats.lowPct, aggressiveness
-            )
+            val all     = computeTir(allSamples)
+            val fasting = computeTir(fastingSamples)
+            val allStr  = all?.let { "%.0f%%in/%.0f%%hi/%.0f%%lo".format(it.inRangePct, it.highPct, it.lowPct) }
+                ?: "insufficient"
+            val fastStr = fasting?.let { "f:%.0f%%in/%.0f%%hi/%.0f%%lo".format(it.inRangePct, it.highPct, it.lowPct) }
+                ?: "f:insufficient"
+            return "tir=$allStr $fastStr score=%.2f".format(aggressiveness)
         }
 
     /**
-     * Record current BG zone. Call every loop cycle.
+     * Record current BG zone.
+     * @param mealMode  Current meal mode — non-fasting samples excluded from score.
      */
-    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double) {
+    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double, mealMode: MealMode) {
         val zone = when {
             bgMgdl < lowThreshMgdl  -> Zone.LOW
             bgMgdl > highThreshMgdl -> Zone.HIGH
             else                    -> Zone.IN_RANGE
         }
-        val nowMs = System.currentTimeMillis()
-        samples.addLast(BgSample(nowMs, zone))
+        val nowMs   = System.currentTimeMillis()
+        val isFasting = mealMode == MealMode.FASTING
+        val sample  = BgSample(nowMs, zone, isFasting)
+
+        allSamples.addLast(sample)
+        if (isFasting) fastingSamples.addLast(sample)
+
         pruneOldSamples(nowMs)
 
-        // Recalculate score hourly
         if (nowMs - lastUpdateMs >= UPDATE_INTERVAL_MS) {
             updateScore()
             lastUpdateMs = nowMs
@@ -110,47 +117,38 @@ class AggressionLearner @Inject constructor(
         }
     }
 
-    /**
-     * Force a score recalculation and persist. Call after settings change.
-     */
     fun recalculate() {
         updateScore()
         saveState()
     }
 
-    // ── Score update ──────────────────────────────────────────────────────────
+    // ── Score update — fasting samples only ───────────────────────────────────
 
     private fun updateScore() {
-        val stats = computeTir() ?: return
+        val stats = computeTir(fastingSamples) ?: run {
+            aapsLogger.debug(LTag.APS, "AggressionLearner: insufficient fasting samples (${fastingSamples.size}/$MIN_SAMPLES_TO_LEARN), score held at $score")
+            return
+        }
         val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
         val floor = 1.0 / max
         val ceil  = max
-
-        val prevScore = score
+        val prev  = score
 
         score = when {
-            // Too many lows — back off hard and fast
-            stats.lowPct > MAX_LOW_PCT -> (score - STEP_DOWN).coerceAtLeast(floor)
-
-            // Great TIR but still some highs — nudge up gently
+            stats.lowPct > MAX_LOW_PCT ->
+                (score - STEP_DOWN).coerceAtLeast(floor)
             stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 ->
                 (score + STEP_UP).coerceAtMost(ceil)
-
-            // Too much time high — push up more firmly
             stats.highPct > MAX_HIGH_PCT ->
                 (score + STEP_UP * 1.5).coerceAtMost(ceil)
-
-            // In a good place — drift back toward neutral slowly
-            else -> score + (1.0 - score) * 0.05
+            else ->
+                score + (1.0 - score) * 0.05
         }
 
-        if (score != prevScore) {
+        if (score != prev) {
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: score %.3f->%.3f tir=%.0f%% high=%.0f%% low=%.0f%%".format(
-                                 prevScore, score,
-                                 stats.inRangePct, stats.highPct, stats.lowPct
-                             )
-            )
+                             "AggressionLearner: score %.3f→%.3f fasting tir=%.0f%% high=%.0f%% low=%.0f%% (n=${fastingSamples.size})".format(
+                                 prev, score, stats.inRangePct, stats.highPct, stats.lowPct))
         }
     }
 
@@ -158,50 +156,44 @@ class AggressionLearner @Inject constructor(
 
     private data class TirStats(val inRangePct: Double, val highPct: Double, val lowPct: Double)
 
-    private fun computeTir(): TirStats? {
-        if (samples.size < MIN_SAMPLES_TO_LEARN) return null
-        val total    = samples.size.toDouble()
-        val inRange  = samples.count { it.zone == Zone.IN_RANGE }
-        val high     = samples.count { it.zone == Zone.HIGH }
-        val low      = samples.count { it.zone == Zone.LOW }
-        return TirStats(
-            inRangePct = inRange / total * 100.0,
-            highPct    = high    / total * 100.0,
-            lowPct     = low     / total * 100.0
-        )
+    private fun computeTir(sampleSet: ArrayDeque<BgSample>): TirStats? {
+        if (sampleSet.size < MIN_SAMPLES_TO_LEARN) return null
+        val total   = sampleSet.size.toDouble()
+        val inRange = sampleSet.count { it.zone == Zone.IN_RANGE }
+        val high    = sampleSet.count { it.zone == Zone.HIGH }
+        val low     = sampleSet.count { it.zone == Zone.LOW }
+        return TirStats(inRange / total * 100.0, high / total * 100.0, low / total * 100.0)
     }
 
     private fun pruneOldSamples(nowMs: Long) {
-        while (samples.isNotEmpty() && nowMs - samples.first().timestampMs > WINDOW_MS) {
-            samples.removeFirst()
-        }
+        while (allSamples.isNotEmpty()     && nowMs - allSamples.first().timestampMs     > WINDOW_MS) allSamples.removeFirst()
+        while (fastingSamples.isNotEmpty() && nowMs - fastingSamples.first().timestampMs > WINDOW_MS) fastingSamples.removeFirst()
     }
-
-    // ── Persistence ───────────────────────────────────────────────────────────
 
     // ── Reset ─────────────────────────────────────────────────────────────────
 
     fun reset() {
-        samples.clear()
+        allSamples.clear()
+        fastingSamples.clear()
         score        = 1.0
         lastUpdateMs = 0L
         preferences.put(StringKey.ApsSmartInsulinAggressionState, "")
         aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
     }
 
+    // ── Persistence ───────────────────────────────────────────────────────────
+
     private fun saveState() {
         try {
-            val arr = JSONArray()
-            // Only persist last 288 samples (24h at 5-min intervals) to keep size manageable
-            val toSave = if (samples.size > 288) samples.takeLast(288) else samples
+            val arr    = JSONArray()
+            val toSave = if (allSamples.size > 288) allSamples.takeLast(288) else allSamples
             toSave.forEach { s ->
-                arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name))
+                arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting))
             }
-            val json = JSONObject()
-                .put(K_SCORE, score)
-                .put(K_LAST_UPDATE, lastUpdateMs)
-                .put(K_SAMPLES, arr)
-            preferences.put(StringKey.ApsSmartInsulinAggressionState, json.toString())
+            preferences.put(
+                StringKey.ApsSmartInsulinAggressionState,
+                JSONObject().put(K_SCORE, score).put(K_LAST_UPDATE, lastUpdateMs).put(K_SAMPLES, arr).toString()
+            )
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: save failed: ${e.message}")
         }
@@ -217,14 +209,17 @@ class AggressionLearner @Inject constructor(
             val arr      = json.optJSONArray(K_SAMPLES) ?: return
             val nowMs    = System.currentTimeMillis()
             for (i in 0 until arr.length()) {
-                val obj = arr.getJSONObject(i)
-                val ts  = obj.getLong(K_TS)
-                if (nowMs - ts <= WINDOW_MS) {
-                    samples.addLast(BgSample(ts, Zone.valueOf(obj.getString(K_ZONE))))
-                }
+                val obj      = arr.getJSONObject(i)
+                val ts       = obj.getLong(K_TS)
+                if (nowMs - ts > WINDOW_MS) continue
+                val zone     = Zone.valueOf(obj.getString(K_ZONE))
+                val isFasting = obj.optBoolean(K_FASTING, true)  // legacy: assume fasting if missing
+                val sample   = BgSample(ts, zone, isFasting)
+                allSamples.addLast(sample)
+                if (isFasting) fastingSamples.addLast(sample)
             }
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: restored score=$score samples=${samples.size}")
+                             "AggressionLearner: restored score=$score all=${allSamples.size} fasting=${fastingSamples.size}")
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: restore failed: ${e.message}")
             score = 1.0

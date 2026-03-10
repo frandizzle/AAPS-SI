@@ -354,7 +354,8 @@ open class SmartInsulinPlugin @Inject constructor(
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
-            highThreshMgdl  = 180.0   // 10.0 mmol — clinical TIR high threshold
+            highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
+            mealMode        = mealMode
         )
         val aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         val tirSummary     = aggressionLearner.tirSummary
