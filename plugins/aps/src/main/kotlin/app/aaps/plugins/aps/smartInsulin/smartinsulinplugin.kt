@@ -359,13 +359,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         val tirSummary     = aggressionLearner.tirSummary
 
-        // Feed basal learner -- learns from any clean fasting window, day or night.
-        // Overnight observations are confidence-weighted higher than daytime ones.
+        // Feed basal learner — fasting only, no high temp target
+        // High TT = deliberate conservative mode (exercise/illness) — don't learn from it
+        // Meal modes = COB active, loop reacting to carbs — basal signal is meaningless
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
+        val profileTargetMgdl = profile.getTargetMgdl()
+        val highTempTarget = isTempTarget && targetBg > profileTargetMgdl
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        if (basalLearningEnabled) {
+        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
@@ -374,6 +377,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 isfMgdl       = trueIsfMgdl,
                 profileBasalU = profile.getBasal()
             )
+        } else if (highTempTarget || mealMode != MealMode.FASTING) {
+            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget")
         }
         // Blend flat BasalLearner with circadian per-hour learning
         // Circadian takes over proportionally as its confidence grows
@@ -385,7 +390,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val dawnWindowStart   = preferences.get(IntKey.ApsSmartInsulinDawnWindowStartHour)
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
-        val profileTargetMgdl = profile.getTargetMgdl()
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMmol > 0.0) modeIsfMmol else null} dosingIsfMgdl=$dosingIsfMgdl learnedProfile=$learnedProfile")
 
@@ -466,21 +470,30 @@ open class SmartInsulinPlugin @Inject constructor(
         lastAPSResult              = apsResult
         lastAPSRun                 = now
 
-        // Append learning status to reason so it's visible in the Loop tab
+        // ── BolusCurveTracker — meal modes only (peak/DIA learning from bolus curves)
+        // This is intentionally NOT suppressed during high TT — a meal bolus during
+        // a high TT is still a valid peak/DIA observation.
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
             apsResult.reason += " | ${bolusCurveTracker.statusSummary(mealMode)}"
         }
 
-        // ── Circadian learner update ──────────────────────────────────────────
-        circadianLearner.update(
-            glucoseStatus  = glucoseStatus,
-            iobArray       = iobArray,
-            mealMode       = mealMode,
-            cobG           = mealData.mealCOB,
-            profileIsfMgdl = trueIsfMgdl,
-            targetMgdl     = oapsProfile.target_bg.toDouble()
-        )
+        // ── Circadian learner — fasting + no high TT only ─────────────────────
+        // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
+        // The circadian learner itself also gates on mealMode==FASTING internally,
+        // but we gate highTempTarget here before the call to avoid polluting bgHistory.
+        if (!highTempTarget) {
+            circadianLearner.update(
+                glucoseStatus  = glucoseStatus,
+                iobArray       = iobArray,
+                mealMode       = mealMode,
+                cobG           = mealData.mealCOB,
+                profileIsfMgdl = trueIsfMgdl,
+                targetMgdl     = oapsProfile.target_bg.toDouble()
+            )
+        } else {
+            aapsLogger.debug(LTag.APS, "CircadianLearner suppressed: highTT=$highTempTarget")
+        }
 
         // Append per-cycle learner summary to reason — visible in Loop tab
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
