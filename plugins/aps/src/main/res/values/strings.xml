@@ -48,6 +48,10 @@
     <string name="si_dinner_carbs_g_title">Dinner default carbs (g)</string>
     <string name="si_mode_window_mins_title">Meal mode window (minutes)</string>
     <string name="si_max_prebolus_title">Max pre-bolus (U)</string>
+    <string name="si_activity_light_target_title">Activity: Light target raise (mmol/L)</string>
+    <string name="si_activity_moderate_target_title">Activity: Moderate target raise (mmol/L)</string>
+    <string name="si_activity_heavy_target_title">Activity: Heavy target raise (mmol/L)</string>
+
 
 
     <!-- Prediction / anti-rebound prefs -->

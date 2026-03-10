@@ -321,8 +321,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     )
                 } else ""
 
+                // Build activity/CGM status suffix for Loop reason string
+                val activityStr = when (activityLevel) {
+                    ActivityMonitor.ActivityLevel.SEDENTARY -> ""
+                    else -> " activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)"
+                }
+                // CGM block reason: show in reason if SMBs were reduced/blocked by warmup or artefact
+                val cgmBlockStr = when {
+                    !cgmDeltaPlausible -> " cgm=smbBlocked(artefactDelta)"
+                    cgmSmbFraction == 0.0 -> " cgm=smbBlocked(warmup<12h)"
+                    cgmSmbFraction < 1.0  -> " cgm=smb×${(cgmSmbFraction * 100).toInt()}%(warmup)"
+                    else -> ""
+                }
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger ".format())
-                sb.append("smb=%.3f tbr=%.3f%s".format(Locale.US, finalSmb, tbrRate, reboundStr))
+                sb.append("smb=%.3f tbr=%.3f%s%s%s".format(Locale.US, finalSmb, tbrRate, reboundStr, activityStr, cgmBlockStr))
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }

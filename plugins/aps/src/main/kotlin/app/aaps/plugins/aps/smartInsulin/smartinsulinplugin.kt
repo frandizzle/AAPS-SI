@@ -600,10 +600,22 @@ open class SmartInsulinPlugin @Inject constructor(
         // Append per-cycle learner summary to reason — visible in Loop tab
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
         val circHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        // Activity status for Loop tab reason string
+        val activitySuffix = when (activityMonitor.level) {
+            ActivityMonitor.ActivityLevel.SEDENTARY -> ""
+            ActivityMonitor.ActivityLevel.LIGHT     -> " | activity=Light(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+            ActivityMonitor.ActivityLevel.MODERATE  -> " | activity=Moderate(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+            ActivityMonitor.ActivityLevel.HEAVY     -> " | activity=Heavy(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+        }
+        // CGM warmup/block suffix
+        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
+
         apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
             " basal×${"%.2f".format(basalMultiplier)}" +
             " aggr=${"%.2f".format(aggressiveness)}/${"%.2f".format(aggressionLearner.aggressiveness)}" +
-            if (inReboundWindow) " rebound=${msSinceLastSuspend / 60_000}min" else ""
+            (if (inReboundWindow) " rebound=${msSinceLastSuspend / 60_000}min" else "") +
+            activitySuffix +
+            cgmSuffix
 
         // ── CSV logging ───────────────────────────────────────────────────────
         val zone = when {
@@ -744,6 +756,10 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinDinnerCarbsG,    title = R.string.si_dinner_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,  title = R.string.si_mode_window_mins_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus, title = R.string.si_max_prebolus_title))
+            // Activity monitor — target raises during exercise
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
         }
     }
 }

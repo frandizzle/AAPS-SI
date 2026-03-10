@@ -60,9 +60,11 @@ class ActivityMonitor @Inject constructor(
     }
 
     // ── Received data ─────────────────────────────────────────────────────────
-    private var lastHrBpm:       Double = 0.0
+    var lastHrBpm:       Double = 0.0
+        private set
     private var lastHrTimestampMs: Long = 0L
-    private var lastSteps5min:   Int    = 0
+    var lastSteps5min:   Int    = 0
+        private set
     private var lastStepsTimestampMs: Long = 0L
 
     // ── Computed level ────────────────────────────────────────────────────────
