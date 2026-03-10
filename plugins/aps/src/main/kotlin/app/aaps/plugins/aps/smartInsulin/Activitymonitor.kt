@@ -44,12 +44,15 @@ class ActivityMonitor @Inject constructor(
         const val STEPS_MODERATE_MIN  = 500
         const val STEPS_HEAVY_MIN     = 900
 
-        // Query windows
-        const val HR_WINDOW_MS        = 10 * 60 * 1000L   // 10 min — covers one full recording interval
-        const val STEPS_SEARCH_MS     = 210 * 60 * 1000L  // 210 min search window (matches AIMI — covers delays)
-        const val STEPS_FRESH_MS      =   5 * 60 * 1000L  // timestamp = END of 5-min window, so fresh = within last 5 min
-        const val STEPS_FALLBACK_MS   =  30 * 60 * 1000L  // fallback if no record in last 5 min
-        const val HR_FALLBACK_MS      = 30 * 60 * 1000L   // 30 min fallback if no fresh HR
+        // HR: record end (timestamp + duration) must be within this window to be considered live.
+        // Wear OS records every ~5 min. If nothing in 10 min → watch is off/charging → SEDENTARY.
+        // NO fallback — stale HR data is worse than no data (it causes phantom activity targeting).
+        const val HR_LIVE_WINDOW_MS   = 10 * 60 * 1000L
+
+        // Steps: search wide for DB records (delays), but only use if fresh
+        const val STEPS_SEARCH_MS     = 210 * 60 * 1000L  // wide search to handle sync delays
+        const val STEPS_FRESH_MS      =  10 * 60 * 1000L  // must have a record end within 10 min
+        // NO steps fallback either — old steps data shouldn't sustain activity targeting
     }
 
     // ── Last read values (public read-only for reason string display) ─────────
@@ -83,16 +86,17 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Fresh = record whose timestamp (= end of 5-min window) is within the last 5 min
-        val freshSteps    = allSteps.filter { it.timestamp >= nowMs - STEPS_FRESH_MS }.maxByOrNull { it.timestamp }
-        // Fallback = most recent record within 30 min (handles one missed sync cycle)
-        val fallbackSteps = if (freshSteps == null)
-            allSteps.filter { it.timestamp >= nowMs - STEPS_FALLBACK_MS }.maxByOrNull { it.timestamp }
-        else null
-        lastSteps5min = freshSteps?.steps5min ?: fallbackSteps?.steps5min ?: 0
+        // Only use a steps record if its timestamp (= end of 5-min window) is within last 10 min.
+        // No fallback — same reason as HR: stale steps shouldn't sustain activity targeting.
+        val freshSteps = allSteps.filter { it.timestamp >= nowMs - STEPS_FRESH_MS }.maxByOrNull { it.timestamp }
+        lastSteps5min  = freshSteps?.steps5min ?: 0
 
         // ── Heart Rate ────────────────────────────────────────────────────────
-        val hrSearchStart = nowMs - (HR_WINDOW_MS + 60 * 60 * 1000L) // 70 min to cover overlapping records
+        // Only use HR records whose END (timestamp + duration) is within the last 10 minutes.
+        // If nothing is that fresh → watch is off/charging → lastHrBpm = 0 → SEDENTARY.
+        // No fallback intentionally: stale HR causes phantom activity targeting (e.g. watch on
+        // charge still showing 95bpm from 25 min ago → spurious +0.5mmol target raise).
+        val hrSearchStart = nowMs - HR_LIVE_WINDOW_MS
         val allHr = try {
             persistenceLayer.getHeartRatesFromTimeToTime(hrSearchStart, nowMs)
         } catch (e: Exception) {
@@ -100,19 +104,12 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Fresh = records whose window overlaps the last 10 minutes
-        val hrWindowStart = nowMs - HR_WINDOW_MS
-        val freshHrList   = allHr.filter { it.timestamp + it.duration >= hrWindowStart }
-
-        lastHrBpm = if (freshHrList.isNotEmpty()) {
-            freshHrList.map { it.beatsPerMinute }.average()
-        } else {
-            // Fallback: most recent record within 30 min
-            val fallback = allHr
-                .filter { it.timestamp + it.duration >= nowMs - HR_FALLBACK_MS }
-                .maxByOrNull { it.timestamp }
-            fallback?.beatsPerMinute ?: 0.0
-        }
+        // Record is live if its window end (timestamp + duration) falls within the live window
+        val liveHrList = allHr.filter { it.timestamp + it.duration >= hrSearchStart }
+        lastHrBpm = if (liveHrList.isNotEmpty())
+            liveHrList.map { it.beatsPerMinute }.average()
+        else
+            0.0  // no live data → watch off or not worn → treat as SEDENTARY
 
         aapsLogger.debug(LTag.APS,
                          "ActivityMonitor: hr=${if (lastHrBpm > 0) "${lastHrBpm.toInt()}bpm" else "none"} " +
