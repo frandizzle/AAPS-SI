@@ -64,6 +64,9 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.floor
+import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.kotlin.plusAssign
+import app.aaps.core.interfaces.rx.weardata.EventData
 
 @Singleton
 open class SmartInsulinPlugin @Inject constructor(
@@ -219,7 +222,7 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     // ── RxBus subscriptions for HR and steps from wear ───────────────────────
-    private val disposable = io.reactivex.rxjava3.disposables.CompositeDisposable()
+    private val disposable = CompositeDisposable()
 
     override fun onStart() {
         super.onStart()
@@ -227,7 +230,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // EventData.ActionHeartRate is sent by DataLayerListenerServiceMobile when
         // HR data arrives from the watch. beatsPerMinute is the averaged BPM value.
         disposable += rxBus
-            .toObservable(app.aaps.core.interfaces.rx.weardata.EventData.ActionHeartRate::class.java)
+            .toObservable(EventData.ActionHeartRate::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ hrEvent ->
                            activityMonitor.feedHeartRate(

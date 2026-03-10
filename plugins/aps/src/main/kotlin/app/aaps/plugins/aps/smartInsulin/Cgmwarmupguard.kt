@@ -2,6 +2,8 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.math.abs
 
 /**
