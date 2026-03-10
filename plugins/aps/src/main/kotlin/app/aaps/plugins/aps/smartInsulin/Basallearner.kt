@@ -15,23 +15,21 @@ import kotlin.math.abs
 /**
  * Learns a basal multiplier from fasting BG drift — any time of day.
  *
- * Signal quality gates replace the overnight time window. An observation only
- * fires when all of the following are true:
+ * NOTE: basalIob gate removed. In a closed loop using oref, basalIob is almost
+ * always negative (loop zero-temps frequently), so gating on it means the learner
+ * almost never fires. Instead, we gate on a sustained quiet fasting window:
  *
- *   - COB is negligible (< 5g) — no active carb absorption
- *   - No bolus in last [MIN_MINUTES_NO_BOLUS] minutes — no recent correction
- *   - IOB is close to basal-only IOB — no meal/correction bolus still active
- *   - BG is within a reasonable range — not in a hypo or stress response
- *   - BG delta is quiet — BG not moving fast due to a non-basal cause
- *   - Enough samples accumulated in the current window
- *   - Measured drift is below the noise gate
+ *   - COB negligible (< 5g)
+ *   - No bolus in last [MIN_MINUTES_NO_BOLUS] minutes
+ *   - BG in a reasonable range
+ *   - BG delta quiet (not reacting to anything rapid)
+ *   - Enough samples over a long enough window
  *
- * Observations are confidence-weighted:
- *   - Overnight (midnight–6am): weight = 1.0 — highest quality signal
- *   - Daytime fasting:          weight = 0.5 — noisier, moves multiplier slower
+ * Net BG drift during that window is the signal — regardless of what the loop
+ * was doing with TBRs. If BG drifted up even with loop suppressing basal,
+ * profile basal is genuinely too low.
  *
- * This means the multiplier still converges primarily on overnight data, but
- * daytime fasting periods (e.g. pre-breakfast, late afternoon) contribute too.
+ * Overnight observations still move the multiplier faster (higher weight).
  */
 @Singleton
 class BasalLearner @Inject constructor(
@@ -53,7 +51,6 @@ class BasalLearner @Inject constructor(
         private const val HIGH_BG_GATE_MGDL       = 162.0  // 9.0 mmol — tighter than overnight gate
         private const val MAX_COB_G               = 5.0
         private const val MAX_DELTA_MGDL_PER_5MIN = 2.0    // BG must be quiet — <2 mg/dL movement
-        private const val MAX_IOB_ABOVE_BASAL_U   = 0.5    // IOB must be close to basal-only IOB
 
         // Drift calculation
         private const val SAMPLE_WINDOW_MS        = 90 * 60 * 1000L  // 90min rolling window
@@ -98,8 +95,6 @@ class BasalLearner @Inject constructor(
      * @param deltaMgdl      5-min BG delta mg/dL
      * @param cobG           Current COB grams
      * @param minsLastBolus  Minutes since last bolus
-     * @param basalOnlyIobU  Expected IOB if only basal were running (U) — used to detect lingering bolus IOB
-     * @param currentIobU    Actual current IOB (U)
      * @param isfMgdl        Current ISF mg/dL/U
      * @param profileBasalU  Profile basal U/hr (before multiplier)
      */
@@ -108,8 +103,6 @@ class BasalLearner @Inject constructor(
         deltaMgdl:     Double,
         cobG:          Double,
         minsLastBolus: Double,
-        basalOnlyIobU: Double,
-        currentIobU:   Double,
         isfMgdl:       Double,
         profileBasalU: Double
     ) {
@@ -122,7 +115,6 @@ class BasalLearner @Inject constructor(
         if (minsLastBolus < MIN_MINUTES_NO_BOLUS) return
         if (bgMgdl < LOW_BG_GATE_MGDL || bgMgdl > HIGH_BG_GATE_MGDL) return
         if (abs(deltaMgdl) > MAX_DELTA_MGDL_PER_5MIN) return
-        if ((currentIobU - basalOnlyIobU) > MAX_IOB_ABOVE_BASAL_U) return
 
         // Sample passes all gates — collect it
         window.addLast(BgDriftSample(nowMs, bgMgdl))

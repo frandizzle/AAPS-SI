@@ -356,16 +356,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        val basalOnlyIob  = iobArray.firstOrNull()?.basaliob ?: 0.0
-        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
         if (basalLearningEnabled) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
                 cobG          = mealData.mealCOB,
                 minsLastBolus = minsLastBolus,
-                basalOnlyIobU = basalOnlyIob,
-                currentIobU   = currentIob,
                 isfMgdl       = trueIsfMgdl,
                 profileBasalU = profile.getBasal()
             )
@@ -474,7 +470,6 @@ open class SmartInsulinPlugin @Inject constructor(
             mealMode       = mealMode,
             cobG           = mealData.mealCOB,
             profileIsfMgdl = trueIsfMgdl,
-            profileBasalUh = profile.getBasal(),
             targetMgdl     = oapsProfile.target_bg.toDouble()
         )
 

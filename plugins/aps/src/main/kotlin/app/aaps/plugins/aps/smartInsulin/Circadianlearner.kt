@@ -68,7 +68,6 @@ class CircadianLearner @Inject constructor(
      * @param mealMode       Active meal mode — only update during FASTING
      * @param cobG           Current COB — skip learning if > 0
      * @param profileIsfMgdl Profile ISF in mg/dL (used for deviation calc)
-     * @param profileBasalUh Profile basal rate U/h
      * @param targetMgdl     Current target BG
      */
     fun update(
@@ -77,7 +76,6 @@ class CircadianLearner @Inject constructor(
         mealMode:       MealMode,
         cobG:           Double,
         profileIsfMgdl: Double,
-        profileBasalUh: Double,
         targetMgdl:     Double
     ) {
         val hour = currentHour()
@@ -115,8 +113,8 @@ class CircadianLearner @Inject constructor(
         // ── 1. ISF learning (deviation-based) ────────────────────────────────
         updateIsfLearner(hour, glucoseStatus, iobArray, profileIsfMgdl)
 
-        // ── 2. Basal learning (fasting drift) ────────────────────────────────
-        updateBasalLearner(hour, delta, iobArray, profileBasalUh)
+        // ── 2. Basal learning (sustained fasting drift — no basalIob gate) ───
+        updateBasalLearner(hour, bg, now)
 
         // ── 3. Aggressiveness ceiling learning ───────────────────────────────
         updateAggrLearner(hour, bg, delta, targetMgdl, iobArray)
@@ -165,34 +163,68 @@ class CircadianLearner @Inject constructor(
     }
 
     // ── Basal learner ─────────────────────────────────────────────────────────
+    //
+    // In a closed loop, basalIob is almost always negative (loop zero-temps frequently).
+    // Gating on basalIob is therefore wrong — it would almost never fire.
+    //
+    // Instead: use a sustained BG drift window. Collect (timestamp, bg) pairs during
+    // quiet fasting periods (low COB, no bolus — already gated upstream in update()).
+    // Once enough samples accumulate over a long enough window, the net drift tells us
+    // whether profile basal is too high or too low — regardless of what the loop did
+    // to achieve it. If BG drifted up even with loop suppressing basal, profile basal
+    // is genuinely too low. If BG stayed flat with loop running normally, it's fine.
+
+    private val basalDriftWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque(BASAL_WINDOW_MAX)
 
     private fun updateBasalLearner(
-        hour:           Int,
-        delta:          Double,
-        iobArray:       Array<IobTotal>,
-        profileBasalUh: Double
+        hour:  Int,
+        bg:    Double,
+        now:   Long
     ) {
-        val basalIob = iobArray.firstOrNull()?.basaliob ?: run {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: no iobArray"); return
-        }
-        if (abs(basalIob) > MAX_BASAL_IOB_FOR_LEARNING) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: basalIob=${"%.2f".format(basalIob)} > $MAX_BASAL_IOB_FOR_LEARNING")
-            return
-        }
-        if (abs(delta) < MIN_DELTA_FOR_BASAL) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: delta=${"%.2f".format(delta)} < $MIN_DELTA_FOR_BASAL")
+        // Collect sample into drift window
+        basalDriftWindow.addLast(now to bg)
+        // Prune samples older than the window
+        while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
+            basalDriftWindow.removeFirst()
+
+        if (basalDriftWindow.size < BASAL_MIN_SAMPLES) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: only ${basalDriftWindow.size}/${BASAL_MIN_SAMPLES} samples")
             return
         }
 
-        // Positive drift → basal too low → multiplier > 1
-        // Negative drift → basal too high → multiplier < 1
-        val adjustment = 1.0 + (delta / BASAL_DRIFT_SENSITIVITY)
-        val newMult = (basalState.get(hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        val oldest     = basalDriftWindow.first()
+        val newest     = basalDriftWindow.last()
+        val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
+        if (elapsedHrs < BASAL_MIN_ELAPSED_HRS) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: elapsed=${"%.2f".format(elapsedHrs)}h < $BASAL_MIN_ELAPSED_HRS")
+            return
+        }
+
+        val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
+
+        // Noise gate — ignore tiny drift, could be CGM noise
+        if (abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
+            return
+        }
+        // Sanity gate — ignore huge drift, something else is going on
+        if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
+            basalDriftWindow.clear()  // stale window, start fresh
+            return
+        }
+
+        // Positive drift → BG rising despite loop → profile basal too low → mult > 1
+        // Negative drift → BG falling → profile basal too high → mult < 1
+        val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
+        val newMult    = (basalState.get(hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         basalState = basalState.updated(hour, newMult, BASAL_ALPHA)
 
+        // Clear window after a learning event so next update is from fresh data
+        basalDriftWindow.clear()
+
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner Basal h=$hour delta=%.2f → mult=%.3f"
-                             .format(delta, basalState.get(hour)))
+                         "CircadianLearner Basal h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(hour))}")
     }
 
     // ── Aggressiveness ceiling learner ────────────────────────────────────────
@@ -360,13 +392,17 @@ class CircadianLearner @Inject constructor(
         private const val MIN_ACTIVITY           = 0.005  // min IOB activity to learn from
         private const val MIN_EXPECTED_DELTA_MGDL = 1.0
 
-        // Basal learner
-        private const val BASAL_ALPHA                  = 0.06
-        private const val BASAL_MULT_MIN               = 0.5
-        private const val BASAL_MULT_MAX               = 1.5
-        private const val MAX_BASAL_IOB_FOR_LEARNING   = 0.3   // only learn when basal IOB is near zero
-        private const val MIN_DELTA_FOR_BASAL          = 0.5   // mg/dL per 5min minimum drift to learn
-        private const val BASAL_DRIFT_SENSITIVITY      = 10.0  // mg/dL drift that maps to 10% basal change
+        // Basal learner — drift window approach (basalIob gate removed, always negative in closed loop)
+        private const val BASAL_ALPHA              = 0.06
+        private const val BASAL_MULT_MIN           = 0.5
+        private const val BASAL_MULT_MAX           = 1.5
+        private const val BASAL_DRIFT_WINDOW_MS    = 90 * 60 * 1000L  // 90 min window to measure drift
+        private const val BASAL_MIN_SAMPLES        = 12               // ~60 min of readings
+        private const val BASAL_MIN_ELAPSED_HRS    = 0.5              // at least 30 min spread
+        private const val BASAL_MIN_DRIFT_MGDL_HR  = 2.0             // < 2 mg/dL/hr = noise, ignore
+        private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
+        private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift → 1.0 multiplier adjustment (1 mmol/L/hr)
+        private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
