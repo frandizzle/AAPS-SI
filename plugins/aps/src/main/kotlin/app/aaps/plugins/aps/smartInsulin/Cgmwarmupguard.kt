@@ -173,9 +173,10 @@ class CgmWarmupGuard @Inject constructor(
         // Determine how many readings to skip between each allowed SMB
         // Erratic/noisy overrides to skip-2 regardless of age
         val skipN: Int = when {
-            sensorErratic || highNoise -> 2          // safety override
-            sensorAgeHours < SKIP3_END_HOURS -> 2    // 0–12h allow every 3rd
-            else -> 0                                // 12–24h allow every reading
+            sensorErratic || highNoise -> 2          // safety override → every 3rd
+            sensorAgeHours < 12.0 -> 2               // 0–12h → every 3rd
+            sensorAgeHours < 24.0 -> 1               // 12–24h → every 2nd
+            else -> 0                                // 24h+ → every reading
         }
 
         // Allow SMB on cycle 0, skip the next skipN cycles, then allow again
