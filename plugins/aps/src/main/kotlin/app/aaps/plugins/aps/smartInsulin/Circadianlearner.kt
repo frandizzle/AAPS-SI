@@ -147,28 +147,46 @@ class CircadianLearner @Inject constructor(
             return
         }
 
-        // ISF convention: higher ISF number = less aggressive (each unit moves BG more).
-        // If actual BG movement < expected → insulin had less effect than predicted
-        //   → real ISF is higher than profile → mult should go UP (use higher ISF = less insulin)
-        // If actual BG movement > expected → insulin had more effect than predicted
-        //   → real ISF is lower than profile → mult should go DOWN (use lower ISF = more insulin)
+        // ISF convention: higher ISF number = less aggressive (each unit moves BG further per unit).
         //
-        // ratio = actualDelta / expectedDelta (both negative when BG falling)
-        // actual < expected (e.g. -1.5 vs -3.6) → ratio = 0.42 → real ISF is HIGHER
-        // So mult = 1 / ratio (invert): under-response → mult > 1 → higher ISF → less insulin ✓
-        val ratio = if (expectedDelta != 0.0) actualDelta / expectedDelta else 1.0
-        val clampedRatio = ratio.coerceIn(0.25, 4.0)
-        // Invert: under-response (ratio < 1) → mult > 1 → higher ISF → less aggressive
-        val isfAdjust = if (clampedRatio > 0.0) 1.0 / clampedRatio else 1.0
-        val clampedAdjust = isfAdjust.coerceIn(0.5, 2.0)
-
-        val newMult = (isfState.get(hour) * (1.0 - ISF_ALPHA) + clampedAdjust * ISF_ALPHA)
+        // We learn a deviation: how much did BG actually move vs how much did IOB predict?
+        // Work in absolute magnitudes to avoid sign confusion — then determine direction separately.
+        //
+        // expectedDelta = -(activity × profileISF × 5)  [negative when insulin active]
+        // If BG moved LESS than expected → insulin weaker than profile predicts → real ISF is HIGHER
+        //   → mult should go UP so dosingISF = profileISF / mult goes DOWN... WAIT.
+        //
+        // APPLICATION convention (fixed below in plugin):
+        //   dosingIsfMgdl = profileISF / circIsfMult
+        //   circIsfMult > 1.0 → dosingISF goes DOWN → less insulin (insulin weaker than expected)
+        //   circIsfMult < 1.0 → dosingISF goes UP   → more insulin (insulin stronger than expected)
+        //
+        // So here: if insulin was WEAKER than expected → mult should go UP (> 1.0)
+        //          if insulin was STRONGER than expected → mult should go DOWN (< 1.0)
+        //
+        // deviation = actualDelta - expectedDelta (signed)
+        // Both negative when BG falling. expectedDelta=-3.6, actualDelta=-1.5:
+        //   deviation = -1.5 - (-3.6) = +2.1  → BG fell less than expected → insulin weaker → mult UP
+        // expectedDelta=-3.6, actualDelta=-5.0:
+        //   deviation = -5.0 - (-3.6) = -1.4  → BG fell more than expected → insulin stronger → mult DOWN
+        // expectedDelta=-1.8, actualDelta=+2.3 (BG rising against IOB):
+        //   deviation = +2.3 - (-1.8) = +4.1  → massive under-response → mult UP (large step)
+        //
+        // Normalise deviation by expectedDelta magnitude to get a fractional adjustment:
+        //   normDeviation = deviation / abs(expectedDelta)
+        //   +1.0 means actual was 100% weaker than expected → mult target = current * 2.0
+        //   -0.5 means actual was 50% stronger → mult target = current * 0.5
+        val deviation     = actualDelta - expectedDelta
+        val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
+        // Target multiplier: positive deviation → mult > 1 → dosingISF/mult goes lower → less insulin
+        val multTarget    = (isfState.get(hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        val newMult       = (isfState.get(hour) * (1.0 - ISF_ALPHA) + multTarget * ISF_ALPHA)
             .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         isfState = isfState.updated(hour, newMult, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f ratio=%.2f isfAdj=%.2f → mult=%.3f"
-                             .format(expectedDelta, actualDelta, clampedRatio, clampedAdjust, isfState.get(hour)))
+                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(hour)))
     }
 
     // ── Basal learner ─────────────────────────────────────────────────────────

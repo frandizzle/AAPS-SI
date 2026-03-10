@@ -284,9 +284,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val circAggrCeil  = circadianLearner.aggrCeiling()
         // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
         // Meal mode ISF overrides are user-set — don't touch them
+        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → less insulin (insulin weaker than profile)
+        // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
+        // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
         val dosingIsfMgdl = when {
-            modeIsfMmol > 0.0 -> modeIsfMmol * 18.0           // user meal-mode override
-            else              -> trueIsfMgdl * circIsfMult     // profile ISF × circadian learned multiplier
+            modeIsfMmol > 0.0 -> modeIsfMmol * 18.0               // user meal-mode override — absolute
+            else              -> trueIsfMgdl / circIsfMult         // divide: mult>1 → lower dosingISF → less insulin
         }
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
