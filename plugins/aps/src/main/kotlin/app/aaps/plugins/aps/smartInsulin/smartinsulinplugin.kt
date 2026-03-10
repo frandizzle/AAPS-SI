@@ -64,9 +64,6 @@ import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.floor
-import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.kotlin.plusAssign
-import app.aaps.core.interfaces.rx.weardata.EventData
 
 @Singleton
 open class SmartInsulinPlugin @Inject constructor(
@@ -222,35 +219,16 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     // ── RxBus subscriptions for HR and steps from wear ───────────────────────
-    private val disposable = CompositeDisposable()
-
     override fun onStart() {
         super.onStart()
-        // Subscribe to heart rate events from wear device
-        // EventData.ActionHeartRate is sent by DataLayerListenerServiceMobile when
-        // HR data arrives from the watch. beatsPerMinute is the averaged BPM value.
-        disposable += rxBus
-            .toObservable(EventData.ActionHeartRate::class.java)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ hrEvent ->
-                           activityMonitor.feedHeartRate(
-                               bpm         = hrEvent.beatsPerMinute,
-                               timestampMs = hrEvent.timestamp
-                           )
-                       }, { aapsLogger.error(LTag.APS, "SmartInsulin: HR subscription error: $it") })
-
-        // Subscribe to steps count events from wear device
-        // TODO: replace EventData.ActionHeartRate with the correct steps event class
-        // once DataLayerListenerServiceMobile file is available to confirm the class name.
-        // The StepsCount DB entity has steps5min: Int which is what we want.
-        // Likely: EventData.ActionStepsCount or similar — check DataLayerListenerServiceMobile.
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart — HR subscription active")
+        // ActivityMonitor now queries persistenceLayer directly each loop cycle.
+        // No RxBus subscription needed — HR and steps are read from DB on demand.
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
     override fun onStop() {
-        disposable.clear()
         super.onStop()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop — subscriptions cleared")
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop")
     }
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
@@ -403,8 +381,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         // ── Activity monitor — recompute from fed HR/steps data ─────────────
-        // HR is fed via feedHeartRate() called from a RxBus subscriber in onStart().
-        // Steps are fed via feedSteps() called from a RxBus subscriber in onStart().
+        // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
         activityMonitor.recompute(nowMs = now)
@@ -601,11 +578,13 @@ open class SmartInsulinPlugin @Inject constructor(
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
         val circHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         // Activity status for Loop tab reason string
+        // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {
-            ActivityMonitor.ActivityLevel.SEDENTARY -> ""
-            ActivityMonitor.ActivityLevel.LIGHT     -> " | activity=Light(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
-            ActivityMonitor.ActivityLevel.MODERATE  -> " | activity=Moderate(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
-            ActivityMonitor.ActivityLevel.HEAVY     -> " | activity=Heavy(+${"%.1f".format(activityTargetOffsetMmol)}mmol hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+            ActivityMonitor.ActivityLevel.SEDENTARY ->
+                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
+            else ->
+                " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
+                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
