@@ -71,12 +71,13 @@ class CircadianLearner @Inject constructor(
      * @param targetMgdl     Current target BG
      */
     fun update(
-        glucoseStatus:  GlucoseStatus,
-        iobArray:       Array<IobTotal>,
-        mealMode:       MealMode,
-        cobG:           Double,
-        profileIsfMgdl: Double,
-        targetMgdl:     Double
+        glucoseStatus:          GlucoseStatus,
+        iobArray:               Array<IobTotal>,
+        mealMode:               MealMode,
+        cobG:                   Double,
+        profileIsfMgdl:         Double,
+        targetMgdl:             Double,
+        suppressAdaptiveLearning: Boolean = false   // true = skip ISF/basal updates, keep rollercoaster protection
     ) {
         val hour = currentHour()
         val bg   = glucoseStatus.glucose
@@ -110,13 +111,17 @@ class CircadianLearner @Inject constructor(
         while (bgHistory.isNotEmpty() && now - bgHistory.first().first > ROLLER_WINDOW_MS)
             bgHistory.removeFirst()
 
-        // ── 1. ISF learning (deviation-based) ────────────────────────────────
-        updateIsfLearner(hour, glucoseStatus, iobArray, profileIsfMgdl)
+        // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
+        if (!suppressAdaptiveLearning) updateIsfLearner(hour, glucoseStatus, iobArray, profileIsfMgdl)
+        else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
 
-        // ── 2. Basal learning (sustained fasting drift — no basalIob gate) ───
-        updateBasalLearner(hour, bg, now)
+        // ── 2. Basal learning — skip during CGM warmup ───────────────────────
+        if (!suppressAdaptiveLearning) updateBasalLearner(hour, bg, now)
+        else aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)")
 
-        // ── 3. Aggressiveness ceiling learning ───────────────────────────────
+        // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
+        // Rollercoaster and soft-low penalties must fire even on a new sensor —
+        // a real rapid rise/crash is dangerous regardless of sensor age.
         updateAggrLearner(hour, bg, delta, targetMgdl, iobArray)
 
         persist()

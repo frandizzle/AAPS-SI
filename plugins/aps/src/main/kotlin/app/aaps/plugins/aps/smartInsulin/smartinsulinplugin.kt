@@ -417,7 +417,10 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
-        val suppressAllLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
+        // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
+        // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
+        val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
+        val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
         val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
@@ -429,7 +432,7 @@ open class SmartInsulinPlugin @Inject constructor(
             heavyMmol    = activityHeavyTarget
         )
 
-        if (suppressAllLearning) {
+        if (suppressAdaptiveLearning) {
             aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
                 "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
         }
@@ -458,7 +461,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAllLearning) {
+        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearning) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
@@ -577,17 +580,22 @@ open class SmartInsulinPlugin @Inject constructor(
         // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
         // The circadian learner itself also gates on mealMode==FASTING internally,
         // but we gate highTempTarget here before the call to avoid polluting bgHistory.
-        if (!highTempTarget && !suppressAllLearning) {
+        // Circadian learner:
+        //   - Always call during normal conditions
+        //   - During CGM warmup: call with suppressAdaptiveLearning=true so rollercoaster still fires
+        //   - During activity or high TT: skip entirely (BG movement isn't insulin-driven)
+        if (!highTempTarget && !suppressRollercoaster) {
             circadianLearner.update(
-                glucoseStatus  = glucoseStatus,
-                iobArray       = iobArray,
-                mealMode       = mealMode,
-                cobG           = mealData.mealCOB,
-                profileIsfMgdl = trueIsfMgdl,
-                targetMgdl     = oapsProfile.target_bg.toDouble()
+                glucoseStatus            = glucoseStatus,
+                iobArray                 = iobArray,
+                mealMode                 = mealMode,
+                cobG                     = mealData.mealCOB,
+                profileIsfMgdl           = trueIsfMgdl,
+                targetMgdl               = oapsProfile.target_bg.toDouble(),
+                suppressAdaptiveLearning = suppressAdaptiveLearning
             )
         } else {
-            aapsLogger.debug(LTag.APS, "CircadianLearner suppressed: highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
+            aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
         }
 
         // Append per-cycle learner summary to reason — visible in Loop tab
