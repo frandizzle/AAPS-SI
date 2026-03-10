@@ -46,7 +46,9 @@ class ActivityMonitor @Inject constructor(
 
         // Query windows
         const val HR_WINDOW_MS        = 10 * 60 * 1000L   // 10 min — covers one full recording interval
-        const val STEPS_WINDOW_MS     = 10 * 60 * 1000L   // 10 min fallback window for steps
+        const val STEPS_SEARCH_MS     = 210 * 60 * 1000L  // 210 min search window (matches AIMI — covers delays)
+        const val STEPS_FRESH_MS      =   5 * 60 * 1000L  // timestamp = END of 5-min window, so fresh = within last 5 min
+        const val STEPS_FALLBACK_MS   =  30 * 60 * 1000L  // fallback if no record in last 5 min
         const val HR_FALLBACK_MS      = 30 * 60 * 1000L   // 30 min fallback if no fresh HR
     }
 
@@ -71,7 +73,9 @@ class ActivityMonitor @Inject constructor(
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
 
         // ── Steps ─────────────────────────────────────────────────────────────
-        val stepsSearchStart = nowMs - STEPS_WINDOW_MS
+        // NOTE: StepsCount.timestamp is the END time of the 5-min window (per SC.kt).
+        // Search wide (210 min like AIMI) to handle watch sync delays, then filter to fresh.
+        val stepsSearchStart = nowMs - STEPS_SEARCH_MS
         val allSteps = try {
             persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, nowMs)
         } catch (e: Exception) {
@@ -79,9 +83,13 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Most recent record within window; fall back to last 30 min if nothing in 10 min
-        val freshSteps = allSteps.maxByOrNull { it.timestamp }
-        lastSteps5min  = freshSteps?.steps5min ?: 0
+        // Fresh = record whose timestamp (= end of 5-min window) is within the last 5 min
+        val freshSteps    = allSteps.filter { it.timestamp >= nowMs - STEPS_FRESH_MS }.maxByOrNull { it.timestamp }
+        // Fallback = most recent record within 30 min (handles one missed sync cycle)
+        val fallbackSteps = if (freshSteps == null)
+            allSteps.filter { it.timestamp >= nowMs - STEPS_FALLBACK_MS }.maxByOrNull { it.timestamp }
+        else null
+        lastSteps5min = freshSteps?.steps5min ?: fallbackSteps?.steps5min ?: 0
 
         // ── Heart Rate ────────────────────────────────────────────────────────
         val hrSearchStart = nowMs - (HR_WINDOW_MS + 60 * 60 * 1000L) // 70 min to cover overlapping records
