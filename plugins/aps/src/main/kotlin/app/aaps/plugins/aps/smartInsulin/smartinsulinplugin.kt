@@ -6,6 +6,7 @@ import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
 import app.aaps.core.data.aps.SMBDefaults
 import app.aaps.core.data.model.GlucoseUnit
+import app.aaps.core.data.model.TE
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.aps.APS
 import app.aaps.core.interfaces.aps.APSResult
@@ -391,9 +392,22 @@ open class SmartInsulinPlugin @Inject constructor(
         // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
         // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
         val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
+        // Query last sensor change from DB — covers fresh installs/rebuilds mid-sensor
+        // where the gap-detection state was lost. Look back 30 days max.
+        val sensorInsertTimeMs: Long = try {
+            val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
+                now - 30 * 24 * 60 * 60 * 1000L,
+                TE.Type.SENSOR_CHANGE,
+                true
+            )
+            sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
+            0L
+        }
         val cgmState = cgmWarmupGuard.evaluate(
             enabled             = cgmGuardEnabled,
-            sensorInsertTimeMs  = 0L,           // TODO: pass from TherapyEvent when PersistenceLayer exposes it
+            sensorInsertTimeMs  = sensorInsertTimeMs,
             nowMs               = now,
             latestBgTimestampMs = glucoseStatus.date,
             deltaMmol           = glucoseStatus.delta / 18.0,
