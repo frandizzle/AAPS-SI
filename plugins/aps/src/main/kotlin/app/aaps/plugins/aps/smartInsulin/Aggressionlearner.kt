@@ -84,11 +84,11 @@ class AggressionLearner @Inject constructor(
         get() {
             val all     = computeTir(allSamples)
             val fasting = computeTir(fastingSamples)
-            val allStr  = all?.let { "%.0f%%in/%.0f%%hi/%.0f%%lo".format(it.inRangePct, it.highPct, it.lowPct) }
+            val allStr  = all?.let { "${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
                 ?: "insufficient"
-            val fastStr = fasting?.let { "f:%.0f%%in/%.0f%%hi/%.0f%%lo".format(it.inRangePct, it.highPct, it.lowPct) }
+            val fastStr = fasting?.let { "f:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
                 ?: "f:insufficient"
-            return "tir=$allStr $fastStr score=%.2f".format(aggressiveness)
+            return "tir=$allStr $fastStr score=${"%.2f".format(aggressiveness)}"
         }
 
     /**
