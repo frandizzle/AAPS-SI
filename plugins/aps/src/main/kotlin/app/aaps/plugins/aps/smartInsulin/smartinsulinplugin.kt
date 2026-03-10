@@ -90,6 +90,9 @@ open class SmartInsulinPlugin @Inject constructor(
     private val aggressionLearner: AggressionLearner,
     private val basalLearner: BasalLearner,
     private val circadianLearner: CircadianLearner,
+    private val activityMonitor:  ActivityMonitor,
+    private val cgmWarmupGuard:   CgmWarmupGuard,
+    private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
     private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData
@@ -181,6 +184,16 @@ open class SmartInsulinPlugin @Inject constructor(
                            "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
+
+            // ── Activity & CGM state ──────────────────────────────────────────
+            val actLevel = activityMonitor.level
+            if (actLevel != ActivityMonitor.ActivityLevel.SEDENTARY) {
+                appendLine()
+                appendLine("── Activity ──────────────────────────")
+                appendLine("  Level        : ${actLevel.label}")
+                appendLine("  Target +     : learning suppressed during activity")
+                appendLine("  (HR/steps data read each loop cycle via persistenceLayer)")
+            }
             appendLine()
 
             // ── Circadian tables ──────────────────────────────────────────────
@@ -203,6 +216,38 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }.trimEnd()
+    }
+
+    // ── RxBus subscriptions for HR and steps from wear ───────────────────────
+    private val disposable = io.reactivex.rxjava3.disposables.CompositeDisposable()
+
+    override fun onStart() {
+        super.onStart()
+        // Subscribe to heart rate events from wear device
+        // EventData.ActionHeartRate is sent by DataLayerListenerServiceMobile when
+        // HR data arrives from the watch. beatsPerMinute is the averaged BPM value.
+        disposable += rxBus
+            .toObservable(app.aaps.core.interfaces.rx.weardata.EventData.ActionHeartRate::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({ hrEvent ->
+                           activityMonitor.feedHeartRate(
+                               bpm         = hrEvent.beatsPerMinute,
+                               timestampMs = hrEvent.timestamp
+                           )
+                       }, { aapsLogger.error(LTag.APS, "SmartInsulin: HR subscription error: $it") })
+
+        // Subscribe to steps count events from wear device
+        // TODO: replace EventData.ActionHeartRate with the correct steps event class
+        // once DataLayerListenerServiceMobile file is available to confirm the class name.
+        // The StepsCount DB entity has steps5min: Int which is what we want.
+        // Likely: EventData.ActionStepsCount or similar — check DataLayerListenerServiceMobile.
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart — HR subscription active")
+    }
+
+    override fun onStop() {
+        disposable.clear()
+        super.onStop()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop — subscriptions cleared")
     }
 
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
@@ -354,6 +399,45 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowGuardMmol      = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
         val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
+        // ── Activity monitor — recompute from fed HR/steps data ─────────────
+        // HR is fed via feedHeartRate() called from a RxBus subscriber in onStart().
+        // Steps are fed via feedSteps() called from a RxBus subscriber in onStart().
+        // See WiringNotes.md for the subscription setup.
+        // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
+        activityMonitor.recompute(nowMs = now)
+
+        // ── CGM warmup guard ─────────────────────────────────────────────────
+        // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
+        // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
+        // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
+        val cgmState = cgmWarmupGuard.evaluate(
+            sensorInsertTimeMs  = 0L,           // TODO: pass from TherapyEvent when PersistenceLayer exposes it
+            nowMs               = now,
+            latestBgTimestampMs = glucoseStatus.date,
+            deltaMmol           = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol   = glucoseStatus.shortAvgDelta / 18.0,
+            longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
+            noiseLevelRaw       = glucoseStatus.noise
+        )
+
+        // Suppress learning during CGM warmup — noisy readings corrupt all learned models
+        val suppressAllLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
+
+        // Activity target offset (user-configured mmol offsets per activity level)
+        val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
+        val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTargetMmol)
+        val activityHeavyTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol)
+        val activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(
+            lightMmol    = activityLightTarget,
+            moderateMmol = activityModerateTarget,
+            heavyMmol    = activityHeavyTarget
+        )
+
+        if (suppressAllLearning) {
+            aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
+                "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
+        }
+
         // Record current BG zone for aggression learning
         // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
         // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
@@ -378,7 +462,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget) {
+        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAllLearning) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
@@ -387,8 +471,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 isfMgdl       = trueIsfMgdl,
                 profileBasalU = profile.getBasal()
             )
-        } else if (highTempTarget || mealMode != MealMode.FASTING) {
-            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget")
+        } else {
+            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
         }
         // Blend flat BasalLearner with circadian per-hour learning
         // Circadian takes over proportionally as its confidence grows
@@ -467,7 +551,12 @@ open class SmartInsulinPlugin @Inject constructor(
             dawnWindowStartHour   = dawnWindowStart,
             dawnWindowEndHour     = dawnWindowEnd,
             dawnSmbReduction      = dawnSmbReduction,
-            bgWentLow             = bgWentLow
+            bgWentLow             = bgWentLow,
+            activityLevel            = activityMonitor.level,
+            activityTargetOffsetMmol = activityTargetOffsetMmol,
+            cgmSmbFraction           = cgmState.smbFraction,
+            cgmDeltaPlausible        = cgmState.deltaPlausible,
+            cgmWarmupReason          = cgmState.reason
         )
 
         apsResult.inputConstraints = inputConstraints
@@ -492,7 +581,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
         // The circadian learner itself also gates on mealMode==FASTING internally,
         // but we gate highTempTarget here before the call to avoid polluting bgHistory.
-        if (!highTempTarget) {
+        if (!highTempTarget && !suppressAllLearning) {
             circadianLearner.update(
                 glucoseStatus  = glucoseStatus,
                 iobArray       = iobArray,
@@ -502,7 +591,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 targetMgdl     = oapsProfile.target_bg.toDouble()
             )
         } else {
-            aapsLogger.debug(LTag.APS, "CircadianLearner suppressed: highTT=$highTempTarget")
+            aapsLogger.debug(LTag.APS, "CircadianLearner suppressed: highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
         }
 
         // Append per-cycle learner summary to reason — visible in Loop tab

@@ -65,4 +65,9 @@ enum class DoubleKey(
     ApsSmartInsulinWarnGuardMmol("si_warn_guard_mmol", 4.8, 3.5, 6.0, defaultedBySM = true),
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
 
+    // Activity monitor — target raises during exercise (mmol/L above profile target)
+    ApsSmartInsulinActivityLightTargetMmol("si_activity_light_target_mmol", 0.5, 0.0, 3.0, defaultedBySM = true),
+    ApsSmartInsulinActivityModerateTargetMmol("si_activity_moderate_target_mmol", 1.0, 0.0, 3.0, defaultedBySM = true),
+    ApsSmartInsulinActivityHeavyTargetMmol("si_activity_heavy_target_mmol", 1.5, 0.0, 3.0, defaultedBySM = true),
+
 }

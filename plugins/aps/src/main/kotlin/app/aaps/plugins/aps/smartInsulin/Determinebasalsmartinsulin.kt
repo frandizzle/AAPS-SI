@@ -83,7 +83,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         dawnWindowStartHour:   Int,
         dawnWindowEndHour:     Int,
         dawnSmbReduction:      Double,         // fraction 0.1–1.0; 0.5 = 50% of normal SMB
-        bgWentLow:             Boolean         // true if BG crossed below threshold during suspend — for reason string
+        bgWentLow:             Boolean,        // true if BG crossed below threshold during suspend — for reason string
+        activityLevel:         ActivityMonitor.ActivityLevel,  // SEDENTARY/LIGHT/MODERATE/HEAVY
+        activityTargetOffsetMmol: Double,      // target raise from activity (mmol/L)
+        cgmSmbFraction:        Double,         // 0.0=block SMBs, 0.5=half, 1.0=full (warmup guard)
+        cgmDeltaPlausible:     Boolean,        // false = delta looks like sensor artefact, block SMBs
+        cgmWarmupReason:       String          // empty string if not in warmup
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -98,7 +103,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val isfMgdl      = oapsProfile.sens               // already mg/dL (getIsfMgdl)
         val profileBasalRaw = oapsProfile.current_basal
         val profileBasal    = profileBasalRaw * basalMultiplier
-        val targetBg     = oapsProfile.target_bg          // already mg/dL (may be temp target)
+        // Apply activity target offset — raises target during exercise to prevent activity-induced lows
+        // If a manual temp target is already active, respect that instead (user intent takes priority)
+        val activityOffsetMgdl = activityTargetOffsetMmol * MMOL_TO_MGDL
+        val targetBg = if (isTempTarget) {
+            oapsProfile.target_bg  // manual TT wins
+        } else {
+            oapsProfile.target_bg + activityOffsetMgdl
+        }
         val currentIob   = iobArray.firstOrNull()?.iob ?: 0.0
 
         // ── High temp target → suppress SMBs (matches stock AAPS behaviour) ──
@@ -115,7 +127,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 currentHour >= dawnWindowStartHour || currentHour < dawnWindowEndHour
         }
         // Effective SMB fraction: if dawn window active use dawnSmbReduction, else full 1.0
-        val dawnFraction = if (inDawnWindow) dawnSmbReduction else 1.0
+        val dawnFraction   = if (inDawnWindow) dawnSmbReduction else 1.0
+        // CGM warmup/artefact fraction — reduces or blocks SMBs, TBR still allowed
+        val cgmFraction    = if (!cgmDeltaPlausible) 0.0 else cgmSmbFraction
 
         // ci = current deviation from IOB-only prediction (matches AutoISF)
         // bgi = expected BG change from current IOB activity alone
@@ -159,8 +173,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val sb = StringBuilder()
         sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} Delta=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
-        sb.append("pred_min=${fmt(predictedMin)} pred30m=${fmt(predictedAt30)} pred60m=${fmt(predictedAt60)} $units ")
+        sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
+        sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
         sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
         sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         sb.append("learnedPeak=${learnedProfile.peakMinutes.toInt()}m learnedDIA=${learnedProfile.diaMinutes.toInt()}m ")
@@ -173,6 +187,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         } else if (bgWentLow) {
             sb.append("rebound=watching ")  // went low but BG hasn't crossed back up yet
         }
+        if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
+            sb.append("activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol) ")
+        if (cgmWarmupReason.isNotEmpty()) sb.append("$cgmWarmupReason ")
         sb.append("$tirSummary ")
         // ── Decision: collect into local vars, call with() exactly once ──────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
@@ -249,7 +266,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     // aggressiveness scales delivery fraction: 1.0=50%, 1.5=75%, 0.5=25%
                     // dawnFraction further scales down during dawn/fasting rise window
-                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction
+                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep  = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
