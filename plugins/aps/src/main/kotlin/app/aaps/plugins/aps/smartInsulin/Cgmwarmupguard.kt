@@ -61,8 +61,7 @@ class CgmWarmupGuard @Inject constructor(
         const val WARMUP_HOURS          = 24.0   // learning suppressed for full 24h
 
         // Skip-N pattern boundaries
-        const val SKIP3_END_HOURS       = 6.0    // 0–6h: allow every 3rd reading
-        const val SKIP2_END_HOURS       = 12.0   // 6–12h: allow every 2nd reading
+        const val SKIP3_END_HOURS       = 12.0    // 0–6h: allow every 3rd reading
         // 12–24h: allow every reading (no skip, but learning still off)
 
         const val MAX_PLAUSIBLE_DELTA_MMOL   = 3.0   // mmol/L per 5 min
@@ -174,10 +173,9 @@ class CgmWarmupGuard @Inject constructor(
         // Determine how many readings to skip between each allowed SMB
         // Erratic/noisy overrides to skip-2 regardless of age
         val skipN: Int = when {
-            sensorErratic || highNoise                -> 2  // allow every 3rd (same as 0–6h)
-            sensorAgeHours < SKIP3_END_HOURS          -> 2  // 0–6h: allow every 3rd
-            sensorAgeHours < SKIP2_END_HOURS          -> 1  // 6–12h: allow every 2nd
-            else                                      -> 0  // 12–24h: allow every reading
+            sensorErratic || highNoise -> 2          // safety override
+            sensorAgeHours < SKIP3_END_HOURS -> 2    // 0–12h allow every 3rd
+            else -> 0                                // 12–24h allow every reading
         }
 
         // Allow SMB on cycle 0, skip the next skipN cycles, then allow again
