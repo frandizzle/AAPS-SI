@@ -43,6 +43,7 @@ enum class BooleanKey(
     AlertIncreaseVolume("gradually_increase_notification_volume", true),
     // SmartInsulin plugin
     ApsSmartInsulinEnableLearning("si_enable_learning", true, defaultedBySM = true),
+    ApsSmartInsulinCgmWarmupEnabled("si_cgm_warmup_enabled", true, defaultedBySM = true),
     ApsSmartInsulinLowCarbMode("si_low_carb_mode", false, defaultedBySM = true),
 
     BgSourceUploadToNs("dexcomg5_nsupload", true, defaultedBySM = true, hideParentScreenIfHidden = true),

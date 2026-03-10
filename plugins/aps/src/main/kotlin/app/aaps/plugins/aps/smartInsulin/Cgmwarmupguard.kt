@@ -7,41 +7,40 @@ import javax.inject.Singleton
 import kotlin.math.abs
 
 /**
- * CgmWarmupGuard — conservative dosing protection for new/noisy CGM sensors.
+ * CgmWarmupGuard — cautious dosing protection for new/noisy CGM sensors.
  *
  * PROBLEM (as seen in practice):
- *   A new sensor on day 1 (e.g. 20h in) produces phantom spikes — consecutive
- *   deltas of +0.7, +0.8, +0.9 mmol/L — that look like a rapid BG rise.
- *   The loop fires SMBs. BG was never actually rising. Crash follows.
- *   TBRs would have been harmless here — they're reversible and self-correcting.
+ *   Day-1 sensors produce phantom spikes — consecutive deltas of +0.7, +0.8, +0.9 mmol/L.
+ *   The loop fires SMBs into a BG that was never actually rising. Crash follows.
+ *   TBRs are safe — reversible and self-correcting.
  *
- * SENSOR AGE DETECTION (no TherapyEvent DB query needed):
- *   The sensor insert time is stored as a SENSOR_CHANGE therapy event in AAPS, but
- *   PersistenceLayer doesn't expose a clean interface for it in all builds.
- *   Instead, we use a stateful approach:
- *     1. Track consecutive BG reading timestamps
- *     2. When we see a gap > [NEW_SENSOR_GAP_MS] in readings, record "new sensor" time
- *     3. Age is measured from that detected gap
- *   This works because Dexcom/Libre always produce a multi-minute gap when a new sensor
- *   starts (warmup period). If the sensorInsertTimeMs is provided (from TherapyEvent
- *   query), it overrides the gap detection — use whichever is available.
+ * STRATEGY (when enabled via preference):
  *
- * DELTA PLAUSIBILITY:
- *   Applies at all sensor ages. A delta > [MAX_PLAUSIBLE_DELTA_MMOL] per 5 min is
- *   physiologically impossible for non-glucose-infusion scenarios.
- *   Blocks SMBs that cycle only. TBRs still go through.
+ *   Instead of hard-blocking SMBs, we skip readings using a cycle counter:
+ *     0– 6h: allow SMB every 3rd reading  (2 skipped between each SMB)
+ *     6–12h: allow SMB every 2nd reading  (1 skipped)
+ *    12–24h: allow SMB every reading      (no skip — normal but learning still off)
+ *    24h+:   fully normal
  *
- * DELTA DIVERGENCE DETECTION:
- *   During sensor warmup, shortAvgDelta and longAvgDelta diverge wildly.
- *   If |shortAvgDelta - longAvgDelta| > [MAX_DELTA_DIVERGENCE_MMOL], the sensor
- *   is behaving erratically — treat as warmup regardless of age.
+ *   Rationale: a real sustained rise will still produce SMBs (just spaced out), while
+ *   a phantom 1–2 reading spike gets skipped and can't cause a crash.
  *
- * STRATEGY:
- *   0–12h:   SMBs blocked entirely. TBRs pass through.
- *   12–24h:  SMBs at 50%. TBRs pass through.
- *   24h+:    Normal unless delta is implausible or divergence is high.
- *   Noise ≥3: Full block regardless of age (xDrip/Dexcom noise flag).
- *   Learning suppressed during entire 24h warmup window.
+ *   Hard overrides (always apply when guard is ON):
+ *     - Implausible delta (>3 mmol/5min): block SMBs this cycle regardless of age
+ *     - Erratic sensor (|shortAvg - longAvg| > 2.5 mmol): skip every 2nd reading
+ *     - High noise (xDrip/Dexcom noise flag ≥ 3): skip every 2nd reading
+ *
+ *   Learning suppression:
+ *     - ALWAYS suppressed for 0–24h regardless of whether the guard switch is on.
+ *       Day-1 data is too unreliable to train from.
+ *
+ * SENSOR AGE DETECTION:
+ *   Stateful gap detection — when BG reading timestamps show a gap > 35 min,
+ *   a new sensor is assumed. sensorInsertTimeMs from TherapyEvent overrides if available.
+ *
+ * SMB FRACTION:
+ *   WarmupState.smbFraction is now either 0.0 (skip this cycle) or 1.0 (allow this cycle).
+ *   The skip pattern is determined by an internal cycle counter incremented each evaluate() call.
  */
 @Singleton
 class CgmWarmupGuard @Inject constructor(
@@ -50,30 +49,25 @@ class CgmWarmupGuard @Inject constructor(
     data class WarmupState(
         val inWarmup:         Boolean,
         val sensorAgeHours:   Double,
-        val smbFraction:      Double,    // 0.0 = block, 0.5 = half, 1.0 = full
+        val smbFraction:      Double,    // 0.0 = skip this cycle, 1.0 = allow
         val suppressLearning: Boolean,
-        val deltaPlausible:   Boolean,   // false = implausible delta, SMBs blocked this cycle
+        val deltaPlausible:   Boolean,
         val reason:           String
     ) {
-        /** True if SMBs should be delivered (warmup AND plausibility both OK). */
         val allowSmb: Boolean get() = smbFraction > 0.0 && deltaPlausible
     }
 
     companion object {
-        const val WARMUP_HOURS          = 12.0
-        const val PARTIAL_WARMUP_HOURS  = 24.0
-        const val SMB_FRACTION_FULL_WARMUP    = 0.0
-        const val SMB_FRACTION_PARTIAL_WARMUP = 0.5
+        const val WARMUP_HOURS          = 24.0   // learning suppressed for full 24h
 
-        // A delta > this is physically impossible (not a glucose infusion scenario)
-        // 3.0 mmol/L / 5 min = 54 mg/dL / 5 min
-        const val MAX_PLAUSIBLE_DELTA_MMOL = 3.0
+        // Skip-N pattern boundaries
+        const val SKIP3_END_HOURS       = 6.0    // 0–6h: allow every 3rd reading
+        const val SKIP2_END_HOURS       = 12.0   // 6–12h: allow every 2nd reading
+        // 12–24h: allow every reading (no skip, but learning still off)
 
-        // shortAvgDelta vs longAvgDelta divergence threshold — sensor erratic if above this
-        const val MAX_DELTA_DIVERGENCE_MMOL = 2.5  // mmol/L
-
-        // Gap in BG readings that indicates a new sensor was inserted
-        const val NEW_SENSOR_GAP_MS = 35 * 60 * 1000L  // 35 minutes
+        const val MAX_PLAUSIBLE_DELTA_MMOL   = 3.0   // mmol/L per 5 min
+        const val MAX_DELTA_DIVERGENCE_MMOL  = 2.5   // mmol/L short vs long avg
+        const val NEW_SENSOR_GAP_MS          = 35 * 60 * 1000L
 
         val SAFE_STATE = WarmupState(
             inWarmup         = false,
@@ -85,22 +79,25 @@ class CgmWarmupGuard @Inject constructor(
         )
     }
 
-    // ── Internal state for gap-based sensor age detection ────────────────────
+    // ── State ─────────────────────────────────────────────────────────────────
     private var detectedSensorStartMs: Long = 0L
     private var lastBgTimestampMs:     Long = 0L
+    private var cycleCounter:          Int  = 0   // counts evaluate() calls since sensor start
 
     /**
      * Evaluate CGM state for this loop cycle.
      *
-     * @param sensorInsertTimeMs  From TherapyEvent SENSOR_CHANGE if available; 0 = use gap detection
+     * @param enabled             From preference ApsSmartInsulinCgmWarmupEnabled
+     * @param sensorInsertTimeMs  From TherapyEvent SENSOR_CHANGE if available; 0 = gap detection
      * @param nowMs               dateUtil.now()
-     * @param latestBgTimestampMs glucoseStatus.date — timestamp of the most recent BG reading
+     * @param latestBgTimestampMs glucoseStatus.date
      * @param deltaMmol           glucoseStatus.delta / 18.0
      * @param shortAvgDeltaMmol   glucoseStatus.shortAvgDelta / 18.0
      * @param longAvgDeltaMmol    glucoseStatus.longAvgDelta / 18.0
-     * @param noiseLevelRaw       glucoseStatus.noise (0=clean, ≥3=high noise)
+     * @param noiseLevelRaw       glucoseStatus.noise (0 = clean, ≥3 = high noise)
      */
     fun evaluate(
+        enabled:              Boolean,
         sensorInsertTimeMs:   Long,
         nowMs:                Long,
         latestBgTimestampMs:  Long,
@@ -115,73 +112,98 @@ class CgmWarmupGuard @Inject constructor(
             val gap = latestBgTimestampMs - lastBgTimestampMs
             if (gap > NEW_SENSOR_GAP_MS && detectedSensorStartMs < lastBgTimestampMs) {
                 detectedSensorStartMs = latestBgTimestampMs
+                cycleCounter = 0
                 aapsLogger.debug(LTag.APS,
-                                 "CgmWarmupGuard: new sensor detected via gap (gap=${gap / 60_000}min) start=$detectedSensorStartMs")
+                                 "CgmWarmupGuard: new sensor detected via gap (${gap / 60_000}min) start=$detectedSensorStartMs")
             }
         }
         if (latestBgTimestampMs > 0L) lastBgTimestampMs = latestBgTimestampMs
 
-        // ── Resolve sensor start time: explicit TherapyEvent wins, gap detection fallback ──
+        // ── Resolve sensor start ───────────────────────────────────────────────
         val effectiveSensorStartMs = when {
-            sensorInsertTimeMs > 0L -> sensorInsertTimeMs
+            sensorInsertTimeMs > 0L    -> sensorInsertTimeMs
             detectedSensorStartMs > 0L -> detectedSensorStartMs
-            else -> 0L  // unknown — no protection applied
+            else                       -> 0L
         }
 
         val sensorAgeHours = if (effectiveSensorStartMs > 0L)
             (nowMs - effectiveSensorStartMs) / 3_600_000.0
         else
-            999.0  // unknown age, assume safe
+            999.0
 
-        // ── Delta plausibility (all ages) ─────────────────────────────────────
+        // ── Learning: always suppress for first 24h, guard on or off ──────────
+        val suppressLearning = sensorAgeHours < WARMUP_HOURS
+
+        // ── If guard is disabled, just return learning flag, no SMB gating ────
+        if (!enabled) {
+            return if (suppressLearning)
+                SAFE_STATE.copy(
+                    inWarmup         = true,
+                    sensorAgeHours   = sensorAgeHours,
+                    suppressLearning = true,
+                    reason           = "cgmWarmup(age=${"%.1f".format(sensorAgeHours)}h learningOff guardDisabled)"
+                )
+            else
+                SAFE_STATE
+        }
+
+        // ── Guard is ON from here ──────────────────────────────────────────────
+
+        // Delta plausibility — hard block (all ages)
         val deltaPlausible = abs(deltaMmol) <= MAX_PLAUSIBLE_DELTA_MMOL
         if (!deltaPlausible) {
             aapsLogger.debug(LTag.APS,
                              "CgmWarmupGuard: implausible delta ${"%+.1f".format(deltaMmol)} mmol/L — SMBs blocked")
-        }
-
-        // ── Delta divergence (short vs long avg) — sensor erratic flag ────────
-        val deltaDivergence = abs(shortAvgDeltaMmol - longAvgDeltaMmol)
-        val sensorErratic   = deltaDivergence > MAX_DELTA_DIVERGENCE_MMOL
-
-        // ── High noise (xDrip/Dexcom noise level) ─────────────────────────────
-        val highNoise = noiseLevelRaw >= 3.0
-
-        // ── Age-based warmup ──────────────────────────────────────────────────
-        val inFullWarmup    = sensorAgeHours < WARMUP_HOURS || highNoise || sensorErratic
-        val inPartialWarmup = !inFullWarmup && sensorAgeHours < PARTIAL_WARMUP_HOURS
-
-        return when {
-            inFullWarmup -> {
-                val why = buildString {
-                    append("age=${"%.1f".format(sensorAgeHours)}h")
-                    if (highNoise)     append(" noise=${"%.0f".format(noiseLevelRaw)}")
-                    if (sensorErratic) append(" erratic(div=${"%.1f".format(deltaDivergence)}mmol)")
-                }
-                WarmupState(
-                    inWarmup         = true,
-                    sensorAgeHours   = sensorAgeHours,
-                    smbFraction      = SMB_FRACTION_FULL_WARMUP,
-                    suppressLearning = true,
-                    deltaPlausible   = deltaPlausible,
-                    reason           = "cgmWarmup($why SMBsBlocked TBRok)"
-                ).also {
-                    aapsLogger.debug(LTag.APS, "CgmWarmupGuard: full warmup — ${it.reason}")
-                }
-            }
-            inPartialWarmup -> WarmupState(
-                inWarmup         = true,
-                sensorAgeHours   = sensorAgeHours,
-                smbFraction      = SMB_FRACTION_PARTIAL_WARMUP,
-                suppressLearning = true,
-                deltaPlausible   = deltaPlausible,
-                reason           = "cgmWarmup(age=${"%.1f".format(sensorAgeHours)}h SMBs×50% TBRok)"
-            )
-            !deltaPlausible -> SAFE_STATE.copy(
+            return SAFE_STATE.copy(
                 deltaPlausible = false,
+                suppressLearning = suppressLearning,
                 reason = "cgmJump(delta=${"%.1f".format(deltaMmol)}mmol SMBsBlocked TBRok)"
             )
-            else -> SAFE_STATE
+        }
+
+        // Fully outside warmup window — normal
+        if (sensorAgeHours >= WARMUP_HOURS) return SAFE_STATE
+
+        // ── Within 24h warmup window — skip-N pattern ─────────────────────────
+        cycleCounter++
+
+        val deltaDivergence = abs(shortAvgDeltaMmol - longAvgDeltaMmol)
+        val sensorErratic   = deltaDivergence > MAX_DELTA_DIVERGENCE_MMOL
+        val highNoise       = noiseLevelRaw >= 3.0
+
+        // Determine how many readings to skip between each allowed SMB
+        // Erratic/noisy overrides to skip-2 regardless of age
+        val skipN: Int = when {
+            sensorErratic || highNoise                -> 2  // allow every 3rd (same as 0–6h)
+            sensorAgeHours < SKIP3_END_HOURS          -> 2  // 0–6h: allow every 3rd
+            sensorAgeHours < SKIP2_END_HOURS          -> 1  // 6–12h: allow every 2nd
+            else                                      -> 0  // 12–24h: allow every reading
+        }
+
+        // Allow SMB on cycle 0, skip the next skipN cycles, then allow again
+        val allowThisCycle = (cycleCounter % (skipN + 1)) == 0
+        val smbFraction    = if (allowThisCycle) 1.0 else 0.0
+
+        val skipDesc = when (skipN) {
+            2    -> "every3rd"
+            1    -> "every2nd"
+            else -> "allowed"
+        }
+        val noiseDesc = buildString {
+            if (sensorErratic) append(" erratic(div=${"%.1f".format(deltaDivergence)}mmol)")
+            if (highNoise)     append(" noise=${"%.0f".format(noiseLevelRaw)}")
+        }
+        val cycleDesc = if (skipN > 0) "(cyc=$cycleCounter→${if (allowThisCycle) "SMB" else "skip"})" else ""
+
+        return WarmupState(
+            inWarmup         = true,
+            sensorAgeHours   = sensorAgeHours,
+            smbFraction      = smbFraction,
+            suppressLearning = true,
+            deltaPlausible   = true,
+            reason           = "cgmWarmup(age=${"%.1f".format(sensorAgeHours)}h $skipDesc$cycleDesc$noiseDesc learningOff)"
+        ).also {
+            aapsLogger.debug(LTag.APS, "CgmWarmupGuard: ${it.reason}")
         }
     }
 }

@@ -390,7 +390,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
         // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
         // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
+        val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
         val cgmState = cgmWarmupGuard.evaluate(
+            enabled             = cgmGuardEnabled,
             sensorInsertTimeMs  = 0L,           // TODO: pass from TherapyEvent when PersistenceLayer exposes it
             nowMs               = now,
             latestBgTimestampMs = glucoseStatus.date,
@@ -714,6 +716,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,       title = R.string.si_cgm_warmup_enabled_title))
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))

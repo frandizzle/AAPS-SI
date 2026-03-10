@@ -51,7 +51,7 @@
     <string name="si_activity_light_target_title">Activity: Light target raise (mmol/L)</string>
     <string name="si_activity_moderate_target_title">Activity: Moderate target raise (mmol/L)</string>
     <string name="si_activity_heavy_target_title">Activity: Heavy target raise (mmol/L)</string>
-
+    <string name="si_cgm_warmup_enabled_title">CGM warmup guard (skip SMBs on new sensor)</string>
 
 
     <!-- Prediction / anti-rebound prefs -->
