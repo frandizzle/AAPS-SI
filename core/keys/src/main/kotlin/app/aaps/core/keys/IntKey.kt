@@ -38,6 +38,7 @@ enum class IntKey(
     ApsSmartInsulinLowCarbCarbsG  ("si_lowcarb_carbs_g",     20,  5,  60, defaultedBySM = true),
     ApsSmartInsulinExtendedCarbsG ("si_extended_carbs_g",    50, 10, 150, defaultedBySM = true),
     ApsSmartInsulinModeWindowMins ("si_mode_window_mins",   180, 30, 480, defaultedBySM = true),
+    ApsSmartInsulinPreBolus2DefaultDelayMins("si_prebolus2_default_delay_mins", 25, 5, 120, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),

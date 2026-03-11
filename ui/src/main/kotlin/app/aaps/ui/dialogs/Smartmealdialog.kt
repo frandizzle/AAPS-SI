@@ -183,7 +183,8 @@ class SmartMealDialog : DialogFragmentWithDate() {
             var cancelLabel = "Cancel ${activeMode.label} mode"
             if (mealOverrideManager.preBolus2Pending) {
                 val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
-                cancelLabel += "\n(PB2 fires in ${minsLeft}min)"
+                cancelLabel += "
+                (PB2 fires in ${minsLeft}min)"
             }
             binding.cancelModeButton.text = cancelLabel
             binding.cancelModeButton.setOnClickListener {
@@ -199,6 +200,26 @@ class SmartMealDialog : DialogFragmentWithDate() {
             }
         } else {
             binding.cancelModeButton.visibility = View.GONE
+        }
+
+        // ── Cancel PB2 button (shown only when PB2 is pending, mode active) ──
+        if (mealOverrideManager.preBolus2Pending) {
+            binding.cancelPb2Button.visibility = View.VISIBLE
+            val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
+            binding.cancelPb2Button.text = "Cancel pre-bolus 2 (fires in ${minsLeft}min)"
+            binding.cancelPb2Button.setOnClickListener {
+                activity?.let { act ->
+                    OKDialog.showConfirmation(act,
+                                              rh.gs(R.string.si_dialog_title),
+                                              "Cancel the scheduled pre-bolus 2? The meal mode will stay active.", {
+                                                  mealOverrideManager.cancelPreBolus2()
+                                                  ToastUtils.okToast(ctx, "Pre-bolus 2 cancelled")
+                                                  dismiss()
+                                              })
+                }
+            }
+        } else {
+            binding.cancelPb2Button.visibility = View.GONE
         }
 
         // ── OK / Cancel ───────────────────────────────────────────────────────

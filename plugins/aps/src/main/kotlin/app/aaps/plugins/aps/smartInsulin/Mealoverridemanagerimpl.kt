@@ -145,6 +145,18 @@ class MealOverrideManagerImpl @Inject constructor(
         persistState()
     }
 
+    override fun cancelPreBolus2() {
+        val s = _state ?: return
+        if (!s.preBolus2Pending) {
+            aapsLogger.debug(LTag.APS, "SmartInsulin PB2 cancel: nothing pending")
+            return
+        }
+        // Mark as discarded (-1L) so it won't retry, without touching mode expiry
+        _state = s.copy(preBolus2FiredMs = -1L)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin PB2 cancelled by user (mode still active: ${s.mode.label})")
+    }
+
     // ── Pre-bolus 2 delivery ──────────────────────────────────────────────────
 
     override fun onLoopCycle(
@@ -188,9 +200,16 @@ class MealOverrideManagerImpl @Inject constructor(
             reasons += "IOB ${String.format("%.2f", currentIob)}U >= ${String.format("%.0f", MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100)}% of maxIob ${String.format("%.1f", maxIobU)}U"
         }
 
-        // 4. BG trend — don't fire if falling fast (delta < -1 mg/dL/5min)
-        if (glucoseStatus.delta < -1.0) {
-            reasons += "BG falling (delta=${String.format("%.1f", glucoseStatus.delta)}mg/dL)"
+        // 4a. Instant delta — single reading falling sharply
+        if (glucoseStatus.delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL) {
+            reasons += "BG falling fast: last delta=${String.format("%.1f", glucoseStatus.delta / 18.0)}mmol"
+        }
+
+        // 4b. Sustained trend — shortAvgDelta covers ~last 3 readings.
+        // Catches a slow persistent drop like -0.5, -0.3, -0.3 mmol even when no single reading
+        // is alarming. -3 mg/dL avg ≈ -0.17 mmol/5min average over last 3 readings.
+        if (glucoseStatus.shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL) {
+            reasons += "BG trending down: shortAvgDelta=${String.format("%.1f", glucoseStatus.shortAvgDelta / 18.0)}mmol"
         }
 
         if (reasons.isNotEmpty()) {
