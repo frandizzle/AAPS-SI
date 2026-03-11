@@ -166,17 +166,29 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val iobPrediction: List<Int> = rawPrediction
 
         // ── Rebound taper state (computed early — used in reason string and decision) ──
-        // Three phases:
-        //   1. "watching"  — bgWentLow=true, window not armed (BG still below threshold or just exiting)
-        //                    taper=0.0, SMBs blocked entirely, TBR zeroed
-        //   2. "windowed"  — inReboundWindow=true (BG crossed back up, window ticking)
-        //                    taper ramps 0.0→1.0 over REBOUND_TAPER_MINS
-        //   3. "clear"     — neither: full normal dosing
-        val reboundMins = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
+        //
+        // Rebound window is SKIPPED entirely during active meal modes (BREAKFAST/LUNCH/DINNER/etc).
+        // Rationale: protein/fat rises are expected and need full insulin response. Rebound
+        // conservatism that made sense in fasting would fight a legitimate post-meal rise.
+        //
+        // When active (FASTING only), three phases:
+        //   1. "watching" — bgWentLow=true, window not yet armed (BG still below threshold).
+        //                   BG is below the guard so we're in the SUSPEND branch anyway.
+        //                   Once BG has risen enough to exit the SUSPEND branch and enter NORMAL,
+        //                   we treat this identically to the windowed phase using msSinceLastSuspend.
+        //                   This means reduced (not zero) insulin once BG exits suspend territory.
+        //   2. "windowed" — inReboundWindow=true: taper ramps 0.0→1.0 over REBOUND_TAPER_MINS
+        //   3. "clear"    — full normal dosing
+        val reboundActive = (bgWentLow || inReboundWindow) && mealMode == MealMode.FASTING
+        val reboundMins   = if (reboundActive) (msSinceLastSuspend / 60_000.0) else 0.0
         val reboundTaperFraction = when {
+            !reboundActive  -> 1.0  // meal mode or no rebound history — full dosing
             inReboundWindow -> (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
-            bgWentLow       -> 0.0   // watching phase — BG still recovering, block everything
-            else            -> 1.0   // clear — full normal dosing
+            bgWentLow       -> (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+            // ↑ watching phase: BG has exited SUSPEND but threshold not yet crossed.
+            // Use same time-based ramp as the windowed phase — this gives reduced (not zero)
+            // insulin instead of a hard block, which was causing the "no insulin on crossover" bug.
+            else            -> 1.0
         }
 
         // ── Reason string ────────────────────────────────────────────────────
@@ -193,11 +205,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
         if (inDawnWindow) sb.append("dawnWindow(reduction=%.0f%%) ".format(Locale.US, dawnSmbReduction * 100))
         if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
-        if (inReboundWindow) {
-            val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
-            sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f SMBs+TBR gated) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
-        } else if (bgWentLow) {
-            sb.append("rebound=watching(SMBs+TBR blocked) ")  // went low, BG hasn't crossed back up yet
+        when {
+            !reboundActive && (bgWentLow || inReboundWindow) ->
+                sb.append("rebound=skipped(mealMode=${mealMode.label}) ")
+            inReboundWindow -> {
+                val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
+                sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
+            }
+            bgWentLow -> {
+                // watching phase — BG exited suspend zone, ramp already started via msSinceLastSuspend
+                val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
+                sb.append("rebound=watching(elapsed=%.0fmin left=%.0fmin taper=%.2f) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
+            }
         }
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append("activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol) ")

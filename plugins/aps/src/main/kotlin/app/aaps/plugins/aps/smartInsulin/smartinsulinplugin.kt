@@ -507,6 +507,15 @@ open class SmartInsulinPlugin @Inject constructor(
         val REBOUND_LOW_THRESHOLD_MGDL = lowGuardMmol * 18.0
         val currentBgMgdl = glucoseStatus.glucose
 
+        // Rebound window is only relevant during FASTING mode.
+        // If a meal mode is active, clear any stale rebound state so it doesn't carry over
+        // to the post-meal fasting period and cause unnecessary insulin restriction.
+        if (mealMode != MealMode.FASTING && (bgWentLow || reboundWindowStartMs > 0L)) {
+            bgWentLow = false
+            reboundWindowStartMs = 0L
+            aapsLogger.debug(LTag.APS, "SmartInsulin: rebound state cleared — meal mode active (${mealMode.label})")
+        }
+
         // During any suspend/caution, track if BG went low
         // We check the previous result's reason to know if we were suspending last cycle
         val wasSuspending = previousAPSResult?.reason?.let {
