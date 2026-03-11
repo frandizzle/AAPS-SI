@@ -173,12 +173,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs?.IOB = rawPrediction
 
         // ── IOB / headroom ────────────────────────────────────────────────────
-        val iobHeadroom   = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
-        val iobOk         = currentIob < oapsProfile.max_iob
-        val bgAboveGuard  = currentBg - lowGuardMgdl
-        val iobDrop       = currentIob * dosingIsfMgdl
-        val bgAboveTarget = (currentBg - targetBg).coerceAtLeast(0.0)
-        val iobSufficient = iobDrop >= bgAboveTarget && currentIob > 0
+        val iobHeadroom  = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
+        val iobOk        = currentIob < oapsProfile.max_iob
+        val bgAboveGuard = currentBg - lowGuardMgdl
+
+        // Stock OpenAPS-style insulinReq: how much insulin is needed to bring
+        // predictedMin to target. predictedMin already has existing IOB baked in,
+        // so this naturally self-limits — no iobSufficient gate needed.
+        val predMinGapMgdl = (predictedMin - targetBg).coerceAtLeast(0.0)
+        val insulinReq     = predMinGapMgdl / dosingIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -238,15 +241,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
             // ── Normal dosing ─────────────────────────────────────────────────
             else -> {
+                // Stock-style: SMB = insulinReq/2, scaled by aggressiveness/dawn/cgm.
+                // insulinReq is based on predictedMin gap to target — self-limits as
+                // prediction curve drops. No iobSufficient gate; existing IOB is already
+                // baked into predictedMin so there's no double-dosing risk.
                 val smbAllowed = microBolusAllowed &&
                     !highTempTargetActive &&
                     bgAboveGuard > 0.0 &&
-                    predictedAt60 > targetBg &&
-                    !iobSufficient
+                    insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
-                    val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    (pred30Gap / dosingIsfMgdl) * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
+                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -255,19 +260,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
 
-                val totalCorrection = if (smbAllowed && iobOk) {
-                    val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
-                    (pred30Gap / dosingIsfMgdl) * aggressiveness
-                } else 0.0
-                val remainingU = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
+                val totalCorrection = if (smbAllowed && iobOk) insulinReq * aggressiveness else 0.0
+                val remainingU      = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
-                    !iobOk        -> 0.0
-                    iobSufficient -> 0.0
+                    !iobOk           -> 0.0
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
-                    else          -> profileBasal
+                    else             -> profileBasal
                 }
                 val tbrRate = tbrRateRaw * reboundTaperFraction
 
@@ -275,10 +276,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
 
                 val trigger = when {
-                    !iobOk        -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
-                    iobSufficient -> "iobSufficient(drop=${String.format(Locale.US, "%.0f", iobDrop)}>=gap=${String.format(Locale.US, "%.0f", bgAboveTarget)})"
-                    !smbAllowed   -> "blocked"
-                    else          -> "aboveTarget"
+                    !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
+                    !smbAllowed -> "blocked"
+                    else        -> "predMinGap(${String.format(Locale.US, "%.1f", predictedMin / 18.0)}->${String.format(Locale.US, "%.1f", targetBg / 18.0)})"
                 }
 
                 val reboundStr = when {
