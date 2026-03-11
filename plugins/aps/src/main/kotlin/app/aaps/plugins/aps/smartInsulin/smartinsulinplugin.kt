@@ -119,7 +119,7 @@ open class SmartInsulinPlugin @Inject constructor(
     // Rebound protection only activates if BG actually went under the low threshold
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
-    var bgWentLow: Boolean = false               // true once BG crossed below lowGuardMmol during suspend
+    var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
     var previousBgMgdl: Double = 0.0             // BG from previous loop cycle for crossing detection
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
@@ -389,8 +389,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val learnedProfile    = profileLearner.getProfile(mealMode)
-        val lowGuardMmol      = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
-        val warnGuardMmol     = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol)
 
         // ── Activity monitor — recompute from fed HR/steps data ─────────────
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
@@ -493,7 +491,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalMultiplier = flatBasalMult * circBasalMult
 
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
-        val maxTbrU           = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr)
         val dawnWindowStart   = preferences.get(IntKey.ApsSmartInsulinDawnWindowStartHour)
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
@@ -503,8 +500,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
-        // Uses lowGuardMmol so rebound tracking matches the suspend threshold exactly.
-        val REBOUND_LOW_THRESHOLD_MGDL = lowGuardMmol * 18.0
+        // Mirrors stock AAPS threshold = min_bg - 0.5*(min_bg-40) so bgWentLow fires
+        // at exactly the same level determine_basal suspends.
+        val minBgMgdl = profile.getTargetLowMgdl()
+        val REBOUND_LOW_THRESHOLD_MGDL = minBgMgdl - 0.5 * (minBgMgdl - 40.0)
         val currentBgMgdl = glucoseStatus.glucose
 
         // Rebound window is only relevant during FASTING mode.
@@ -553,33 +552,30 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
+        // oapsProfile.sens is already set to dosingIsfMgdl (meal mode ISF or profile ISF)
+        // by the oapsProfile construction above — determine_basal uses oapsProfile.sens for
+        // both prediction and dosing, exactly as stock AAPS does.
         val apsResult = determineBasalSmartInsulin.determine_basal(
-            glucoseStatus         = glucoseStatus,
-            currentTemp           = currentTemp,
-            iobArray              = iobArray,
-            oapsProfile           = oapsProfile,
-            mealData              = mealData,
-            profile               = profile,
-            learnedProfile        = learnedProfile,
-            mealMode              = mealMode,
-            lowGuardMmol          = lowGuardMmol,
-            warnGuardMmol         = warnGuardMmol,
-            maxSmbU               = maxSmbU,
-            maxTbrU               = maxTbrU,
-            aggressiveness        = aggressiveness,
-            tirSummary            = tirSummary,
-            basalMultiplier       = basalMultiplier,
-            dosingIsfMgdl         = dosingIsfMgdl,
-            microBolusAllowed     = microBolusAllowed,
-            inReboundWindow       = inReboundWindow,
-            msSinceLastSuspend    = msSinceLastSuspend,
-            currentTime           = now,
-            isTempTarget          = isTempTarget,
-            profileTargetMgdl     = profileTargetMgdl,
-            dawnWindowStartHour   = dawnWindowStart,
-            dawnWindowEndHour     = dawnWindowEnd,
-            dawnSmbReduction      = dawnSmbReduction,
-            bgWentLow             = bgWentLow,
+            glucoseStatus            = glucoseStatus,
+            currentTemp              = currentTemp,
+            iobArray                 = iobArray,
+            oapsProfile              = oapsProfile,
+            mealData                 = mealData,
+            profile                  = profile,
+            mealMode                 = mealMode,
+            maxSmbU                  = maxSmbU,
+            aggressiveness           = aggressiveness,
+            basalMultiplier          = basalMultiplier,
+            microBolusAllowed        = microBolusAllowed,
+            inReboundWindow          = inReboundWindow,
+            msSinceLastSuspend       = msSinceLastSuspend,
+            currentTime              = now,
+            isTempTarget             = isTempTarget,
+            profileTargetMgdl        = profileTargetMgdl,
+            dawnWindowStartHour      = dawnWindowStart,
+            dawnWindowEndHour        = dawnWindowEnd,
+            dawnSmbReduction         = dawnSmbReduction,
+            bgWentLow                = bgWentLow,
             activityLevel            = activityMonitor.level,
             activityTargetOffsetMmol = activityTargetOffsetMmol,
             cgmSmbFraction           = cgmState.smbFraction,
