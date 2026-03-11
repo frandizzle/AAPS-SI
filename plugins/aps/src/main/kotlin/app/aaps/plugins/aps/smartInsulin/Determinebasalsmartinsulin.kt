@@ -47,7 +47,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
      * Respects skip_neutral_temps: if true and rate == profile basal, cancels any running
      * temp or does nothing (matching stock AAPS behaviour).
      */
-    private fun setTempBasal(rate: Double, duration: Int, oapsProfile: OapsProfile, rT: RT, currentTemp: CurrentTemp): RT {
+    private fun setTempBasal(rate: Double, duration: Int, oapsProfile: OapsProfile, rT: RT): RT {
         val safeRate = rate.coerceIn(0.0, oapsProfile.max_basal)
         val rounded  = (Math.round(safeRate * 100.0) / 100.0)
         // We construct a fresh rT every cycle so rate/duration MUST always be set --
@@ -151,8 +151,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val predictedMin  = predictedBg.minOrNull() ?: currentBg
         // List is now 5-min ticks: index 6 = 30 mins, index 12 = 60 mins
-        val predictedAt30 = if (predictedBg.size > 6)  predictedBg[6]  else predictedBg.lastOrNull() ?: currentBg
-        val predictedAt60 = if (predictedBg.size > 12) predictedBg[12] else predictedBg.lastOrNull() ?: currentBg
+        // predictedBg[0]=5min, [5]=30min, [11]=60min (tick=1 is first 5-min projection, no index-0=now)
+        val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
+        val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
 
         // ── Downsample curve to 5-min intervals for predBGs ──────────────────
         val rawPrediction: MutableList<Int> = mutableListOf()
@@ -226,7 +227,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
                 sb.append("LGS_SUSPEND BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(0.0, 30, oapsProfile, rT)
             }
 
             predictedMin < lowGuardMgdl || fallingIntoLow -> {
@@ -235,7 +236,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 else
                     "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
                 sb.append(reason)
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(0.0, 30, oapsProfile, rT)
             }
 
             predictedMin < warnGuardMgdl -> {
@@ -244,7 +245,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val scale       = if (guardWindow > 0.0) (headroom / guardWindow).coerceIn(0.0, 1.0) else 0.0
                 val reduced     = (profileBasal * scale * 0.5).coerceAtLeast(0.0)
                 sb.append("CAUTION scale=%.2f reducedBasal=%.3f".format(Locale.US, scale, reduced))
-                setTempBasal(reduced, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(reduced, 30, oapsProfile, rT)
             }
 
             else -> {
@@ -286,12 +287,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 // TBR: 0.00 U/h when IOB at or above max (let it decay).
                 // Elevated TBR only when there's headroom AND correction needed.
+                // Resolve final SMB first — rebound/taper gate may zero it out.
+                // remainingU must use finalSmb (not constrainedSmb) so TBR only covers
+                // what wasn't delivered, not phantom blocked-SMB volume.
+                val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
+                val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
+
                 val totalCorrection = if (smbAllowed && iobOk) {
-                    // Size TBR correction from pred30 gap — consistent with SMB sizing
                     val pred30Gap = (predictedAt30 - targetBg).coerceAtLeast(0.0)
                     (pred30Gap / dosingIsfMgdl) * aggressiveness
                 } else 0.0
-                val remainingU  = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
+                // remainingU uses finalSmb — blocked SMB volume is discarded, not rolled into TBR
+                val remainingU  = (totalCorrection - finalSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
                     !iobOk           -> 0.0
@@ -302,10 +309,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     else             -> profileBasal
                 }
                 val tbrRate = tbrRateRaw * reboundTaperFraction
-
-                // Block SMBs entirely during rebound window, then taper back in
-                val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
-                val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
 
                 val needsTbr = !iobOk || iobSufficient || remainingU > 0.0 || inReboundWindow
 
@@ -340,7 +343,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger ".format())
                 sb.append("smb=%.3f tbr=%.3f%s%s%s".format(Locale.US, finalSmb, tbrRate, reboundStr, activityStr, cgmBlockStr))
                 smbOut = finalSmb
-                setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(tbrRate, 30, oapsProfile, rT)
             }
         }
 
