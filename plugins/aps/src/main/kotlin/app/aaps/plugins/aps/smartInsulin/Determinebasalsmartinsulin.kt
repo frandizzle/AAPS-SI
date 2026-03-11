@@ -205,6 +205,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         var minCOBGuardBG = 999.0; var minUAMGuardBG = 999.0
         var minIOBGuardBG = 999.0; var minZTGuardBG  = 999.0
         var maxIOBPredBG  = bg
+        var maxCOBPredBG  = bg
         var UAMduration   = 0.0
         val insulinPeak5m = (90.0 / 60.0) * 12.0  // 90m peak time
 
@@ -248,6 +249,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
             if (IOBpredBGs.size > insulinPeak5m && iobPredBG < minIOBPredBG) minIOBPredBG = round(iobPredBG, 0)
             if (iobPredBG > maxIOBPredBG) maxIOBPredBG = iobPredBG
+            if (cobPredBG > maxCOBPredBG) maxCOBPredBG = cobPredBG
             if ((cid != 0.0 || remainingCIpeak > 0) && COBpredBGs.size > insulinPeak5m && cobPredBG < minCOBPredBG)
                 minCOBPredBG = round(cobPredBG, 0)
             if (oapsProfile.enableUAM && UAMpredBGs.size > 12 && uamPredBG < minUAMPredBG)
