@@ -500,10 +500,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
-        // Mirrors stock AAPS threshold = min_bg - 0.5*(min_bg-40) so bgWentLow fires
-        // at exactly the same level determine_basal suspends.
-        val minBgMgdl = profile.getTargetLowMgdl()
-        val REBOUND_LOW_THRESHOLD_MGDL = minBgMgdl - 0.5 * (minBgMgdl - 40.0)
+        // Matches the lowGuardMmol threshold used in determine_basal's SUSPEND decision.
+        val REBOUND_LOW_THRESHOLD_MGDL = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol) * 18.0
         val currentBgMgdl = glucoseStatus.glucose
 
         // Rebound window is only relevant during FASTING mode.
@@ -552,9 +550,6 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
-        // oapsProfile.sens is already set to dosingIsfMgdl (meal mode ISF or profile ISF)
-        // by the oapsProfile construction above — determine_basal uses oapsProfile.sens for
-        // both prediction and dosing, exactly as stock AAPS does.
         val apsResult = determineBasalSmartInsulin.determine_basal(
             glucoseStatus            = glucoseStatus,
             currentTemp              = currentTemp,
@@ -562,10 +557,16 @@ open class SmartInsulinPlugin @Inject constructor(
             oapsProfile              = oapsProfile,
             mealData                 = mealData,
             profile                  = profile,
+            learnedProfile           = learnedProfile,
             mealMode                 = mealMode,
+            lowGuardMmol             = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol),
+            warnGuardMmol            = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol),
             maxSmbU                  = maxSmbU,
+            maxTbrU                  = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr),
             aggressiveness           = aggressiveness,
+            tirSummary               = aggressionLearner.tirSummary,
             basalMultiplier          = basalMultiplier,
+            dosingIsfMgdl            = dosingIsfMgdl,
             microBolusAllowed        = microBolusAllowed,
             inReboundWindow          = inReboundWindow,
             msSinceLastSuspend       = msSinceLastSuspend,
