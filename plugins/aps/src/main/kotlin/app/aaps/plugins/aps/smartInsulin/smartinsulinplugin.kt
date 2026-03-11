@@ -186,6 +186,17 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
 
+            // ── Meal override / pre-bolus 2 status ───────────────────────────
+            val activeMode = mealOverrideManager.activeMealMode
+            if (activeMode != null) {
+                val modeRemMins = mealOverrideManager.modeTimeRemainingMs / 60_000
+                appendLine("  Mode active   : ${activeMode.label} (${modeRemMins}min remaining)")
+            }
+            val pb2Status = mealOverrideManager.preBolus2StatusText
+            if (pb2Status.isNotEmpty()) {
+                appendLine("  $pb2Status")
+            }
+
             // ── Activity & CGM state ──────────────────────────────────────────
             val actLevel = activityMonitor.level
             if (actLevel != ActivityMonitor.ActivityLevel.SEDENTARY) {

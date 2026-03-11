@@ -182,8 +182,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
             binding.cancelModeButton.visibility = View.VISIBLE
             var cancelLabel = "Cancel ${activeMode.label} mode"
             if (mealOverrideManager.preBolus2Pending) {
-                val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
-                cancelLabel += "\n(PB2 fires in ${minsLeft}min)"
+                cancelLabel += "\n(${mealOverrideManager.preBolus2StatusText})"
             }
             binding.cancelModeButton.text = cancelLabel
             binding.cancelModeButton.setOnClickListener {
@@ -204,8 +203,9 @@ class SmartMealDialog : DialogFragmentWithDate() {
         // ── Cancel PB2 button (shown only when PB2 is pending, mode active) ──
         if (mealOverrideManager.preBolus2Pending) {
             binding.cancelPb2Button.visibility = View.VISIBLE
-            val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
-            binding.cancelPb2Button.text = "Cancel pre-bolus 2 (fires in ${minsLeft}min)"
+            // Show live status: countdown or block reason (e.g. "PB2 waiting: BG below target 5.5mmol")
+            val pb2Status = mealOverrideManager.preBolus2StatusText
+            binding.cancelPb2Button.text = "Cancel  |  $pb2Status"
             binding.cancelPb2Button.setOnClickListener {
                 activity?.let { act ->
                     OKDialog.showConfirmation(act,

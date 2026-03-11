@@ -22,8 +22,13 @@ interface MealOverrideManager {
     /** True if pre-bolus 2 is pending delivery (scheduled but not yet fired) */
     val preBolus2Pending: Boolean
 
-    /** Minutes until pre-bolus 2 fires, or null if not pending */
-    val preBolus2MinutesRemaining: Int?
+    /** Human-readable status of pre-bolus 2 for display in dialog and tab UI.
+     *  Examples: "PB2: 18min", "PB2: waiting — BG below target (5.1 <= 5.5mmol)",
+     *            "PB2: delivered 14:32", "PB2: cancelled", "" if not scheduled */
+    val preBolus2StatusText: String
+
+    /** Seconds until pre-bolus 2 fire time (negative = overdue, waiting on safety checks) */
+    val preBolus2SecondsRemaining: Long?
 
     fun activateOverride(
         mode:             MealMode,

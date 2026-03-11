@@ -110,10 +110,70 @@ class MealOverrideManagerImpl @Inject constructor(
     override val preBolus2Pending: Boolean
         get() = _state?.preBolus2Pending == true
 
-    override val preBolus2MinutesRemaining: Int? get() {
+    override val preBolus2SecondsRemaining: Long? get() {
         val s = _state?.takeIf { it.preBolus2Pending } ?: return null
-        val minsLeft = ((s.preBolus2FireAtMs - System.currentTimeMillis()) / 60_000).toInt()
-        return minsLeft.coerceAtLeast(0)
+        return s.preBolus2FireAtMs - System.currentTimeMillis()  // negative = overdue/waiting on safety
+    }
+
+    /** Evaluate current safety blocks without needing glucoseStatus (uses last known values). */
+    private fun safetyBlockReasons(
+        bgMgdl:        Double,
+        iob:           Double,
+        maxIob:        Double,
+        targetMgdl:    Double,
+        delta:         Double,
+        shortAvgDelta: Double
+    ): List<String> {
+        val reasons = mutableListOf<String>()
+        if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL)
+            reasons += "BG ${String.format("%.1f", bgMgdl / 18.0)}mmol < 5.0mmol min"
+        if (bgMgdl <= targetMgdl)
+            reasons += "BG ${String.format("%.1f", bgMgdl / 18.0)} not above target ${String.format("%.1f", targetMgdl / 18.0)}mmol"
+        if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO)
+            reasons += "IOB ${String.format("%.2f", iob)}U high (max ${String.format("%.1f", maxIob)}U)"
+        if (delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)
+            reasons += "falling fast (delta ${String.format("%.2f", delta / 18.0)}mmol)"
+        if (shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)
+            reasons += "trending down (avg ${String.format("%.2f", shortAvgDelta / 18.0)}mmol)"
+        return reasons
+    }
+
+    // Cache last known glucose values so statusText can reflect safety state between loop cycles
+    @Volatile private var lastBgMgdl        = 0.0
+    @Volatile private var lastIob           = 0.0
+    @Volatile private var lastMaxIob        = 0.0
+    @Volatile private var lastTargetMgdl    = 108.0
+    @Volatile private var lastDelta         = 0.0
+    @Volatile private var lastShortAvgDelta = 0.0
+
+    override val preBolus2StatusText: String get() {
+        val s   = _state ?: return ""
+        val now = System.currentTimeMillis()
+        return when {
+            // Discarded (-1L) or already fired (positive timestamp)
+            s.preBolus2FiredMs != null && s.preBolus2FiredMs == -1L ->
+                "PB2: cancelled"
+            s.preBolus2FiredMs != null && s.preBolus2FiredMs!! > 0L -> {
+                val firedMins = (now - s.preBolus2FiredMs!!) / 60_000
+                "PB2: delivered ${firedMins}min ago"
+            }
+            // Counting down
+            now < s.preBolus2FireAtMs -> {
+                val secsLeft = (s.preBolus2FireAtMs - now) / 1000
+                if (secsLeft >= 60)
+                    "PB2: ${secsLeft / 60}min ${secsLeft % 60}s"
+                else
+                    "PB2: ${secsLeft}s"
+            }
+            // Time elapsed — show safety block reasons if any
+            else -> {
+                val reasons = safetyBlockReasons(
+                    lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta
+                )
+                if (reasons.isEmpty()) "PB2: waiting for next loop cycle"
+                else "PB2 waiting: ${reasons.joinToString(", ")}"
+            }
+        }
     }
 
     override fun activateOverride(
@@ -180,37 +240,24 @@ class MealOverrideManagerImpl @Inject constructor(
         val currentBgMgdl = glucoseStatus.glucose
         val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
         val profile       = profileFunction.getProfile()
-        val profileTarget = profile?.getTargetMgdl() ?: 108.0  // fallback 6.0 mmol
+        val profileTarget = profile?.getTargetMgdl() ?: 108.0
 
-        val reasons = mutableListOf<String>()
+        // Cache for preBolus2StatusText so dialog can show live block reasons between cycles
+        lastBgMgdl        = currentBgMgdl
+        lastIob           = currentIob
+        lastMaxIob        = maxIobU
+        lastTargetMgdl    = profileTarget
+        lastDelta         = glucoseStatus.delta
+        lastShortAvgDelta = glucoseStatus.shortAvgDelta
 
-        // 1. BG must be above threshold (don't stack if already dropping to target)
-        if (currentBgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL) {
-            reasons += "BG ${String.format("%.1f", currentBgMgdl / 18.0)}mmol < threshold"
-        }
-
-        // 2. BG must actually be above profile target — the whole point is catching a protein/fat rise
-        if (currentBgMgdl <= profileTarget) {
-            reasons += "BG not above target (${String.format("%.1f", currentBgMgdl/18.0)} <= ${String.format("%.1f", profileTarget/18.0)}mmol)"
-        }
-
-        // 3. IOB headroom — must have room to absorb additional bolus
-        val iobHeadroomOk = currentIob < (maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO)
-        if (!iobHeadroomOk) {
-            reasons += "IOB ${String.format("%.2f", currentIob)}U >= ${String.format("%.0f", MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100)}% of maxIob ${String.format("%.1f", maxIobU)}U"
-        }
-
-        // 4a. Instant delta — single reading falling sharply
-        if (glucoseStatus.delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL) {
-            reasons += "BG falling fast: last delta=${String.format("%.1f", glucoseStatus.delta / 18.0)}mmol"
-        }
-
-        // 4b. Sustained trend — shortAvgDelta covers ~last 3 readings.
-        // Catches a slow persistent drop like -0.5, -0.3, -0.3 mmol even when no single reading
-        // is alarming. -3 mg/dL avg ≈ -0.17 mmol/5min average over last 3 readings.
-        if (glucoseStatus.shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL) {
-            reasons += "BG trending down: shortAvgDelta=${String.format("%.1f", glucoseStatus.shortAvgDelta / 18.0)}mmol"
-        }
+        val reasons = safetyBlockReasons(
+            bgMgdl        = currentBgMgdl,
+            iob           = currentIob,
+            maxIob        = maxIobU,
+            targetMgdl    = profileTarget,
+            delta         = glucoseStatus.delta,
+            shortAvgDelta = glucoseStatus.shortAvgDelta
+        )
 
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB2 BLOCKED: ${reasons.joinToString(", ")}")
