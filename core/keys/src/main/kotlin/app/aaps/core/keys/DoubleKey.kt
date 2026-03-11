@@ -60,6 +60,8 @@ enum class DoubleKey(
     ApsSmartInsulinLowCarbIsf("si_lowcarb_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
     ApsSmartInsulinExtendedIsf("si_extended_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
     ApsSmartInsulinMaxPreBolus("si_max_prebolus_u", 8.0, 0.5, 15.0, defaultedBySM = true),
+    // Pre-bolus 2: default amount in units (user can override per-activation in SmartMealDialog)
+    ApsSmartInsulinPreBolus2DefaultU("si_prebolus2_default_u", 2.0, 0.5, 10.0, defaultedBySM = true),
     ApsSmartInsulinLearningRate("si_learning_rate", 0.15, 0.05, 0.5, defaultedBySM = true),
     ApsSmartInsulinLowGuardMmol("si_low_guard_mmol", 4.0, 3.0, 5.0, defaultedBySM = true),
     ApsSmartInsulinWarnGuardMmol("si_warn_guard_mmol", 4.8, 3.5, 6.0, defaultedBySM = true),

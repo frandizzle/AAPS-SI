@@ -21,6 +21,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.IntKey
 import app.aaps.core.objects.extensions.formatColor
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.toast.ToastUtils
@@ -33,6 +34,7 @@ import java.util.LinkedList
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 class SmartMealDialog : DialogFragmentWithDate() {
 
@@ -86,9 +88,12 @@ class SmartMealDialog : DialogFragmentWithDate() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // Use MaxPreBolus pref, not the general SMB constraint
         val maxPreBolus = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
         val bolusStep   = activePlugin.activePump.pumpDescription.bolusStep
+
+        // Default PB2 values from global settings (user can override per-activation)
+        val defaultPb2U         = preferences.get(DoubleKey.ApsSmartInsulinPreBolus2DefaultU)
+        val defaultPb2DelayMins = preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins).toDouble()
 
         // ── Mode spinner ─────────────────────────────────────────────────────
         val modeLabels = modeList.map { it.label }
@@ -99,7 +104,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         binding.modeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, v: View?, position: Int, id: Long) {
                 selectedMode = modeList[position]
-                loadIsfForMode(selectedMode)   // update ISF picker when mode changes
+                loadIsfForMode(selectedMode)
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -116,31 +121,27 @@ class SmartMealDialog : DialogFragmentWithDate() {
         )
 
         // ── ISF picker ────────────────────────────────────────────────────────
-        // Range 0.0–20.0 mmol, step 0.1. 0.0 = use profile ISF (same as prefs)
         binding.isfAmount.setParams(
             savedInstanceState?.getDouble("isfAmount") ?: preferences.get(isfKeyFor(selectedMode) ?: DoubleKey.ApsSmartInsulinLunchIsf),
             0.0, 20.0, 0.1,
             DecimalFormat("0.0"), false, binding.okcancel.ok, null
         )
-        // Load correct ISF for initial mode if not restoring state
         if (savedInstanceState == null) loadIsfForMode(selectedMode)
 
-        // ── Pre-bolus toggle ──────────────────────────────────────────────────
+        // ── Pre-bolus 1 toggle ────────────────────────────────────────────────
         binding.preBolusSwitch.isChecked = false
         binding.preBolusLayout.visibility = View.GONE
         binding.preBolusSwitch.setOnCheckedChangeListener { _, checked ->
             binding.preBolusLayout.visibility = if (checked) View.VISIBLE else View.GONE
         }
 
-        // ── Pre-bolus amount picker ───────────────────────────────────────────
+        // ── Pre-bolus 1 amount picker ─────────────────────────────────────────
         binding.preBolusAmount.setParams(
             savedInstanceState?.getDouble("preBolusAmount") ?: 0.0,
             0.0, maxPreBolus, bolusStep,
             decimalFormatter.pumpSupportedBolusFormat(bolusStep),
             false, binding.okcancel.ok, null
         )
-
-        // Quick-add buttons
         binding.bolus1.setOnClickListener {
             binding.preBolusAmount.value = (binding.preBolusAmount.value + 1.0).coerceAtMost(maxPreBolus)
         }
@@ -151,11 +152,40 @@ class SmartMealDialog : DialogFragmentWithDate() {
             binding.preBolusAmount.value = (binding.preBolusAmount.value + 3.0).coerceAtMost(maxPreBolus)
         }
 
+        // ── Pre-bolus 2 toggle ────────────────────────────────────────────────
+        // PB2 is a scheduled bolus fired by MealOverrideManagerImpl.onLoopCycle()
+        // when BG is above target and IOB headroom allows it.
+        binding.preBolus2Switch.isChecked = false
+        binding.preBolus2Layout.visibility = View.GONE
+        binding.preBolus2Switch.setOnCheckedChangeListener { _, checked ->
+            binding.preBolus2Layout.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+
+        // ── Pre-bolus 2 delay picker (minutes after PB1 / activation) ─────────
+        binding.preBolus2DelayMins.setParams(
+            savedInstanceState?.getDouble("pb2DelayMins") ?: defaultPb2DelayMins,
+            5.0, 120.0, 5.0,
+            DecimalFormat("0"), false, binding.okcancel.ok, null
+        )
+
+        // ── Pre-bolus 2 amount picker ─────────────────────────────────────────
+        binding.preBolus2Amount.setParams(
+            savedInstanceState?.getDouble("pb2Amount") ?: defaultPb2U,
+            0.5, maxPreBolus, bolusStep,
+            decimalFormatter.pumpSupportedBolusFormat(bolusStep),
+            false, binding.okcancel.ok, null
+        )
+
         // ── Cancel active mode button ─────────────────────────────────────────
         val activeMode = mealOverrideManager.activeMealMode
         if (activeMode != null) {
             binding.cancelModeButton.visibility = View.VISIBLE
-            binding.cancelModeButton.text = "Cancel ${activeMode.label} mode"
+            var cancelLabel = "Cancel ${activeMode.label} mode"
+            if (mealOverrideManager.preBolus2Pending) {
+                val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
+                cancelLabel += "\n(PB2 fires in ${minsLeft}min)"
+            }
+            binding.cancelModeButton.text = cancelLabel
             binding.cancelModeButton.setOnClickListener {
                 activity?.let { act ->
                     OKDialog.showConfirmation(act,
@@ -181,13 +211,16 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val durationMs    = TimeUnit.MINUTES.toMillis(durationMins.toLong())
         val wantsPreBolus = binding.preBolusSwitch.isChecked
         val preBolus      = if (wantsPreBolus) binding.preBolusAmount.value else 0.0
+        val wantsPb2      = binding.preBolus2Switch.isChecked
+        val pb2U          = if (wantsPb2) binding.preBolus2Amount.value else 0.0
+        val pb2DelayMins  = if (wantsPb2) binding.preBolus2DelayMins.value.roundToInt() else 0
+        val pb2DelayMs    = TimeUnit.MINUTES.toMillis(pb2DelayMins.toLong())
         val bolusStep     = activePlugin.activePump.pumpDescription.bolusStep
         val maxPreBolus   = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
         val isfValue      = binding.isfAmount.value
 
-        val prebolusAfterConstraints = if (preBolus > 0.0)
-            maxPreBolus.coerceAtMost(preBolus)
-        else 0.0
+        val pb1Clamped = if (preBolus > 0.0) maxPreBolus.coerceAtMost(preBolus) else 0.0
+        val pb2Clamped = if (pb2U > 0.0)     maxPreBolus.coerceAtMost(pb2U)     else 0.0
 
         val actions: LinkedList<String?> = LinkedList()
         actions.add(
@@ -204,17 +237,26 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 (if (isfValue > 0.0) "${isfValue} mmol" else "Profile ISF")
                     .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
-        if (prebolusAfterConstraints > 0.0) {
+        if (pb1Clamped > 0.0) {
             actions.add(
-                rh.gs(app.aaps.core.ui.R.string.bolus) + ": " +
-                    decimalFormatter.toPumpSupportedBolus(prebolusAfterConstraints, bolusStep)
+                rh.gs(app.aaps.core.ui.R.string.bolus) + " (now): " +
+                    decimalFormatter.toPumpSupportedBolus(pb1Clamped, bolusStep)
                         .formatColor(context, rh, app.aaps.core.ui.R.attr.bolusColor)
             )
-            if (abs(prebolusAfterConstraints - preBolus) > bolusStep)
+            if (abs(pb1Clamped - preBolus) > bolusStep)
                 actions.add(
-                    rh.gs(app.aaps.core.ui.R.string.bolus_constraint_applied_warn, preBolus, prebolusAfterConstraints)
+                    rh.gs(app.aaps.core.ui.R.string.bolus_constraint_applied_warn, preBolus, pb1Clamped)
                         .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor)
                 )
+        }
+        if (pb2Clamped > 0.0) {
+            actions.add(
+                "Pre-bolus 2 (in ${pb2DelayMins}min): " +
+                    decimalFormatter.toPumpSupportedBolus(pb2Clamped, bolusStep)
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.bolusColor) +
+                    " — fires automatically if BG > target &amp; IOB has headroom"
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor)
+            )
         }
 
         activity?.let { activity ->
@@ -228,21 +270,22 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         preferences.put(key, isfValue)
                     }
 
-                    // Activate the meal mode override — doseU=null because we deliver
-                    // the pre-bolus directly below, not via onLoopCycle()
+                    // Activate meal mode — PB2 params passed to manager for scheduled delivery
                     mealOverrideManager.activateOverride(
-                        mode         = selectedMode,
-                        doseU        = null,
-                        carbsG       = 0,
-                        modeWindowMs = durationMs
+                        mode             = selectedMode,
+                        doseU            = null,
+                        carbsG           = 0,
+                        modeWindowMs     = durationMs,
+                        preBolus2U       = pb2Clamped,
+                        preBolus2DelayMs = pb2DelayMs
                     )
 
-                    // Deliver pre-bolus immediately if requested
-                    if (prebolusAfterConstraints > 0.0) {
+                    // Deliver pre-bolus 1 immediately if requested
+                    if (pb1Clamped > 0.0) {
                         val detailedBolusInfo = DetailedBolusInfo()
-                        detailedBolusInfo.insulin   = prebolusAfterConstraints
+                        detailedBolusInfo.insulin   = pb1Clamped
                         detailedBolusInfo.context   = context
-                        detailedBolusInfo.notes     = "SmartMeal ${selectedMode.label} pre-bolus"
+                        detailedBolusInfo.notes     = "SmartMeal ${selectedMode.label} pre-bolus 1"
                         detailedBolusInfo.timestamp = dateUtil.now()
                         commandQueue.bolus(detailedBolusInfo, object : Callback() {
                             override fun run() {
@@ -255,20 +298,25 @@ class SmartMealDialog : DialogFragmentWithDate() {
                             }
                         })
                     }
-                    ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins))
-                    dismiss()  // dismiss only after user confirms
+
+                    val pb2Summary = if (pb2Clamped > 0.0)
+                        " + PB2 ${pb2Clamped}U in ${pb2DelayMins}min (safety-gated)" else ""
+                    ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins) + pb2Summary)
+                    dismiss()
                 }
             )
         }
-        return false  // never auto-dismiss — confirmation dialog handles it
+        return false
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putInt("modeIndex", modeList.indexOf(selectedMode))
+        outState.putInt("modeIndex",      modeList.indexOf(selectedMode))
         outState.putDouble("modeDuration", binding.modeDuration.value)
         outState.putDouble("preBolusAmount", binding.preBolusAmount.value)
-        outState.putDouble("isfAmount", binding.isfAmount.value)
+        outState.putDouble("isfAmount",    binding.isfAmount.value)
+        outState.putDouble("pb2DelayMins", binding.preBolus2DelayMins.value)
+        outState.putDouble("pb2Amount",    binding.preBolus2Amount.value)
     }
 
     override fun onResume() {

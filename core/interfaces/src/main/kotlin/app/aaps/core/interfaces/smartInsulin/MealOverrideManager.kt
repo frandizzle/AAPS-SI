@@ -10,7 +10,7 @@ import app.aaps.core.interfaces.aps.IobTotal
  */
 interface MealOverrideManager {
 
-    /** Active meal mode — returns override if not expired, else null (caller auto-detects) */
+    /** Active meal mode — returns override if not expired, else null */
     val activeMealMode: MealMode?
 
     /** ISF multiplier for current loop cycle — 1.0 if no override active */
@@ -19,18 +19,26 @@ interface MealOverrideManager {
     /** Milliseconds remaining in the active mode window, or 0 if no override active */
     val modeTimeRemainingMs: Long
 
+    /** True if pre-bolus 2 is pending delivery (scheduled but not yet fired) */
+    val preBolus2Pending: Boolean
+
+    /** Minutes until pre-bolus 2 fires, or null if not pending */
+    val preBolus2MinutesRemaining: Int?
+
     fun activateOverride(
-        mode:         MealMode,
-        doseU:        Double?,
-        carbsG:       Int,
-        modeWindowMs: Long = DEFAULT_MODE_WINDOW_MS
+        mode:             MealMode,
+        doseU:            Double?,
+        carbsG:           Int,
+        modeWindowMs:     Long   = DEFAULT_MODE_WINDOW_MS,
+        preBolus2U:       Double = 0.0,
+        preBolus2DelayMs: Long   = 0L
     )
 
     fun cancelOverride()
 
     /**
      * Called every loop cycle from SmartInsulinPlugin.invoke().
-     * Fires the bolus when all safety conditions are met, or drops it on expiry.
+     * Checks if pre-bolus 2 is due, runs safety checks, fires if safe.
      */
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
@@ -39,7 +47,8 @@ interface MealOverrideManager {
     )
 
     companion object {
-        const val MIN_BG_MGDL            = 90.0
-        const val DEFAULT_MODE_WINDOW_MS = 3 * 60 * 60 * 1000L
+        const val MIN_BG_FOR_PB2_MGDL    = 90.0    // ~5.0 mmol — don't fire PB2 if below this
+        const val MAX_IOB_HEADROOM_RATIO  = 0.75    // IOB must be < 75% of maxIob to allow PB2
+        const val DEFAULT_MODE_WINDOW_MS  = 3 * 60 * 60 * 1000L
     }
 }

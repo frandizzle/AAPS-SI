@@ -118,6 +118,89 @@
             </LinearLayout>
         </LinearLayout>
 
+
+        <!-- Pre-bolus 2 — scheduled bolus for protein/fat rise coverage -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Pre-bolus 2 (scheduled)"
+                    android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Auto-fires after delay if BG &gt; target"
+                    android:textSize="12sp"
+                    android:alpha="0.6" />
+
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/pre_bolus2_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus 2 controls (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/pre_bolus2_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Delay (mins after bolus 1)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus2_delay_mins"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Amount (units)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus2_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Safety checks: BG must be above target, BG not falling, and IOB must have headroom"
+                android:textSize="11sp"
+                android:alpha="0.55"
+                android:layout_marginBottom="4dp" />
+
+        </LinearLayout>
+
         <!-- Cancel active mode button (shown only if mode active) -->
         <Button
             android:id="@+id/cancel_mode_button"

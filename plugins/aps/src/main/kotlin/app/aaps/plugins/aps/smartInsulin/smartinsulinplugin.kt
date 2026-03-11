@@ -426,11 +426,14 @@ open class SmartInsulinPlugin @Inject constructor(
         val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
         val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTargetMmol)
         val activityHeavyTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol)
-        val activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(
-            lightMmol    = activityLightTarget,
-            moderateMmol = activityModerateTarget,
-            heavyMmol    = activityHeavyTarget
-        )
+        val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
+        val activityTargetOffsetMmol = if (activityTargetEnabled) {
+            activityMonitor.targetOffsetMmol(
+                lightMmol    = activityLightTarget,
+                moderateMmol = activityModerateTarget,
+                heavyMmol    = activityHeavyTarget
+            )
+        } else 0.0
 
         if (suppressAdaptiveLearning) {
             aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
@@ -765,8 +768,11 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinLunchCarbsG,     title = R.string.si_lunch_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinDinnerCarbsG,    title = R.string.si_dinner_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,  title = R.string.si_mode_window_mins_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus, title = R.string.si_max_prebolus_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus,           title = R.string.si_max_prebolus_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinPreBolus2DefaultU,         title = R.string.si_prebolus2_default_u_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,    title = R.string.si_prebolus2_default_delay_title))
             // Activity monitor — target raises during exercise
+            addPreference(AdaptiveSwitchPreference(  ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,         title = R.string.si_activity_target_enabled_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
