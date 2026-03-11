@@ -183,8 +183,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
             var cancelLabel = "Cancel ${activeMode.label} mode"
             if (mealOverrideManager.preBolus2Pending) {
                 val minsLeft = mealOverrideManager.preBolus2MinutesRemaining ?: 0
-                cancelLabel += "
-                (PB2 fires in ${minsLeft}min)"
+                cancelLabel += "\n(PB2 fires in ${minsLeft}min)"
             }
             binding.cancelModeButton.text = cancelLabel
             binding.cancelModeButton.setOnClickListener {
