@@ -44,15 +44,16 @@ class ActivityMonitor @Inject constructor(
         const val STEPS_MODERATE_MIN  = 500
         const val STEPS_HEAVY_MIN     = 900
 
-        // HR: record end (timestamp + duration) must be within this window to be considered live.
-        // Wear OS records every ~5 min. If nothing in 10 min → watch is off/charging → SEDENTARY.
-        // NO fallback — stale HR data is worse than no data (it causes phantom activity targeting).
-        const val HR_LIVE_WINDOW_MS   = 10 * 60 * 1000L
+        // HR: HeartRateListener sends every 60 seconds. timestamp = END of sampling window.
+        // Use 20 min window to survive Bluetooth batching delays without phantom-activity risk.
+        // No fallback — if nothing in 20 min the watch is off/charging → SEDENTARY.
+        const val HR_LIVE_WINDOW_MS   = 20 * 60 * 1000L
 
-        // Steps: search wide for DB records (delays), but only use if fresh
-        const val STEPS_SEARCH_MS     = 210 * 60 * 1000L  // wide search to handle sync delays
-        const val STEPS_FRESH_MS      =  10 * 60 * 1000L  // must have a record end within 10 min
-        // NO steps fallback either — old steps data shouldn't sustain activity targeting
+        // Steps: timestamp = END of sampling period (per StepsCount.kt).
+        // Search wide (210 min) for DB records, but only classify fresh (within 20 min).
+        // Use steps10min bucket — more resilient to sync delays than steps5min.
+        const val STEPS_SEARCH_MS     = 210 * 60 * 1000L
+        const val STEPS_FRESH_MS      =  20 * 60 * 1000L
     }
 
     // ── Last read values (public read-only for reason string display) ─────────
@@ -89,7 +90,8 @@ class ActivityMonitor @Inject constructor(
         // Only use a steps record if its timestamp (= end of 5-min window) is within last 10 min.
         // No fallback — same reason as HR: stale steps shouldn't sustain activity targeting.
         val freshSteps = allSteps.filter { it.timestamp >= nowMs - STEPS_FRESH_MS }.maxByOrNull { it.timestamp }
-        lastSteps5min  = freshSteps?.steps5min ?: 0
+        // Use steps10min bucket — wider window is more resilient to Bluetooth sync delays
+        lastSteps5min  = freshSteps?.steps10min ?: 0
 
         // ── Heart Rate ────────────────────────────────────────────────────────
         // Use the single most recent HR record whose END (timestamp + duration) is within
@@ -104,10 +106,11 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Most recent live record: end of window (timestamp + duration) within last 10 min
+        // HR.timestamp = END of the 60-second sampling window (confirmed via HeartRateListener.kt).
+        // Filter: record ended within last 20 min. Pick most recent by timestamp.
         val latestHr = allHr
-            .filter { it.timestamp + it.duration >= hrSearchStart }
-            .maxByOrNull { it.timestamp + it.duration }  // latest end = most current reading
+            .filter { it.timestamp >= hrSearchStart }
+            .maxByOrNull { it.timestamp }
         lastHrBpm = latestHr?.beatsPerMinute ?: 0.0
 
         aapsLogger.debug(LTag.APS,
