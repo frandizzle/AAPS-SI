@@ -92,10 +92,10 @@ class ActivityMonitor @Inject constructor(
         lastSteps5min  = freshSteps?.steps5min ?: 0
 
         // ── Heart Rate ────────────────────────────────────────────────────────
-        // Only use HR records whose END (timestamp + duration) is within the last 10 minutes.
-        // If nothing is that fresh → watch is off/charging → lastHrBpm = 0 → SEDENTARY.
-        // No fallback intentionally: stale HR causes phantom activity targeting (e.g. watch on
-        // charge still showing 95bpm from 25 min ago → spurious +0.5mmol target raise).
+        // Use the single most recent HR record whose END (timestamp + duration) is within
+        // the last 10 minutes. Most recent = lowest latency. No averaging — averaging
+        // old + new readings introduces lag (e.g. 75bpm 5min ago + 95bpm now = 85bpm reported).
+        // No fallback: if nothing fresh → watch off/charging → SEDENTARY.
         val hrSearchStart = nowMs - HR_LIVE_WINDOW_MS
         val allHr = try {
             persistenceLayer.getHeartRatesFromTimeToTime(hrSearchStart, nowMs)
@@ -104,12 +104,11 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Record is live if its window end (timestamp + duration) falls within the live window
-        val liveHrList = allHr.filter { it.timestamp + it.duration >= hrSearchStart }
-        lastHrBpm = if (liveHrList.isNotEmpty())
-            liveHrList.map { it.beatsPerMinute }.average()
-        else
-            0.0  // no live data → watch off or not worn → treat as SEDENTARY
+        // Most recent live record: end of window (timestamp + duration) within last 10 min
+        val latestHr = allHr
+            .filter { it.timestamp + it.duration >= hrSearchStart }
+            .maxByOrNull { it.timestamp + it.duration }  // latest end = most current reading
+        lastHrBpm = latestHr?.beatsPerMinute ?: 0.0
 
         aapsLogger.debug(LTag.APS,
                          "ActivityMonitor: hr=${if (lastHrBpm > 0) "${lastHrBpm.toInt()}bpm" else "none"} " +

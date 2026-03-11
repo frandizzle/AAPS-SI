@@ -140,13 +140,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ── Build prediction curves ──────────────────────────────────────────
         // Always run to 240 mins for the graph (matches AutoISF 48-point convention).
         // Algorithm reads at fixed indices 30 and 60 — independent of graph horizon.
+        // Extend prediction to full learned DIA so AAPS graph centers "Now" correctly.
+        // Standard AAPS covers the full insulin curve (5–8h). Clamped 360–480 mins.
+        // This doesn't affect dosing decisions (which use pred30/pred60) — only graph display.
+        val predHorizonMins = learnedProfile.diaMinutes.toInt().coerceIn(360, 480)
         val predictedBg = predictBgCurve(
             currentBg             = currentBg,
             ci                    = ci,
             iobArray              = iobArray,
             isfMgdl               = isfMgdl,
             learnedProfile        = learnedProfile,
-            predictionHorizonMins = 240
+            predictionHorizonMins = predHorizonMins
         )
 
         val predictedMin  = predictedBg.minOrNull() ?: currentBg
@@ -372,7 +376,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         for (tick in 1..ticks) {
             val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile)
             val iobDelta   = -(activity * isfMgdl * 5.0)
-            val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
+            val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (30.0 / 5.0)))  // fade over 30 min (6 ticks)
             bg += iobDelta + predDev
             bg = bg.coerceAtLeast(39.0)
             predictions.add(bg)
