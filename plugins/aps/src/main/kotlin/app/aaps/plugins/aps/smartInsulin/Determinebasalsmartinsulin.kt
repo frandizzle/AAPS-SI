@@ -260,8 +260,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
 
-                val totalCorrection = if (smbAllowed && iobOk) insulinReq * aggressiveness else 0.0
-                val remainingU      = (totalCorrection - constrainedSmb).coerceAtLeast(0.0)
+                // TBR correction is independent of smbAllowed — high temp target blocks
+                // SMBs but still needs elevated TBR to bring predMin to the temp target.
+                // insulinReq is already computed against targetBg (which IS the temp target
+                // when active), so TBR naturally aims for 6.5 not 5.5.
+                val tbrCorrectionU  = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                val remainingU      = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
                     !iobOk           -> 0.0
