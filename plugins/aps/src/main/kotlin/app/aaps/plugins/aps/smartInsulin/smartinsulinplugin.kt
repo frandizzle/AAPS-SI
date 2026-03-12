@@ -120,7 +120,6 @@ open class SmartInsulinPlugin @Inject constructor(
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
     var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
-    var previousBgMgdl: Double = 0.0             // BG from previous loop cycle for crossing detection
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
@@ -139,7 +138,6 @@ open class SmartInsulinPlugin @Inject constructor(
         circadianLearner.reset()
         profileLearner.resetProfiles()
         bgWentLow          = false
-        previousBgMgdl     = 0.0
         reboundWindowStartMs = 0L
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
@@ -527,24 +525,21 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), watching for recovery")
             }
         } else {
-            // Not suspending — check if BG just crossed back UP through threshold
-            if (bgWentLow && previousBgMgdl < REBOUND_LOW_THRESHOLD_MGDL && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
-                // Arm the rebound window from the crossing moment
+            // Not suspending — arm rebound window if BG went low and is now above threshold.
+            // No previousBgMgdl check: BG may jump above threshold in one 5-min step
+            // (common with LGS recovery), so we just need bgWentLow=true and BG>=threshold
+            // and window not already armed.
+            if (bgWentLow && reboundWindowStartMs == 0L && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
                 reboundWindowStartMs = now
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG crossed above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL — rebound window armed")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL after low — rebound window armed")
             }
-            // Only clear bgWentLow once the full rebound window has expired, OR if BG
-            // never went low in the first place. Do NOT clear it while still "watching"
-            // (bgWentLow=true but window not armed yet) — that phase is pre-crossing and
-            // SMBs must stay blocked until the window arms and fully tapers.
+            // Clear once the full rebound window has elapsed
             if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
-                // Window was armed and has now fully elapsed — reset
                 reboundWindowStartMs = 0L
                 bgWentLow = false
                 aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
             }
         }
-        previousBgMgdl = currentBgMgdl
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
