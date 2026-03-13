@@ -7,7 +7,6 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.di.ApplicationContext
 import java.util.ArrayDeque
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,7 +30,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class StepCounterService @Inject constructor(
-    @ApplicationContext private val context: Context,
+    private val context: Context,
     private val aapsLogger: AAPSLogger
 ) : SensorEventListener {
 
