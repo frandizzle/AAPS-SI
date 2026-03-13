@@ -127,14 +127,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val dawnFraction = if (inDawnWindow) dawnSmbReduction else 1.0
         val cgmFraction  = if (!cgmDeltaPlausible) 0.0 else cgmSmbFraction
 
-        // Rebound taper
+        // Rebound taper — only applies during the active rebound window (BG crossed back above
+        // lowGuard after a real low). Starts at 30% and tapers linearly back to 100% over
+        // REBOUND_TAPER_MINS (60 min). Outside the window taper is always 1.0.
         val reboundMins = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
-        val reboundTaperFraction = when {
-            !inReboundWindow && !bgWentLow -> 1.0
-            inReboundWindow -> (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
-            bgWentLow       -> (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
-            else            -> 1.0
-        }
+        val rawTaper = (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+        val reboundTaperFraction = if (inReboundWindow) 0.3 + (0.7 * rawTaper) else 1.0
 
         // Guard thresholds in mg/dL
         val lowGuardMgdl  = lowGuardMmol * MMOL_TO_MGDL
@@ -363,7 +361,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val SMB_DELIVERY_FRACTION  = 0.5
         private const val TBR_WINDOW_HOURS       = 0.5
         private const val REBOUND_TAPER_MINS     = 60.0
-        private const val REBOUND_SMB_GATE       = 0.5
+        private const val REBOUND_SMB_GATE       = 0.825 // SMBs blocked for first 45 min: taper=0.3+(0.7×0.75)=0.825 at t=45min
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
     }
 }

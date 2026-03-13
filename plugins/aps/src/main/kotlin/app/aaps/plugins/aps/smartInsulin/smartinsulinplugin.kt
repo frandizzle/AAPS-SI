@@ -127,7 +127,7 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     companion object {
-        const val REBOUND_GUARD_MS = 90 * 60 * 1000L  // 90 min rebound protection window
+        const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
     }
 
     // ── Reset all learners ────────────────────────────────────────────────────
@@ -509,6 +509,15 @@ open class SmartInsulinPlugin @Inject constructor(
             bgWentLow = false
             reboundWindowStartMs = 0L
             aapsLogger.debug(LTag.APS, "SmartInsulin: rebound state cleared — meal mode active (${mealMode.label})")
+        }
+
+        // If BG drops below lowGuard again at any point — including mid-rebound-window —
+        // reset the timer and restart the whole cycle. The suspend logic in determine_basal
+        // will zero the TBR; once BG recovers above the threshold again the window re-arms.
+        if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL && reboundWindowStartMs > 0L) {
+            reboundWindowStartMs = 0L
+            bgWentLow = true   // keep bgWentLow so the window re-arms on next recovery
+            aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard (${currentBgMgdl} mg/dL) during rebound window — resetting timer")
         }
 
         // During any suspend/caution, track if BG went low
