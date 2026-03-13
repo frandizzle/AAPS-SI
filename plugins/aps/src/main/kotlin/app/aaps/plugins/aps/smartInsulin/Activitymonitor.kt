@@ -32,7 +32,8 @@ import javax.inject.Singleton
 @Singleton
 class ActivityMonitor @Inject constructor(
     private val aapsLogger:       AAPSLogger,
-    private val persistenceLayer: PersistenceLayer
+    private val persistenceLayer: PersistenceLayer,
+    private val stepCounter:      StepCounterService
 ) {
     enum class ActivityLevel {
         SEDENTARY, LIGHT, MODERATE, HEAVY;
@@ -50,8 +51,7 @@ class ActivityMonitor @Inject constructor(
         const val HR_REL_MODERATE_MIN = 35.0
         const val HR_REL_HEAVY_MIN    = 60.0
 
-        // Steps — 5-min bucket
-        const val STEPS_BUCKET_MS     = 5 * 60 * 1000L   // duration filter — must match record type
+        // Steps — thresholds for 5-min native pedometer window
         const val STEPS_LIGHT_MIN     = 200
         const val STEPS_MODERATE_MIN  = 500
         const val STEPS_HEAVY_MIN     = 900
@@ -65,9 +65,6 @@ class ActivityMonitor @Inject constructor(
         // 7 min gives one full loop cycle of slack before treating absence as dropout.
         const val HR_DROPOUT_MS       =  7 * 60 * 1000L
 
-        // Steps: search wide (210 min) for DB records, classify fresh only (within 20 min).
-        const val STEPS_SEARCH_MS     =  30 * 60 * 1000L  // search 30 min back — survives BT sync delays
-        const val STEPS_FRESH_MS      =  10 * 60 * 1000L  // accept records up to 10 min old
 
         // Asymmetric EWA alphas for HR smoothing
         // Rise: fast attack — exercise onset visible in 1–2 loop cycles
@@ -118,32 +115,15 @@ class ActivityMonitor @Inject constructor(
      */
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
 
-        // ── Steps ─────────────────────────────────────────────────────────────
-        // StepsCount.timestamp = END of the 5-min sampling window (per StepsCount.kt).
-        // Search wide to handle watch sync delays, then filter to fresh records only.
-        // Steps — search wide to survive BT sync delays, then filter to:
-        //   1. 5-min duration records only (duration == STEPS_BUCKET_MS)
-        //   2. Fresh enough to be current (within STEPS_FRESH_MS)
-        // Broad search means a delayed sync record is still found.
-        val stepsSearchStart = nowMs - STEPS_SEARCH_MS
-        val allSteps = try {
-            persistenceLayer.getStepsCountFromTime(stepsSearchStart)
-        } catch (e: Exception) {
-            aapsLogger.error(LTag.APS, "ActivityMonitor: steps query failed", e)
-            emptyList()
-        }
+        // ── Steps — native Android pedometer ────────────────────────────────
+        // TYPE_STEP_COUNTER hardware sensor — no BT/DB dependency.
+        // StepCounterService registers once and maintains a rolling 5-min delta.
+        stepCounter.ensureRegistered()
+        lastSteps5min = stepCounter.steps5min
 
-        val latest5m = allSteps
-            .filter { it.duration == STEPS_BUCKET_MS }
-            .filter { it.timestamp >= nowMs - STEPS_FRESH_MS }
-            .maxByOrNull { it.timestamp }
-        lastSteps5min = latest5m?.steps5min ?: 0
-
-        val stepsSample = allSteps.firstOrNull()
-            ?.let { "dur=${it.duration} s5=${it.steps5min} s10=${it.steps10min}" } ?: "none"
         aapsLogger.debug(LTag.APS,
-                         "ActivityMonitor: steps5m=$lastSteps5min latest5mTs=${latest5m?.timestamp ?: -1} " +
-                             "allRecords=${allSteps.size} sample=$stepsSample")
+                         "ActivityMonitor: steps5m=$lastSteps5min totalSteps=${stepCounter.totalStepsSinceRegistration}")
+
 
         // ── Heart Rate — fetch ────────────────────────────────────────────────
         // HR.timestamp = END of the 60-second sampling window (HeartRateListener.kt).
