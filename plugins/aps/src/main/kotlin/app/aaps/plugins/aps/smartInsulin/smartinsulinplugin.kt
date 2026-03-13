@@ -392,8 +392,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        val restingHr = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
-        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHr)
+        val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
+        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
         // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
@@ -629,10 +629,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {
             ActivityMonitor.ActivityLevel.SEDENTARY ->
-                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
+                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/10m"
             else ->
                 " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
-                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/10m)"
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
@@ -791,6 +791,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinRestingHrBpm,                title = R.string.si_resting_hr_bpm_title))
         }
     }
 }

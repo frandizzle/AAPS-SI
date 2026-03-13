@@ -41,8 +41,8 @@ class ActivityMonitor @Inject constructor(
 
     companion object {
         // HR thresholds — absolute bpm fallback (used when restingHrBpm = 0)
-        const val HR_LIGHT_MIN        = 95.0
-        const val HR_MODERATE_MIN     = 115.0
+        const val HR_LIGHT_MIN        = 90.0
+        const val HR_MODERATE_MIN     = 110.0
         const val HR_HEAVY_MIN        = 140.0
 
         // Relative thresholds (bpm above resting HR) — used when resting HR is known
