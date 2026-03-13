@@ -3,6 +3,9 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext
+import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityManager
+import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -105,10 +108,12 @@ class ActivityMonitor @Inject constructor(
             else                                     -> ActivityLevel.SEDENTARY
         }
 
+        val scoreStr = "%.1f".format(ctx.intensityScore)
+        val recoveryTag = if (isRecovery) " *** recoveryAfterExercise=true (${ctx.description})" else ""
         aapsLogger.debug(LTag.APS,
                          "ActivityMonitor: level=$level avgHr=${avgHrBpm.toInt()}bpm " +
-                             "steps5m=$lastSteps5min score=${"%.1f".format(ctx.intensityScore)} " +
-                             "recovery=$isRecovery hrRecords=${recentHr.size}/${allHr.size}")
+                             "steps5m=$lastSteps5min score=$scoreStr$recoveryTag " +
+                             "hrRecords=${recentHr.size}/${allHr.size}")
     }
 
     fun targetOffsetMmol(lightMmol: Double, moderateMmol: Double, heavyMmol: Double): Double = when (level) {

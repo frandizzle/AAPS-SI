@@ -680,9 +680,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val activitySuffix = when (activityMonitor.level) {
             ActivityMonitor.ActivityLevel.SEDENTARY ->
                 " | hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
-            else ->
-                " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
+            else -> {
+                val offsetStr = "%.1f".format(activityTargetOffsetMmol)
+                " | activity=${activityMonitor.level.label}(+${offsetStr}mmol" +
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+            }
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""

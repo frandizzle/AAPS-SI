@@ -101,7 +101,9 @@ class ActivityManager @Inject constructor() {
         // During recovery, we might want to keep *some* sensitivity or protection
         // For now, let's flag it for safety protection (e.g. conservative SMBs)
 
-        val description = if (isRecovery) "Recovery (Debt: ${"%.1f".format(recoveryBucket)})" else "${state.name} (Score: ${"%.1f".format(smoothedScore)})"
+        val recoveryDebt = "%.1f".format(recoveryBucket)
+        val intensityStr = "%.1f".format(smoothedScore)
+        val description = if (isRecovery) "Recovery (Debt: $recoveryDebt)" else "${state.name} (Score: $intensityStr)"
 
         return ActivityContext(
             state = state,
