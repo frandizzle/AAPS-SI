@@ -670,10 +670,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {
             ActivityMonitor.ActivityLevel.SEDENTARY ->
-                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
+                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/5m"
             else ->
                 " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
-                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/5m)"
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
