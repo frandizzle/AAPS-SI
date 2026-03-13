@@ -131,14 +131,10 @@ class ProfileLearner @Inject constructor(
         }
 
         val newSampleCount = current.sampleCount + 1
-        val newConfidence  = current.normalizedConfidence
-            .coerceAtLeast(alpha)   // confidence can only grow
-            .coerceAtMost(1.0)
 
         val updated = current.copy(
             peakMinutes   = newPeak,
             diaMinutes    = newDia,
-            confidence    = newConfidence,
             sampleCount   = newSampleCount,
             lastUpdatedMs = System.currentTimeMillis()
         )
@@ -146,12 +142,13 @@ class ProfileLearner @Inject constructor(
         profiles[mode] = updated
         saveProfile(updated)
 
+        val confPct = (updated.normalizedConfidence * 100.0).toInt()
         aapsLogger.debug(
             LTag.APS,
             "ProfileLearner updated ${mode.label}: " +
                 "peak ${fmtChange(current.peakMinutes, newPeak)} " +
                 "dia ${fmtChange(current.diaMinutes, newDia)} " +
-                "α=${"%.3f".format(Locale.US, alpha)} n=$newSampleCount"
+                "α=${"%.3f".format(Locale.US, alpha)} n=$newSampleCount conf=$confPct%"
         )
     }
 

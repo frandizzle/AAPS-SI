@@ -12,8 +12,6 @@ import org.json.JSONObject
  * @param mode          The [MealMode] this profile applies to
  * @param peakMinutes   Learned time-to-peak insulin activity (minutes)
  * @param diaMinutes    Learned full duration of insulin action (minutes)
- * @param confidence    0.0–1.0 — how much real data has shaped this profile.
- *                      Starts low, approaches 1.0 as sample count grows.
  * @param sampleCount   Number of completed bolus observations that have
  *                      contributed to this profile
  * @param lastUpdatedMs Epoch ms of the last EWMA update
@@ -22,7 +20,6 @@ data class LearnedInsulinProfile(
     val mode:           MealMode,
     val peakMinutes:    Double,
     val diaMinutes:     Double,
-    val confidence:     Double,
     val sampleCount:    Int,
     val lastUpdatedMs:  Long
 ) {
@@ -33,7 +30,6 @@ data class LearnedInsulinProfile(
         put("mode",          mode.name)
         put("peakMinutes",   peakMinutes)
         put("diaMinutes",    diaMinutes)
-        put("confidence",    confidence)
         put("sampleCount",   sampleCount)
         put("lastUpdatedMs", lastUpdatedMs)
     }
@@ -47,15 +43,16 @@ data class LearnedInsulinProfile(
     val isMature: Boolean get() = sampleCount >= MIN_SAMPLES_FOR_MATURITY
 
     /**
-     * Fraction of the way between prior and fully learned.
-     * Saturates at 1.0 after [FULL_CONFIDENCE_SAMPLES] observations.
+     * Fraction of the way between prior and fully learned, derived purely from
+     * [sampleCount]. Saturates at 1.0 after [FULL_CONFIDENCE_SAMPLES] observations.
+     * Not stored — always recomputed so it can never desync from sample count.
      */
     val normalizedConfidence: Double
         get() = (sampleCount.toDouble() / FULL_CONFIDENCE_SAMPLES).coerceIn(0.0, 1.0)
 
     override fun toString(): String =
         "LearnedInsulinProfile(mode=${mode.label} peak=%.1f dia=%.1f conf=%.2f n=$sampleCount)"
-            .format(peakMinutes, diaMinutes, confidence)
+            .format(peakMinutes, diaMinutes, normalizedConfidence)
 
     companion object {
 
@@ -84,14 +81,9 @@ data class LearnedInsulinProfile(
          * Seed defaults from the actual profile DIA/peak rather than hardcoded values.
          * Meal modes get a small upward offset on DIA since carb absorption extends apparent action.
          */
-        fun defaultFor(mode: MealMode, profilePeakMins: Double = FALLBACK_PEAK_MINS, profileDiaMins: Double = FALLBACK_DIA_MINS): LearnedInsulinProfile {
-            val confidence = when (mode) {
-                MealMode.FASTING -> 0.3
-                else             -> 0.2
-            }
-            return LearnedInsulinProfile(mode, peakMinutes = profilePeakMins, diaMinutes = profileDiaMins,
-                                         confidence = confidence, sampleCount = 0, lastUpdatedMs = 0L)
-        }
+        fun defaultFor(mode: MealMode, profilePeakMins: Double = FALLBACK_PEAK_MINS, profileDiaMins: Double = FALLBACK_DIA_MINS): LearnedInsulinProfile =
+            LearnedInsulinProfile(mode, peakMinutes = profilePeakMins, diaMinutes = profileDiaMins,
+                                  sampleCount = 0, lastUpdatedMs = 0L)
 
         /**
          * Deserialise from JSON stored in SharedPreferences.
@@ -103,7 +95,7 @@ data class LearnedInsulinProfile(
                     mode          = MealMode.valueOf(json.getString("mode")),
                     peakMinutes   = json.getDouble("peakMinutes"),
                     diaMinutes    = json.getDouble("diaMinutes"),
-                    confidence    = json.getDouble("confidence"),
+                    // "confidence" key intentionally ignored — now derived from sampleCount
                     sampleCount   = json.getInt("sampleCount"),
                     lastUpdatedMs = json.getLong("lastUpdatedMs")
                 )
