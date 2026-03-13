@@ -213,7 +213,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // ── Activity ─────────────────────────────────────────────────────
             val actLevel = activityMonitor.level
             appendLine("  Activity     : ${actLevel.label} " +
-                           "hr=${activityMonitor.rawHrBpm.toInt()}raw/${activityMonitor.smoothedHrBpm.toInt()}smooth " +
+                           "hr=${activityMonitor.avgHrBpm.toInt()}avg " +
                            "steps=${activityMonitor.lastSteps5min}/5m")
             appendLine()
 
@@ -497,7 +497,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMealMode = mealMode != MealMode.FASTING
         val learningStateStr = when {
             !learningEnabledCache                -> "off: learning disabled"
-            activityMonitor.suppressLearning     -> "off: activity (${activityMonitor.level.label})"
+            activityMonitor.suppressLearning     -> if (activityMonitor.isRecovery) "off: post-exercise recovery" else "off: activity (${activityMonitor.level.label})"
             cgmState.suppressLearning            -> "off: CGM warmup"
             highTempTarget                       -> "off: high temp target"
             isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
@@ -679,10 +679,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {
             ActivityMonitor.ActivityLevel.SEDENTARY ->
-                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
+                " | hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
             else ->
                 " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
-                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
+                    " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
