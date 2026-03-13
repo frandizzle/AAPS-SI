@@ -10,18 +10,19 @@ package app.aaps.core.interfaces.smartInsulin
 interface SmartInsulinOverview {
 
     /**
-     * Current meal mode display string for the Overview COB cell.
-     * Format: "Mode: Dinner 47m" while an override is active,
-     *         "Mode: Fasting" when no override is running.
+     * Snapshot of all state needed to render the Overview info cell.
+     * Computed once per invoke() cycle and cached — safe to read from UI thread.
      */
-    fun overviewModeText(): String
+    data class OverviewState(
+        /** "Meal: Lunch 177m" or "Meal: Fasting" */
+        val modeLine: String,
+        /** "PB2 active: 30m" or null if no PB2 pending */
+        val pb2Line: String?,
+        /** null = full learning active
+         *  "limited" = meal mode (only DIA/peak learning)
+         *  "off: <reason>" = fully suppressed */
+        val learningState: String
+    )
 
-    /**
-     * Returns null if adaptive learning is currently active.
-     * Returns a short human-readable reason string if suppressed, e.g.:
-     *   "activity (Moderate)", "CGM warmup", "learning off"
-     *
-     * Overview uses this to show "State: Learning" or "State: Not Learning".
-     */
-    fun learningSuppressionReason(): String?
+    fun overviewState(): OverviewState
 }

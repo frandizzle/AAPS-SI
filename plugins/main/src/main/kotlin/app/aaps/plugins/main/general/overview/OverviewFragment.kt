@@ -1012,10 +1012,17 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             carbAnimation?.stop()
             binding.infoLayout.carbsIcon.visibility = View.GONE
 
-            val modeLine  = smartInsulinOverview.overviewModeText()
-            val stateLine = if (smartInsulinOverview.learningSuppressionReason() != null)
-                "State: Not Learning" else "State: Learning"
-            binding.infoLayout.cob.text = "$modeLine\n$stateLine"
+            val s = smartInsulinOverview.overviewState()
+            val stateLabel = when (s.learningState) {
+                "Learning" -> "State: Learning"
+                "limited"  -> "State: Learning limited"
+                else       -> "State: Not Learning"
+            }
+            binding.infoLayout.cob.text = buildString {
+                append(s.modeLine)
+                if (s.pb2Line != null) append("\n${s.pb2Line}")
+                append("\n$stateLabel")
+            }
         }
     }
 

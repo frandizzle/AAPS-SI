@@ -130,10 +130,14 @@ open class SmartInsulinPlugin @Inject constructor(
         const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
     }
 
-    // ── Cached learning suppression state ────────────────────────────────────
-    // Updated each invoke() so learningSuppressionReason() can be called any time
-    // (from Overview, SI tab) without re-running CGM guard logic outside invoke().
-    @Volatile private var cachedSuppressionReason: String? = null
+    // ── Cached Overview state ────────────────────────────────────────────────
+    // Updated each invoke() so overviewState() can be called any time from UI threads.
+    @Volatile private var cachedOverviewState: app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
+        app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
+            modeLine      = "Meal: Fasting",
+            pb2Line       = null,
+            learningState = "Learning"
+        )
 
     // ── Reset all learners ────────────────────────────────────────────────────
 
@@ -203,15 +207,8 @@ open class SmartInsulinPlugin @Inject constructor(
             // ── Learning state ────────────────────────────────────────────────
             appendLine()
             appendLine("── Learning ──────────────────────────")
-            val learnEnabled = preferences.get(app.aaps.core.keys.BooleanKey.ApsSmartInsulinEnableLearning)
-            val suppressionReason = learningSuppressionReason()
-            if (!learnEnabled) {
-                appendLine("  State        : Not Learning (disabled in prefs)")
-            } else if (suppressionReason != null) {
-                appendLine("  State        : Not Learning — $suppressionReason")
-            } else {
-                appendLine("  State        : Learning")
-            }
+            val state = cachedOverviewState
+            appendLine("  State        : ${state.learningState}")
 
             // ── Activity & CGM state ──────────────────────────────────────────
             val actLevel = activityMonitor.level
@@ -250,24 +247,8 @@ open class SmartInsulinPlugin @Inject constructor(
      * or null if learning is currently active.
      * Called from OverviewFragment.updateIobCob() each loop cycle.
      */
-    override fun learningSuppressionReason(): String? =
-    // Updated each invoke() — safe to read between loop cycles from UI threads.
-        // null = learning active; non-null = suppressed with reason string.
-        cachedSuppressionReason
-
-    /**
-     * Returns the current meal mode display string for the Overview cell.
-     * Format: "Mode: Dinner 47m" or "Mode: Fasting"
-     */
-    override fun overviewModeText(): String {
-        val activeMode = mealOverrideManager.activeMealMode
-        return if (activeMode != null) {
-            val remMins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            "Mode: ${activeMode.label} ${remMins}m"
-        } else {
-            "Mode: Fasting"
-        }
-    }
+    override fun overviewState(): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
+        cachedOverviewState
 
     // ── RxBus subscriptions for HR and steps from wear ───────────────────────
     override fun onStart() {
@@ -470,14 +451,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
-        // Cache suppression reason for learningSuppressionReason() — readable between cycles
-        cachedSuppressionReason = when {
-            !learningEnabled                    -> "learning off"
-            activityMonitor.suppressLearning    -> "activity (${activityMonitor.level.label})"
-            cgmState.suppressLearning           -> "CGM warmup"
-            else                                -> null
-        }
-
         // Activity target offset (user-configured mmol offsets per activity level)
         val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
         val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTargetMmol)
@@ -517,6 +490,32 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
         val profileTargetMgdl = profile.getTargetMgdl()
         val highTempTarget = isTempTarget && targetBg > profileTargetMgdl
+
+        // ── Cache Overview state — updated here where all conditions are in scope ──
+        // highTempTarget, mealMode, cgmState, activityMonitor all available now.
+        val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
+        val isMealMode = mealMode != MealMode.FASTING
+        val learningStateStr = when {
+            !learningEnabledCache                -> "off: learning disabled"
+            activityMonitor.suppressLearning     -> "off: activity (${activityMonitor.level.label})"
+            cgmState.suppressLearning            -> "off: CGM warmup"
+            highTempTarget                       -> "off: high temp target"
+            isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
+            else                                 -> "Learning"
+        }
+        val modeLineStr = mealOverrideManager.activeMealMode?.let {
+            "Meal: ${it.label} ${mealOverrideManager.modeTimeRemainingMs / 60_000}m"
+        } ?: "Meal: Fasting"
+        val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
+            val secsRem = mealOverrideManager.preBolus2SecondsRemaining
+            if (secsRem != null && secsRem > 0) "PB2 active: ${secsRem / 60}m" else "PB2 active: due"
+        } else null
+        cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
+            modeLine      = modeLineStr,
+            pb2Line       = pb2LineStr,
+            learningState = learningStateStr
+        )
+
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
