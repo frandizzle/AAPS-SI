@@ -130,6 +130,11 @@ open class SmartInsulinPlugin @Inject constructor(
         const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
     }
 
+    // ── Cached learning suppression state ────────────────────────────────────
+    // Updated each invoke() so learningSuppressionReason() can be called any time
+    // (from Overview, SI tab) without re-running CGM guard logic outside invoke().
+    @Volatile private var cachedSuppressionReason: String? = null
+
     // ── Reset all learners ────────────────────────────────────────────────────
 
     fun resetAllLearners() {
@@ -245,16 +250,10 @@ open class SmartInsulinPlugin @Inject constructor(
      * or null if learning is currently active.
      * Called from OverviewFragment.updateIobCob() each loop cycle.
      */
-    override fun learningSuppressionReason(): String? {
-        val learningEnabled = preferences.get(app.aaps.core.keys.BooleanKey.ApsSmartInsulinEnableLearning)
-        if (!learningEnabled) return "learning off"
-        if (activityMonitor.suppressLearning) return "activity (${activityMonitor.level.label})"
-        // CGM warmup: read last known cgmState reason via lastAPSResult or direct guard
-        // We surface the reason from the last invoke() run — safe to read between cycles.
-        val lastReason = lastAPSResult?.reason?.toString() ?: ""
-        if (lastReason.contains("cgm=smbBlocked(warmup")) return "CGM warmup"
-        return null  // null = learning active
-    }
+    override fun learningSuppressionReason(): String? =
+    // Updated each invoke() — safe to read between loop cycles from UI threads.
+        // null = learning active; non-null = suppressed with reason string.
+        cachedSuppressionReason
 
     /**
      * Returns the current meal mode display string for the Overview cell.
@@ -470,6 +469,14 @@ open class SmartInsulinPlugin @Inject constructor(
         // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
         val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
+
+        // Cache suppression reason for learningSuppressionReason() — readable between cycles
+        cachedSuppressionReason = when {
+            !learningEnabled                    -> "learning off"
+            activityMonitor.suppressLearning    -> "activity (${activityMonitor.level.label})"
+            cgmState.suppressLearning           -> "CGM warmup"
+            else                                -> null
+        }
 
         // Activity target offset (user-configured mmol offsets per activity level)
         val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
