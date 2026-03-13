@@ -11,18 +11,23 @@ import javax.inject.Singleton
  *
  * Data source: PersistenceLayer (same approach as AIMI).
  * Called once per loop cycle via [recompute] — no RxBus subscriptions needed.
- * Queries the last 20 minutes of HR and steps from the DB directly.
  *
  * If no data in DB (watch not worn, no wear device), defaults to SEDENTARY — safe.
  *
  * Classification uses the higher signal from HR or steps.
  * HR uses absolute thresholds. If resting HR known, uses relative (HR - resting).
  *
- * HR smoothing uses an asymmetric EWA:
- *   - Fast attack (HR_SMOOTH_ALPHA_RISE): exercise onset detected within 1–2 loop cycles
- *   - Slow decay (HR_SMOOTH_ALPHA_FALL): brief HR dips mid-exercise don't drop classification
- *   - No-data decay (HR_SMOOTH_DROPOUT_FACTOR): watch dropout doesn't instantly kill detection,
- *     but smoothed HR bleeds to zero over ~4–5 cycles if watch goes offline
+ * HR smoothing uses an asymmetric EWA — but ONLY fires on genuinely new HR samples
+ * (tracked via lastProcessedHrTimestamp). Stale samples are never re-smoothed.
+ *
+ *   - Fast attack   (HR_SMOOTH_ALPHA_RISE):    exercise onset detected within 1–2 loop cycles
+ *   - Slow decay    (HR_SMOOTH_ALPHA_FALL):    brief HR dips mid-exercise don't drop classification
+ *   - Dropout decay (HR_SMOOTH_DROPOUT_FACTOR): watch offline → smoothed HR bleeds to zero
+ *     over ~4–5 cycles rather than instantly
+ *
+ * Freshness split:
+ *   - HR_SEARCH_MS: how far back to query the DB (handles BT sync delays)
+ *   - HR_FRESH_MS:  max age of a sample to be treated as live (not re-smoothed if stale)
  */
 @Singleton
 class ActivityMonitor @Inject constructor(
@@ -36,8 +41,8 @@ class ActivityMonitor @Inject constructor(
 
     companion object {
         // HR thresholds — absolute bpm fallback (used when restingHrBpm = 0)
-        const val HR_LIGHT_MIN        = 100.0
-        const val HR_MODERATE_MIN     = 120.0
+        const val HR_LIGHT_MIN        = 95.0
+        const val HR_MODERATE_MIN     = 115.0
         const val HR_HEAVY_MIN        = 140.0
 
         // Relative thresholds (bpm above resting HR) — used when resting HR is known
@@ -45,53 +50,57 @@ class ActivityMonitor @Inject constructor(
         const val HR_REL_MODERATE_MIN = 35.0
         const val HR_REL_HEAVY_MIN    = 60.0
 
-        // Steps per 10-min window thresholds (steps10min bucket)
+        // Steps per 10-min window thresholds (steps10min bucket — doubled vs steps5min values)
         const val STEPS_LIGHT_MIN     = 400
         const val STEPS_MODERATE_MIN  = 1000
         const val STEPS_HEAVY_MIN     = 1800
 
-        // HR: HeartRateListener sends every 60 seconds. timestamp = END of sampling window.
-        // Use 20 min window to survive Bluetooth batching delays without phantom-activity risk.
-        // No fallback — if nothing in 20 min the watch is off/charging → smoothed HR decays.
-        const val HR_LIVE_WINDOW_MS   = 20 * 60 * 1000L
+        // HR fetch window — search back this far to handle BT batching/sync delays.
+        // A sample found here is only smoothed if it also passes the HR_FRESH_MS check.
+        const val HR_SEARCH_MS        = 20 * 60 * 1000L
 
-        // Steps: timestamp = END of sampling period (per StepsCount.kt).
-        // Search wide (210 min) for DB records, but only classify fresh (within 20 min).
-        // Use steps10min bucket — more resilient to sync delays than steps5min.
+        // HR freshness gate — a sample must be this recent to be treated as live data.
+        // Older than this → treated as dropout → smoothed HR decays instead of updating.
+        // 2 min gives one missed 60s HeartRateListener cycle of slack before decaying.
+        const val HR_FRESH_MS         =  2 * 60 * 1000L
+
+        // Steps: search wide (210 min) for DB records, classify fresh only (within 20 min).
+        // steps10min bucket — more resilient to sync delays than steps5min.
         const val STEPS_SEARCH_MS     = 210 * 60 * 1000L
         const val STEPS_FRESH_MS      =  20 * 60 * 1000L
 
-        // Asymmetric EWA smoothing alphas for HR
-        // Rise: fast attack — a single high reading moves the smoothed value 60% of the way
-        //       toward the raw reading immediately. Exercise onset visible in 1–2 loop cycles.
-        // Fall: slow decay — brief HR dips (rest between sets, downhill walk) don't drop
-        //       classification. Takes ~4–5 cycles to fully decay from HEAVY back to SEDENTARY.
-        const val HR_SMOOTH_ALPHA_RISE    = 0.6
-        const val HR_SMOOTH_ALPHA_FALL    = 0.15
+        // Asymmetric EWA alphas for HR smoothing
+        // Rise: fast attack — exercise onset visible in 1–2 loop cycles
+        // Fall: slow decay — brief dips (rest between sets, downhill) don't collapse level
+        const val HR_SMOOTH_ALPHA_RISE     = 0.6
+        const val HR_SMOOTH_ALPHA_FALL     = 0.15
 
-        // Per-cycle bleed factor when no fresh HR reading is available (watch dropout).
+        // Per-cycle bleed when no fresh HR arrives (watch dropout / charging).
         // 0.85 → ~4–5 loop cycles (~20–25 min) to decay to zero from a typical exercise HR.
-        // Prevents a brief Bluetooth gap from instantly killing activity detection,
-        // but doesn't sustain a stale state indefinitely.
         const val HR_SMOOTH_DROPOUT_FACTOR = 0.85
     }
 
-    // ── Smoothed HR state (persists across loop cycles) ───────────────────────
-    // rawHrBpm    — most recent raw reading from DB (0 if no fresh record)
-    // smoothedHrBpm — asymmetric EWA output — used for classification
+    // ── Stale-sample guard ────────────────────────────────────────────────────
+    // Tracks the timestamp of the last HR record we actually smoothed.
+    // EWA only fires when latestHr.timestamp > lastProcessedHrTimestamp.
+    // Without this, the same sample would be re-smoothed every loop cycle,
+    // causing smoothedHrBpm to drift upward indefinitely with no new data.
+    private var lastProcessedHrTimestamp: Long = 0L
+
+    // ── HR state (persists across loop cycles) ────────────────────────────────
+    // rawHrBpm      — the raw bpm of the last fresh sample (0 if dropout this cycle)
+    // smoothedHrBpm — asymmetric EWA output — the value used for classification
     var rawHrBpm: Double = 0.0
         private set
     var smoothedHrBpm: Double = 0.0
         private set
 
-    // ── Last read values (public read-only for reason string / UI display) ────
-    // lastHrBpm exposes the smoothed value so all callers (statusString, logging)
-    // see the same number that drove classification.
-    var lastHrBpm: Double
-        get() = smoothedHrBpm
-        private set(_) {}   // backing field unused — smoothedHrBpm is the source of truth
+    // Convenience alias — exposes smoothedHrBpm to existing callers without breaking API
+    val lastHrBpm: Double get() = smoothedHrBpm
 
-    var lastSteps5min: Int = 0
+    // ── Steps state ───────────────────────────────────────────────────────────
+    // Stores the steps10min bucket value — named to match what it actually contains
+    var lastSteps10min: Int = 0
         private set
 
     // ── Computed level ────────────────────────────────────────────────────────
@@ -110,8 +119,8 @@ class ActivityMonitor @Inject constructor(
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
 
         // ── Steps ─────────────────────────────────────────────────────────────
-        // NOTE: StepsCount.timestamp is the END time of the 5-min window (per SC.kt).
-        // Search wide (210 min like AIMI) to handle watch sync delays, then filter to fresh.
+        // StepsCount.timestamp = END of the 5-min sampling window (per StepsCount.kt).
+        // Search wide to handle watch sync delays, then filter to fresh records only.
         val stepsSearchStart = nowMs - STEPS_SEARCH_MS
         val allSteps = try {
             persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, nowMs)
@@ -120,16 +129,18 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        // Only use a steps record if its timestamp (= end of window) is within last 20 min.
-        val freshSteps = allSteps.filter { it.timestamp >= nowMs - STEPS_FRESH_MS }.maxByOrNull { it.timestamp }
-        // steps10min bucket — wider window is more resilient to Bluetooth sync delays.
-        // Thresholds are scaled accordingly (doubled vs steps5min values).
-        lastSteps5min = freshSteps?.steps10min ?: 0
+        val freshSteps = allSteps
+            .filter { it.timestamp >= nowMs - STEPS_FRESH_MS }
+            .maxByOrNull { it.timestamp }
+        // steps10min bucket — wider window, more resilient to BT sync delays.
+        // STEPS_*_MIN thresholds are calibrated to 10-min counts.
+        lastSteps10min = freshSteps?.steps10min ?: 0
 
-        // ── Heart Rate — raw fetch ─────────────────────────────────────────────
-        // HR.timestamp = END of the 60-second sampling window (confirmed via HeartRateListener.kt).
-        // Fetch the most recent record within the live window — single reading, no DB-side averaging.
-        val hrSearchStart = nowMs - HR_LIVE_WINDOW_MS
+        // ── Heart Rate — fetch ────────────────────────────────────────────────
+        // HR.timestamp = END of the 60-second sampling window (HeartRateListener.kt).
+        // Search HR_SEARCH_MS back to survive BT batching delays, then gate on HR_FRESH_MS
+        // to determine whether the latest record is live data or dropout.
+        val hrSearchStart = nowMs - HR_SEARCH_MS
         val allHr = try {
             persistenceLayer.getHeartRatesFromTimeToTime(hrSearchStart, nowMs)
         } catch (e: Exception) {
@@ -137,48 +148,50 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        val latestHr = allHr
-            .filter { it.timestamp >= hrSearchStart }
-            .maxByOrNull { it.timestamp }
-        rawHrBpm = latestHr?.beatsPerMinute ?: 0.0
+        val latestHr  = allHr.maxByOrNull { it.timestamp }
+        // Fresh = arrived within HR_FRESH_MS. Stale records found by the wide search
+        // are ignored for smoothing — they only exist to confirm the watch was worn recently.
+        val freshHr   = latestHr?.takeIf { it.timestamp >= nowMs - HR_FRESH_MS }
+        val isNewSample = freshHr != null && freshHr.timestamp > lastProcessedHrTimestamp
 
         // ── Heart Rate — asymmetric EWA smoothing ─────────────────────────────
         //
-        // Three cases:
-        //   1. No fresh reading (watch dropout/charging): bleed smoothed value toward zero
-        //      at HR_SMOOTH_DROPOUT_FACTOR per cycle. Survives brief BT gaps without
-        //      instantly killing activity detection.
-        //   2. First reading (smoothed was 0): seed directly — no smoothing on cold start,
-        //      avoids a slow ramp-up from zero when the watch first connects.
-        //   3. HR rising: fast attack alpha — exercise onset detected in 1–2 cycles.
-        //   4. HR falling: slow decay alpha — brief dips don't collapse classification.
-        smoothedHrBpm = when {
-            rawHrBpm <= 0.0 -> {
-                // No fresh data — bleed toward zero slowly
-                if (smoothedHrBpm > 0.0) smoothedHrBpm * HR_SMOOTH_DROPOUT_FACTOR else 0.0
+        // KEY INVARIANT: EWA only updates on a genuinely new sample (isNewSample = true).
+        // If the same sample were re-smoothed every loop, smoothedHrBpm would keep drifting
+        // upward toward rawHrBpm even with no new HR data arriving.
+        //
+        // Cases:
+        //   new fresh sample  → apply EWA (rise or fall alpha), record timestamp
+        //   no new fresh sample → decay smoothed HR toward zero by dropout factor
+        //   cold start        → seed smoothedHrBpm directly, skip EWA ramp-up from zero
+        if (isNewSample) {
+            rawHrBpm = freshHr!!.beatsPerMinute
+            smoothedHrBpm = when {
+                smoothedHrBpm <= 0.0 ->
+                    // Cold start — seed directly to avoid slow ramp-up from zero
+                    rawHrBpm
+                rawHrBpm > smoothedHrBpm ->
+                    // Rising — fast attack
+                    HR_SMOOTH_ALPHA_RISE * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_RISE) * smoothedHrBpm
+                else ->
+                    // Falling — slow decay
+                    HR_SMOOTH_ALPHA_FALL * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_FALL) * smoothedHrBpm
             }
-            smoothedHrBpm <= 0.0 -> {
-                // Cold start — seed with raw reading directly
-                rawHrBpm
-            }
-            rawHrBpm > smoothedHrBpm -> {
-                // Rising — fast attack
-                HR_SMOOTH_ALPHA_RISE * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_RISE) * smoothedHrBpm
-            }
-            else -> {
-                // Falling — slow decay
-                HR_SMOOTH_ALPHA_FALL * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_FALL) * smoothedHrBpm
-            }
+            lastProcessedHrTimestamp = freshHr.timestamp
+        } else {
+            // No new fresh sample — stale, dropout, or watch offline
+            rawHrBpm      = 0.0
+            smoothedHrBpm = if (smoothedHrBpm > 0.0) smoothedHrBpm * HR_SMOOTH_DROPOUT_FACTOR else 0.0
         }
 
         aapsLogger.debug(LTag.APS,
                          "ActivityMonitor: rawHr=${if (rawHrBpm > 0) "${rawHrBpm.toInt()}bpm" else "none"} " +
-                             "smoothedHr=${smoothedHrBpm.toInt()}bpm " +
-                             "steps10m=$lastSteps5min  hrRecords=${allHr.size}  stepsRecords=${allSteps.size}")
+                             "smoothedHr=${smoothedHrBpm.toInt()}bpm newSample=$isNewSample " +
+                             "steps10m=$lastSteps10min  hrRecords=${allHr.size}  stepsRecords=${allSteps.size}")
 
         // ── Classify ──────────────────────────────────────────────────────────
-        // Classification always uses smoothedHrBpm — never raw — so a single noisy spike
-        // can't instantly jump classification, and brief dips can't instantly drop it.
+        // Always classifies from smoothedHrBpm — never raw — so a single noisy spike
+        // can't instantly jump the level, and brief dips can't instantly drop it.
         val hrLevel = when {
             smoothedHrBpm <= 0.0 -> ActivityLevel.SEDENTARY
             restingHrBpm > 0.0 -> {
@@ -199,10 +212,10 @@ class ActivityMonitor @Inject constructor(
         }
 
         val stepsLevel = when {
-            lastSteps5min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
-            lastSteps5min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
-            lastSteps5min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
-            else                                -> ActivityLevel.SEDENTARY
+            lastSteps10min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
+            lastSteps10min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
+            lastSteps10min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
+            else                                 -> ActivityLevel.SEDENTARY
         }
 
         val newLevel = if (hrLevel.ordinal >= stepsLevel.ordinal) hrLevel else stepsLevel
@@ -210,7 +223,7 @@ class ActivityMonitor @Inject constructor(
             aapsLogger.debug(LTag.APS,
                              "ActivityMonitor: $level → $newLevel  " +
                                  "smoothedHr=${smoothedHrBpm.toInt()}bpm(raw=${rawHrBpm.toInt()}) " +
-                                 "steps=${lastSteps5min}/10m")
+                                 "steps=${lastSteps10min}/10m")
         }
         level = newLevel
     }
@@ -223,7 +236,7 @@ class ActivityMonitor @Inject constructor(
     }
 
     val statusString: String get() = when (level) {
-        ActivityLevel.SEDENTARY -> "hr=${smoothedHrBpm.toInt()}(raw=${rawHrBpm.toInt()}) steps10m=$lastSteps5min"
-        else                    -> "activity=${level.label}(hr=${smoothedHrBpm.toInt()}smooth/${rawHrBpm.toInt()}raw steps10m=$lastSteps5min)"
+        ActivityLevel.SEDENTARY -> "hr=${smoothedHrBpm.toInt()}(raw=${rawHrBpm.toInt()}) steps10m=$lastSteps10min"
+        else                    -> "activity=${level.label}(hr=${smoothedHrBpm.toInt()}smooth/${rawHrBpm.toInt()}raw steps10m=$lastSteps10min)"
     }
 }
