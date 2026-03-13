@@ -210,12 +210,11 @@ open class SmartInsulinPlugin @Inject constructor(
             val state = cachedOverviewState
             appendLine("  State        : ${state.learningState}")
 
-            // ── Activity & CGM state ──────────────────────────────────────────
+            // ── Activity ─────────────────────────────────────────────────────
             val actLevel = activityMonitor.level
-            if (actLevel != ActivityMonitor.ActivityLevel.SEDENTARY) {
-                appendLine("  Activity     : ${actLevel.label} " +
-                               "(hr=${activityMonitor.smoothedHrBpm.toInt()}bpm steps=${activityMonitor.lastSteps5min}/5m)")
-            }
+            appendLine("  Activity     : ${actLevel.label} " +
+                           "hr=${activityMonitor.rawHrBpm.toInt()}raw/${activityMonitor.smoothedHrBpm.toInt()}smooth " +
+                           "steps=${activityMonitor.lastSteps5min}/5m")
             appendLine()
 
             // ── Circadian tables ──────────────────────────────────────────────
@@ -414,7 +413,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        activityMonitor.recompute(nowMs = now)
+        val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
+        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
         // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
