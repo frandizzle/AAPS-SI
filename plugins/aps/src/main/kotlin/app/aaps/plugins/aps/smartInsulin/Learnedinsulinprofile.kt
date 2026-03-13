@@ -79,7 +79,7 @@ data class LearnedInsulinProfile(
 
         /**
          * Seed defaults from the actual profile DIA/peak rather than hardcoded values.
-         * Meal modes get a small upward offset on DIA since carb absorption extends apparent action.
+         * All modes start with the same peak/DIA — divergence happens through EWMA learning.
          */
         fun defaultFor(mode: MealMode, profilePeakMins: Double = FALLBACK_PEAK_MINS, profileDiaMins: Double = FALLBACK_DIA_MINS): LearnedInsulinProfile =
             LearnedInsulinProfile(mode, peakMinutes = profilePeakMins, diaMinutes = profileDiaMins,
@@ -92,7 +92,7 @@ data class LearnedInsulinProfile(
         fun fromJson(json: JSONObject, mode: MealMode): LearnedInsulinProfile =
             try {
                 LearnedInsulinProfile(
-                    mode          = MealMode.valueOf(json.getString("mode")),
+                    mode          = mode,  // trust the caller — pref key already identifies the slot
                     peakMinutes   = json.getDouble("peakMinutes"),
                     diaMinutes    = json.getDouble("diaMinutes"),
                     // "confidence" key intentionally ignored — now derived from sampleCount

@@ -157,7 +157,7 @@ class ProfileLearner @Inject constructor(
      * Useful if the user changes insulin type or suspects corrupt data.
      */
     fun resetProfile(mode: MealMode) {
-        val default = LearnedInsulinProfile.defaultFor(mode)
+        val default = profileSeededDefault(mode)
         profiles[mode] = default
         saveProfile(default)
         aapsLogger.debug(LTag.APS, "ProfileLearner: reset $mode to defaults")
@@ -189,10 +189,10 @@ class ProfileLearner @Inject constructor(
     private fun loadProfile(mode: MealMode): LearnedInsulinProfile {
         return try {
             val json = preferences.get(prefKeyFor(mode))
-            if (json.isBlank()) return LearnedInsulinProfile.defaultFor(mode)
+            if (json.isBlank()) return profileSeededDefault(mode)
             LearnedInsulinProfile.fromJson(JSONObject(json), mode)
         } catch (_: Exception) {
-            LearnedInsulinProfile.defaultFor(mode)
+            profileSeededDefault(mode)
         }
     }
 
