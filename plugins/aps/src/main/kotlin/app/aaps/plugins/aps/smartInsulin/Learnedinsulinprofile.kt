@@ -65,17 +65,9 @@ data class LearnedInsulinProfile(
         const val DIA_MIN_MINUTES  = 120.0
         const val DIA_MAX_MINUTES  = 480.0
 
-        /**
-         * Physiologically sensible starting priors per mode.
-         * These will converge toward the user's real values over ~30 boluses.
-         *
-         * FASTING   — cleanest signal, tighter prior
-         * LOW_CARB  — slightly longer DIA due to lower glucose disposal rate
-         * MEAL      — peak slightly later due to competing carb absorption
-         * EXTENDED  — longest DIA, most uncertainty
-         */
-        const val FALLBACK_PEAK_MINS = 75.0   // used if no profile available at seed time
-        const val FALLBACK_DIA_MINS  = 300.0  // used if no profile available at seed time
+        // Fallback constants used only when profileFunction/activeInsulin are unavailable at seed time
+        const val FALLBACK_PEAK_MINS = 75.0
+        const val FALLBACK_DIA_MINS  = 300.0
 
         /**
          * Seed defaults from the actual profile DIA/peak rather than hardcoded values.
@@ -90,17 +82,13 @@ data class LearnedInsulinProfile(
          * Returns the default profile for [mode] if JSON is missing or malformed.
          */
         fun fromJson(json: JSONObject, mode: MealMode): LearnedInsulinProfile =
-            try {
-                LearnedInsulinProfile(
-                    mode          = mode,  // trust the caller — pref key already identifies the slot
-                    peakMinutes   = json.getDouble("peakMinutes"),
-                    diaMinutes    = json.getDouble("diaMinutes"),
-                    // "confidence" key intentionally ignored — now derived from sampleCount
-                    sampleCount   = json.getInt("sampleCount"),
-                    lastUpdatedMs = json.getLong("lastUpdatedMs")
-                )
-            } catch (_: Exception) {
-                defaultFor(mode)
-            }
+            LearnedInsulinProfile(
+                mode          = mode,  // trust the caller — pref key already identifies the slot
+                peakMinutes   = json.getDouble("peakMinutes"),
+                diaMinutes    = json.getDouble("diaMinutes"),
+                // "confidence" key intentionally ignored — now derived from sampleCount
+                sampleCount   = json.getInt("sampleCount"),
+                lastUpdatedMs = json.getLong("lastUpdatedMs")
+            )
     }
 }
