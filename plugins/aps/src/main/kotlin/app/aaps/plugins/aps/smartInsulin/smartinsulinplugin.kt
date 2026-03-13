@@ -511,43 +511,36 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, "SmartInsulin: rebound state cleared — meal mode active (${mealMode.label})")
         }
 
-        // If BG drops below lowGuard again at any point — including mid-rebound-window —
-        // reset the timer and restart the whole cycle. The suspend logic in determine_basal
-        // will zero the TBR; once BG recovers above the threshold again the window re-arms.
-        if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL && reboundWindowStartMs > 0L) {
-            reboundWindowStartMs = 0L
-            bgWentLow = true   // keep bgWentLow so the window re-arms on next recovery
-            aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard (${currentBgMgdl} mg/dL) during rebound window — resetting timer")
-        }
+        // Rebound arming is keyed purely on actual BG threshold crossings — not on whether
+        // the previous APS result was suspending. This ensures the recovery taper starts on
+        // the exact loop where BG crosses back above lowGuard, with no one-cycle delay.
 
-        // During any suspend/caution, track if BG went low
-        // We check the previous result's reason to know if we were suspending last cycle
-        val wasSuspending = previousAPSResult?.reason?.let {
-            it.contains("SUSPEND") || it.contains("CAUTION") || it.contains("LGS_SUSPEND")
-        } ?: false
-
-        if (wasSuspending) {
-            // Track that BG went low — do NOT start the rebound countdown yet.
-            // The window only starts once BG recovers above the threshold.
-            if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
-                bgWentLow = true
+        // 1) BG is below lowGuard: mark that a real low occurred.
+        //    If we were already in a rebound window, reset the timer so the cycle restarts
+        //    fresh once BG recovers again.
+        if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
+            if (!bgWentLow) {
                 aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), watching for recovery")
             }
-        } else {
-            // Not suspending — arm rebound window if BG went low and is now above threshold.
-            // No previousBgMgdl check: BG may jump above threshold in one 5-min step
-            // (common with LGS recovery), so we just need bgWentLow=true and BG>=threshold
-            // and window not already armed.
-            if (bgWentLow && reboundWindowStartMs == 0L && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
-                reboundWindowStartMs = now
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL after low — rebound window armed")
-            }
-            // Clear once the full rebound window has elapsed
-            if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
+            bgWentLow = true
+            if (reboundWindowStartMs > 0L) {
                 reboundWindowStartMs = 0L
-                bgWentLow = false
-                aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard (${currentBgMgdl} mg/dL) during rebound window — resetting timer")
             }
+        }
+
+        // 2) BG has recovered above lowGuard after a real low — arm the rebound window
+        //    immediately on this cycle.
+        if (bgWentLow && reboundWindowStartMs == 0L && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
+            reboundWindowStartMs = now
+            aapsLogger.debug(LTag.APS, "SmartInsulin: BG above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL after low — rebound window armed")
+        }
+
+        // 3) Clear state once the full 60-min rebound window has elapsed.
+        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
+            reboundWindowStartMs = 0L
+            bgWentLow = false
+            aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
         }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
