@@ -50,10 +50,10 @@ class ActivityMonitor @Inject constructor(
         const val HR_REL_MODERATE_MIN = 35.0
         const val HR_REL_HEAVY_MIN    = 60.0
 
-        // Steps per 10-min window thresholds (steps10min bucket — doubled vs steps5min values)
-        const val STEPS_LIGHT_MIN     = 400
-        const val STEPS_MODERATE_MIN  = 1000
-        const val STEPS_HEAVY_MIN     = 1800
+        // Steps per 5-min window thresholds
+        const val STEPS_LIGHT_MIN     = 200
+        const val STEPS_MODERATE_MIN  = 500
+        const val STEPS_HEAVY_MIN     = 900
 
         // HR fetch window — search back this far to handle BT batching/sync delays.
         const val HR_SEARCH_MS        = 20 * 60 * 1000L
@@ -65,9 +65,8 @@ class ActivityMonitor @Inject constructor(
         const val HR_DROPOUT_MS       =  7 * 60 * 1000L
 
         // Steps: search wide (210 min) for DB records, classify fresh only (within 20 min).
-        // steps10min bucket — more resilient to sync delays than steps5min.
         const val STEPS_SEARCH_MS     = 210 * 60 * 1000L
-        const val STEPS_FRESH_MS      =  20 * 60 * 1000L
+        const val STEPS_FRESH_MS      =  10 * 60 * 1000L  // 10 min covers BT sync delay on a 5-min bucket
 
         // Asymmetric EWA alphas for HR smoothing
         // Rise: fast attack — exercise onset visible in 1–2 loop cycles
@@ -100,7 +99,7 @@ class ActivityMonitor @Inject constructor(
 
     // ── Steps state ───────────────────────────────────────────────────────────
     // Stores the steps10min bucket value — named to match what it actually contains
-    var lastSteps10min: Int = 0
+    var lastSteps5min: Int = 0
         private set
 
     // ── Computed level ────────────────────────────────────────────────────────
@@ -121,27 +120,35 @@ class ActivityMonitor @Inject constructor(
         // ── Steps ─────────────────────────────────────────────────────────────
         // StepsCount.timestamp = END of the 5-min sampling window (per StepsCount.kt).
         // Search wide to handle watch sync delays, then filter to fresh records only.
-        val stepsSearchStart = nowMs - STEPS_SEARCH_MS
+        // Steps — mirrors TriggerStepsCount: search recent records, filter by duration to
+        // ensure we get a real 10-min record (not a partial), pick the most recent.
+        // StepsCount records update every ~1-1.5 min on watch; search 5 min back is enough.
+        // We use STEPS_FRESH_MS (10 min) as a fallback for BT sync delays.
+        val stepsSearchStart = nowMs - STEPS_FRESH_MS
         val allSteps = try {
-            persistenceLayer.getStepsCountFromTimeToTime(stepsSearchStart, nowMs)
+            persistenceLayer.getStepsCountFromTime(stepsSearchStart)
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ActivityMonitor: steps query failed: ${e.message}")
             emptyList()
         }
 
+        // Filter to records whose duration matches a 5-min window (same logic as TriggerStepsCount)
+        val five_min_ms = 5 * 60 * 1000L
         val freshSteps = allSteps
-            .filter { it.timestamp >= nowMs - STEPS_FRESH_MS }
+            .filter { it.duration == five_min_ms }
             .maxByOrNull { it.timestamp }
-        // steps10min bucket — wider window, more resilient to BT sync delays.
-        // STEPS_*_MIN thresholds are calibrated to 10-min counts.
-        lastSteps10min = freshSteps?.steps10min ?: 0
+        lastSteps5min = freshSteps?.steps5min ?: 0
 
         // ── Heart Rate — fetch ────────────────────────────────────────────────
         // HR.timestamp = END of the 60-second sampling window (HeartRateListener.kt).
         // Search HR_SEARCH_MS back to survive BT batching delays.
+        // HR — mirrors TriggerHeartRate: duration-weighted average over recent records.
+        // averageHeartRateDurationMillis in TriggerHeartRate = 330s (~5.5 min).
+        // We search HR_SEARCH_MS back (20 min) for BT delay resilience, but only
+        // average records from the last 330s for the raw bpm value — matching the trigger.
         val hrSearchStart = nowMs - HR_SEARCH_MS
         val allHr = try {
-            persistenceLayer.getHeartRatesFromTimeToTime(hrSearchStart, nowMs)
+            persistenceLayer.getHeartRatesFromTime(hrSearchStart)
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ActivityMonitor: HR query failed: ${e.message}")
             emptyList()
@@ -149,11 +156,16 @@ class ActivityMonitor @Inject constructor(
 
         val latestHr    = allHr.maxByOrNull { it.timestamp }
         val isNewSample = latestHr != null && latestHr.timestamp > lastProcessedHrTimestamp
-        // True dropout: no HR record at all within HR_DROPOUT_MS.
-        // This is distinct from "same record, already processed" — between loop cycles
-        // the watch sends every 60s but the loop only reads every ~5 min, so the most
-        // recent record will almost always already be processed. That is NOT a dropout.
         val isDropout   = latestHr == null || latestHr.timestamp < nowMs - HR_DROPOUT_MS
+
+        // Duration-weighted average over the last 330s — same as TriggerHeartRate
+        val avgWindowMs = 330 * 1000L
+        val recentHr = allHr.filter { it.timestamp >= nowMs - avgWindowMs }
+        val totalDuration = recentHr.sumOf { it.duration }
+        val weightedAvgHr = if (totalDuration > 0L)
+            recentHr.sumOf { it.beatsPerMinute * it.duration } / totalDuration.toDouble()
+        else
+            latestHr?.beatsPerMinute ?: 0.0
 
         // ── Heart Rate — asymmetric EWA smoothing ─────────────────────────────
         //
@@ -169,7 +181,7 @@ class ActivityMonitor @Inject constructor(
         // decay smoothedHrBpm, causing it to drop ~10 bpm per loop to zero.
         when {
             isNewSample -> {
-                rawHrBpm = latestHr!!.beatsPerMinute
+                rawHrBpm = weightedAvgHr
                 smoothedHrBpm = when {
                     smoothedHrBpm <= 0.0 ->
                         // Cold start — seed directly, no ramp-up from zero
@@ -196,9 +208,9 @@ class ActivityMonitor @Inject constructor(
         }
 
         aapsLogger.debug(LTag.APS,
-                         "ActivityMonitor: rawHr=${if (rawHrBpm > 0) "${rawHrBpm.toInt()}bpm" else "none"} " +
-                             "smoothedHr=${smoothedHrBpm.toInt()}bpm newSample=$isNewSample " +
-                             "steps10m=$lastSteps10min  hrRecords=${allHr.size}  stepsRecords=${allSteps.size}")
+                         "ActivityMonitor: weightedAvgHr=${weightedAvgHr.toInt()}bpm smoothedHr=${smoothedHrBpm.toInt()}bpm " +
+                             "newSample=$isNewSample recentHrRecords=${recentHr.size}/${allHr.size} " +
+                             "steps5m=$lastSteps5min stepsRecords=${allSteps.size}")
 
         // ── Classify ──────────────────────────────────────────────────────────
         // Always classifies from smoothedHrBpm — never raw — so a single noisy spike
@@ -223,9 +235,9 @@ class ActivityMonitor @Inject constructor(
         }
 
         val stepsLevel = when {
-            lastSteps10min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
-            lastSteps10min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
-            lastSteps10min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
+            lastSteps5min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
+            lastSteps5min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
+            lastSteps5min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
             else                                 -> ActivityLevel.SEDENTARY
         }
 
@@ -234,7 +246,7 @@ class ActivityMonitor @Inject constructor(
             aapsLogger.debug(LTag.APS,
                              "ActivityMonitor: $level → $newLevel  " +
                                  "smoothedHr=${smoothedHrBpm.toInt()}bpm(raw=${rawHrBpm.toInt()}) " +
-                                 "steps=${lastSteps10min}/10m")
+                                 "steps=${lastSteps5min}/5m")
         }
         level = newLevel
     }
@@ -247,7 +259,7 @@ class ActivityMonitor @Inject constructor(
     }
 
     val statusString: String get() = when (level) {
-        ActivityLevel.SEDENTARY -> "hr=${smoothedHrBpm.toInt()}(raw=${rawHrBpm.toInt()}) steps10m=$lastSteps10min"
-        else                    -> "activity=${level.label}(hr=${smoothedHrBpm.toInt()}smooth/${rawHrBpm.toInt()}raw steps10m=$lastSteps10min)"
+        ActivityLevel.SEDENTARY -> "hr=${smoothedHrBpm.toInt()}(raw=${rawHrBpm.toInt()}) steps5m=$lastSteps5min"
+        else                    -> "activity=${level.label}(hr=${smoothedHrBpm.toInt()}smooth/${rawHrBpm.toInt()}raw steps5m=$lastSteps5min)"
     }
 }
