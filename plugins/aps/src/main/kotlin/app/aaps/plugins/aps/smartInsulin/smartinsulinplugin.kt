@@ -392,7 +392,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        activityMonitor.recompute(nowMs = now)
+        val restingHr = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
+        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHr)
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
         // Sensor start time: use gap detection (automatic) + TherapyEvent if available.

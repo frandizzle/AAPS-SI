@@ -30,9 +30,9 @@ class ActivityMonitor @Inject constructor(
 
     companion object {
         // HR thresholds — absolute bpm
-        const val HR_LIGHT_MIN        = 200.0
-        const val HR_MODERATE_MIN     = 200.0
-        const val HR_HEAVY_MIN        = 200.0
+        const val HR_LIGHT_MIN        = 100.0
+        const val HR_MODERATE_MIN     = 120.0
+        const val HR_HEAVY_MIN        = 135.0
 
         // Relative thresholds (bpm above resting HR) — used when resting HR is known
         const val HR_REL_LIGHT_MIN    = 20.0
