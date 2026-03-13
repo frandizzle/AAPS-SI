@@ -1020,7 +1020,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             }
             binding.infoLayout.cob.apply {
                 // Fixed 10sp — fits 3 lines in the cell at the same visual weight as the surrounding labels
-                textSize = 10f
+                textSize = 14f
                 text = buildString {
                     append(s.modeLine)
                     if (s.pb2Line != null) append("\n${s.pb2Line}")
