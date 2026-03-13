@@ -3,31 +3,19 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityContext
-import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityManager
-import app.aaps.plugins.aps.openAPSAIMI.activity.ActivityState
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * ActivityMonitor — tracks physical activity from HR (watch DB) + steps (phone pedometer).
+ * ActivityMonitor — HR and steps using stock AAPS trigger patterns verbatim.
  *
- * HR:    mirrors TriggerHeartRate — duration-weighted average over last 5.5 min from DB.
- *        Fed into ActivityManager.process() which handles its own EWA smoothing.
- *        No additional smoothing here — single stage only.
- *
- * Steps: mirrors BoostV2 StepService — phone TYPE_STEP_COUNTER pedometer via StepCounterService.
- *        Hardware sensor, always running, no BT/DB dependency. Instant response.
- *
- * Classification: delegated to ActivityManager (AIMI scoring model) which combines
- *        HR reserve + steps into a smoothed intensity score with recovery bucket.
+ * HR:    TriggerHeartRate pattern — getHeartRatesFromTime(start), duration-weighted average.
+ * Steps: TriggerStepsCount pattern — getStepsCountFromTime(start), filter by duration, steps5min.
  */
 @Singleton
 class ActivityMonitor @Inject constructor(
     private val aapsLogger:       AAPSLogger,
-    private val persistenceLayer: PersistenceLayer,
-    private val stepCounter:      StepCounterService,
-    private val activityManager:  ActivityManager
+    private val persistenceLayer: PersistenceLayer
 ) {
     enum class ActivityLevel {
         SEDENTARY, LIGHT, MODERATE, HEAVY;
@@ -35,85 +23,99 @@ class ActivityMonitor @Inject constructor(
     }
 
     companion object {
-        // HR: search back this far to survive BT batching delays
-        const val HR_SEARCH_MS    = 20 * 60 * 1000L
-        // HR: average window — matches TriggerHeartRate.averageHeartRateDurationMillis (330s)
-        const val HR_AVG_MS       = 330 * 1000L
+        // HR window — matches TriggerHeartRate.averageHeartRateDurationMillis = 330s
+        const val HR_WINDOW_MS        = 330 * 1000L
 
-        // ActivityManager score→level mapping (mirrors its internal state thresholds)
-        const val SCORE_LIGHT_MIN    = 1.0
-        const val SCORE_MODERATE_MIN = 3.0
-        const val SCORE_HEAVY_MIN    = 6.0
+        // Steps — 5-min bucket, search back 5 min (same as TriggerStepsCount)
+        const val STEPS_WINDOW_MS     = 5 * 60 * 1000L
+        const val STEPS_DURATION_MS   = 5 * 60 * 1000L  // duration filter for 5-min records
+
+        // HR thresholds — absolute (used when no resting HR configured)
+        const val HR_LIGHT_MIN        = 90.0
+        const val HR_MODERATE_MIN     = 110.0
+        const val HR_HEAVY_MIN        = 140.0
+
+        // HR thresholds — relative above resting (used when resting HR configured)
+        const val HR_REL_LIGHT_MIN    = 20.0
+        const val HR_REL_MODERATE_MIN = 35.0
+        const val HR_REL_HEAVY_MIN    = 60.0
+
+        // Steps thresholds — 5-min window
+        const val STEPS_LIGHT_MIN     = 200
+        const val STEPS_MODERATE_MIN  = 500
+        const val STEPS_HEAVY_MIN     = 900
     }
 
-    // ── Public state ──────────────────────────────────────────────────────────
-    var avgHrBpm:     Double = 0.0; private set
-    var lastSteps5min: Int   = 0;   private set
-    var level: ActivityLevel = ActivityLevel.SEDENTARY; private set
+    var avgHrBpm:      Double = 0.0; private set
+    var lastSteps5min: Int    = 0;   private set
+    var level: ActivityLevel  = ActivityLevel.SEDENTARY; private set
 
-    var lastActivityDescription: String = "Rest"; private set
-    var isRecovery: Boolean = false; private set
+    val suppressLearning: Boolean get() = level != ActivityLevel.SEDENTARY
 
-    // Suppress learning during any activity OR post-exercise recovery
-    val suppressLearning: Boolean get() = level != ActivityLevel.SEDENTARY || isRecovery
-
-    /**
-     * Recompute activity level. Called once per loop cycle from SmartInsulinPlugin.invoke().
-     *
-     * @param nowMs        Current wall-clock time in ms
-     * @param restingHrBpm User-configured resting HR (0 = unknown, uses AIMI 60bpm fallback)
-     */
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
 
-        // ── Heart Rate — duration-weighted average (TriggerHeartRate pattern) ─
-        // Search wide for BT batching delays, average only the last 330s.
-        val hrSearchStart = nowMs - HR_SEARCH_MS
-        val allHr = try {
-            persistenceLayer.getHeartRatesFromTime(hrSearchStart)
+        // ── Heart Rate — TriggerHeartRate pattern ─────────────────────────────
+        val hrStart = nowMs - HR_WINDOW_MS
+        val hrs = try {
+            persistenceLayer.getHeartRatesFromTime(hrStart)
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ActivityMonitor: HR query failed: ${e.message}")
             emptyList()
         }
-
-        val recentHr      = allHr.filter { it.timestamp >= nowMs - HR_AVG_MS }
-        val totalDuration = recentHr.sumOf { it.duration }
+        val totalDuration = hrs.sumOf { it.duration }
         avgHrBpm = if (totalDuration > 0L)
-            recentHr.sumOf { it.beatsPerMinute * it.duration } / totalDuration.toDouble()
+            hrs.sumOf { it.beatsPerMinute * it.duration } / totalDuration.toDouble()
         else
             0.0
 
-        // ── Steps — phone pedometer (BoostV2 StepService pattern) ────────────
-        // TYPE_STEP_COUNTER hardware sensor — instant, no BT/DB dependency.
-        stepCounter.ensureRegistered()
-        lastSteps5min = stepCounter.steps5min
+        // ── Steps — TriggerStepsCount pattern ────────────────────────────────
+        val stepsStart = nowMs - STEPS_WINDOW_MS
+        val measurements = try {
+            persistenceLayer.getStepsCountFromTime(stepsStart)
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "ActivityMonitor: steps query failed: ${e.message}")
+            emptyList()
+        }
+        val lastSC = measurements.lastOrNull { it.duration == STEPS_DURATION_MS }
+        lastSteps5min = lastSC?.steps5min ?: 0
 
-        // ── Classify via ActivityManager (AIMI scoring model) ─────────────────
-        // ActivityManager handles EWA smoothing + recovery bucket internally.
-        // Pass steps5min for both 5min and 10min params — we only have the 5-min window.
-        val ctx = activityManager.process(
-            steps5min    = lastSteps5min,
-            steps10min   = lastSteps5min,
-            avgHr        = avgHrBpm,
-            avgHrResting = if (restingHrBpm > 0.0) restingHrBpm else 0.0
-        )
+        aapsLogger.debug(LTag.APS,
+                         "ActivityMonitor: avgHr=${avgHrBpm.toInt()}bpm hrRecords=${hrs.size} " +
+                             "steps5m=$lastSteps5min stepsRecords=${measurements.size}")
 
-        lastActivityDescription = ctx.description
-        isRecovery              = ctx.isRecovery
-
-        level = when {
-            ctx.isRecovery                           -> ActivityLevel.LIGHT  // conservative during recovery
-            ctx.intensityScore >= SCORE_HEAVY_MIN    -> ActivityLevel.HEAVY
-            ctx.intensityScore >= SCORE_MODERATE_MIN -> ActivityLevel.MODERATE
-            ctx.intensityScore >= SCORE_LIGHT_MIN    -> ActivityLevel.LIGHT
-            else                                     -> ActivityLevel.SEDENTARY
+        // ── Classify — take higher of HR or steps ────────────────────────────
+        val hrLevel = when {
+            avgHrBpm <= 0.0    -> ActivityLevel.SEDENTARY
+            restingHrBpm > 0.0 -> {
+                val delta = avgHrBpm - restingHrBpm
+                when {
+                    delta >= HR_REL_HEAVY_MIN    -> ActivityLevel.HEAVY
+                    delta >= HR_REL_MODERATE_MIN -> ActivityLevel.MODERATE
+                    delta >= HR_REL_LIGHT_MIN    -> ActivityLevel.LIGHT
+                    else                         -> ActivityLevel.SEDENTARY
+                }
+            }
+            else -> when {
+                avgHrBpm >= HR_HEAVY_MIN    -> ActivityLevel.HEAVY
+                avgHrBpm >= HR_MODERATE_MIN -> ActivityLevel.MODERATE
+                avgHrBpm >= HR_LIGHT_MIN    -> ActivityLevel.LIGHT
+                else                        -> ActivityLevel.SEDENTARY
+            }
         }
 
-        val scoreStr = "%.1f".format(ctx.intensityScore)
-        val recoveryTag = if (isRecovery) " *** recoveryAfterExercise=true (${ctx.description})" else ""
-        aapsLogger.debug(LTag.APS,
-                         "ActivityMonitor: level=$level avgHr=${avgHrBpm.toInt()}bpm " +
-                             "steps5m=$lastSteps5min score=$scoreStr$recoveryTag " +
-                             "hrRecords=${recentHr.size}/${allHr.size}")
+        val stepsLevel = when {
+            lastSteps5min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
+            lastSteps5min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
+            lastSteps5min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
+            else                                -> ActivityLevel.SEDENTARY
+        }
+
+        val newLevel = maxOf(hrLevel, stepsLevel, compareBy { it.ordinal })
+        if (newLevel != level) {
+            aapsLogger.debug(LTag.APS,
+                             "ActivityMonitor: $level → $newLevel  hr=${avgHrBpm.toInt()}bpm steps=$lastSteps5min/5m")
+        }
+        level = newLevel
     }
 
     fun targetOffsetMmol(lightMmol: Double, moderateMmol: Double, heavyMmol: Double): Double = when (level) {

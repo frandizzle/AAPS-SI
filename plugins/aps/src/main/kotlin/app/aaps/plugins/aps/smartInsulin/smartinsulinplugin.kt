@@ -497,7 +497,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMealMode = mealMode != MealMode.FASTING
         val learningStateStr = when {
             !learningEnabledCache                -> "off: learning disabled"
-            activityMonitor.suppressLearning     -> if (activityMonitor.isRecovery) "off: post-exercise recovery" else "off: activity (${activityMonitor.level.label})"
+            activityMonitor.suppressLearning     -> "off: activity (${activityMonitor.level.label})"
             cgmState.suppressLearning            -> "off: CGM warmup"
             highTempTarget                       -> "off: high temp target"
             isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
