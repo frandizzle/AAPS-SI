@@ -27,7 +27,7 @@ import javax.inject.Singleton
  *
  * Freshness split:
  *   - HR_SEARCH_MS: how far back to query the DB (handles BT sync delays)
- *   - HR_FRESH_MS:  max age of a sample to be treated as live (not re-smoothed if stale)
+ *   - HR_DROPOUT_MS: how long with no HR record before treating watch as offline
  */
 @Singleton
 class ActivityMonitor @Inject constructor(
@@ -56,13 +56,13 @@ class ActivityMonitor @Inject constructor(
         const val STEPS_HEAVY_MIN     = 1800
 
         // HR fetch window — search back this far to handle BT batching/sync delays.
-        // A sample found here is only smoothed if it also passes the HR_FRESH_MS check.
         const val HR_SEARCH_MS        = 20 * 60 * 1000L
 
-        // HR freshness gate — a sample must be this recent to be treated as live data.
-        // Older than this → treated as dropout → smoothed HR decays instead of updating.
-        // 2 min gives one missed 60s HeartRateListener cycle of slack before decaying.
-        const val HR_FRESH_MS         =  2 * 60 * 1000L
+        // HR dropout threshold — if the most recent HR record is older than this,
+        // the watch is considered offline/charging and smoothedHrBpm decays.
+        // Must be >= loop interval (~5 min) + HeartRateListener interval (1 min) + BT slack.
+        // 7 min gives one full loop cycle of slack before treating absence as dropout.
+        const val HR_DROPOUT_MS       =  7 * 60 * 1000L
 
         // Steps: search wide (210 min) for DB records, classify fresh only (within 20 min).
         // steps10min bucket — more resilient to sync delays than steps5min.
@@ -138,8 +138,7 @@ class ActivityMonitor @Inject constructor(
 
         // ── Heart Rate — fetch ────────────────────────────────────────────────
         // HR.timestamp = END of the 60-second sampling window (HeartRateListener.kt).
-        // Search HR_SEARCH_MS back to survive BT batching delays, then gate on HR_FRESH_MS
-        // to determine whether the latest record is live data or dropout.
+        // Search HR_SEARCH_MS back to survive BT batching delays.
         val hrSearchStart = nowMs - HR_SEARCH_MS
         val allHr = try {
             persistenceLayer.getHeartRatesFromTimeToTime(hrSearchStart, nowMs)
@@ -148,40 +147,52 @@ class ActivityMonitor @Inject constructor(
             emptyList()
         }
 
-        val latestHr  = allHr.maxByOrNull { it.timestamp }
-        // Fresh = arrived within HR_FRESH_MS. Stale records found by the wide search
-        // are ignored for smoothing — they only exist to confirm the watch was worn recently.
-        val freshHr   = latestHr?.takeIf { it.timestamp >= nowMs - HR_FRESH_MS }
-        val isNewSample = freshHr != null && freshHr.timestamp > lastProcessedHrTimestamp
+        val latestHr    = allHr.maxByOrNull { it.timestamp }
+        val isNewSample = latestHr != null && latestHr.timestamp > lastProcessedHrTimestamp
+        // True dropout: no HR record at all within HR_DROPOUT_MS.
+        // This is distinct from "same record, already processed" — between loop cycles
+        // the watch sends every 60s but the loop only reads every ~5 min, so the most
+        // recent record will almost always already be processed. That is NOT a dropout.
+        val isDropout   = latestHr == null || latestHr.timestamp < nowMs - HR_DROPOUT_MS
 
         // ── Heart Rate — asymmetric EWA smoothing ─────────────────────────────
         //
-        // KEY INVARIANT: EWA only updates on a genuinely new sample (isNewSample = true).
-        // If the same sample were re-smoothed every loop, smoothedHrBpm would keep drifting
-        // upward toward rawHrBpm even with no new HR data arriving.
+        // Three distinct cases — must not conflate "already processed" with "dropout":
         //
-        // Cases:
-        //   new fresh sample  → apply EWA (rise or fall alpha), record timestamp
-        //   no new fresh sample → decay smoothed HR toward zero by dropout factor
-        //   cold start        → seed smoothedHrBpm directly, skip EWA ramp-up from zero
-        if (isNewSample) {
-            rawHrBpm = freshHr!!.beatsPerMinute
-            smoothedHrBpm = when {
-                smoothedHrBpm <= 0.0 ->
-                    // Cold start — seed directly to avoid slow ramp-up from zero
-                    rawHrBpm
-                rawHrBpm > smoothedHrBpm ->
-                    // Rising — fast attack
-                    HR_SMOOTH_ALPHA_RISE * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_RISE) * smoothedHrBpm
-                else ->
-                    // Falling — slow decay
-                    HR_SMOOTH_ALPHA_FALL * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_FALL) * smoothedHrBpm
+        //   isNewSample = true  → new record arrived since last loop: apply EWA, record timestamp
+        //   isDropout   = true  → no record within HR_DROPOUT_MS: watch offline → decay
+        //   neither             → same record, already processed, watch still live → HOLD
+        //                         Do not decay. Do not re-smooth. Just keep smoothedHrBpm as-is.
+        //
+        // The HOLD case is the critical fix: without it, every loop cycle between new HR
+        // records (which arrive every 60s but are read every ~5 min) would incorrectly
+        // decay smoothedHrBpm, causing it to drop ~10 bpm per loop to zero.
+        when {
+            isNewSample -> {
+                rawHrBpm = latestHr!!.beatsPerMinute
+                smoothedHrBpm = when {
+                    smoothedHrBpm <= 0.0 ->
+                        // Cold start — seed directly, no ramp-up from zero
+                        rawHrBpm
+                    rawHrBpm > smoothedHrBpm ->
+                        // Rising — fast attack
+                        HR_SMOOTH_ALPHA_RISE * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_RISE) * smoothedHrBpm
+                    else ->
+                        // Falling — slow decay
+                        HR_SMOOTH_ALPHA_FALL * rawHrBpm + (1.0 - HR_SMOOTH_ALPHA_FALL) * smoothedHrBpm
+                }
+                lastProcessedHrTimestamp = latestHr.timestamp
             }
-            lastProcessedHrTimestamp = freshHr.timestamp
-        } else {
-            // No new fresh sample — stale, dropout, or watch offline
-            rawHrBpm      = 0.0
-            smoothedHrBpm = if (smoothedHrBpm > 0.0) smoothedHrBpm * HR_SMOOTH_DROPOUT_FACTOR else 0.0
+            isDropout -> {
+                // Watch offline or charging — bleed smoothedHrBpm toward zero
+                rawHrBpm      = 0.0
+                smoothedHrBpm = if (smoothedHrBpm > 1.0) smoothedHrBpm * HR_SMOOTH_DROPOUT_FACTOR else 0.0
+            }
+            else -> {
+                // HOLD — same record already processed, watch still live between loop cycles
+                // rawHrBpm stays 0 (no new reading this cycle), smoothedHrBpm unchanged
+                rawHrBpm = 0.0
+            }
         }
 
         aapsLogger.debug(LTag.APS,

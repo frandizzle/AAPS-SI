@@ -2,10 +2,12 @@ package app.aaps.plugins.aps.di
 
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.autotune.Autotune
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.plugins.aps.OpenAPSFragment
 import app.aaps.plugins.aps.autotune.AutotunePlugin
 import app.aaps.plugins.aps.loop.LoopPlugin
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
+import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
 import dagger.Binds
 import dagger.Module
 import dagger.android.ContributesAndroidInjector
@@ -29,5 +31,6 @@ abstract class ApsModule {
 
         @Binds fun bindLoop(loopPlugin: LoopPlugin): Loop
         @Binds fun bindAutotune(autotunePlugin: AutotunePlugin): Autotune
+        @Binds fun bindSmartInsulinOverview(smartInsulinPlugin: SmartInsulinPlugin): SmartInsulinOverview
     }
 }
