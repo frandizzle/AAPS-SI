@@ -51,7 +51,10 @@ class ActivityMonitor @Inject constructor(
         const val HR_REL_MODERATE_MIN = 35.0
         const val HR_REL_HEAVY_MIN    = 60.0
 
-        // Steps — thresholds for 5-min native pedometer window
+        // Steps — watch DB (primary) + phone pedometer (fallback), 5-min window
+        const val STEPS_BUCKET_MS     =  5 * 60 * 1000L   // watch record duration filter
+        const val STEPS_SEARCH_MS     = 30 * 60 * 1000L   // wide search for BT sync lag
+        const val STEPS_FRESH_MS      = 10 * 60 * 1000L   // max age for a valid watch record
         const val STEPS_LIGHT_MIN     = 200
         const val STEPS_MODERATE_MIN  = 500
         const val STEPS_HEAVY_MIN     = 900
@@ -115,14 +118,34 @@ class ActivityMonitor @Inject constructor(
      */
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
 
-        // ── Steps — native Android pedometer ────────────────────────────────
-        // TYPE_STEP_COUNTER hardware sensor — no BT/DB dependency.
-        // StepCounterService registers once and maintains a rolling 5-min delta.
+        // ── Steps — watch (DB) primary, phone pedometer fallback ────────────
+        // Watch is preferred: wrist position better captures arm-swing activity.
+        // Phone fallback kicks in if no fresh watch record (watch not worn / BT gap).
         stepCounter.ensureRegistered()
-        lastSteps5min = stepCounter.steps5min
 
+        val stepsSearchStart = nowMs - STEPS_SEARCH_MS
+        val allSteps = try {
+            persistenceLayer.getStepsCountFromTime(stepsSearchStart)
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "ActivityMonitor: steps DB query failed: ${e.message}")
+            emptyList()
+        }
+
+        val watchRecord = allSteps
+            .filter { it.duration == STEPS_BUCKET_MS }
+            .filter { it.timestamp >= nowMs - STEPS_FRESH_MS }
+            .maxByOrNull { it.timestamp }
+
+        val watchSteps = watchRecord?.steps5min ?: 0
+        val phoneSteps = stepCounter.steps5min
+        val usingWatch = watchSteps > 0
+
+        lastSteps5min = if (usingWatch) watchSteps else phoneSteps
+
+        val stepsSource = if (usingWatch) "watch" else "phone"
         aapsLogger.debug(LTag.APS,
-                         "ActivityMonitor: steps5m=$lastSteps5min totalSteps=${stepCounter.totalStepsSinceRegistration}")
+                         "ActivityMonitor: steps5m=$lastSteps5min source=$stepsSource " +
+                             "watchSteps=$watchSteps phoneSteps=$phoneSteps watchRecords=${allSteps.size}")
 
 
         // ── Heart Rate — fetch ────────────────────────────────────────────────
