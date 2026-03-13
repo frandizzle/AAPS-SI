@@ -109,7 +109,7 @@ open class SmartInsulinPlugin @Inject constructor(
         .showInList { config.APS }
         .description(R.string.smart_insulin_description),
     aapsLogger, rh
-), APS, PluginConstraints {
+), APS, PluginConstraints, app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview {
 
     override var lastAPSRun: Long = 0
     override val algorithm = APSResult.Algorithm.SMB
@@ -195,14 +195,24 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  $pb2Status")
             }
 
+            // ── Learning state ────────────────────────────────────────────────
+            appendLine()
+            appendLine("── Learning ──────────────────────────")
+            val learnEnabled = preferences.get(app.aaps.core.keys.BooleanKey.ApsSmartInsulinEnableLearning)
+            val suppressionReason = learningSuppressionReason()
+            if (!learnEnabled) {
+                appendLine("  State        : Not Learning (disabled in prefs)")
+            } else if (suppressionReason != null) {
+                appendLine("  State        : Not Learning — $suppressionReason")
+            } else {
+                appendLine("  State        : Learning")
+            }
+
             // ── Activity & CGM state ──────────────────────────────────────────
             val actLevel = activityMonitor.level
             if (actLevel != ActivityMonitor.ActivityLevel.SEDENTARY) {
-                appendLine()
-                appendLine("── Activity ──────────────────────────")
-                appendLine("  Level        : ${actLevel.label}")
-                appendLine("  Target +     : learning suppressed during activity")
-                appendLine("  (HR/steps data read each loop cycle via persistenceLayer)")
+                appendLine("  Activity     : ${actLevel.label} " +
+                               "(hr=${activityMonitor.smoothedHrBpm.toInt()}bpm steps=${activityMonitor.lastSteps10min}/10m)")
             }
             appendLine()
 
@@ -226,6 +236,38 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }.trimEnd()
+    }
+
+    // ── Public state accessors for Overview display ─────────────────────────
+
+    /**
+     * Returns a one-line suppression reason for the Overview "State" cell,
+     * or null if learning is currently active.
+     * Called from OverviewFragment.updateIobCob() each loop cycle.
+     */
+    override fun learningSuppressionReason(): String? {
+        val learningEnabled = preferences.get(app.aaps.core.keys.BooleanKey.ApsSmartInsulinEnableLearning)
+        if (!learningEnabled) return "learning off"
+        if (activityMonitor.suppressLearning) return "activity (${activityMonitor.level.label})"
+        // CGM warmup: read last known cgmState reason via lastAPSResult or direct guard
+        // We surface the reason from the last invoke() run — safe to read between cycles.
+        val lastReason = lastAPSResult?.reason?.toString() ?: ""
+        if (lastReason.contains("cgm=smbBlocked(warmup")) return "CGM warmup"
+        return null  // null = learning active
+    }
+
+    /**
+     * Returns the current meal mode display string for the Overview cell.
+     * Format: "Mode: Dinner 47m" or "Mode: Fasting"
+     */
+    override fun overviewModeText(): String {
+        val activeMode = mealOverrideManager.activeMealMode
+        return if (activeMode != null) {
+            val remMins = mealOverrideManager.modeTimeRemainingMs / 60_000
+            "Mode: ${activeMode.label} ${remMins}m"
+        } else {
+            "Mode: Fasting"
+        }
     }
 
     // ── RxBus subscriptions for HR and steps from wear ───────────────────────
@@ -392,8 +434,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
-        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
+        activityMonitor.recompute(nowMs = now)
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
         // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
@@ -629,10 +670,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {
             ActivityMonitor.ActivityLevel.SEDENTARY ->
-                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/10m"
+                " | hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
             else ->
                 " | activity=${activityMonitor.level.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol" +
-                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps10min}/10m)"
+                    " hr=${activityMonitor.lastHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
         }
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
@@ -791,7 +832,6 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinRestingHrBpm,                title = R.string.si_resting_hr_bpm_title))
         }
     }
 }

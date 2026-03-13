@@ -86,6 +86,7 @@ import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.TrendCalculator
 import app.aaps.core.interfaces.utils.fabric.FabricPrivacy
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.DoubleKey
@@ -161,6 +162,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
     @Inject lateinit var decimalFormatter: DecimalFormatter
     @Inject lateinit var graphDataProvider: Provider<GraphData>
     @Inject lateinit var commandQueue: CommandQueue
+    @Inject lateinit var smartInsulinOverview: SmartInsulinOverview
 
     private val disposable = CompositeDisposable()
 
@@ -1000,31 +1002,20 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
     private fun updateIobCob() {
         val iobText = iobText()
         val iobDialogText = iobDialogText()
-        val displayText = iobCobCalculator.getCobInfo("Overview COB").displayText(rh, decimalFormatter)
-        val lastCarbsTime = persistenceLayer.getNewestCarbs()?.timestamp ?: 0L
         runOnUiThread {
             _binding ?: return@runOnUiThread
             binding.infoLayout.iob.text = iobText
             binding.infoLayout.iobLayout.setOnClickListener { activity?.let { OKDialog.show(it, rh.gs(app.aaps.core.ui.R.string.iob), iobDialogText) } }
-            // cob
-            var cobText = displayText ?: rh.gs(app.aaps.core.ui.R.string.value_unavailable_short)
 
-            val constraintsProcessed = loop.lastRun?.constraintsProcessed
-            val lastRun = loop.lastRun
-            if (config.APS && constraintsProcessed != null && lastRun != null) {
-                if (constraintsProcessed.carbsReq > 0) {
-                    //only display carbsreq when carbs have not been entered recently
-                    if (lastCarbsTime < lastRun.lastAPSRun) {
-                        cobText += "\n" + constraintsProcessed.carbsReq + " " + rh.gs(app.aaps.core.ui.R.string.required)
-                    }
-                    if (carbAnimation?.isRunning == false)
-                        carbAnimation?.start()
-                } else {
-                    carbAnimation?.stop()
-                    carbAnimation?.selectDrawable(0)
-                }
-            }
-            binding.infoLayout.cob.text = cobText
+            // ── SmartInsulin mode + learning state (replaces COB cell) ────────
+            // Carb icon hidden — COB cell now shows meal mode + learning state.
+            carbAnimation?.stop()
+            binding.infoLayout.carbsIcon.visibility = View.GONE
+
+            val modeLine  = smartInsulinOverview.overviewModeText()
+            val stateLine = if (smartInsulinOverview.learningSuppressionReason() != null)
+                "State: Not Learning" else "State: Learning"
+            binding.infoLayout.cob.text = "$modeLine\n$stateLine"
         }
     }
 
