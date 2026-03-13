@@ -1019,8 +1019,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 else       -> "State: Not Learning"
             }
             binding.infoLayout.cob.apply {
-                // Match font size to the IOB cell — COB cell auto-shrinks with multi-line text otherwise
-                textSize = binding.infoLayout.iob.textSize / resources.displayMetrics.scaledDensity
+                // Fixed 10sp — fits 3 lines in the cell at the same visual weight as the surrounding labels
+                textSize = 10f
                 text = buildString {
                     append(s.modeLine)
                     if (s.pb2Line != null) append("\n${s.pb2Line}")
