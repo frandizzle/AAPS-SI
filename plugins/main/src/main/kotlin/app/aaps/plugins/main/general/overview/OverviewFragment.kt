@@ -1018,10 +1018,14 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 "limited"  -> "State: Learning limited"
                 else       -> "State: Not Learning"
             }
-            binding.infoLayout.cob.text = buildString {
-                append(s.modeLine)
-                if (s.pb2Line != null) append("\n${s.pb2Line}")
-                append("\n$stateLabel")
+            binding.infoLayout.cob.apply {
+                // Match font size to the IOB cell — COB cell auto-shrinks with multi-line text otherwise
+                textSize = binding.infoLayout.iob.textSize / resources.displayMetrics.scaledDensity
+                text = buildString {
+                    append(s.modeLine)
+                    if (s.pb2Line != null) append("\n${s.pb2Line}")
+                    append("\n$stateLabel")
+                }
             }
         }
     }

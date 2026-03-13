@@ -507,8 +507,11 @@ open class SmartInsulinPlugin @Inject constructor(
             "Meal: ${it.label} ${mealOverrideManager.modeTimeRemainingMs / 60_000}m"
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
-            val secsRem = mealOverrideManager.preBolus2SecondsRemaining
-            if (secsRem != null && secsRem > 0) "PB2 active: ${secsRem / 60}m" else "PB2 active: due"
+            val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
+            when {
+                msRem == null || msRem <= 0 -> "PB2 active: due"
+                else                        -> "PB2 active: ${msRem / 60_000}m"
+            }
         } else null
         cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
             modeLine      = modeLineStr,
