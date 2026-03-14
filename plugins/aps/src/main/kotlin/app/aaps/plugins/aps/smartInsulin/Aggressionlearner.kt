@@ -8,6 +8,7 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -43,7 +44,11 @@ class AggressionLearner @Inject constructor(
     // ── State ─────────────────────────────────────────────────────────────────
     private val allSamples     = ArrayDeque<BgSample>()  // all modes — display TIR only
     private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score
-    private var score          = 1.0
+
+    // Day-of-week aware scores: [0=Sun..6=Sat] + global fallback
+    private val dayScores      = DoubleArray(7) { 1.0 }
+    private val daySampleCount = IntArray(7) { 0 }
+    private var globalScore    = 1.0
     private var lastUpdateMs   = 0L
 
     init { restoreState() }
@@ -59,6 +64,8 @@ class AggressionLearner @Inject constructor(
 
         private const val STEP_UP              = 0.02
         private const val STEP_DOWN            = 0.05
+        private const val MIN_DAY_SAMPLES_FOR_BLEND = 20  // samples on a given day before blending in
+        val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
         private const val K_SCORE        = "score"
         private const val K_LAST_UPDATE  = "lastUpdateMs"
@@ -72,7 +79,10 @@ class AggressionLearner @Inject constructor(
 
     val aggressiveness: Double
         get() {
-            val max = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
+            val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
+            val dow   = currentDow()
+            val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
+            val score = globalScore * (1.0 - blend) + dayScores[dow] * blend
             return score.coerceIn(1.0 / max, max)
         }
 
@@ -88,7 +98,7 @@ class AggressionLearner @Inject constructor(
                 ?: "insufficient"
             val fastStr = fasting?.let { "f:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
                 ?: "f:insufficient"
-            return "tir=$allStr $fastStr score=${"%.2f".format(aggressiveness)}"
+            return "tir=$allStr $fastStr global=${"%.2f".format(globalScore)} today=${"%.2f".format(dayScores[currentDow()])}"
         }
 
     /**
@@ -126,31 +136,55 @@ class AggressionLearner @Inject constructor(
 
     private fun updateScore() {
         val stats = computeTir(fastingSamples) ?: run {
-            aapsLogger.debug(LTag.APS, "AggressionLearner: insufficient fasting samples (${fastingSamples.size}/$MIN_SAMPLES_TO_LEARN), score held at $score")
+            aapsLogger.debug(LTag.APS, "AggressionLearner: insufficient fasting samples (${fastingSamples.size}/$MIN_SAMPLES_TO_LEARN), global held at $globalScore")
             return
         }
         val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
         val floor = 1.0 / max
         val ceil  = max
-        val prev  = score
+        val dow   = currentDow()
 
-        score = when {
-            stats.lowPct > MAX_LOW_PCT ->
-                (score - STEP_DOWN).coerceAtLeast(floor)
-            stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 ->
-                (score + STEP_UP).coerceAtMost(ceil)
-            stats.highPct > MAX_HIGH_PCT ->
-                (score + STEP_UP * 1.5).coerceAtMost(ceil)
-            else ->
-                score + (1.0 - score) * 0.05
+        // Update global score — uses all fasting samples regardless of day
+        val prevGlobal = globalScore
+        globalScore = when {
+            stats.lowPct > MAX_LOW_PCT           -> (globalScore - STEP_DOWN).coerceAtLeast(floor)
+            stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0
+                                                 -> (globalScore + STEP_UP).coerceAtMost(ceil)
+            stats.highPct > MAX_HIGH_PCT         -> (globalScore + STEP_UP * 1.5).coerceAtMost(ceil)
+            else                                 -> globalScore + (1.0 - globalScore) * 0.05
         }
 
-        if (score != prev) {
+        // Update today's day score — uses only today's fasting samples
+        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dow) }))
+        if (todayStats != null) {
+            val prev = dayScores[dow]
+            dayScores[dow] = when {
+                todayStats.lowPct > MAX_LOW_PCT           -> (dayScores[dow] - STEP_DOWN).coerceAtLeast(floor)
+                todayStats.inRangePct >= TARGET_TIR_PCT && todayStats.highPct > 0
+                                                          -> (dayScores[dow] + STEP_UP).coerceAtMost(ceil)
+                todayStats.highPct > MAX_HIGH_PCT         -> (dayScores[dow] + STEP_UP * 1.5).coerceAtMost(ceil)
+                else                                      -> dayScores[dow] + (1.0 - dayScores[dow]) * 0.05
+            }
+            if (dayScores[dow] != prev)
+                aapsLogger.debug(LTag.APS,
+                                 "AggressionLearner: day[${DAY_LABELS[dow]}] score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%%".format(
+                                     prev, dayScores[dow], todayStats.inRangePct, todayStats.highPct, todayStats.lowPct))
+        }
+
+        if (globalScore != prevGlobal)
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: score %.3f→%.3f fasting tir=%.0f%% high=%.0f%% low=%.0f%% (n=${fastingSamples.size})".format(
-                                 prev, score, stats.inRangePct, stats.highPct, stats.lowPct))
-        }
+                             "AggressionLearner: global score %.3f→%.3f fasting tir=%.0f%% high=%.0f%% low=%.0f%% (n=${fastingSamples.size})".format(
+                                 prevGlobal, globalScore, stats.inRangePct, stats.highPct, stats.lowPct))
     }
+
+    /** True if sample's day-of-week matches [dow] */
+    private fun isSameDay(timestampMs: Long, dow: Int): Boolean {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestampMs
+        return (cal.get(Calendar.DAY_OF_WEEK) - 1) == dow
+    }
+
+    private fun currentDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
 
     // ── TIR calculation ───────────────────────────────────────────────────────
 
@@ -175,7 +209,8 @@ class AggressionLearner @Inject constructor(
     fun reset() {
         allSamples.clear()
         fastingSamples.clear()
-        score        = 1.0
+        for (i in 0..6) { dayScores[i] = 1.0; daySampleCount[i] = 0 }
+        globalScore  = 1.0
         lastUpdateMs = 0L
         preferences.put(StringKey.ApsSmartInsulinAggressionState, "")
         aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
@@ -190,9 +225,12 @@ class AggressionLearner @Inject constructor(
             toSave.forEach { s ->
                 arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting))
             }
+            val dayArr = org.json.JSONArray()
+            for (i in 0..6) dayArr.put(JSONObject().put("score", dayScores[i]).put("n", daySampleCount[i]))
             preferences.put(
                 StringKey.ApsSmartInsulinAggressionState,
-                JSONObject().put(K_SCORE, score).put(K_LAST_UPDATE, lastUpdateMs).put(K_SAMPLES, arr).toString()
+                JSONObject().put(K_SCORE, globalScore).put(K_LAST_UPDATE, lastUpdateMs)
+                    .put(K_SAMPLES, arr).put("dayScores", dayArr).toString()
             )
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: save failed: ${e.message}")
@@ -204,8 +242,16 @@ class AggressionLearner @Inject constructor(
             val raw = preferences.get(StringKey.ApsSmartInsulinAggressionState)
             if (raw.isBlank()) return
             val json     = JSONObject(raw)
-            score        = json.optDouble(K_SCORE, 1.0)
+            globalScore  = json.optDouble(K_SCORE, 1.0)
             lastUpdateMs = json.optLong(K_LAST_UPDATE, 0L)
+            val dayArr   = json.optJSONArray("dayScores")
+            if (dayArr != null) {
+                for (i in 0..6) {
+                    val obj = dayArr.optJSONObject(i) ?: continue
+                    dayScores[i]      = obj.optDouble("score", 1.0)
+                    daySampleCount[i] = obj.optInt("n", 0)
+                }
+            }
             val arr      = json.optJSONArray(K_SAMPLES) ?: return
             val nowMs    = System.currentTimeMillis()
             for (i in 0 until arr.length()) {
@@ -219,10 +265,10 @@ class AggressionLearner @Inject constructor(
                 if (isFasting) fastingSamples.addLast(sample)
             }
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: restored score=$score all=${allSamples.size} fasting=${fastingSamples.size}")
+                             "AggressionLearner: restored globalScore=$globalScore all=${allSamples.size} fasting=${fastingSamples.size}")
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: restore failed: ${e.message}")
-            score = 1.0
+            globalScore = 1.0
         }
     }
 }

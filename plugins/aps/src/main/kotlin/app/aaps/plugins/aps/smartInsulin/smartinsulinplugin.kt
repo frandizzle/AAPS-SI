@@ -175,13 +175,16 @@ open class SmartInsulinPlugin @Inject constructor(
     // ── Status summary for tab UI ─────────────────────────────────────────────
 
     fun statusSummary(): String {
-        val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val cal  = java.util.Calendar.getInstance()
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
+        val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return buildString {
             appendLine("=== SmartInsulin Status ===")
             appendLine()
 
             // ── Active cycle values ───────────────────────────────────────────
-            appendLine("── Active (h=${hour}:00) ─────────────────")
+            appendLine("── Active (h=${hour}:00, d=$day) ─────────────────")
             val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
             appendLine("  Aggressiveness : ${"%.3f".format(effectiveAggr)}")
             appendLine("    TIR score    : ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")

@@ -7,7 +7,6 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import javax.inject.Inject
@@ -33,9 +32,9 @@ class CircadianLearner @Inject constructor(
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private var isfState:   CircadianState = CircadianState(DoubleArray(24) { 1.0 })
-    private var basalState: CircadianState = CircadianState(DoubleArray(24) { 1.0 })
-    private var aggrState:  CircadianState = CircadianState(DoubleArray(24) { 1.0 })
+    private var isfState:   DayOfWeekCircadianState = DayOfWeekCircadianState()
+    private var basalState: DayOfWeekCircadianState = DayOfWeekCircadianState()
+    private var aggrState:  DayOfWeekCircadianState = DayOfWeekCircadianState()
 
     // Rollercoaster detection — ring buffer of recent (timestamp, bg) pairs
     private val bgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(MAX_HISTORY)
@@ -45,19 +44,19 @@ class CircadianLearner @Inject constructor(
     // ── Public outputs ────────────────────────────────────────────────────────
 
     /** ISF multiplier for current hour (0.7–1.5). >1.0 = less aggressive ISF */
-    fun isfMultiplier(hour: Int = currentHour()): Double =
-        blend(isfState.get(hour), 1.0, isfState.getConfidence(hour))
+    fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
+        blend(isfState.get(dow, hour), 1.0, isfState.getConfidence(dow, hour))
             .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
     /** Basal multiplier for current hour (0.5–1.5) */
-    fun basalMultiplier(hour: Int = currentHour()): Double =
-        blend(basalState.get(hour), 1.0, basalState.getConfidence(hour))
+    fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
+        blend(basalState.get(dow, hour), 1.0, basalState.getConfidence(dow, hour))
             .coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
     /** Aggressiveness ceiling for current hour (0.6–1.2).
      *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling) */
-    fun aggrCeiling(hour: Int = currentHour()): Double =
-        blend(aggrState.get(hour), 1.0, aggrState.getConfidence(hour))
+    fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow()): Double =
+        blend(aggrState.get(dow, hour), 1.0, aggrState.getConfidence(dow, hour))
             .coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
 
     // ── Core update — called every loop cycle ─────────────────────────────────
@@ -80,6 +79,7 @@ class CircadianLearner @Inject constructor(
         suppressAdaptiveLearning: Boolean = false   // true = skip ISF/basal updates, keep rollercoaster protection
     ) {
         val hour = currentHour()
+        val dow  = currentDow()
         val bg   = glucoseStatus.glucose
         val delta  = glucoseStatus.shortAvgDelta
         val now    = System.currentTimeMillis()
@@ -112,17 +112,17 @@ class CircadianLearner @Inject constructor(
             bgHistory.removeFirst()
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
-        if (!suppressAdaptiveLearning) updateIsfLearner(hour, glucoseStatus, iobArray, profileIsfMgdl)
+        if (!suppressAdaptiveLearning) updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl)
         else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
-        if (!suppressAdaptiveLearning) updateBasalLearner(hour, bg, now)
+        if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now)
         else aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)")
 
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
-        updateAggrLearner(hour, bg, delta, targetMgdl, iobArray)
+        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray)
 
         persist()
     }
@@ -131,6 +131,7 @@ class CircadianLearner @Inject constructor(
 
     private fun updateIsfLearner(
         hour:           Int,
+        dow:            Int,
         glucoseStatus:  GlucoseStatus,
         iobArray:       Array<IobTotal>,
         profileIsfMgdl: Double
@@ -184,14 +185,14 @@ class CircadianLearner @Inject constructor(
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
         // Target multiplier: positive deviation → mult > 1 → dosingISF/mult goes lower → less insulin
-        val multTarget    = (isfState.get(hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        val newMult       = (isfState.get(hour) * (1.0 - ISF_ALPHA) + multTarget * ISF_ALPHA)
+        val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        val newMult       = (isfState.get(dow, hour) * (1.0 - ISF_ALPHA) + multTarget * ISF_ALPHA)
             .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        isfState = isfState.updated(hour, newMult, ISF_ALPHA)
+        isfState = isfState.updated(dow, hour, newMult, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(hour)))
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(dow, hour)))
     }
 
     // ── Basal learner ─────────────────────────────────────────────────────────
@@ -210,6 +211,7 @@ class CircadianLearner @Inject constructor(
 
     private fun updateBasalLearner(
         hour:  Int,
+        dow:   Int,
         bg:    Double,
         now:   Long
     ) {
@@ -249,35 +251,36 @@ class CircadianLearner @Inject constructor(
         // Positive drift → BG rising despite loop → profile basal too low → mult > 1
         // Negative drift → BG falling → profile basal too high → mult < 1
         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
-        val newMult    = (basalState.get(hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        basalState = basalState.updated(hour, newMult, BASAL_ALPHA)
+        val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
 
         // Clear window after a learning event so next update is from fresh data
         basalDriftWindow.clear()
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner Basal h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(hour))}")
+                         "CircadianLearner Basal h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
     }
 
     // ── Aggressiveness ceiling learner ────────────────────────────────────────
 
     private fun updateAggrLearner(
         hour:      Int,
+        dow:       Int,
         bg:        Double,
         delta:     Double,
         targetMgdl:Double,
         iobArray:  Array<IobTotal>
     ) {
-        val currentCeil = aggrState.get(hour)
+        val currentCeil = aggrState.get(dow, hour)
 
         // ── Penalty signal 1: Rollercoaster ──────────────────────────────────
         val rollercoaster = detectRollercoaster(targetMgdl)
         if (rollercoaster) {
             val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
-            aggrState = aggrState.updated(hour, penalised, AGGR_ALPHA_PENALTY)
+            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour ROLLERCOASTER detected → ceil=%.3f"
-                                 .format(aggrState.get(hour)))
+                                 .format(aggrState.get(dow, hour)))
             return
         }
 
@@ -287,10 +290,10 @@ class CircadianLearner @Inject constructor(
         val approachingLow = bg < SOFT_LOW_BG_MGDL && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
-            aggrState = aggrState.updated(hour, penalised, AGGR_ALPHA_PENALTY)
+            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta → ceil=%.3f"
-                                 .format(aggrState.get(hour)))
+                                 .format(aggrState.get(dow, hour)))
             return
         }
 
@@ -299,10 +302,10 @@ class CircadianLearner @Inject constructor(
         val stableNearTarget = abs(bg - targetMgdl) < STABLE_BAND_MGDL && abs(delta) < STABLE_DELTA_MGDL
         if (stableNearTarget && currentCeil < 1.0) {
             val recovered = (currentCeil + AGGR_RECOVERY_STEP).coerceAtMost(AGGR_CEIL_MAX)
-            aggrState = aggrState.updated(hour, recovered, AGGR_ALPHA_RECOVERY)
+            aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour STABLE_RECOVERY → ceil=%.3f"
-                                 .format(aggrState.get(hour)))
+                                 .format(aggrState.get(dow, hour)))
         }
     }
 
@@ -329,9 +332,9 @@ class CircadianLearner @Inject constructor(
     private fun persist() {
         try {
             val json = JSONObject().apply {
-                put("isf",   stateToJson(isfState))
-                put("basal", stateToJson(basalState))
-                put("aggr",  stateToJson(aggrState))
+                put("isf",   isfState.toJson())
+                put("basal", basalState.toJson())
+                put("aggr",  aggrState.toJson())
             }
             preferences.put(StringKey.ApsSmartInsulinCircadianState, json.toString())
         } catch (e: Exception) {
@@ -344,52 +347,39 @@ class CircadianLearner @Inject constructor(
             val raw = preferences.get(StringKey.ApsSmartInsulinCircadianState)
             if (raw.isBlank()) return
             val json = JSONObject(raw)
-            isfState   = jsonToState(json.getJSONObject("isf"))
-            basalState = jsonToState(json.getJSONObject("basal"))
-            aggrState  = jsonToState(json.getJSONObject("aggr"))
-            aapsLogger.debug(LTag.APS, "CircadianLearner restored")
+            // Legacy migration: old format had flat "values"/"confidence" arrays, not day-of-week structure
+            if (json.getJSONObject("isf").has("values")) {
+                aapsLogger.debug(LTag.APS, "CircadianLearner: legacy format detected, resetting to day-of-week structure")
+                return  // fresh start — old data incompatible with 7-day structure
+            }
+            isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
+            basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
+            aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
+            aapsLogger.debug(LTag.APS, "CircadianLearner restored (day-of-week)")
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner restore failed: ${e.message}")
         }
     }
 
-    private fun stateToJson(s: CircadianState): JSONObject {
-        val vArr = JSONArray()
-        val cArr = JSONArray()
-        for (i in 0..23) { vArr.put(s.values[i]); cArr.put(s.confidence[i]) }
-        return JSONObject().apply {
-            put("values",     vArr)
-            put("confidence", cArr)
-        }
-    }
-
-    private fun jsonToState(obj: JSONObject): CircadianState {
-        val vArr = obj.getJSONArray("values")
-        val cArr = obj.getJSONArray("confidence")
-        val values     = DoubleArray(24) { vArr.getDouble(it) }
-        val confidence = DoubleArray(24) { cArr.getDouble(it) }
-        return CircadianState(values, confidence)
-    }
-
     // ── Reset ─────────────────────────────────────────────────────────────────
 
     fun reset() {
-        isfState   = CircadianState()
-        basalState = CircadianState()
-        aggrState  = CircadianState()
+        isfState   = DayOfWeekCircadianState()
+        basalState = DayOfWeekCircadianState()
+        aggrState  = DayOfWeekCircadianState()
         bgHistory.clear()
         preferences.put(StringKey.ApsSmartInsulinCircadianState, "")
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
 
     fun resetBasal() {
-        basalState = CircadianState()
+        basalState = DayOfWeekCircadianState()
         persist()
         aapsLogger.debug(LTag.APS, "CircadianLearner basal state reset")
     }
 
     fun resetAggr() {
-        aggrState = CircadianState()
+        aggrState = DayOfWeekCircadianState()
         bgHistory.clear()
         persist()
         aapsLogger.debug(LTag.APS, "CircadianLearner aggr state reset")
@@ -397,24 +387,27 @@ class CircadianLearner @Inject constructor(
 
     // ── Status summary for tab UI ─────────────────────────────────────────────
 
-    /** Average confidence across ISF/basal/aggr for a given hour, as 0–100 */
-    fun confidencePct(hour: Int): Double {
+    /** Average confidence across ISF/basal/aggr for a given hour and day, as 0–100 */
+    fun confidencePct(hour: Int, dow: Int = currentDow()): Double {
         val h = hour.coerceIn(0, 23)
-        return ((isfState.getConfidence(h) + basalState.getConfidence(h) + aggrState.getConfidence(h)) / 3.0) * 100.0
+        return ((isfState.getConfidence(dow, h) + basalState.getConfidence(dow, h) + aggrState.getConfidence(dow, h)) / 3.0) * 100.0
     }
 
-    fun statusSummary(hour: Int = currentHour()): String =
-        "h=$hour ISF×%.2f basal×%.2f aggrCeil=%.2f (conf isf=%.0f%% basal=%.0f%% aggr=%.0f%%)"
+    fun statusSummary(hour: Int = currentHour(), dow: Int = currentDow()): String {
+        val dayLabel = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        return "h=$hour($dayLabel) ISF×%.2f basal×%.2f aggrCeil=%.2f (conf isf=%.0f%% basal=%.0f%% aggr=%.0f%%)"
             .format(
-                isfMultiplier(hour), basalMultiplier(hour), aggrCeiling(hour),
-                isfState.getConfidence(hour) * 100,
-                basalState.getConfidence(hour) * 100,
-                aggrState.getConfidence(hour) * 100
+                isfMultiplier(hour, dow), basalMultiplier(hour, dow), aggrCeiling(hour, dow),
+                isfState.getConfidence(dow, hour) * 100,
+                basalState.getConfidence(dow, hour) * 100,
+                aggrState.getConfidence(dow, hour) * 100
             )
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    private fun currentDow(): Int  = DayOfWeekCircadianState.currentDayOfWeek()
 
     /** Blend learned value toward default (1.0) based on confidence */
     private fun blend(learned: Double, default: Double, confidence: Double) =

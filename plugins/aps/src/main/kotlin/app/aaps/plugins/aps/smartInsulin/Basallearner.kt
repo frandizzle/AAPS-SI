@@ -38,9 +38,11 @@ class BasalLearner @Inject constructor(
 ) {
     private data class BgDriftSample(val timestampMs: Long, val bgMgdl: Double)
 
-    private val window     = ArrayDeque<BgDriftSample>()
-    private var multiplier = 1.0
-    private var lastLearnMs = 0L
+    private val window          = ArrayDeque<BgDriftSample>()
+    private val dayMultipliers  = DoubleArray(7) { 1.0 }
+    private val daySampleCount  = IntArray(7) { 0 }
+    private var globalMultiplier = 1.0
+    private var lastLearnMs     = 0L
 
     init { restoreState() }
 
@@ -67,8 +69,10 @@ class BasalLearner @Inject constructor(
         private const val BASE_ALPHA               = 0.1
 
         // Hard limits
-        private const val MIN_MULTIPLIER           = 0.7
-        private const val MAX_MULTIPLIER           = 1.5
+        private const val MIN_MULTIPLIER             = 0.7
+        private const val MAX_MULTIPLIER             = 1.5
+        private const val MIN_DAY_SAMPLES_FOR_BLEND  = 15  // samples on a given day before blending in
+        val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
         // Overnight hours
         private const val OVERNIGHT_START_HOUR     = 0
@@ -85,10 +89,15 @@ class BasalLearner @Inject constructor(
     // ── Public API ────────────────────────────────────────────────────────────
 
     val multiplierClamped: Double
-        get() = multiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+        get() {
+            val dow   = currentDow()
+            val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
+            return (globalMultiplier * (1.0 - blend) + dayMultipliers[dow] * blend)
+                .coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+        }
 
     val reasonSummary: String
-        get() = "basal_x%.2f".format(Locale.US, multiplierClamped)
+        get() = "basal_x%.2f(g=%.2f)".format(Locale.US, multiplierClamped, globalMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER))
 
     /**
      * @param bgMgdl         Current BG mg/dL
@@ -145,20 +154,30 @@ class BasalLearner @Inject constructor(
             (profileBasalU + basalDeltaU) / profileBasalU
         else 1.0
 
-        val prevMultiplier = multiplier
-        multiplier = ((1.0 - alpha) * multiplier + alpha * requiredMultiplier)
+        val dow = currentDow()
+
+        // Update global multiplier — all observations contribute
+        val prevGlobal = globalMultiplier
+        globalMultiplier = ((1.0 - alpha) * globalMultiplier + alpha * requiredMultiplier)
             .coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+
+        // Update day-of-week multiplier
+        val prevDay = dayMultipliers[dow]
+        dayMultipliers[dow] = ((1.0 - alpha) * dayMultipliers[dow] + alpha * requiredMultiplier)
+            .coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+        daySampleCount[dow] = (daySampleCount[dow] + 1).coerceAtMost(999)
 
         lastLearnMs = nowMs
         saveState()
 
         aapsLogger.debug(LTag.APS,
-                         "BasalLearner: %s drift=%.1f mg/dL/hr δ=%.3f U/hr reqMult=%.3f α=%.2f mult %.3f→%.3f"
+                         "BasalLearner: %s drift=%.1f mg/dL/hr δ=%.3f U/hr reqMult=%.3f α=%.2f global %.3f→%.3f day[%s] %.3f→%.3f"
                              .format(
                                  Locale.US,
                                  if (isOvernight) "overnight" else "daytime",
                                  driftMgdlPerHr, basalDeltaU, requiredMultiplier, alpha,
-                                 prevMultiplier, multiplier
+                                 prevGlobal, globalMultiplier,
+                                 DAY_LABELS[dow], prevDay, dayMultipliers[dow]
                              ))
     }
 
@@ -166,13 +185,16 @@ class BasalLearner @Inject constructor(
 
     fun reset() {
         window.clear()
-        multiplier  = 1.0
-        lastLearnMs = 0L
+        for (i in 0..6) { dayMultipliers[i] = 1.0; daySampleCount[i] = 0 }
+        globalMultiplier = 1.0
+        lastLearnMs      = 0L
         preferences.put(StringKey.ApsSmartInsulinBasalState, "")
         aapsLogger.debug(LTag.APS, "BasalLearner: reset to 1.0")
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
+
+    private fun currentDow(): Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
 
     private fun pruneWindow(nowMs: Long) {
         while (window.isNotEmpty() && nowMs - window.first().timestampMs > SAMPLE_WINDOW_MS) {
@@ -184,12 +206,15 @@ class BasalLearner @Inject constructor(
         try {
             val arr = JSONArray()
             window.forEach { s -> arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_BG, s.bgMgdl)) }
+            val dayArr = org.json.JSONArray()
+            for (i in 0..6) dayArr.put(JSONObject().put("mult", dayMultipliers[i]).put("n", daySampleCount[i]))
             preferences.put(
                 StringKey.ApsSmartInsulinBasalState,
                 JSONObject()
-                    .put(K_MULTIPLIER, multiplier)
+                    .put(K_MULTIPLIER, globalMultiplier)
                     .put(K_LAST_LEARN, lastLearnMs)
                     .put(K_SAMPLES, arr)
+                    .put("dayMultipliers", dayArr)
                     .toString()
             )
         } catch (e: Exception) {
@@ -202,8 +227,16 @@ class BasalLearner @Inject constructor(
             val raw = preferences.get(StringKey.ApsSmartInsulinBasalState)
             if (raw.isBlank()) return
             val json    = JSONObject(raw)
-            multiplier  = json.optDouble(K_MULTIPLIER, 1.0).coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
-            lastLearnMs = json.optLong(K_LAST_LEARN, 0L)
+            globalMultiplier = json.optDouble(K_MULTIPLIER, 1.0).coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+            lastLearnMs      = json.optLong(K_LAST_LEARN, 0L)
+            val dayArr = json.optJSONArray("dayMultipliers")
+            if (dayArr != null) {
+                for (i in 0..6) {
+                    val obj = dayArr.optJSONObject(i) ?: continue
+                    dayMultipliers[i]  = obj.optDouble("mult", 1.0).coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+                    daySampleCount[i]  = obj.optInt("n", 0)
+                }
+            }
             val arr     = json.optJSONArray(K_SAMPLES) ?: return
             val nowMs   = System.currentTimeMillis()
             for (i in 0 until arr.length()) {
@@ -214,10 +247,10 @@ class BasalLearner @Inject constructor(
                 }
             }
             aapsLogger.debug(LTag.APS,
-                             "BasalLearner: restored multiplier=%.3f samples=${window.size}".format(Locale.US, multiplier))
+                             "BasalLearner: restored global=%.3f samples=${window.size}".format(Locale.US, globalMultiplier))
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BasalLearner: restore failed: ${e.message}")
-            multiplier = 1.0
+            globalMultiplier = 1.0
         }
     }
 }
