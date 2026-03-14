@@ -165,9 +165,10 @@ class AggressionLearner @Inject constructor(
                 todayStats.highPct > MAX_HIGH_PCT         -> (dayScores[dow] + STEP_UP * 1.5).coerceAtMost(ceil)
                 else                                      -> dayScores[dow] + (1.0 - dayScores[dow]) * 0.05
             }
+            daySampleCount[dow] = (daySampleCount[dow] + 1).coerceAtMost(999)
             if (dayScores[dow] != prev)
                 aapsLogger.debug(LTag.APS,
-                                 "AggressionLearner: day[${DAY_LABELS[dow]}] score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%%".format(
+                                 "AggressionLearner: day[${DAY_LABELS[dow]}] score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%% (n=${daySampleCount[dow]})".format(
                                      prev, dayScores[dow], todayStats.inRangePct, todayStats.highPct, todayStats.lowPct))
         }
 
