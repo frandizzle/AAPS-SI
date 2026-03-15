@@ -180,7 +180,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return buildString {
-            appendLine("SmartInsulin Status")
             appendLine()
 
             // ── Active cycle values ───────────────────────────────────────────
