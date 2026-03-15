@@ -17,8 +17,9 @@ import javax.inject.Singleton
  *
  * Maintains TWO sample sets:
  *
- *  - [allSamples]     — full 24h rolling window, all modes. Used only for tirSummary display.
- *  - [fastingSamples] — fasting-only samples. Used exclusively for score calculation.
+ *  - [fastingSamples] — fasting-only samples. Drives score calculation + fasting TIR display.
+ *  - [mealSamples]    — meal-mode samples. Display TIR only — post-meal highs don't affect scoring.
+ *  - [allSamples]     — all modes combined. Used only for pruning/persistence, not displayed.
  *
  * Why separate? A post-dinner spike at 6pm looks like "too much time high" to a naive
  * TIR-based score, pushing aggressiveness up. Next day at 6pm (pre-dinner, still fasting)
@@ -42,8 +43,9 @@ class AggressionLearner @Inject constructor(
     private enum class Zone { LOW, IN_RANGE, HIGH }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private val allSamples     = ArrayDeque<BgSample>()  // all modes — display TIR only
-    private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score
+    private val allSamples     = ArrayDeque<BgSample>()  // all modes — pruning/persistence only
+    private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score + display
+    private val mealSamples    = ArrayDeque<BgSample>()  // meal modes only — display TIR only
 
     // Day-of-week aware scores: [0=Sun..6=Sat] + global fallback
     private val dayScores      = DoubleArray(7) { 1.0 }
@@ -87,18 +89,19 @@ class AggressionLearner @Inject constructor(
         }
 
     /**
-     * TIR summary shows full 24h all-mode stats for display,
-     * plus fasting-only stats so you can see the split.
+     * TIR summary shows fasting and meal TIR separately for display.
+     * Fasting TIR also drives the aggressiveness score.
+     * Meal TIR is display-only — post-meal highs are expected and don't affect scoring.
      */
     val tirSummary: String
         get() {
-            val all     = computeTir(allSamples)
             val fasting = computeTir(fastingSamples)
-            val allStr  = all?.let { "${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
-                ?: "insufficient"
+            val meal    = computeTir(mealSamples)
             val fastStr = fasting?.let { "f:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
                 ?: "f:insufficient"
-            return "tir=$allStr $fastStr global=${"%.2f".format(globalScore)} today=${"%.2f".format(dayScores[currentDow()])}"
+            val mealStr = meal?.let { "m:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
+                ?: "m:insufficient"
+            return "tir=$fastStr $mealStr global=${"%.2f".format(globalScore)} today=${"%.2f".format(dayScores[currentDow()])}"
         }
 
     /**
@@ -117,6 +120,7 @@ class AggressionLearner @Inject constructor(
 
         allSamples.addLast(sample)
         if (isFasting) fastingSamples.addLast(sample)
+        else mealSamples.addLast(sample)
 
         pruneOldSamples(nowMs)
 
@@ -203,6 +207,7 @@ class AggressionLearner @Inject constructor(
     private fun pruneOldSamples(nowMs: Long) {
         while (allSamples.isNotEmpty()     && nowMs - allSamples.first().timestampMs     > WINDOW_MS) allSamples.removeFirst()
         while (fastingSamples.isNotEmpty() && nowMs - fastingSamples.first().timestampMs > WINDOW_MS) fastingSamples.removeFirst()
+        while (mealSamples.isNotEmpty()    && nowMs - mealSamples.first().timestampMs    > WINDOW_MS) mealSamples.removeFirst()
     }
 
     // ── Reset ─────────────────────────────────────────────────────────────────
@@ -210,6 +215,7 @@ class AggressionLearner @Inject constructor(
     fun reset() {
         allSamples.clear()
         fastingSamples.clear()
+        mealSamples.clear()
         for (i in 0..6) { dayScores[i] = 1.0; daySampleCount[i] = 0 }
         globalScore  = 1.0
         lastUpdateMs = 0L
@@ -222,6 +228,7 @@ class AggressionLearner @Inject constructor(
     private fun saveState() {
         try {
             val arr    = JSONArray()
+            // Save all samples (capped at 288 = 24h at 5 min intervals)
             val toSave = if (allSamples.size > 288) allSamples.takeLast(288) else allSamples
             toSave.forEach { s ->
                 arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting))
@@ -264,9 +271,10 @@ class AggressionLearner @Inject constructor(
                 val sample   = BgSample(ts, zone, isFasting)
                 allSamples.addLast(sample)
                 if (isFasting) fastingSamples.addLast(sample)
+                else mealSamples.addLast(sample)
             }
             aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: restored globalScore=$globalScore all=${allSamples.size} fasting=${fastingSamples.size}")
+                             "AggressionLearner: restored globalScore=$globalScore all=${allSamples.size} fasting=${fastingSamples.size} meal=${mealSamples.size}")
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: restore failed: ${e.message}")
             globalScore = 1.0
