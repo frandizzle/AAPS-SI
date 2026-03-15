@@ -210,7 +210,11 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── Learning ──────────────────────────")
             val state = cachedOverviewState
-            appendLine("  State: ${state.learningState}")
+            val learningDisplay = when (state.learningState) {
+                "limited" -> "Limited due to meal mode - DIA/Peak only"
+                else      -> state.learningState
+            }
+            appendLine("  State: $learningDisplay")
 
             // ── Activity ─────────────────────────────────────────────────────
             val actLevel = activityMonitor.level
@@ -502,7 +506,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activityMonitor.suppressLearning     -> "off: Activity (${activityMonitor.level.label})"
             cgmState.suppressLearning            -> "off: CGM warmup"
             highTempTarget                       -> "off: High temp target"
-            isMealMode                           -> "Limited due to meal mode - DIA/Peak only"  // DIA/peak only — no basal/ISF learning
+            isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
             else                                 -> "Learning"
         }
         val modeLineStr = mealOverrideManager.activeMealMode?.let {

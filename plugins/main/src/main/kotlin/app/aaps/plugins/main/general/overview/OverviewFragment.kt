@@ -1015,7 +1015,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val s = smartInsulinOverview.overviewState()
             val stateLabel = when (s.learningState) {
                 "Learning" -> "State: Learning"
-                "limited"  -> "State: Learning limited"
+                "limited"  -> "State: Limited (Peak/DIA only)"
                 else       -> "State: Not Learning"
             }
             binding.infoLayout.cob.apply {
