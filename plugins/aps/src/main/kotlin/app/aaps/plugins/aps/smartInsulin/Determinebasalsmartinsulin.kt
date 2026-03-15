@@ -158,17 +158,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // conservative 90 min default. Hard rails (50–110 min) prevent corrupt learned
         // values from causing unsafe behaviour. Meal mode has a 70 min floor since ISF
         // tightening already makes the curve aggressive — extra conservatism is free.
+        // Use learned peak minutes once enough samples exist, otherwise fall back to the
+        // seeded default (which is already sourced from activeInsulin.peak + profile DIA).
+        // Hard rails (50–110 min) guard against corrupt learned values regardless.
         val insulinPeakTicks = run {
-            val learnedTicks = (learnedProfile.peakMinutes / 5.0).toInt()
-            val baseTicks = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
-                18  // conservative 90 min default until enough data
+            val ticks = (learnedProfile.peakMinutes / 5.0).toInt()
+            if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
+                ticks.coerceIn(10, 18)  // seeded from real insulin but cap at 90 min until trusted
             else
-                learnedTicks.coerceIn(10, 22)  // hard rails: 50–110 min
-            when (mealMode) {
-                MealMode.FASTING  -> baseTicks.coerceAtLeast(10)  // trust learned data more in fasting
-                MealMode.LOW_CARB -> baseTicks.coerceAtLeast(12)  // 60 min floor
-                else              -> baseTicks.coerceAtLeast(14)  // 70 min floor for active meal modes
-            }
+                ticks.coerceIn(10, 22)  // hard rails: 50–110 min once learned
         }
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
