@@ -185,12 +185,12 @@ open class SmartInsulinPlugin @Inject constructor(
             // ── Active cycle values ───────────────────────────────────────────
             appendLine("── Active (Hour=${hour}:00, Day=$day) ─────────────────")
             val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
-            appendLine("  Aggressiveness : ${"%.3f".format(effectiveAggr)}")
-            appendLine("  TIR score    : ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
-            appendLine("  Circ ceiling : ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
-            appendLine("  Meal mode    : aggressiveness locked to 1.0 during any non-fasting mode")
-            appendLine("  ISF multiplier       : ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
-            appendLine("  Basal multiplier     : ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
+            appendLine("  Aggressiveness: ${"%.3f".format(effectiveAggr)}")
+            appendLine("  TIR score: ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
+            appendLine("  Circ ceiling: ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
+            appendLine("  Meal mode: aggressiveness locked to 1.0 during any non-fasting mode")
+            appendLine("  ISF multiplier: ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
+            appendLine("  Basal multiplier: ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
                            "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
