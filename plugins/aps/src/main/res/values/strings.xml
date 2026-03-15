@@ -307,4 +307,42 @@
     <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
     <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
 
+    <!-- SmartInsulin UAM auto-detection -->
+    <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
+    <string name="si_uam_trigger_threshold_title">UAM trigger threshold (mmol)</string>
+    <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading (mmol)</string>
+    <string name="si_uam_rise_readings_title">UAM consecutive rise readings required</string>
+    <string name="si_uam_night_cutoff_title">UAM night cutoff hour (0-23)</string>
+    <string name="si_uam_rearm_delay_title">UAM re-arm delay after expiry (min)</string>
+
+    <string name="si_uam_breakfast_enabled_title">UAM Breakfast enabled</string>
+    <string name="si_uam_breakfast_start_title">UAM Breakfast window start hour</string>
+    <string name="si_uam_breakfast_end_title">UAM Breakfast window end hour</string>
+    <string name="si_uam_breakfast_duration_title">UAM Breakfast mode duration (min)</string>
+    <string name="si_uam_breakfast_isf_title">UAM Breakfast ISF (mmol, 0 = profile)</string>
+
+    <string name="si_uam_lunch_enabled_title">UAM Lunch enabled</string>
+    <string name="si_uam_lunch_start_title">UAM Lunch window start hour</string>
+    <string name="si_uam_lunch_end_title">UAM Lunch window end hour</string>
+    <string name="si_uam_lunch_duration_title">UAM Lunch mode duration (min)</string>
+    <string name="si_uam_lunch_isf_title">UAM Lunch ISF (mmol, 0 = profile)</string>
+
+    <string name="si_uam_dinner_enabled_title">UAM Dinner enabled</string>
+    <string name="si_uam_dinner_start_title">UAM Dinner window start hour</string>
+    <string name="si_uam_dinner_end_title">UAM Dinner window end hour</string>
+    <string name="si_uam_dinner_duration_title">UAM Dinner mode duration (min)</string>
+    <string name="si_uam_dinner_isf_title">UAM Dinner ISF (mmol, 0 = profile)</string>
+
+    <string name="si_uam_snack_enabled_title">UAM Snack enabled</string>
+    <string name="si_uam_snack_start_title">UAM Snack window start hour</string>
+    <string name="si_uam_snack_end_title">UAM Snack window end hour</string>
+    <string name="si_uam_snack_duration_title">UAM Snack mode duration (min)</string>
+    <string name="si_uam_snack_isf_title">UAM Snack ISF (mmol, 0 = profile)</string>
+
+    <string name="si_uam_lowcarb_enabled_title">UAM Low Carb enabled</string>
+    <string name="si_uam_lowcarb_start_title">UAM Low Carb window start hour</string>
+    <string name="si_uam_lowcarb_end_title">UAM Low Carb window end hour</string>
+    <string name="si_uam_lowcarb_duration_title">UAM Low Carb mode duration (min)</string>
+    <string name="si_uam_lowcarb_isf_title">UAM Low Carb ISF (mmol, 0 = profile)</string>
+
 </resources>
