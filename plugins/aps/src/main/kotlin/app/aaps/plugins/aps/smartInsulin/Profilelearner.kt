@@ -195,10 +195,29 @@ class ProfileLearner @Inject constructor(
     private fun loadProfile(mode: MealMode): LearnedInsulinProfile {
         return try {
             val json = preferences.get(prefKeyFor(mode))
-            if (json.isBlank()) return profileSeededDefault(mode)
+            if (json.isBlank()) return safeSeededDefault(mode)
             LearnedInsulinProfile.fromJson(JSONObject(json), mode)
         } catch (_: Exception) {
+            safeSeededDefault(mode)
+        }
+    }
+
+    /**
+     * Safe default that won't crash during Dagger init.
+     * profileFunction.getProfile() requires APS to be selected — not safe at construction time.
+     * Falls back to hardcoded constants if the profile/APS isn't ready yet.
+     */
+    private fun safeSeededDefault(mode: MealMode): LearnedInsulinProfile {
+        return try {
             profileSeededDefault(mode)
+        } catch (_: Exception) {
+            // APS not yet selected (app startup) — use hardcoded fallback.
+            // getProfile() will be called on first actual use via getProfile(mode).
+            LearnedInsulinProfile.defaultFor(
+                mode,
+                55.0,  // conservative rapid-acting peak default
+                LearnedInsulinProfile.FALLBACK_DIA_MINS
+            )
         }
     }
 
