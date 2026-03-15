@@ -152,21 +152,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
             ticks         = learnedProfile.diaMinutes.toInt().coerceIn(360, 480) / 5
         )
 
-        // predictedMin: only look after insulin peak to avoid suspending on the early
-        // trough while insulin is still peaking. Uses learned peak once enough samples
-        // have accumulated (PEAK_LEARNING_MIN_SAMPLES), otherwise falls back to the
-        // conservative 90 min default. Hard rails (50–110 min) prevent corrupt learned
-        // values from causing unsafe behaviour. Meal mode has a 70 min floor since ISF
-        // tightening already makes the curve aggressive — extra conservatism is free.
-        // Use learned peak minutes once enough samples exist, otherwise fall back to the
-        // seeded default (which is already sourced from activeInsulin.peak + profile DIA).
-        // Hard rails (50–110 min) guard against corrupt learned values regardless.
+        // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
+        // suspending on the early trough while insulin is still peaking. The +2 tick
+        // buffer prevents a single noisy trough right at the peak boundary from driving
+        // a suspend decision — fallingIntoLow and LGS cover that window anyway.
+        // Seeded from activeInsulin.peak + profile DIA at n=0, transitions to learned
+        // values once sampleCount >= PEAK_LEARNING_MIN_SAMPLES.
+        // Hard rails ensure corrupt learned values can never cause unsafe behaviour.
         val insulinPeakTicks = run {
-            val ticks = (learnedProfile.peakMinutes / 5.0).toInt()
+            val ticks = (learnedProfile.peakMinutes / 5.0).toInt() + 2  // +2 ticks = +10 min buffer
             if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
-                ticks.coerceIn(10, 18)  // seeded from real insulin but cap at 90 min until trusted
+                ticks.coerceIn(10, 18)  // seeded from real insulin, capped at 90 min until trusted
             else
-                ticks.coerceIn(10, 22)  // hard rails: 50–110 min once learned
+                ticks.coerceIn(10, 24)  // hard rails: 50–120 min once learned
         }
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
