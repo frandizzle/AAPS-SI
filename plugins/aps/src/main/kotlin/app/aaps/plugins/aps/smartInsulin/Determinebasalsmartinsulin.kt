@@ -152,9 +152,24 @@ class DetermineBasalSmartInsulin @Inject constructor(
             ticks         = learnedProfile.diaMinutes.toInt().coerceIn(360, 480) / 5
         )
 
-        // predictedMin: only look after insulin peak (90 min = 18 ticks) to avoid
-        // suspending on the early trough while insulin is still peaking.
-        val insulinPeakTicks = 18  // 90 min / 5 min per tick
+        // predictedMin: only look after insulin peak to avoid suspending on the early
+        // trough while insulin is still peaking. Uses learned peak once enough samples
+        // have accumulated (PEAK_LEARNING_MIN_SAMPLES), otherwise falls back to the
+        // conservative 90 min default. Hard rails (50–110 min) prevent corrupt learned
+        // values from causing unsafe behaviour. Meal mode has a 70 min floor since ISF
+        // tightening already makes the curve aggressive — extra conservatism is free.
+        val insulinPeakTicks = run {
+            val learnedTicks = (learnedProfile.peakMinutes / 5.0).toInt()
+            val baseTicks = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
+                18  // conservative 90 min default until enough data
+            else
+                learnedTicks.coerceIn(10, 22)  // hard rails: 50–110 min
+            when (mealMode) {
+                MealMode.FASTING  -> baseTicks.coerceAtLeast(10)  // trust learned data more in fasting
+                MealMode.LOW_CARB -> baseTicks.coerceAtLeast(12)  // 60 min floor
+                else              -> baseTicks.coerceAtLeast(14)  // 70 min floor for active meal modes
+            }
+        }
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
         else
@@ -363,5 +378,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val REBOUND_TAPER_MINS     = 60.0
         private const val REBOUND_SMB_GATE       = 0.825 // SMBs blocked for first 45 min: taper=0.3+(0.7×0.75)=0.825 at t=45min
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
+        private const val PEAK_LEARNING_MIN_SAMPLES  = 5
     }
 }
