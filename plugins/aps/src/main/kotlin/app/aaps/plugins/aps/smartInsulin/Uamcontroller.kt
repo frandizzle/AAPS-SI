@@ -136,9 +136,10 @@ class UamController @Inject constructor(
         // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
         if (currentHour >= nightCutoff) {
-            if (consecutiveRiseReadings > 0) {
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
                 aapsLogger.debug(LTag.APS, "UAM: night cutoff (hour=$currentHour >= $nightCutoff), reset")
                 resetStreak()
+                stuckHighReadings = 0
             }
             return
         }
