@@ -68,7 +68,9 @@ class UamController @Inject constructor(
         // How long after a real low to block UAM
         private const val LOW_BLOCK_MINS            = 90L
         // shortAvgDelta must be at least this fraction of riseMinDelta
-        private const val SHORT_AVG_DELTA_FRACTION  = 0.75
+        private const val SHORT_AVG_DELTA_FRACTION   = 0.75
+        // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
+        private const val UNEXPECTED_RISE_MIN_MMOL   = 0.15
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -80,6 +82,8 @@ class UamController @Inject constructor(
      * @param currentBgMmol      Current BG in mmol/L
      * @param deltaMmol          5-min delta in mmol/L
      * @param shortAvgDeltaMmol  Short average delta (~15 min) in mmol/L
+     * @param bgiMmol            Blood glucose impact from insulin activity (negative = insulin pulling BG down)
+     *                           Computed as: -(iobActivity * ISF * 5) / 18.0
      * @param currentHour        Hour of day (0-23)
      * @param bgWentLow          True if a real low occurred (rebound protection)
      * @param inReboundWindow    True if currently in post-low rebound window
@@ -90,6 +94,7 @@ class UamController @Inject constructor(
         currentBgMmol:     Double,
         deltaMmol:         Double,
         shortAvgDeltaMmol: Double,
+        bgiMmol:           Double,
         currentHour:       Int,
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
@@ -167,11 +172,23 @@ class UamController @Inject constructor(
             resetStreak(); return
         }
 
-        // ── Rise confirmation: delta AND shortAvgDelta ────────────────────────
-        val riseMinDelta      = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
-        val shortAvgThreshold = riseMinDelta * SHORT_AVG_DELTA_FRACTION
+        // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
+        // unexpectedDelta = how much BG is rising beyond what insulin predicts.
+        // BGI is typically negative (insulin pulling BG down), so unexpectedDelta
+        // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
+        // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
+        // activity and is likely drift or noise rather than food.
+        val riseMinDelta       = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-        val risingNow = deltaMmol >= riseMinDelta && shortAvgDeltaMmol >= shortAvgThreshold
+
+        val unexpectedDelta = deltaMmol - bgiMmol
+        val unexpectedShort = shortAvgDeltaMmol - bgiMmol
+
+        val risingNow = deltaMmol >= riseMinDelta &&
+            shortAvgDeltaMmol >= shortAvgThreshold &&
+            unexpectedDelta >= UNEXPECTED_RISE_MIN_MMOL &&
+            unexpectedShort >= UNEXPECTED_RISE_MIN_MMOL * SHORT_AVG_DELTA_FRACTION
 
         if (risingNow) {
             if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
@@ -180,14 +197,18 @@ class UamController @Inject constructor(
             aapsLogger.debug(LTag.APS,
                              "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded " +
                                  "bg=${String.format("%.1f", currentBgMmol)}mmol " +
-                                 "Δ=+${String.format("%.2f", deltaMmol)} avg=+${String.format("%.2f", shortAvgDeltaMmol)} " +
-                                 "total=+${String.format("%.1f", totalRise)}mmol mode=${uamMode.label}")
+                                 "Δ=${String.format("%+.2f", deltaMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)} " +
+                                 "bgi=${String.format("%+.2f", bgiMmol)} " +
+                                 "uΔ=${String.format("%+.2f", unexpectedDelta)} uAvg=${String.format("%+.2f", unexpectedShort)} " +
+                                 "total=${String.format("%+.1f", totalRise)}mmol mode=${uamMode.label}")
         } else {
             if (consecutiveRiseReadings > 0)
                 aapsLogger.debug(LTag.APS,
-                                 "UAM: streak broken " +
-                                     "(Δ=${String.format("%.2f", deltaMmol)} needed>=$riseMinDelta, " +
-                                     "avg=${String.format("%.2f", shortAvgDeltaMmol)} needed>=${String.format("%.2f", shortAvgThreshold)}), reset")
+                                 "UAM: streak broken — " +
+                                     "Δ=${String.format("%+.2f", deltaMmol)}(need>=$riseMinDelta) " +
+                                     "avg=${String.format("%+.2f", shortAvgDeltaMmol)}(need>=${String.format("%.2f", shortAvgThreshold)}) " +
+                                     "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=$UNEXPECTED_RISE_MIN_MMOL) " +
+                                     "bgi=${String.format("%+.2f", bgiMmol)}, reset")
             resetStreak(); return
         }
 

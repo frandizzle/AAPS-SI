@@ -393,11 +393,15 @@ open class SmartInsulinPlugin @Inject constructor(
         // Use reboundWindowStartMs as proxy for lastLowTimeMs — it's set when BG recovers above
         // lowGuard, so it slightly underestimates time since low (conservative = safe).
         val uamLastLowTimeMs = if (bgWentLow) reboundWindowStartMs else 0L
+        // BGI = expected BG change from insulin activity alone (mg/dL per 5 min, converted to mmol)
+        // Negative = insulin pulling BG down. Used by UAM to detect rises beyond insulin prediction.
+        val uamBgiMmol = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0
         uamController.onLoopCycle(
             currentMealMode   = mealMode,
             currentBgMmol     = glucoseStatus.glucose / 18.0,
             deltaMmol         = glucoseStatus.delta / 18.0,
             shortAvgDeltaMmol = glucoseStatus.shortAvgDelta / 18.0,
+            bgiMmol           = uamBgiMmol,
             currentHour       = uamCurrentHour,
             bgWentLow         = bgWentLow,
             inReboundWindow   = inReboundWindow,
