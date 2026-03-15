@@ -192,8 +192,8 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
-    ApsSmartInsulinProfileUamLowCarb(
-        "si_profile_uam_low_carb",
+    ApsSmartInsulinProfileUamProteinFat(
+        "si_profile_uam_proteinfat",
         defaultValue          = "",
         showInApsMode         = false,
         showInNsClientMode    = false,
