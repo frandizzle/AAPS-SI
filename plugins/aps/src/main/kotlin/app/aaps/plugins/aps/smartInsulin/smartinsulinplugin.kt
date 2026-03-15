@@ -203,7 +203,7 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             val pb2Status = mealOverrideManager.preBolus2StatusText
             if (pb2Status.isNotEmpty()) {
-                appendLine("  $pb2Status")
+                appendLine("  ${pb2Status.replace("PB2 waiting:", "PB2:").replace("PB2 active:", "PB2:")}")
             }
 
             // ── Learning state ────────────────────────────────────────────────
@@ -214,7 +214,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 "limited" -> "Limited due to meal mode - DIA/Peak only"
                 else      -> state.learningState
             }
-            appendLine("  State: $learningDisplay")
+            appendLine("  Learning: $learningDisplay")
 
             // ── Activity ─────────────────────────────────────────────────────
             val actLevel = activityMonitor.level
