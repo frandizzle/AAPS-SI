@@ -1015,7 +1015,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val s = smartInsulinOverview.overviewState()
             val stateLabel = when {
                 s.learningState == "Learning" -> "Learning: Active"
-                s.learningState == "limited"  -> "Learning: Limited (Peak/DIA only)"
+                s.learningState == "limited"  -> "Learning: Peak/DIA only"
                 s.learningState.startsWith("off: ") -> {
                     val reason = s.learningState.removePrefix("off: ")
                     "Learning: Off ($reason)"
