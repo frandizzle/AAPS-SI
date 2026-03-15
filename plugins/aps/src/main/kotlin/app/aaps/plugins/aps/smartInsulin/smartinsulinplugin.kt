@@ -86,6 +86,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activePlugin: ActivePlugin,
     private val dateUtil: DateUtil,
     private val determineBasalSmartInsulin: DetermineBasalSmartInsulin,
+    private val stftController: StftController,
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
     private val aggressionLearner: AggressionLearner,
@@ -362,6 +363,22 @@ open class SmartInsulinPlugin @Inject constructor(
             maxIobU       = constraintsChecker.getMaxIOBAllowed().value()
         )
 
+        // ── STFT: short-term target reduction for stuck-high fasting BG ──────
+        // Only runs in fasting, never overrides a deliberate temp target.
+        // Adjusts targetBg downward to make the loop naturally more aggressive
+        // without touching ISF, basal, aggressiveness, or any learners.
+        // STFT runs every cycle — it handles meal mode and temp target suppression internally.
+        // When a temp target is active we still call it so it can reset cleanly, but we
+        // discard the adjusted value and keep the user's deliberate temp target.
+        val profileTargetMgdl = profile.getTargetMgdl()
+        val stftAdjusted = stftController.onLoopCycle(
+            profileTargetMgdl = profileTargetMgdl,
+            currentBgMgdl     = glucoseStatus.glucose,
+            delta             = glucoseStatus.delta,
+            mealMode          = mealMode
+        )
+        val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
+
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
@@ -373,7 +390,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_basal                       = constraintsChecker.getMaxBasalAllowed(profile).also { inputConstraints.copyReasons(it) }.value(),
             min_bg                          = minBg,
             max_bg                          = maxBg,
-            target_bg                       = targetBg,
+            target_bg                       = stftTargetMgdl,
             carb_ratio                      = profile.getIc(),
             sens                            = dosingIsfMgdl,  // meal mode ISF if set, else true profile ISF
             autosens_adjust_targets         = false,
@@ -494,8 +511,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // High TT = deliberate conservative mode (exercise/illness) — don't learn from it
         // Meal modes = COB active, loop reacting to carbs — basal signal is meaningless
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
-        val profileTargetMgdl = profile.getTargetMgdl()
         val highTempTarget = isTempTarget && targetBg > profileTargetMgdl
+
 
         // ── Cache Overview state — updated here where all conditions are in scope ──
         // highTempTarget, mealMode, cgmState, activityMonitor all available now.
@@ -637,6 +654,9 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason
         )
+
+        // Append STFT status to reason if active
+        stftController.statusString()?.let { apsResult.reason += " | $it" }
 
         apsResult.inputConstraints = inputConstraints
         apsResult.autosensResult   = autosensResult
