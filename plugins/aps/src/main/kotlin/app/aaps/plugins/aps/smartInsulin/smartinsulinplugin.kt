@@ -180,18 +180,18 @@ open class SmartInsulinPlugin @Inject constructor(
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return buildString {
-            appendLine("=== SmartInsulin Status ===")
+            appendLine("SmartInsulin Status")
             appendLine()
 
             // ── Active cycle values ───────────────────────────────────────────
-            appendLine("── Active (h=${hour}:00, d=$day) ─────────────────")
+            appendLine("── Active (Hour=${hour}:00, Day=$day) ─────────────────")
             val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
             appendLine("  Aggressiveness : ${"%.3f".format(effectiveAggr)}")
-            appendLine("    TIR score    : ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
-            appendLine("    Circ ceiling : ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
-            appendLine("    Meal mode    : aggressiveness locked to 1.0 during any non-fasting mode")
-            appendLine("  ISF mult       : ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
-            appendLine("  Basal mult     : ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
+            appendLine("  TIR score    : ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
+            appendLine("  Circ ceiling : ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
+            appendLine("  Meal mode    : aggressiveness locked to 1.0 during any non-fasting mode")
+            appendLine("  ISF multiplier       : ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
+            appendLine("  Basal multiplier     : ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
                            "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
@@ -211,11 +211,11 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── Learning ──────────────────────────")
             val state = cachedOverviewState
-            appendLine("  State        : ${state.learningState}")
+            appendLine("  State: ${state.learningState}")
 
             // ── Activity ─────────────────────────────────────────────────────
             val actLevel = activityMonitor.level
-            appendLine("  Activity     : ${actLevel.label} " +
+            appendLine("  Activity: ${actLevel.label} " +
                            "hr=${activityMonitor.avgHrBpm.toInt()}avg " +
                            "steps=${activityMonitor.lastSteps5min}/5m")
             appendLine()
@@ -499,11 +499,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val isMealMode = mealMode != MealMode.FASTING
         val learningStateStr = when {
-            !learningEnabledCache                -> "off: learning disabled"
-            activityMonitor.suppressLearning     -> "off: activity (${activityMonitor.level.label})"
+            !learningEnabledCache                -> "off: Learning disabled"
+            activityMonitor.suppressLearning     -> "off: Activity (${activityMonitor.level.label})"
             cgmState.suppressLearning            -> "off: CGM warmup"
-            highTempTarget                       -> "off: high temp target"
-            isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
+            highTempTarget                       -> "off: High temp target"
+            isMealMode                           -> "Limited due to meal mode - DIA/Peak only"  // DIA/peak only — no basal/ISF learning
             else                                 -> "Learning"
         }
         val modeLineStr = mealOverrideManager.activeMealMode?.let {
