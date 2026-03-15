@@ -387,22 +387,22 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
         // Only fires in FASTING mode within configured time windows.
-        // Activates the appropriate UAM mode via MealOverrideManager — no bolus,
-        // ISF-only adjustment. Hard cutoff at configured night hour (default 23:00).
+        // Expiry detection is handled internally by UamController via previousMealMode tracking.
+        // Safety inputs (bgWentLow, inReboundWindow) prevent false triggers from rebound rises.
         val uamCurrentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        // Use reboundWindowStartMs as proxy for lastLowTimeMs — it's set when BG recovers above
+        // lowGuard, so it slightly underestimates time since low (conservative = safe).
+        val uamLastLowTimeMs = if (bgWentLow) reboundWindowStartMs else 0L
         uamController.onLoopCycle(
-            currentMealMode = mealMode,
-            currentBgMmol   = glucoseStatus.glucose / 18.0,
-            deltaMmol       = glucoseStatus.delta / 18.0,
-            currentHour     = uamCurrentHour
+            currentMealMode   = mealMode,
+            currentBgMmol     = glucoseStatus.glucose / 18.0,
+            deltaMmol         = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol = glucoseStatus.shortAvgDelta / 18.0,
+            currentHour       = uamCurrentHour,
+            bgWentLow         = bgWentLow,
+            inReboundWindow   = inReboundWindow,
+            lastLowTimeMs     = uamLastLowTimeMs
         )
-
-        // Track UAM mode expiry for re-arm — if previous cycle had a UAM mode and now we're fasting
-        if (previousAPSResult != null && mealMode == MealMode.FASTING) {
-            // Check if we just transitioned out of a UAM mode
-            val prevMealMode = mealOverrideManager.activeMealMode
-            if (prevMealMode == null) uamController.onUamModeExpired()
-        }
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump

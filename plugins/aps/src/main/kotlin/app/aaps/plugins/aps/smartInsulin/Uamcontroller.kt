@@ -20,8 +20,12 @@ import javax.inject.Singleton
  *
  * ## Detection logic
  * - Current hour must fall within a UAM mode's configured window
- * - BG must be above [uamTriggerThresholdMmol] (default 6.0 mmol)
- * - [riseConsecutiveReadings] consecutive CGM readings each with delta >= [riseMinDeltaMmol]
+ * - No recent low / rebound window active (hard block)
+ * - BG must be above [triggerThresholdMmol] (default 6.0 mmol)
+ * - [riseConsecutiveReadings] consecutive readings with:
+ *     - delta >= [riseMinDeltaMmol]
+ *     - shortAvgDelta >= [riseMinDeltaMmol] * 0.75  (filters single-reading noise)
+ * - Total BG rise since streak start >= [RISE_TOTAL_MMOL_MIN] (filters wobble streaks)
  * → auto-activate the matching UAM mode via [MealOverrideManager.activateOverride]
  *
  * ## Hard cutoff
@@ -32,63 +36,110 @@ import javax.inject.Singleton
  * After a UAM mode expires, the controller waits [reArmDelayMins] before allowing
  * re-activation. If BG is still elevated after re-arm, it will trigger again.
  *
- * ## Learner isolation
- * UAM modes (e.g. UAM_LUNCH) are separate from manual modes (LUNCH) in MealMode,
- * so ProfileLearner accumulates independent peak/DIA data for auto-detected meals.
+ * ## Safety blocks
+ * UAM will not fire if:
+ *   - A real low occurred recently (within [LOW_BLOCK_MINS])
+ *   - The rebound window is active
+ *
+ * ## Window priority
+ * Breakfast → Lunch → Dinner → Snack → Low Carb (first match wins).
+ * If windows overlap, the earlier meal slot takes priority.
  */
 @Singleton
 class UamController @Inject constructor(
-    private val preferences:          Preferences,
-    private val mealOverrideManager:  MealOverrideManager,
-    private val aapsLogger:           AAPSLogger
+    private val preferences:         Preferences,
+    private val mealOverrideManager: MealOverrideManager,
+    private val aapsLogger:          AAPSLogger
 ) {
 
     // ── State ─────────────────────────────────────────────────────────────────
     private var consecutiveRiseReadings = 0
-    private var lastUamMode:   MealMode? = null
-    private var lastUamTimeMs: Long      = 0L
-    private var lastUamTriggerCount      = 0
-    private var uamExpiredAtMs: Long     = 0L  // when the last UAM mode expired
+    private var bgAtStreakStart:  Double  = 0.0
+    private var lastUamMode:    MealMode? = null
+    private var lastUamTimeMs:  Long      = 0L
+    private var lastUamTriggerCount       = 0
+    private var uamExpiredAtMs: Long      = 0L
+    private var previousMealMode: MealMode? = null  // for expiry transition detection
 
     companion object {
-        private const val MMOL_TO_MGDL = 18.0
-        private const val HARD_CUTOFF_HOUR_DEFAULT = 23
+        // Minimum total BG rise over the full streak before triggering
+        private const val RISE_TOTAL_MMOL_MIN      = 0.8
+        // How long after a real low to block UAM
+        private const val LOW_BLOCK_MINS            = 90L
+        // shortAvgDelta must be at least this fraction of riseMinDelta
+        private const val SHORT_AVG_DELTA_FRACTION  = 0.75
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
      * Call once per loop cycle from SmartInsulinPlugin.invoke().
-     * Only acts when [currentMealMode] is FASTING — UAM won't fire over a manual mode.
+     *
+     * @param currentMealMode    Current active meal mode
+     * @param currentBgMmol      Current BG in mmol/L
+     * @param deltaMmol          5-min delta in mmol/L
+     * @param shortAvgDeltaMmol  Short average delta (~15 min) in mmol/L
+     * @param currentHour        Hour of day (0-23)
+     * @param bgWentLow          True if a real low occurred (rebound protection)
+     * @param inReboundWindow    True if currently in post-low rebound window
+     * @param lastLowTimeMs      Timestamp of last low event (0 if never)
      */
     fun onLoopCycle(
-        currentMealMode: MealMode,
-        currentBgMmol:   Double,
-        deltaMmol:       Double,
-        currentHour:     Int
+        currentMealMode:   MealMode,
+        currentBgMmol:     Double,
+        deltaMmol:         Double,
+        shortAvgDeltaMmol: Double,
+        currentHour:       Int,
+        bgWentLow:         Boolean,
+        inReboundWindow:   Boolean,
+        lastLowTimeMs:     Long
     ) {
+        // ── Expiry detection — track mode transitions ─────────────────────────
+        // When we go from a UAM mode back to FASTING, the mode just expired
+        if (previousMealMode?.isUam == true && currentMealMode == MealMode.FASTING) {
+            if (uamExpiredAtMs == 0L) {
+                uamExpiredAtMs = System.currentTimeMillis()
+                aapsLogger.debug(LTag.APS, "UAM: ${previousMealMode!!.label} expired, re-arm timer started")
+            }
+        }
+        previousMealMode = currentMealMode
+
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
-            consecutiveRiseReadings = 0
-            return
+            resetStreak(); return
         }
 
-        // Only detect when fasting — don't fire over a manual or existing UAM mode
+        // Only detect during fasting — don't stack on manual or active UAM mode
         if (currentMealMode != MealMode.FASTING) {
-            consecutiveRiseReadings = 0
-            return
+            resetStreak(); return
         }
 
-        // Hard cutoff — no UAM after configured hour
+        // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
         if (currentHour >= nightCutoff) {
             if (consecutiveRiseReadings > 0) {
-                aapsLogger.debug(LTag.APS, "UAM: night cutoff reached (hour=$currentHour >= $nightCutoff), resetting")
-                consecutiveRiseReadings = 0
+                aapsLogger.debug(LTag.APS, "UAM: night cutoff (hour=$currentHour >= $nightCutoff), reset")
+                resetStreak()
             }
             return
         }
 
-        // Check re-arm delay — don't re-trigger too soon after last UAM expiry
+        // ── Safety block: recent low / rebound ───────────────────────────────
+        val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
+        val lowBlockMs = LOW_BLOCK_MINS * 60_000L
+        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
+            if (consecutiveRiseReadings > 0) {
+                val reason = when {
+                    inReboundWindow         -> "rebound window active"
+                    bgWentLow               -> "recent low (bgWentLow)"
+                    else                    -> "low ${msSinceLow / 60_000}min ago < ${LOW_BLOCK_MINS}min block"
+                }
+                aapsLogger.debug(LTag.APS, "UAM: blocked — $reason, streak reset")
+                resetStreak()
+            }
+            return
+        }
+
+        // ── Re-arm delay ─────────────────────────────────────────────────────
         val reArmDelayMs = preferences.get(IntKey.ApsSmartInsulinUamReArmDelayMins) * 60_000L
         if (uamExpiredAtMs > 0L && System.currentTimeMillis() - uamExpiredAtMs < reArmDelayMs) {
             val waitMins = (reArmDelayMs - (System.currentTimeMillis() - uamExpiredAtMs)) / 60_000
@@ -96,106 +147,105 @@ class UamController @Inject constructor(
             return
         }
 
-        // Find which UAM mode window we're in (if any)
+        // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
-            consecutiveRiseReadings = 0
-            return
+            resetStreak(); return
         }
 
-        // Check BG above trigger threshold
+        // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
         if (currentBgMmol < triggerThresholdMmol) {
-            consecutiveRiseReadings = 0
-            return
+            resetStreak(); return
         }
 
-        // Accumulate rise readings
-        val riseMinDelta       = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        // ── Rise confirmation: delta AND shortAvgDelta ────────────────────────
+        val riseMinDelta      = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val shortAvgThreshold = riseMinDelta * SHORT_AVG_DELTA_FRACTION
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+        val risingNow = deltaMmol >= riseMinDelta && shortAvgDeltaMmol >= shortAvgThreshold
 
-        if (deltaMmol >= riseMinDelta) {
+        if (risingNow) {
+            if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
             consecutiveRiseReadings++
+            val totalRise = currentBgMmol - bgAtStreakStart
             aapsLogger.debug(LTag.APS,
-                             "UAM: rise detected $consecutiveRiseReadings/$riseReadingsNeeded " +
-                                 "bg=${currentBgMmol}mmol delta=+${deltaMmol}mmol mode=${uamMode.label}")
+                             "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded " +
+                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
+                                 "Δ=+${String.format("%.2f", deltaMmol)} avg=+${String.format("%.2f", shortAvgDeltaMmol)} " +
+                                 "total=+${String.format("%.1f", totalRise)}mmol mode=${uamMode.label}")
         } else {
             if (consecutiveRiseReadings > 0)
-                aapsLogger.debug(LTag.APS, "UAM: rise streak broken (delta=${deltaMmol}mmol < min ${riseMinDelta}mmol), reset")
-            consecutiveRiseReadings = 0
-            return
+                aapsLogger.debug(LTag.APS,
+                                 "UAM: streak broken " +
+                                     "(Δ=${String.format("%.2f", deltaMmol)} needed>=$riseMinDelta, " +
+                                     "avg=${String.format("%.2f", shortAvgDeltaMmol)} needed>=${String.format("%.2f", shortAvgThreshold)}), reset")
+            resetStreak(); return
         }
 
-        // Trigger if enough consecutive rising readings
+        // ── Total rise gate ───────────────────────────────────────────────────
         if (consecutiveRiseReadings >= riseReadingsNeeded) {
-            triggerUam(uamMode, currentBgMmol, deltaMmol)
-            consecutiveRiseReadings = 0
+            val totalRise = currentBgMmol - bgAtStreakStart
+            if (totalRise < RISE_TOTAL_MMOL_MIN) {
+                aapsLogger.debug(LTag.APS,
+                                 "UAM: readings met but total rise ${String.format("%.2f", totalRise)}mmol " +
+                                     "< ${RISE_TOTAL_MMOL_MIN}mmol min — holding for more movement")
+                return  // keep streak alive, don't reset
+            }
+            triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
+            resetStreak()
         }
-    }
-
-    /**
-     * Call when a UAM mode expires so the re-arm timer starts.
-     * SmartInsulinPlugin should call this when it detects the active UAM mode has expired.
-     */
-    fun onUamModeExpired() {
-        uamExpiredAtMs = System.currentTimeMillis()
-        aapsLogger.debug(LTag.APS, "UAM: mode expired, re-arm timer started")
     }
 
     /** Status string for loop reason output — null if nothing to show */
     fun statusString(): String? {
-        val now = System.currentTimeMillis()
-
-        // Show active watching state
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
             return "UAM: watching ($consecutiveRiseReadings/$riseReadingsNeeded rising)"
         }
-
-        // Show last trigger history
         if (lastUamMode != null && lastUamTimeMs > 0L) {
-            val cal = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
-            val h   = cal.get(Calendar.HOUR_OF_DAY)
-            val m   = cal.get(Calendar.MINUTE)
-            val timeStr = "%02d:%02d".format(h, m)
+            val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
+            val timeStr = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
             val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""
             return "UAM: last ${lastUamMode!!.label} $timeStr$countStr"
         }
-
         return null
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
 
-    private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double) {
+    private fun resetStreak() {
+        consecutiveRiseReadings = 0
+        bgAtStreakStart         = 0.0
+    }
+
+    private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double) {
         val durationMins = uamDurationMins(mode)
         val isfMmol      = uamIsfMmol(mode)
         val now          = System.currentTimeMillis()
 
-        // Track trigger history
         lastUamTriggerCount = if (lastUamMode == mode &&
             now - lastUamTimeMs < 4 * 60 * 60 * 1000L) lastUamTriggerCount + 1 else 1
-        lastUamMode   = mode
-        lastUamTimeMs = now
-        uamExpiredAtMs = 0L  // reset expiry — new activation in progress
+        lastUamMode    = mode
+        lastUamTimeMs  = now
+        uamExpiredAtMs = 0L
 
         aapsLogger.debug(LTag.APS,
-                         "UAM: TRIGGERING ${mode.label} bg=${bgMmol}mmol delta=+${deltaMmol}mmol " +
-                             "isf=${isfMmol}mmol duration=${durationMins}min (trigger #$lastUamTriggerCount)")
+                         "UAM: TRIGGERING ${mode.label} " +
+                             "bg=${String.format("%.1f", bgMmol)}mmol " +
+                             "Δ=+${String.format("%.2f", deltaMmol)}mmol " +
+                             "totalRise=+${String.format("%.1f", totalRise)}mmol " +
+                             "isf=${isfMmol}mmol duration=${durationMins}min " +
+                             "(trigger #$lastUamTriggerCount)")
 
         mealOverrideManager.activateOverride(
             mode         = mode,
-            doseU        = null,   // UAM is ISF-only, no bolus
+            doseU        = null,
             carbsG       = 0,
             modeWindowMs = durationMins * 60_000L
         )
     }
 
-    /**
-     * Resolve which UAM mode applies for [currentHour].
-     * Returns null if no window matches or that mode is disabled.
-     */
     private fun resolveUamMode(currentHour: Int): MealMode? {
-        // Check each UAM mode window in priority order
         val candidates = listOf(
             Triple(MealMode.UAM_BREAKFAST,
                    preferences.get(IntKey.ApsSmartInsulinUamBreakfastStartHour),
@@ -213,7 +263,6 @@ class UamController @Inject constructor(
                    preferences.get(IntKey.ApsSmartInsulinUamLowCarbStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamLowCarbEndHour))
         )
-
         return candidates.firstOrNull { (mode, start, end) ->
             uamModeEnabled(mode) && hourInWindow(currentHour, start, end)
         }?.first
@@ -221,7 +270,7 @@ class UamController @Inject constructor(
 
     private fun hourInWindow(hour: Int, start: Int, end: Int): Boolean =
         if (start <= end) hour in start until end
-        else hour >= start || hour < end  // handles midnight wrap
+        else hour >= start || hour < end
 
     private fun uamModeEnabled(mode: MealMode): Boolean = when (mode) {
         MealMode.UAM_BREAKFAST -> preferences.get(BooleanKey.ApsSmartInsulinUamBreakfastEnabled)
