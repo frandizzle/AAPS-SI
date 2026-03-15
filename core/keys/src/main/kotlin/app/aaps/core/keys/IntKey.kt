@@ -104,7 +104,7 @@ enum class IntKey(
     ApsSmartInsulinUamSnackStartHour("si_uam_snack_start", 21, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     ApsSmartInsulinUamSnackEndHour("si_uam_snack_end", 23, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     ApsSmartInsulinUamSnackDurationMins("si_uam_snack_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
-    // Low Carb UAM window (user configures, disabled by default)
+    // Low Carb UAM (protein/fat catch-all) window (user configures, disabled by default)
     ApsSmartInsulinUamLowCarbStartHour("si_uam_lowcarb_start", 0, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
     ApsSmartInsulinUamLowCarbEndHour("si_uam_lowcarb_end", 0, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
     ApsSmartInsulinUamLowCarbDurationMins("si_uam_lowcarb_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),

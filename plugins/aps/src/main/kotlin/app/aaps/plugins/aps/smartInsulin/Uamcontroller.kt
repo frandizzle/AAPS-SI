@@ -150,6 +150,7 @@ class UamController @Inject constructor(
         if (uamExpiredAtMs > 0L && System.currentTimeMillis() - uamExpiredAtMs < reArmDelayMs) {
             val waitMins = (reArmDelayMs - (System.currentTimeMillis() - uamExpiredAtMs)) / 60_000
             aapsLogger.debug(LTag.APS, "UAM: re-arm delay active (${waitMins}min remaining)")
+            resetStreak()  // clear any building streak so it can't carry over into re-arm
             return
         }
 

@@ -567,16 +567,22 @@ open class SmartInsulinPlugin @Inject constructor(
             else                                 -> "Learning"
         }
         val modeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
-            val prefix = if (mode.isUam) "Meal: UAM" else "Meal:"
-            val shortLabel = when (mode) {
-                MealMode.UAM_BREAKFAST -> "Breakfast"
-                MealMode.UAM_LUNCH     -> "Lunch"
-                MealMode.UAM_DINNER    -> "Dinner"
-                MealMode.UAM_SNACK     -> "Snack"
-                MealMode.UAM_LOW_CARB  -> "Low Carb"
-                else                   -> mode.label
+            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
+            if (mode.isUam) {
+                // UAM modes: "Meal: UAM (Dinner) 25m", "Meal: UAM (Low Carb) 25m"
+                val uamLabel = when (mode) {
+                    MealMode.UAM_BREAKFAST -> "Breakfast"
+                    MealMode.UAM_LUNCH     -> "Lunch"
+                    MealMode.UAM_DINNER    -> "Dinner"
+                    MealMode.UAM_SNACK     -> "Snack"
+                    MealMode.UAM_LOW_CARB  -> "Low Carb"
+                    else                   -> mode.label
+                }
+                "Meal: UAM ($uamLabel) ${mins}m"
+            } else {
+                // Manual modes: "Meal: Dinner 25m"
+                "Meal: ${mode.label} ${mins}m"
             }
-            "$prefix $shortLabel ${mealOverrideManager.modeTimeRemainingMs / 60_000}m"
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
             val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
@@ -956,7 +962,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,         title = R.string.si_uam_snack_duration_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamSnackIsf,               title = R.string.si_uam_snack_isf_title))
 
-            // Low Carb UAM
+            // Low Carb UAM (protein/fat catch-all)
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLowCarbEnabled,        title = R.string.si_uam_lowcarb_enabled_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLowCarbStartHour,          title = R.string.si_uam_lowcarb_start_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLowCarbEndHour,            title = R.string.si_uam_lowcarb_end_title))
