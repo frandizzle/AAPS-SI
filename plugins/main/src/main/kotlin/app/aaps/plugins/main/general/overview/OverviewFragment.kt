@@ -1013,10 +1013,14 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             binding.infoLayout.carbsIcon.visibility = View.GONE
 
             val s = smartInsulinOverview.overviewState()
-            val stateLabel = when (s.learningState) {
-                "Learning" -> "Learning: Active"
-                "limited"  -> "Learning: Limited (Peak/DIA only)"
-                else       -> "Learning: Off"
+            val stateLabel = when {
+                s.learningState == "Learning" -> "Learning: Active"
+                s.learningState == "limited"  -> "Learning: Limited (Peak/DIA only)"
+                s.learningState.startsWith("off: ") -> {
+                    val reason = s.learningState.removePrefix("off: ")
+                    "Learning: Off ($reason)"
+                }
+                else -> "Learning: Off"
             }
             binding.infoLayout.cob.apply {
                 // Fixed 10sp — fits 3 lines in the cell at the same visual weight as the surrounding labels
