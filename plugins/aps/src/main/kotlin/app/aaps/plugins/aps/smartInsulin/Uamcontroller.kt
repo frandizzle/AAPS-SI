@@ -59,7 +59,8 @@ class UamController @Inject constructor(
     private var lastUamTimeMs:  Long      = 0L
     private var lastUamTriggerCount       = 0
     private var uamExpiredAtMs: Long      = 0L
-    private var previousMealMode: MealMode? = null  // for expiry transition detection
+    private var previousMealMode: MealMode?  = null  // for expiry transition detection
+    private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
     companion object {
         // Minimum total BG rise over the full streak before triggering
@@ -151,6 +152,14 @@ class UamController @Inject constructor(
         val uamMode = resolveUamMode(currentHour) ?: run {
             resetStreak(); return
         }
+
+        // Reset streak if we've moved into a different meal window mid-streak.
+        // Avoids carrying a Lunch-window streak into the Dinner window.
+        if (consecutiveRiseReadings > 0 && lastResolvedMode != null && lastResolvedMode != uamMode) {
+            aapsLogger.debug(LTag.APS, "UAM: window changed ${lastResolvedMode!!.label}→${uamMode.label}, streak reset")
+            resetStreak()
+        }
+        lastResolvedMode = uamMode
 
         // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
