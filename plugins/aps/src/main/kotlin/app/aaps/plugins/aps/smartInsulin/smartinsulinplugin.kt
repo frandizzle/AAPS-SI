@@ -87,6 +87,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val dateUtil: DateUtil,
     private val determineBasalSmartInsulin: DetermineBasalSmartInsulin,
     private val stftController: StftController,
+    private val uamController: UamController,
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
     private val aggressionLearner: AggressionLearner,
@@ -334,11 +335,16 @@ open class SmartInsulinPlugin @Inject constructor(
         // Absolute ISF override per meal mode — 0.0 means not set, fall back to profile ISF
         // When set, this fully replaces profile ISF for both prediction and dosing
         val modeIsfMmol = when (mealMode) {
-            MealMode.BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
-            MealMode.LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
-            MealMode.DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
-            MealMode.LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
-            MealMode.EXTENDED  -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+            MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+            MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+            MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+            MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+            MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+            MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+            MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinUamLowCarbIsf)
             MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
@@ -378,6 +384,25 @@ open class SmartInsulinPlugin @Inject constructor(
             mealMode          = mealMode
         )
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
+
+        // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
+        // Only fires in FASTING mode within configured time windows.
+        // Activates the appropriate UAM mode via MealOverrideManager — no bolus,
+        // ISF-only adjustment. Hard cutoff at configured night hour (default 23:00).
+        val uamCurrentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        uamController.onLoopCycle(
+            currentMealMode = mealMode,
+            currentBgMmol   = glucoseStatus.glucose / 18.0,
+            deltaMmol       = glucoseStatus.delta / 18.0,
+            currentHour     = uamCurrentHour
+        )
+
+        // Track UAM mode expiry for re-arm — if previous cycle had a UAM mode and now we're fasting
+        if (previousAPSResult != null && mealMode == MealMode.FASTING) {
+            // Check if we just transitioned out of a UAM mode
+            val prevMealMode = mealOverrideManager.activeMealMode
+            if (prevMealMode == null) uamController.onUamModeExpired()
+        }
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
@@ -430,7 +455,18 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
-        val learnedProfile    = profileLearner.getProfile(mealMode)
+        // UAM modes share peak/DIA learning with their parent mode — they accumulate
+        // separate observations but start from the same profile. This means UAM_LUNCH
+        // uses LUNCH's learned peak/DIA until it has its own samples.
+        val learnedProfileMode = when (mealMode) {
+            MealMode.UAM_BREAKFAST -> MealMode.BREAKFAST
+            MealMode.UAM_LUNCH     -> MealMode.LUNCH
+            MealMode.UAM_DINNER    -> MealMode.DINNER
+            MealMode.UAM_SNACK     -> MealMode.DINNER   // closest equivalent
+            MealMode.UAM_LOW_CARB  -> MealMode.LOW_CARB
+            else                   -> mealMode
+        }
+        val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
 
         // ── Activity monitor — recompute from fed HR/steps data ─────────────
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
@@ -523,11 +559,20 @@ open class SmartInsulinPlugin @Inject constructor(
             activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
             cgmState.suppressLearning            -> "off: CGM warmup"
             highTempTarget                       -> "off: High temp target"
-            isMealMode                           -> "limited"  // DIA/peak only — no basal/ISF learning
+            isMealMode || mealMode.isUam         -> "limited"  // DIA/peak only — no basal/ISF learning
             else                                 -> "Learning"
         }
-        val modeLineStr = mealOverrideManager.activeMealMode?.let {
-            "Meal: ${it.label} ${mealOverrideManager.modeTimeRemainingMs / 60_000}m"
+        val modeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
+            val prefix = if (mode.isUam) "Meal: UAM" else "Meal:"
+            val shortLabel = when (mode) {
+                MealMode.UAM_BREAKFAST -> "Breakfast"
+                MealMode.UAM_LUNCH     -> "Lunch"
+                MealMode.UAM_DINNER    -> "Dinner"
+                MealMode.UAM_SNACK     -> "Snack"
+                MealMode.UAM_LOW_CARB  -> "Low Carb"
+                else                   -> mode.label
+            }
+            "$prefix $shortLabel ${mealOverrideManager.modeTimeRemainingMs / 60_000}m"
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
             val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
@@ -657,6 +702,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Append STFT status to reason if active
         stftController.statusString()?.let { apsResult.reason += " | $it" }
+        uamController.statusString()?.let  { apsResult.reason += " | $it" }
 
         apsResult.inputConstraints = inputConstraints
         apsResult.autosensResult   = autosensResult

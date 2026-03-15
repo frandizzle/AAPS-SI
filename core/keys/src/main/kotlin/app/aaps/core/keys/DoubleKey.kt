@@ -73,4 +73,13 @@ enum class DoubleKey(
     ApsSmartInsulinActivityModerateTargetMmol("si_activity_moderate_target_mmol", 1.0, 0.0, 3.0, defaultedBySM = true),
     ApsSmartInsulinActivityHeavyTargetMmol("si_activity_heavy_target_mmol", 1.5, 0.0, 3.0, defaultedBySM = true),
 
+    // UAM auto-detection
+    ApsSmartInsulinUamTriggerThresholdMmol("si_uam_trigger_mmol", 6.0, 4.0, 10.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamRiseMinDeltaMmol("si_uam_rise_min_delta_mmol", 0.2, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamBreakfastIsf("si_uam_breakfast_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    ApsSmartInsulinUamLunchIsf("si_uam_lunch_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    ApsSmartInsulinUamDinnerIsf("si_uam_dinner_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamSnackIsf("si_uam_snack_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamLowCarbIsf("si_uam_lowcarb_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
+
 }

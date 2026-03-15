@@ -178,12 +178,18 @@ class ProfileLearner @Inject constructor(
 
     private fun prefKeyFor(mode: MealMode): StringKey =
         when (mode) {
-            MealMode.FASTING   -> StringKey.ApsSmartInsulinProfileFasting
-            MealMode.LOW_CARB  -> StringKey.ApsSmartInsulinProfileLowCarb
-            MealMode.BREAKFAST -> StringKey.ApsSmartInsulinProfileBreakfast
-            MealMode.LUNCH     -> StringKey.ApsSmartInsulinProfileLunch
-            MealMode.DINNER    -> StringKey.ApsSmartInsulinProfileDinner
-            MealMode.EXTENDED  -> StringKey.ApsSmartInsulinProfileExtended
+            MealMode.FASTING       -> StringKey.ApsSmartInsulinProfileFasting
+            MealMode.LOW_CARB      -> StringKey.ApsSmartInsulinProfileLowCarb
+            MealMode.BREAKFAST     -> StringKey.ApsSmartInsulinProfileBreakfast
+            MealMode.LUNCH         -> StringKey.ApsSmartInsulinProfileLunch
+            MealMode.DINNER        -> StringKey.ApsSmartInsulinProfileDinner
+            MealMode.EXTENDED      -> StringKey.ApsSmartInsulinProfileExtended
+            // UAM modes — separate profile learning from manual meal modes
+            MealMode.UAM_BREAKFAST -> StringKey.ApsSmartInsulinProfileUamBreakfast
+            MealMode.UAM_LUNCH     -> StringKey.ApsSmartInsulinProfileUamLunch
+            MealMode.UAM_DINNER    -> StringKey.ApsSmartInsulinProfileUamDinner
+            MealMode.UAM_SNACK     -> StringKey.ApsSmartInsulinProfileUamSnack
+            MealMode.UAM_LOW_CARB  -> StringKey.ApsSmartInsulinProfileUamLowCarb
         }
 
     private fun loadProfile(mode: MealMode): LearnedInsulinProfile {

@@ -83,4 +83,29 @@ enum class IntKey(
     NsClientUrgentAlarmStaleData("ns_alarm_urgent_stale_data_value", 31, 30, 180),
 
     SiteRotationUserProfile("site_rotation_user_profile", 0, 0, 2),
+
+    // UAM auto-detection
+    ApsSmartInsulinUamNightCutoffHour("si_uam_night_cutoff_hour", 23, 20, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamReArmDelayMins("si_uam_rearm_delay_mins", 30, 10, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamRiseConsecutiveReadings("si_uam_rise_readings", 3, 2, 6, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    // Breakfast UAM window
+    ApsSmartInsulinUamBreakfastStartHour("si_uam_breakfast_start", 6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    ApsSmartInsulinUamBreakfastEndHour("si_uam_breakfast_end", 10, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    ApsSmartInsulinUamBreakfastDurationMins("si_uam_breakfast_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    // Lunch UAM window
+    ApsSmartInsulinUamLunchStartHour("si_uam_lunch_start", 10, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    ApsSmartInsulinUamLunchEndHour("si_uam_lunch_end", 14, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    ApsSmartInsulinUamLunchDurationMins("si_uam_lunch_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    // Dinner UAM window
+    ApsSmartInsulinUamDinnerStartHour("si_uam_dinner_start", 17, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamDinnerEndHour("si_uam_dinner_end", 21, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamDinnerDurationMins("si_uam_dinner_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    // Snack UAM window
+    ApsSmartInsulinUamSnackStartHour("si_uam_snack_start", 21, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamSnackEndHour("si_uam_snack_end", 23, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamSnackDurationMins("si_uam_snack_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    // Low Carb UAM window (user configures, disabled by default)
+    ApsSmartInsulinUamLowCarbStartHour("si_uam_lowcarb_start", 0, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
+    ApsSmartInsulinUamLowCarbEndHour("si_uam_lowcarb_end", 0, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
+    ApsSmartInsulinUamLowCarbDurationMins("si_uam_lowcarb_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLowCarbEnabled),
 }

@@ -159,4 +159,45 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — UAM mode learned insulin profiles (JSON, not user-visible)
+    ApsSmartInsulinProfileUamBreakfast(
+        "si_profile_uam_breakfast",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
+    ApsSmartInsulinProfileUamLunch(
+        "si_profile_uam_lunch",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
+    ApsSmartInsulinProfileUamDinner(
+        "si_profile_uam_dinner",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
+    ApsSmartInsulinProfileUamSnack(
+        "si_profile_uam_snack",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
+    ApsSmartInsulinProfileUamLowCarb(
+        "si_profile_uam_low_carb",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
 }

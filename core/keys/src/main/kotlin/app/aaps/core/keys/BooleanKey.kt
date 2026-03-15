@@ -46,6 +46,13 @@ enum class BooleanKey(
     ApsSmartInsulinCgmWarmupEnabled("si_cgm_warmup_enabled", true, defaultedBySM = true),
     ApsSmartInsulinLowCarbMode("si_low_carb_mode", false, defaultedBySM = true),
     ApsSmartInsulinActivityTargetEnabled("si_activity_target_enabled", true, defaultedBySM = true),
+    // UAM auto-detection
+    ApsSmartInsulinUamEnabled("si_uam_enabled", false, defaultedBySM = true),
+    ApsSmartInsulinUamBreakfastEnabled("si_uam_breakfast_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamLunchEnabled("si_uam_lunch_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamDinnerEnabled("si_uam_dinner_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamSnackEnabled("si_uam_snack_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamLowCarbEnabled("si_uam_lowcarb_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
 
     BgSourceUploadToNs("dexcomg5_nsupload", true, defaultedBySM = true, hideParentScreenIfHidden = true),
     BgSourceCreateSensorChange("dexcom_lognssensorchange", true, defaultedBySM = true),
