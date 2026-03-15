@@ -56,8 +56,8 @@ enum class MealMode(
         learningWeight     = 0.4,
         isUam              = true
     ),
-    UAM_LOW_CARB(
-        label              = "Low Carb (UAM)",
+    UAM_PROTEIN_FAT(
+        label              = "Protein/Fat (UAM)",
         diaLearningEnabled = true,
         learningWeight     = 0.4,
         isUam              = true

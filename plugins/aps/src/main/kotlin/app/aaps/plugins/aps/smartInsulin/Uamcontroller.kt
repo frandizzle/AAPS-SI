@@ -62,6 +62,9 @@ class UamController @Inject constructor(
     private var previousMealMode: MealMode?  = null  // for expiry transition detection
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
+    // Stuck-high state for UAM_PROTEIN_FAT detection
+    private var stuckHighReadings = 0  // consecutive readings with BG above threshold and flat delta
+
     companion object {
         // Minimum total BG rise over the full streak before triggering
         private const val RISE_TOTAL_MMOL_MIN      = 0.8
@@ -71,6 +74,13 @@ class UamController @Inject constructor(
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
         // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
         private const val UNEXPECTED_RISE_MIN_MMOL   = 0.15
+
+        // Stuck-high detection for UAM_PROTEIN_FAT
+        // Delta must be in this range to count as "stuck" (not falling, not spiking)
+        private const val STUCK_DELTA_MIN_MMOL        = -0.1   // not falling
+        private const val STUCK_DELTA_MAX_MMOL        = 0.2    // not spiking (carbs would be higher)
+        // 6 readings = 30 min at 5 min intervals
+        private const val STUCK_READINGS_NEEDED       = 6
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -111,12 +121,16 @@ class UamController @Inject constructor(
         previousMealMode = currentMealMode
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
-            resetStreak(); return
+            resetStreak()
+            stuckHighReadings = 0
+            return
         }
 
         // Only detect during fasting — don't stack on manual or active UAM mode
         if (currentMealMode != MealMode.FASTING) {
-            resetStreak(); return
+            resetStreak()
+            stuckHighReadings = 0
+            return
         }
 
         // ── Hard night cutoff ─────────────────────────────────────────────────
@@ -150,9 +164,15 @@ class UamController @Inject constructor(
         if (uamExpiredAtMs > 0L && System.currentTimeMillis() - uamExpiredAtMs < reArmDelayMs) {
             val waitMins = (reArmDelayMs - (System.currentTimeMillis() - uamExpiredAtMs)) / 60_000
             aapsLogger.debug(LTag.APS, "UAM: re-arm delay active (${waitMins}min remaining)")
-            resetStreak()  // clear any building streak so it can't carry over into re-arm
+            resetStreak()        // clear rise streak so it can't carry over into re-arm
+            stuckHighReadings = 0  // clear stuck streak too
             return
         }
+
+        // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
+        // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
+        // gated like meal slots. Runs every fasting cycle after safety checks pass.
+        checkStuckHigh(currentBgMmol, deltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs)
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
@@ -227,11 +247,79 @@ class UamController @Inject constructor(
         }
     }
 
+    /**
+     * Stuck-high detection for UAM_PROTEIN_FAT.
+     * Called every fasting loop cycle. Triggers when BG has been above threshold
+     * with flat delta for [STUCK_READINGS_NEEDED] consecutive readings (default 30 min).
+     * Only fires when no meal-slot UAM window is active — protein/fat is the fallback.
+     */
+    private fun checkStuckHigh(
+        currentBgMmol:   Double,
+        deltaMmol:       Double,
+        currentHour:     Int,
+        bgWentLow:       Boolean,
+        inReboundWindow: Boolean,
+        lastLowTimeMs:   Long
+    ) {
+        if (!uamModeEnabled(MealMode.UAM_PROTEIN_FAT)) {
+            stuckHighReadings = 0
+            return
+        }
+
+        // Don't fire if a meal-slot window is currently active — let those handle it
+        val mealSlotActive = resolveUamMode(currentHour)
+            ?.let { it != MealMode.UAM_PROTEIN_FAT } == true
+        if (mealSlotActive) {
+            stuckHighReadings = 0
+            return
+        }
+
+        // Respect the same safety blocks as rise detection
+        val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
+        val lowBlockMs = LOW_BLOCK_MINS * 60_000L
+        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
+            stuckHighReadings = 0
+            return
+        }
+
+        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+
+        // BG must be above threshold AND delta must be flat (not falling, not spiking)
+        val isStuck = currentBgMmol >= triggerThresholdMmol &&
+            deltaMmol >= STUCK_DELTA_MIN_MMOL &&
+            deltaMmol <= STUCK_DELTA_MAX_MMOL
+
+        if (isStuck) {
+            stuckHighReadings++
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: stuck-high $stuckHighReadings/$STUCK_READINGS_NEEDED " +
+                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
+                                 "Δ=${String.format("%+.2f", deltaMmol)}mmol")
+
+            if (stuckHighReadings >= STUCK_READINGS_NEEDED) {
+                aapsLogger.debug(LTag.APS,
+                                 "UAM_PROTEIN_FAT: TRIGGERING after ${stuckHighReadings * 5}min stuck above " +
+                                     "${triggerThresholdMmol}mmol")
+                triggerUam(MealMode.UAM_PROTEIN_FAT, currentBgMmol, deltaMmol, 0.0)
+                stuckHighReadings = 0
+            }
+        } else {
+            if (stuckHighReadings > 0)
+                aapsLogger.debug(LTag.APS,
+                                 "UAM_PROTEIN_FAT: stuck streak broken " +
+                                     "(bg=${String.format("%.1f", currentBgMmol)} Δ=${String.format("%+.2f", deltaMmol)}), reset")
+            stuckHighReadings = 0
+        }
+    }
+
     /** Status string for loop reason output — null if nothing to show */
     fun statusString(): String? {
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
             return "UAM: watching ($consecutiveRiseReadings/$riseReadingsNeeded rising)"
+        }
+        if (stuckHighReadings > 0) {
+            return "UAM: P/F watching ($stuckHighReadings/$STUCK_READINGS_NEEDED stuck)"
         }
         if (lastUamMode != null && lastUamTimeMs > 0L) {
             val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
@@ -290,9 +378,9 @@ class UamController @Inject constructor(
             Triple(MealMode.UAM_SNACK,
                    preferences.get(IntKey.ApsSmartInsulinUamSnackStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamSnackEndHour)),
-            Triple(MealMode.UAM_LOW_CARB,
-                   preferences.get(IntKey.ApsSmartInsulinUamLowCarbStartHour),
-                   preferences.get(IntKey.ApsSmartInsulinUamLowCarbEndHour))
+            Triple(MealMode.UAM_PROTEIN_FAT,
+                   preferences.get(IntKey.ApsSmartInsulinUamProteinFatStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamProteinFatEndHour))
         )
         return candidates.firstOrNull { (mode, start, end) ->
             uamModeEnabled(mode) && hourInWindow(currentHour, start, end)
@@ -308,7 +396,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(BooleanKey.ApsSmartInsulinUamLunchEnabled)
         MealMode.UAM_DINNER    -> preferences.get(BooleanKey.ApsSmartInsulinUamDinnerEnabled)
         MealMode.UAM_SNACK     -> preferences.get(BooleanKey.ApsSmartInsulinUamSnackEnabled)
-        MealMode.UAM_LOW_CARB  -> preferences.get(BooleanKey.ApsSmartInsulinUamLowCarbEnabled)
+        MealMode.UAM_PROTEIN_FAT  -> preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
         else                   -> false
     }
 
@@ -317,7 +405,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(IntKey.ApsSmartInsulinUamLunchDurationMins).toLong()
         MealMode.UAM_DINNER    -> preferences.get(IntKey.ApsSmartInsulinUamDinnerDurationMins).toLong()
         MealMode.UAM_SNACK     -> preferences.get(IntKey.ApsSmartInsulinUamSnackDurationMins).toLong()
-        MealMode.UAM_LOW_CARB  -> preferences.get(IntKey.ApsSmartInsulinUamLowCarbDurationMins).toLong()
+        MealMode.UAM_PROTEIN_FAT  -> preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins).toLong()
         else                   -> 30L
     }
 
@@ -326,7 +414,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
         MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
         MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-        MealMode.UAM_LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinUamLowCarbIsf)
-        else                   -> preferences.get(DoubleKey.ApsSmartInsulinUamLowCarbIsf)
+        MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
+        else                   -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
     }
 }

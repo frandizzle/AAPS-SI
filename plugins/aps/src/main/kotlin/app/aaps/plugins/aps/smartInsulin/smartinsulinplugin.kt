@@ -344,7 +344,7 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
             MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
             MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-            MealMode.UAM_LOW_CARB  -> preferences.get(DoubleKey.ApsSmartInsulinUamLowCarbIsf)
+            MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
             MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
@@ -467,7 +467,7 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_LUNCH     -> MealMode.LUNCH
             MealMode.UAM_DINNER    -> MealMode.DINNER
             MealMode.UAM_SNACK     -> MealMode.DINNER   // closest equivalent
-            MealMode.UAM_LOW_CARB  -> MealMode.LOW_CARB
+            MealMode.UAM_PROTEIN_FAT  -> MealMode.LOW_CARB
             else                   -> mealMode
         }
         val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
@@ -575,7 +575,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_LUNCH     -> "Lunch"
                     MealMode.UAM_DINNER    -> "Dinner"
                     MealMode.UAM_SNACK     -> "Snack"
-                    MealMode.UAM_LOW_CARB  -> "Low Carb"
+                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
                     else                   -> mode.label
                 }
                 "Meal: UAM ($uamLabel) ${mins}m"
@@ -962,12 +962,10 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,         title = R.string.si_uam_snack_duration_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamSnackIsf,               title = R.string.si_uam_snack_isf_title))
 
-            // Low Carb UAM (protein/fat catch-all)
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLowCarbEnabled,        title = R.string.si_uam_lowcarb_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLowCarbStartHour,          title = R.string.si_uam_lowcarb_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLowCarbEndHour,            title = R.string.si_uam_lowcarb_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLowCarbDurationMins,       title = R.string.si_uam_lowcarb_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamLowCarbIsf,             title = R.string.si_uam_lowcarb_isf_title))
+            // Protein/Fat UAM (stuck-high detection — no time window, runs all day until night cutoff)
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,        title = R.string.si_uam_proteinfat_enabled_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,       title = R.string.si_uam_proteinfat_duration_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatIsf,             title = R.string.si_uam_proteinfat_isf_title))
         }
     }
 }

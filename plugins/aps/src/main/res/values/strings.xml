@@ -339,10 +339,8 @@
     <string name="si_uam_snack_duration_title">UAM Snack mode duration (min)</string>
     <string name="si_uam_snack_isf_title">UAM Snack ISF (mmol, 0 = profile)</string>
 
-    <string name="si_uam_lowcarb_enabled_title">UAM Low Carb enabled</string>
-    <string name="si_uam_lowcarb_start_title">UAM window start hour</string>
-    <string name="si_uam_lowcarb_end_title">UAM window end hour</string>
-    <string name="si_uam_lowcarb_duration_title">UAM mode duration (min)</string>
-    <string name="si_uam_lowcarb_isf_title">UAM ISF (mmol, 0 = profile)</string>
+    <string name="si_uam_proteinfat_enabled_title">UAM Protein/Fat enabled (stuck-high detection)</string>
+    <string name="si_uam_proteinfat_duration_title">UAM Protein/Fat mode duration (min)</string>
+    <string name="si_uam_proteinfat_isf_title">UAM Protein/Fat ISF (mmol, 0 = profile)</string>
 
 </resources>
