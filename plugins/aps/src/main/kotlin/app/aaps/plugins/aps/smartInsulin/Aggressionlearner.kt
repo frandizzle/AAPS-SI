@@ -97,10 +97,10 @@ class AggressionLearner @Inject constructor(
         get() {
             val fasting = computeTir(fastingSamples)
             val meal    = computeTir(mealSamples)
-            val fastStr = fasting?.let { "f:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
-                ?: "f:insufficient"
-            val mealStr = meal?.let { "m:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
-                ?: "m:insufficient"
+            val fastStr = fasting?.let { "Fasting:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
+                ?: "Fasting:insufficient"
+            val mealStr = meal?.let { "Meal:${it.inRangePct.toInt()}%in/${it.highPct.toInt()}%hi/${it.lowPct.toInt()}%lo" }
+                ?: "Meal:insufficient"
             return "tir=$fastStr $mealStr global=${"%.2f".format(globalScore)} today=${"%.2f".format(dayScores[currentDow()])}"
         }
 
