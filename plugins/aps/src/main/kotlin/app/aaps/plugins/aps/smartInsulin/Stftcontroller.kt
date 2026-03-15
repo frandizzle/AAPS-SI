@@ -136,11 +136,16 @@ class StftController @Inject constructor(
         return adjustedTarget
     }
 
-    /** Current STFT status for display — null if inactive */
+    /** Current STFT status for display — null if inactive and not watching */
     fun statusString(): String? {
-        if (!stftActive) return null
-        val reductionMmol = stepsApplied * STEP_MMOL
-        return "STFT: -%.1fmmol target (${stepsApplied * 5}min above target)".format(reductionMmol)
+        if (stftActive) {
+            val reductionMmol = stepsApplied * STEP_MMOL
+            return "STFT: -%.1fmmol target (${stepsApplied * 5}min above target)".format(reductionMmol)
+        }
+        if (consecutiveAbove > 0) {
+            return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${TRIGGER_THRESHOLD_MMOL}mmol)"
+        }
+        return null
     }
 
     /** True if STFT is currently adjusting the target */
