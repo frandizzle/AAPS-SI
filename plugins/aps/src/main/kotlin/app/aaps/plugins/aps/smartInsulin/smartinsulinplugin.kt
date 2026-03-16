@@ -220,24 +220,22 @@ open class SmartInsulinPlugin @Inject constructor(
             // STFT
             val stftStatus = stftController.statusString()
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
-            // UAM
+            // UAM status
             val uamStatus = uamController.statusString()
             if (uamStatus != null) appendLine("  $uamStatus") else appendLine("  UAM: idle")
+            // UAM thresholds + last reject
+            appendLine(uamController.debugSummary())
             // Post-meal lockout
-            if (learningDirtyUntilMs > 0L) {
-                val now = System.currentTimeMillis()
-                if (now < learningDirtyUntilMs) {
-                    val minsLeft = (learningDirtyUntilMs - now) / 60_000
-                    appendLine("  Post-meal lockout: active (${minsLeft}min left) — UAM stricter thresholds ON")
-                } else {
-                    appendLine("  Post-meal lockout: expired")
-                }
+            val nowSi = System.currentTimeMillis()
+            if (learningDirtyUntilMs > 0L && nowSi < learningDirtyUntilMs) {
+                val minsLeft = (learningDirtyUntilMs - nowSi) / 60_000
+                appendLine("  Post-meal lockout: ${minsLeft}min left — UAM↑ thresholds ON")
             } else {
                 appendLine("  Post-meal lockout: none")
             }
-            // Rebound
-            if (inReboundWindow) appendLine("  Rebound window: ${msSinceLastSuspend / 60_000}min elapsed")
-            if (bgWentLow && !inReboundWindow) appendLine("  Recent low: watching for recovery")
+            // Safety state
+            if (inReboundWindow) appendLine("  ⚠ Rebound: ${msSinceLastSuspend / 60_000}min elapsed")
+            if (bgWentLow && !inReboundWindow) appendLine("  ⚠ Recent low: watching for recovery")
 
             // ── Learning state ────────────────────────────────────────────────
             appendLine()

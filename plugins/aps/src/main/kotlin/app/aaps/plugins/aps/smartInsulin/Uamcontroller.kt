@@ -60,7 +60,13 @@ class UamController @Inject constructor(
     // Stuck-high state for UAM_PROTEIN_FAT detection
     private var stuckHighReadings = 0
     // Post-meal lockout state — updated each cycle for statusString access
-    private var currentlyInPostMealLockout = false  // consecutive readings with BG above threshold and flat delta
+    private var currentlyInPostMealLockout = false
+
+    // Last reject tracking for debug display
+    private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
+                                  val unexpectedActual: Double, val unexpectedNeeded: Double,
+                                  val wasDirtyWindow: Boolean)
+    private var lastReject: RejectInfo? = null  // consecutive readings with BG above threshold and flat delta
 
     companion object {
         // How long after a real low to block UAM
@@ -268,6 +274,15 @@ class UamController @Inject constructor(
                                      "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=${String.format("%.2f", unexpectedMin)}) " +
                                      "bgi=${String.format("%+.2f", bgiMmol)}, reset")
             }
+            // Record reject reason for SI tab debug display
+            val rejectReason = when {
+                deltaMmol < riseMinDelta         -> "Δ ${String.format("%.2f", deltaMmol)} < ${String.format("%.2f", riseMinDelta)}"
+                shortAvgDeltaMmol < shortAvgThreshold -> "avg ${String.format("%.2f", shortAvgDeltaMmol)} < ${String.format("%.2f", shortAvgThreshold)}"
+                unexpectedDelta < unexpectedMin  -> "uΔ ${String.format("%.2f", unexpectedDelta)} < ${String.format("%.2f", unexpectedMin)}"
+                unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${String.format("%.2f", unexpectedShort)} < ${String.format("%.2f", unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
+                else                             -> "threshold not met"
+            }
+            lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
             resetStreak(); return
         }
 
@@ -348,6 +363,34 @@ class UamController @Inject constructor(
                                      "(bg=${String.format("%.1f", currentBgMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)}), reset")
             stuckHighReadings = 0
         }
+    }
+
+    /**
+     * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
+     */
+    fun debugSummary(): String {
+        val riseMinDeltaBase = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val normalDelta      = riseMinDeltaBase
+        val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
+        val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
+        val dirtyUnexpected  = UNEXPECTED_RISE_MIN_MMOL * DIRTY_WINDOW_UNEXPECTED_MULT
+        val riseNeeded       = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+        val activeMode       = if (currentlyInPostMealLockout) "dirty" else "normal"
+
+        return buildString {
+            appendLine("  UAM thresholds:")
+            appendLine("    normal: Δ≥${String.format("%.2f", normalDelta)}  uΔ≥${String.format("%.2f", normalUnexpected)}  readings=$riseNeeded")
+            appendLine("    dirty : Δ≥${String.format("%.2f", dirtyDelta)}  uΔ≥${String.format("%.2f", dirtyUnexpected)}  readings=$riseNeeded")
+            appendLine("    active: $activeMode")
+            val reject = lastReject
+            if (reject != null) {
+                val dirtyTag = if (reject.wasDirtyWindow) " [dirty]" else ""
+                appendLine("  Last UAM reject$dirtyTag: ${reject.reason}")
+            }
+            if (stuckHighReadings > 0) {
+                appendLine("  P/F stuck: $stuckHighReadings/$STUCK_READINGS_NEEDED readings")
+            }
+        }.trimEnd()
     }
 
     /** Status string for loop reason output — null if nothing to show */
