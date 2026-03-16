@@ -62,6 +62,7 @@ class UamController @Inject constructor(
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
+    private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
 
@@ -129,6 +130,7 @@ class UamController @Inject constructor(
     ) {
         previousMealMode = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
+        currentlyInMealMode        = currentMealMode != MealMode.FASTING
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
             resetStreak()
@@ -207,7 +209,7 @@ class UamController @Inject constructor(
         // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
         // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
         // gated like meal slots. Runs every fasting cycle after safety checks pass.
-        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs)
+        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout)
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
@@ -328,18 +330,21 @@ class UamController @Inject constructor(
         currentHour:       Int,
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
-        lastLowTimeMs:     Long
+        lastLowTimeMs:     Long,
+        currentMealMode:   MealMode,
+        inPostMealLockout: Boolean
     ) {
-        if (!uamModeEnabled(MealMode.UAM_PROTEIN_FAT)) {
+        // Check P/F preference directly — uamModeEnabled() returns false for P/F
+        if (!preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
             stuckHighReadings = 0
             return
         }
 
-        // Don't fire if a meal-slot window is currently active — let those handle it
-        val mealSlotActive = resolveUamMode(currentHour)
-            ?.let { it != MealMode.UAM_PROTEIN_FAT } == true
-        if (mealSlotActive) {
-            stuckHighReadings = 0
+        // Block P/F while a meal or UAM mode is active — let those handle the carb rise.
+        // P/F is for the fat/protein TAIL after the meal mode expires, not the initial rise.
+        // Post-meal dirty window (fasting but recently ate) = P/F armed for the tail.
+        if (currentMealMode != MealMode.FASTING) {
+            if (stuckHighReadings > 0) stuckHighReadings = 0
             return
         }
 
@@ -426,6 +431,8 @@ class UamController @Inject constructor(
                 when {
                     currentlyPastNightCutoff ->
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
+                    currentlyInMealMode ->
+                        appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
                     else -> {
                         val avgStr = String.format("%+.2f", lastStuckAvgDelta)
                         val bgStr  = String.format("%.1f", lastStuckBgMmol)
@@ -535,7 +542,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(BooleanKey.ApsSmartInsulinUamLunchEnabled)
         MealMode.UAM_DINNER    -> preferences.get(BooleanKey.ApsSmartInsulinUamDinnerEnabled)
         MealMode.UAM_SNACK     -> preferences.get(BooleanKey.ApsSmartInsulinUamSnackEnabled)
-        MealMode.UAM_PROTEIN_FAT  -> false  // not time-window gated — handled by checkStuckHigh()
+        MealMode.UAM_PROTEIN_FAT  -> false  // no time window — P/F uses direct pref check in checkStuckHigh()
         else                   -> false
     }
 
