@@ -86,7 +86,7 @@ class UamController @Inject constructor(
 
         // Stuck-high detection for UAM_PROTEIN_FAT
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
-        private const val STUCK_DELTA_MIN_MMOL        = -0.1   // not falling
+        private const val STUCK_DELTA_MIN_MMOL        = -0.15  // -0.1 with small noise tolerance — genuinely falling (-0.2+) excluded
         private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
         // 6 readings = 30 min at 5 min intervals
         // STUCK_READINGS_NEEDED moved to user preference ApsSmartInsulinUamProteinFatStuckReadings
