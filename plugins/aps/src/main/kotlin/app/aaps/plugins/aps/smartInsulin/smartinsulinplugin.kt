@@ -1051,6 +1051,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol,   title = R.string.si_uam_trigger_threshold_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,             title = R.string.si_uam_day_start_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,           title = R.string.si_uam_night_cutoff_title))
 
             // Breakfast UAM

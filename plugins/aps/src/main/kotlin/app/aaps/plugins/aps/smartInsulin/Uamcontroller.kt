@@ -163,12 +163,15 @@ class UamController @Inject constructor(
 
         // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
-        // Simple 24h check. Cutoff=23 → disabled from 11pm. Cutoff=1 → disabled from 1am.
-        // For overnight coverage set cutoff to 1 or 2 to allow P/F detection past midnight.
-        if (currentHour >= nightCutoff) {
+        val dayStart    = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
+        // UAM active window: dayStart until nightCutoff.
+        // Outside that window (nightCutoff → dayStart next day) UAM is blocked.
+        // e.g. dayStart=9, cutoff=1 → active 9am–1am, blocked 1am–9am.
+        val inActiveWindow = currentHour in dayStart until nightCutoff
+        if (!inActiveWindow) {
             currentlyPastNightCutoff = true
             if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
-                aapsLogger.debug(LTag.APS, "UAM: night cutoff (hour=$currentHour >= $nightCutoff), reset")
+                aapsLogger.debug(LTag.APS, "UAM: outside active window (hour=$currentHour window=${dayStart}:00-${nightCutoff}:00), reset")
                 resetStreak()
                 stuckHighReadings = 0
             }
@@ -404,7 +407,7 @@ class UamController @Inject constructor(
                 appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $stuckNeeded readings)")
                 when {
                     currentlyPastNightCutoff ->
-                        appendLine("  P/F stuck: off (past night cutoff ${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
+                        appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
                     stuckHighReadings > 0 ->
                         appendLine("  P/F stuck: $stuckHighReadings/$stuckNeeded readings above ${triggerMmol}mmol")
                     else ->
