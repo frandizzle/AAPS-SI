@@ -412,10 +412,8 @@ class UamController @Inject constructor(
                 when {
                     currentlyPastNightCutoff ->
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
-                    stuckHighReadings > 0 ->
-                        appendLine("  P/F stuck: $stuckHighReadings/$stuckNeeded readings above ${triggerMmol}mmol")
                     else ->
-                        appendLine("  P/F stuck: watching (need BG>=${triggerMmol}mmol with flat avg Δ)")
+                        appendLine("  P/F stuck: $stuckHighReadings/$stuckNeeded readings above ${triggerMmol}mmol (need flat avg Δ -0.1→${STUCK_DELTA_MAX_MMOL}mmol)")
                 }
             } else {
                 appendLine("  P/F detection: disabled")
@@ -431,9 +429,13 @@ class UamController @Inject constructor(
             val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote)"
         }
-        if (stuckHighReadings > 0) {
+        // Always show P/F count if enabled and in active window
+        if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
             val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
-            return "UAM: P/F watching ($stuckHighReadings/${preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)} stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol)"
+            val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
+            if (stuckHighReadings > 0 || consecutiveRiseReadings == 0) {
+                return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol"
+            }
         }
         if (lastUamMode != null && lastUamTimeMs > 0L) {
             val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
