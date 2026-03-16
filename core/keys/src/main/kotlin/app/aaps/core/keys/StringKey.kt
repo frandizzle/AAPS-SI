@@ -67,6 +67,14 @@ enum class StringKey(
 // Paste before the closing } of the enum:
 
     // SmartInsulin — learned insulin profiles (JSON, not user-visible)
+    ApsSmartInsulinLearningDirtyUntil(
+        "si_learning_dirty_until",
+        defaultValue          = "0",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = false
+    ),
     ApsSmartInsulinProfileFasting(
         "si_profile_fasting",
         defaultValue          = "",
