@@ -66,8 +66,6 @@ class UamController @Inject constructor(
     private var stuckHighReadings = 0  // consecutive readings with BG above threshold and flat delta
 
     companion object {
-        // Minimum total BG rise over the full streak before triggering
-        private const val RISE_TOTAL_MMOL_MIN      = 0.8
         // How long after a real low to block UAM
         private const val LOW_BLOCK_MINS            = 90L
         // shortAvgDelta must be at least this fraction of riseMinDelta
@@ -259,15 +257,12 @@ class UamController @Inject constructor(
             resetStreak(); return
         }
 
-        // ── Total rise gate ───────────────────────────────────────────────────
+        // ── Trigger once consecutive readings met ────────────────────────────
+        // The multi-layer confirmation (consecutive + shortAvgDelta + BGI gap) is
+        // sufficient — no additional total-rise gate needed. Fires exactly when
+        // settings say it should.
         if (consecutiveRiseReadings >= riseReadingsNeeded) {
             val totalRise = currentBgMmol - bgAtStreakStart
-            if (totalRise < RISE_TOTAL_MMOL_MIN) {
-                aapsLogger.debug(LTag.APS,
-                                 "UAM: readings met but total rise ${String.format("%.2f", totalRise)}mmol " +
-                                     "< ${RISE_TOTAL_MMOL_MIN}mmol min — holding for more movement")
-                return  // keep streak alive, don't reset
-            }
             triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
             resetStreak()
         }
