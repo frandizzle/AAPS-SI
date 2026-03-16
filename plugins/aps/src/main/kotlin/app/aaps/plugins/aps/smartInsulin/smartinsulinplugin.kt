@@ -43,6 +43,7 @@ import app.aaps.core.interfaces.utils.Round
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.constraints.ConstraintObject
@@ -124,6 +125,7 @@ open class SmartInsulinPlugin @Inject constructor(
     var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
+    private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
@@ -212,6 +214,31 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  ${pb2Status.replace("PB2 waiting:", "PB2:").replace("PB2 active:", "PB2:")}")
             }
 
+            // ── STFT / UAM debug ──────────────────────────────────────────────
+            appendLine()
+            appendLine("── STFT / UAM ────────────────────────")
+            // STFT
+            val stftStatus = stftController.statusString()
+            if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
+            // UAM
+            val uamStatus = uamController.statusString()
+            if (uamStatus != null) appendLine("  $uamStatus") else appendLine("  UAM: idle")
+            // Post-meal lockout
+            if (learningDirtyUntilMs > 0L) {
+                val now = System.currentTimeMillis()
+                if (now < learningDirtyUntilMs) {
+                    val minsLeft = (learningDirtyUntilMs - now) / 60_000
+                    appendLine("  Post-meal lockout: active (${minsLeft}min left) — UAM stricter thresholds ON")
+                } else {
+                    appendLine("  Post-meal lockout: expired")
+                }
+            } else {
+                appendLine("  Post-meal lockout: none")
+            }
+            // Rebound
+            if (inReboundWindow) appendLine("  Rebound window: ${msSinceLastSuspend / 60_000}min elapsed")
+            if (bgWentLow && !inReboundWindow) appendLine("  Recent low: watching for recovery")
+
             // ── Learning state ────────────────────────────────────────────────
             appendLine()
             appendLine("── Learning ──────────────────────────")
@@ -266,6 +293,10 @@ open class SmartInsulinPlugin @Inject constructor(
         super.onStart()
         // ActivityMonitor now queries persistenceLayer directly each loop cycle.
         // No RxBus subscription needed — HR and steps are read from DB on demand.
+        // Restore persisted learningDirtyUntilMs so lockout survives app restart
+        learningDirtyUntilMs = preferences.get(StringKey.ApsSmartInsulinLearningDirtyUntil).toLongOrNull() ?: 0L
+        if (learningDirtyUntilMs > 0L)
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: restored learningDirtyUntilMs=$learningDirtyUntilMs")
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
@@ -340,10 +371,17 @@ open class SmartInsulinPlugin @Inject constructor(
         // as "dirty for learning" for a configurable window. Fat/protein tails and carb
         // residuals won't corrupt basal/ISF/aggressiveness learning.
         // UAM detection is completely unaffected — it runs independently of this flag.
+        // Initialize tracker to current mode on first loop — prevents fake transition at startup
+        if (!lockoutTrackerInitialized) {
+            previousMealModeForLockout = mealMode
+            lockoutTrackerInitialized = true
+        }
+
         if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
+                preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: ${previousMealModeForLockout.label} ended — " +
                                      "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
@@ -351,6 +389,11 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         previousMealModeForLockout = mealMode
         val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
+        // Clear persisted dirty flag once window has passed
+        if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) {
+            learningDirtyUntilMs = 0L
+            preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, "0")
+        }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
         // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
@@ -466,7 +509,8 @@ open class SmartInsulinPlugin @Inject constructor(
             inReboundWindow   = inReboundWindow,
             lastLowTimeMs     = uamLastLowTimeMs,
             highTempTarget    = highTempTarget,
-            cgmInWarmup       = cgmInWarmup
+            cgmInWarmup       = cgmInWarmup,
+            inPostMealLockout = inPostMealLockout
         )
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
@@ -756,6 +800,11 @@ open class SmartInsulinPlugin @Inject constructor(
         // Append STFT status to reason if active
         stftController.statusString()?.let { apsResult.reason += " | $it" }
         uamController.statusString()?.let  { apsResult.reason += " | $it" }
+        // Post-meal lockout in loop output
+        if (inPostMealLockout) {
+            val minsLeft = (learningDirtyUntilMs - now) / 60_000
+            apsResult.reason += " | postMeal: dirty(${minsLeft}min) UAM↑thresh"
+        }
 
         apsResult.inputConstraints = inputConstraints
         apsResult.autosensResult   = autosensResult

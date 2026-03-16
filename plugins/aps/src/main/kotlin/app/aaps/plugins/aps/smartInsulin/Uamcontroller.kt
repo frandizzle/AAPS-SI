@@ -58,7 +58,9 @@ class UamController @Inject constructor(
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
     // Stuck-high state for UAM_PROTEIN_FAT detection
-    private var stuckHighReadings = 0  // consecutive readings with BG above threshold and flat delta
+    private var stuckHighReadings = 0
+    // Post-meal lockout state — updated each cycle for statusString access
+    private var currentlyInPostMealLockout = false  // consecutive readings with BG above threshold and flat delta
 
     companion object {
         // How long after a real low to block UAM
@@ -69,7 +71,11 @@ class UamController @Inject constructor(
         // without resetting an active rise streak (CGM noise/compression mitigation)
         private const val WOBBLE_TOLERANCE_MMOL       = 0.3
         // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
-        private const val UNEXPECTED_RISE_MIN_MMOL   = 0.15
+        private const val UNEXPECTED_RISE_MIN_MMOL        = 0.15
+        // Stricter thresholds during post-meal dirty window — distinguishes genuine
+        // second meal (strong sharp rise) from fat/protein tail (slow weak rise)
+        private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5   // 0.2 → 0.3
+        private const val DIRTY_WINDOW_UNEXPECTED_MULT    = 1.67  // 0.15 → 0.25
 
         // Stuck-high detection for UAM_PROTEIN_FAT
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
@@ -96,6 +102,7 @@ class UamController @Inject constructor(
      * @param lastLowTimeMs      Timestamp of last low event (0 if never)
      * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
      * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
+     * @param inPostMealLockout  True if within post-meal dirty window — stricter thresholds apply
      */
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -108,9 +115,11 @@ class UamController @Inject constructor(
         inReboundWindow:   Boolean,
         lastLowTimeMs:     Long,
         highTempTarget:    Boolean,
-        cgmInWarmup:       Boolean
+        cgmInWarmup:       Boolean,
+        inPostMealLockout: Boolean
     ) {
         previousMealMode = currentMealMode
+        currentlyInPostMealLockout = inPostMealLockout
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
             resetStreak()
@@ -215,37 +224,50 @@ class UamController @Inject constructor(
         // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
         // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
         // activity and is likely drift or noise rather than food.
-        val riseMinDelta       = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
-        val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
+        val riseMinDeltaBase   = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+
+        // During post-meal dirty window, require a stronger rise to confirm it's a new
+        // meal rather than a fat/protein tail. Slow tails fail the stricter bar and
+        // fall through to STFT + UAM_PROTEIN_FAT stuck-high detection instead.
+        val dirtyMultiplier    = if (inPostMealLockout) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
+        val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
+        val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
+        val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
+        val unexpectedMin      = UNEXPECTED_RISE_MIN_MMOL * unexpectedMultiplier
 
         val unexpectedDelta = deltaMmol - bgiMmol
         val unexpectedShort = shortAvgDeltaMmol - bgiMmol
 
         val risingNow = deltaMmol >= riseMinDelta &&
             shortAvgDeltaMmol >= shortAvgThreshold &&
-            unexpectedDelta >= UNEXPECTED_RISE_MIN_MMOL &&
-            unexpectedShort >= UNEXPECTED_RISE_MIN_MMOL * SHORT_AVG_DELTA_FRACTION
+            unexpectedDelta >= unexpectedMin &&
+            unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
 
         if (risingNow) {
             if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
             consecutiveRiseReadings++
             val totalRise = currentBgMmol - bgAtStreakStart
+            val dirtyTag = if (inPostMealLockout) " [DIRTY×${String.format("%.1f", dirtyMultiplier)}]" else ""
             aapsLogger.debug(LTag.APS,
-                             "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded " +
+                             "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded$dirtyTag " +
                                  "bg=${String.format("%.1f", currentBgMmol)}mmol " +
-                                 "Δ=${String.format("%+.2f", deltaMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)} " +
+                                 "Δ=${String.format("%+.2f", deltaMmol)}(≥${String.format("%.2f", riseMinDelta)}) " +
+                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)} " +
                                  "bgi=${String.format("%+.2f", bgiMmol)} " +
-                                 "uΔ=${String.format("%+.2f", unexpectedDelta)} uAvg=${String.format("%+.2f", unexpectedShort)} " +
+                                 "uΔ=${String.format("%+.2f", unexpectedDelta)}(≥${String.format("%.2f", unexpectedMin)}) " +
+                                 "uAvg=${String.format("%+.2f", unexpectedShort)} " +
                                  "total=${String.format("%+.1f", totalRise)}mmol mode=${uamMode.label}")
         } else {
-            if (consecutiveRiseReadings > 0)
+            if (consecutiveRiseReadings > 0) {
+                val dirtyNote = if (inPostMealLockout) " [dirty-window stricter thresholds]" else ""
                 aapsLogger.debug(LTag.APS,
-                                 "UAM: streak broken — " +
-                                     "Δ=${String.format("%+.2f", deltaMmol)}(need>=$riseMinDelta) " +
+                                 "UAM: streak broken$dirtyNote — " +
+                                     "Δ=${String.format("%+.2f", deltaMmol)}(need>=${String.format("%.2f", riseMinDelta)}) " +
                                      "avg=${String.format("%+.2f", shortAvgDeltaMmol)}(need>=${String.format("%.2f", shortAvgThreshold)}) " +
-                                     "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=$UNEXPECTED_RISE_MIN_MMOL) " +
+                                     "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=${String.format("%.2f", unexpectedMin)}) " +
                                      "bgi=${String.format("%+.2f", bgiMmol)}, reset")
+            }
             resetStreak(); return
         }
 
@@ -330,9 +352,11 @@ class UamController @Inject constructor(
 
     /** Status string for loop reason output — null if nothing to show */
     fun statusString(): String? {
+        val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            return "UAM: watching ($consecutiveRiseReadings/$riseReadingsNeeded rising)"
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote)"
         }
         if (stuckHighReadings > 0) {
             return "UAM: P/F watching ($stuckHighReadings/$STUCK_READINGS_NEEDED stuck)"
