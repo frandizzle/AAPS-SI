@@ -346,6 +346,7 @@
 
     <string name="si_uam_proteinfat_enabled_title">UAM Protein/Fat enabled (stuck-high detection)</string>
     <string name="si_uam_proteinfat_duration_title">UAM Protein/Fat mode duration (min)</string>
+    <string name="si_uam_proteinfat_stuck_readings_title">UAM Protein/Fat stuck readings to trigger (2-12)</string>
     <string name="si_uam_proteinfat_isf_title">UAM Protein/Fat ISF (mmol, 0 = profile)</string>
 
 </resources>

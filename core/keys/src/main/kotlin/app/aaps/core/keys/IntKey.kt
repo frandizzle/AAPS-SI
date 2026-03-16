@@ -106,4 +106,5 @@ enum class IntKey(
     ApsSmartInsulinUamSnackDurationMins("si_uam_snack_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     // Protein/Fat UAM — no time window, stuck-high detection runs until night cutoff
     ApsSmartInsulinUamProteinFatDurationMins("si_uam_proteinfat_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatStuckReadings("si_uam_proteinfat_stuck_readings", 6, 2, 12, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
 }

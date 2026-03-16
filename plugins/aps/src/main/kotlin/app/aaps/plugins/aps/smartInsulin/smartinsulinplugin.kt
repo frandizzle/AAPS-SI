@@ -218,7 +218,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── STFT / UAM ────────────────────────")
             // STFT
-            val stftStatus = stftController.statusString()
+            val stftStatus = stftController.statusString(profile.getTargetMgdl())
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
             // UAM status
             val uamStatus = uamController.statusString()
@@ -796,7 +796,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Append STFT status to reason if active
-        stftController.statusString()?.let { apsResult.reason += " | $it" }
+        stftController.statusString(profileTargetMgdl)?.let { apsResult.reason += " | $it" }
         uamController.statusString()?.let  { apsResult.reason += " | $it" }
         // Post-meal lockout in loop output
         if (inPostMealLockout) {
@@ -1057,6 +1057,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // Protein/Fat UAM (stuck-high detection — no time window, runs all day until night cutoff)
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,        title = R.string.si_uam_proteinfat_enabled_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,       title = R.string.si_uam_proteinfat_duration_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,     title = R.string.si_uam_proteinfat_stuck_readings_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatIsf,             title = R.string.si_uam_proteinfat_isf_title))
         }
     }
