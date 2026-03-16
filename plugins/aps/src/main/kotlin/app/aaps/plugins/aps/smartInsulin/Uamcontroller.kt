@@ -62,6 +62,8 @@ class UamController @Inject constructor(
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
+    private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
+    private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
 
     // Last reject tracking for debug display
     private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
@@ -351,12 +353,24 @@ class UamController @Inject constructor(
 
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
 
+        // Track last values for SI tab debug display
+        lastStuckAvgDelta = shortAvgDeltaMmol
+        lastStuckBgMmol   = currentBgMmol
+
         // BG must be above threshold AND shortAvgDelta must be flat (not falling, not spiking).
         // Using shortAvgDelta rather than instantaneous delta prevents a single noisy CGM
         // reading (e.g. +0.3 on an otherwise flat plateau) from killing a 25-min streak.
         val isStuck = currentBgMmol >= triggerThresholdMmol &&
             shortAvgDeltaMmol >= STUCK_DELTA_MIN_MMOL &&
             shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL
+
+        // Debug: always log isStuck evaluation so we can see why it's not counting
+        if (!isStuck) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: not stuck — " +
+                                 "bg=${String.format("%.2f", currentBgMmol)}(need>=${String.format("%.1f", triggerThresholdMmol)}) " +
+                                 "avg=${String.format("%+.3f", shortAvgDeltaMmol)}(need ${String.format("%.2f", STUCK_DELTA_MIN_MMOL)}→${String.format("%.2f", STUCK_DELTA_MAX_MMOL)})")
+        }
 
         if (isStuck) {
             stuckHighReadings++
@@ -412,8 +426,20 @@ class UamController @Inject constructor(
                 when {
                     currentlyPastNightCutoff ->
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
-                    else ->
-                        appendLine("  P/F stuck: $stuckHighReadings/$stuckNeeded readings above ${triggerMmol}mmol (need flat avg Δ -0.1→${STUCK_DELTA_MAX_MMOL}mmol)")
+                    else -> {
+                        val avgStr = String.format("%+.2f", lastStuckAvgDelta)
+                        val bgStr  = String.format("%.1f", lastStuckBgMmol)
+                        val countStr = "$stuckHighReadings/$stuckNeeded"
+                        val rangeStr = "${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}"
+                        val meetsRange = lastStuckAvgDelta >= STUCK_DELTA_MIN_MMOL && lastStuckAvgDelta <= STUCK_DELTA_MAX_MMOL
+                        val meetsBg    = lastStuckBgMmol >= triggerMmol
+                        val blockReason = when {
+                            !meetsBg    -> " ✗ BG ${bgStr} < ${triggerMmol}"
+                            !meetsRange -> " ✗ avg ${avgStr} outside ${rangeStr}"
+                            else        -> " ✓ counting"
+                        }
+                        appendLine("  P/F stuck: $countStr  avg=${avgStr}mmol (${rangeStr})$blockReason")
+                    }
                 }
             } else {
                 appendLine("  P/F detection: disabled")
