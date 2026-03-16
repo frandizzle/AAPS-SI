@@ -377,12 +377,18 @@ open class SmartInsulinPlugin @Inject constructor(
         // When a temp target is active we still call it so it can reset cleanly, but we
         // discard the adjusted value and keep the user's deliberate temp target.
         val profileTargetMgdl = profile.getTargetMgdl()
+        val highTempTarget    = isTempTarget && targetBg > profileTargetMgdl
         val stftAdjusted = stftController.onLoopCycle(
             profileTargetMgdl = profileTargetMgdl,
             currentBgMgdl     = glucoseStatus.glucose,
             delta             = glucoseStatus.delta,
-            mealMode          = mealMode
+            mealMode          = mealMode,
+            isTempTarget      = isTempTarget,
+            bgWentLow         = bgWentLow,
+            inReboundWindow   = inReboundWindow
         )
+        // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
+        // The plugin-side TT guard is kept as a safety backstop.
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
         // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
@@ -405,7 +411,8 @@ open class SmartInsulinPlugin @Inject constructor(
             currentHour       = uamCurrentHour,
             bgWentLow         = bgWentLow,
             inReboundWindow   = inReboundWindow,
-            lastLowTimeMs     = uamLastLowTimeMs
+            lastLowTimeMs     = uamLastLowTimeMs,
+            highTempTarget    = highTempTarget
         )
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
@@ -551,7 +558,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // High TT = deliberate conservative mode (exercise/illness) — don't learn from it
         // Meal modes = COB active, loop reacting to carbs — basal signal is meaningless
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
-        val highTempTarget = isTempTarget && targetBg > profileTargetMgdl
 
 
         // ── Cache Overview state — updated here where all conditions are in scope ──

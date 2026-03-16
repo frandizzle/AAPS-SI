@@ -101,6 +101,7 @@ class UamController @Inject constructor(
      * @param bgWentLow          True if a real low occurred (rebound protection)
      * @param inReboundWindow    True if currently in post-low rebound window
      * @param lastLowTimeMs      Timestamp of last low event (0 if never)
+     * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
      */
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -111,7 +112,8 @@ class UamController @Inject constructor(
         currentHour:       Int,
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
-        lastLowTimeMs:     Long
+        lastLowTimeMs:     Long,
+        highTempTarget:    Boolean
     ) {
         // ── Expiry detection — track mode transitions ─────────────────────────
         // When we go from a UAM mode back to FASTING, the mode just expired
@@ -133,6 +135,16 @@ class UamController @Inject constructor(
         if (currentMealMode != MealMode.FASTING) {
             resetStreak()
             stuckHighReadings = 0
+            return
+        }
+
+        // High temp target — user deliberately conservative (exercise/illness). Block UAM.
+        if (highTempTarget) {
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
+                aapsLogger.debug(LTag.APS, "UAM: blocked — high temp target active, streak reset")
+                resetStreak()
+                stuckHighReadings = 0
+            }
             return
         }
 

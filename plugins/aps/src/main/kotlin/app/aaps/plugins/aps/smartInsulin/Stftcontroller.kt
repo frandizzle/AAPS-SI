@@ -74,13 +74,37 @@ class StftController @Inject constructor(
         profileTargetMgdl: Double,
         currentBgMgdl:     Double,
         delta:             Double,
-        mealMode:          MealMode
+        mealMode:          MealMode,
+        isTempTarget:      Boolean,
+        bgWentLow:         Boolean,
+        inReboundWindow:   Boolean
     ): Double {
 
         // STFT only runs in fasting — reset immediately if meal mode activates
         if (mealMode != MealMode.FASTING) {
             if (stftActive || consecutiveAbove > 0) {
                 aapsLogger.debug(LTag.APS, "STFT: reset — meal mode active (${mealMode.label})")
+                reset()
+            }
+            return profileTargetMgdl
+        }
+
+        // Temp target active — reset and suspend. The user has deliberately set a target;
+        // don't manipulate it. Reset fully so streak doesn't survive TT expiry.
+        if (isTempTarget) {
+            if (stftActive || consecutiveAbove > 0) {
+                aapsLogger.debug(LTag.APS, "STFT: reset — temp target active")
+                reset()
+            }
+            return profileTargetMgdl
+        }
+
+        // Low/rebound protection — reset and block during and after a low.
+        // Prevents STFT from re-activating immediately during rebound recovery.
+        if (bgWentLow || inReboundWindow) {
+            if (stftActive || consecutiveAbove > 0) {
+                val reason = if (inReboundWindow) "rebound window active" else "recent low"
+                aapsLogger.debug(LTag.APS, "STFT: reset — $reason")
                 reset()
             }
             return profileTargetMgdl
