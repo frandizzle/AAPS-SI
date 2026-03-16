@@ -650,6 +650,12 @@ open class SmartInsulinPlugin @Inject constructor(
         if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
             if (!bgWentLow) {
                 aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), watching for recovery")
+                // Cancel any active UAM mode immediately — ISF override should not continue
+                // through a low. Re-activation is blocked by bgWentLow + rebound window guards.
+                if (mealMode.isUam) {
+                    aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
+                    mealOverrideManager.cancelOverride()
+                }
             }
             bgWentLow = true
             if (reboundWindowStartMs > 0L) {
