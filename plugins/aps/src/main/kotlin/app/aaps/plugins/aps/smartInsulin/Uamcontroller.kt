@@ -389,7 +389,7 @@ class UamController @Inject constructor(
             }
             // P/F stuck-high detail
             val triggerMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
-            val pfEnabled = uamModeEnabled(MealMode.UAM_PROTEIN_FAT)
+            val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
             if (pfEnabled) {
                 appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $STUCK_READINGS_NEEDED readings)")
                 if (stuckHighReadings > 0) {
