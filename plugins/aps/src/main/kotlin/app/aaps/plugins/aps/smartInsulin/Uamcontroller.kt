@@ -61,6 +61,7 @@ class UamController @Inject constructor(
     private var stuckHighReadings = 0
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
+    private var currentlyPastNightCutoff   = false
 
     // Last reject tracking for debug display
     private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
@@ -162,7 +163,10 @@ class UamController @Inject constructor(
 
         // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
+        // Simple 24h check. Cutoff=23 → disabled from 11pm. Cutoff=1 → disabled from 1am.
+        // For overnight coverage set cutoff to 1 or 2 to allow P/F detection past midnight.
         if (currentHour >= nightCutoff) {
+            currentlyPastNightCutoff = true
             if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
                 aapsLogger.debug(LTag.APS, "UAM: night cutoff (hour=$currentHour >= $nightCutoff), reset")
                 resetStreak()
@@ -170,6 +174,7 @@ class UamController @Inject constructor(
             }
             return
         }
+        currentlyPastNightCutoff = false
 
         // ── Safety block: recent low / rebound ───────────────────────────────
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
@@ -395,11 +400,15 @@ class UamController @Inject constructor(
             val triggerMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
             val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
             if (pfEnabled) {
-                appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for ${preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)} readings)")
-                if (stuckHighReadings > 0) {
-                    appendLine("  P/F stuck: $stuckHighReadings/${preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)} readings above ${triggerMmol}mmol")
-                } else {
-                    appendLine("  P/F stuck: waiting (need BG>=${triggerMmol}mmol with flat avg)")
+                val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
+                appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $stuckNeeded readings)")
+                when {
+                    currentlyPastNightCutoff ->
+                        appendLine("  P/F stuck: off (past night cutoff ${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
+                    stuckHighReadings > 0 ->
+                        appendLine("  P/F stuck: $stuckHighReadings/$stuckNeeded readings above ${triggerMmol}mmol")
+                    else ->
+                        appendLine("  P/F stuck: watching (need BG>=${triggerMmol}mmol with flat avg Δ)")
                 }
             } else {
                 appendLine("  P/F detection: disabled")

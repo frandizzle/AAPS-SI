@@ -86,7 +86,7 @@ enum class IntKey(
     SiteRotationUserProfile("site_rotation_user_profile", 0, 0, 2),
 
     // UAM auto-detection
-    ApsSmartInsulinUamNightCutoffHour("si_uam_night_cutoff_hour", 23, 20, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamNightCutoffHour("si_uam_night_cutoff_hour", 23, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamRiseConsecutiveReadings("si_uam_rise_readings", 3, 2, 6, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     // Breakfast UAM window
     ApsSmartInsulinUamBreakfastStartHour("si_uam_breakfast_start", 6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
