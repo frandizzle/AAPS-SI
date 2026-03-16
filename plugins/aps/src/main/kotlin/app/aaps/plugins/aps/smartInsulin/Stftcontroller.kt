@@ -128,7 +128,7 @@ class StftController @Inject constructor(
             negDeltaStreak++
             if (negDeltaStreak >= NEG_DELTA_RESET_COUNT && stftActive) {
                 aapsLogger.debug(LTag.APS,
-                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative deltas (delta=%.1f)".format(delta))
+                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative deltas (delta=${"%.2f".format(delta / MMOL_TO_MGDL)}mmol)")
                 reset()
                 return profileTargetMgdl
             }
@@ -174,10 +174,13 @@ class StftController @Inject constructor(
     }
 
     /** Current STFT status for display — null if inactive and not watching */
-    fun statusString(): String? {
+    fun statusString(profileTargetMgdl: Double = TARGET_FLOOR_MGDL + STEP_MGDL): String? {
         if (stftActive) {
-            val reductionMmol = stepsApplied * STEP_MMOL
-            return "STFT: -%.1fmmol target (${stepsApplied * 5}min above target)".format(reductionMmol)
+            // Show actual applied reduction (clamped to floor), not raw steps * step size
+            val theoreticalTarget = profileTargetMgdl - (stepsApplied * STEP_MGDL)
+            val actualTarget = theoreticalTarget.coerceAtLeast(TARGET_FLOOR_MGDL)
+            val actualReduction = (profileTargetMgdl - actualTarget) / MMOL_TO_MGDL
+            return "STFT: -${"%.1f".format(actualReduction)}mmol target (${stepsApplied * 5}min above target)"
         }
         if (consecutiveAbove > 0) {
             return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${TRIGGER_THRESHOLD_MMOL}mmol)"
