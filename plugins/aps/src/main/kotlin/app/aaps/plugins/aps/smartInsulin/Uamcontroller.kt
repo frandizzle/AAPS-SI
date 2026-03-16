@@ -86,7 +86,7 @@ class UamController @Inject constructor(
         // Stuck-high detection for UAM_PROTEIN_FAT
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
         private const val STUCK_DELTA_MIN_MMOL        = -0.1   // not falling
-        private const val STUCK_DELTA_MAX_MMOL        = 0.2    // not spiking (carbs would be higher)
+        private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
         // 6 readings = 30 min at 5 min intervals
         private const val STUCK_READINGS_NEEDED       = 6
     }
@@ -387,8 +387,18 @@ class UamController @Inject constructor(
                 val dirtyTag = if (reject.wasDirtyWindow) " [dirty]" else ""
                 appendLine("  Last UAM reject$dirtyTag: ${reject.reason}")
             }
-            if (stuckHighReadings > 0) {
-                appendLine("  P/F stuck: $stuckHighReadings/$STUCK_READINGS_NEEDED readings")
+            // P/F stuck-high detail
+            val triggerMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            val pfEnabled = uamModeEnabled(MealMode.UAM_PROTEIN_FAT)
+            if (pfEnabled) {
+                appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $STUCK_READINGS_NEEDED readings)")
+                if (stuckHighReadings > 0) {
+                    appendLine("  P/F stuck: $stuckHighReadings/$STUCK_READINGS_NEEDED readings above ${triggerMmol}mmol")
+                } else {
+                    appendLine("  P/F stuck: waiting (need BG>=${triggerMmol}mmol with flat avg)")
+                }
+            } else {
+                appendLine("  P/F detection: disabled")
             }
         }.trimEnd()
     }
@@ -402,7 +412,8 @@ class UamController @Inject constructor(
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote)"
         }
         if (stuckHighReadings > 0) {
-            return "UAM: P/F watching ($stuckHighReadings/$STUCK_READINGS_NEEDED stuck)"
+            val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            return "UAM: P/F watching ($stuckHighReadings/$STUCK_READINGS_NEEDED stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol)"
         }
         if (lastUamMode != null && lastUamTimeMs > 0L) {
             val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
