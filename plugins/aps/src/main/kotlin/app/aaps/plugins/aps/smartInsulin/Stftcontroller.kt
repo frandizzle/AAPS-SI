@@ -144,10 +144,14 @@ class StftController @Inject constructor(
             return profileTargetMgdl
         }
 
-        // Count consecutive readings above trigger threshold
-        if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL) {
+        // Count consecutive readings above trigger threshold.
+        // Only count if delta is non-negative — don't activate on BG falling through threshold
+        // (e.g. post-meal descent from 10→6). STFT is for stuck-high, not falling BG.
+        if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL && delta >= 0.0) {
             consecutiveAbove++
         } else {
+            if (consecutiveAbove > 0 && delta < 0.0)
+                aapsLogger.debug(LTag.APS, "STFT: streak reset — BG falling (delta=%.2f)".format(delta / MMOL_TO_MGDL))
             consecutiveAbove = 0
             if (!stftActive) return profileTargetMgdl
         }
@@ -156,7 +160,7 @@ class StftController @Inject constructor(
         if (!stftActive && consecutiveAbove >= TRIGGER_READINGS) {
             stftActive = true
             aapsLogger.debug(LTag.APS,
-                             "STFT: activated — BG above ${TRIGGER_THRESHOLD_MMOL}mmol for $TRIGGER_READINGS readings")
+                             "STFT: activated — BG above ${TRIGGER_THRESHOLD_MMOL}mmol for $TRIGGER_READINGS readings (non-negative delta)")
         }
 
         if (!stftActive) return profileTargetMgdl
