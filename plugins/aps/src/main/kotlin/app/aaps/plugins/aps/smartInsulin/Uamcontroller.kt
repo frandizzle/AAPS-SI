@@ -164,10 +164,14 @@ class UamController @Inject constructor(
         // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
         val dayStart    = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
-        // UAM active window: dayStart until nightCutoff.
-        // Outside that window (nightCutoff → dayStart next day) UAM is blocked.
-        // e.g. dayStart=9, cutoff=1 → active 9am–1am, blocked 1am–9am.
-        val inActiveWindow = currentHour in dayStart until nightCutoff
+        // UAM active window: dayStart until nightCutoff, wrapping midnight.
+        // e.g. dayStart=10, cutoff=1 → active 10am–1am (blocked 1am–10am).
+        // When cutoff < dayStart the window crosses midnight — split into two ranges.
+        val inActiveWindow = if (nightCutoff > dayStart) {
+            currentHour in dayStart until nightCutoff          // simple: e.g. 9am–11pm
+        } else {
+            currentHour >= dayStart || currentHour < nightCutoff  // wraps: e.g. 10am–1am
+        }
         if (!inActiveWindow) {
             currentlyPastNightCutoff = true
             if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
