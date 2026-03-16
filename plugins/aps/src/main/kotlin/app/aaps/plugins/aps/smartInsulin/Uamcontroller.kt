@@ -72,6 +72,9 @@ class UamController @Inject constructor(
         private const val LOW_BLOCK_MINS            = 90L
         // shortAvgDelta must be at least this fraction of riseMinDelta
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
+        // Wobble tolerance: how far below trigger threshold a single reading can dip
+        // without resetting an active rise streak (CGM noise/compression mitigation)
+        private const val WOBBLE_TOLERANCE_MMOL       = 0.3
         // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
         private const val UNEXPECTED_RISE_MIN_MMOL   = 0.15
 
@@ -190,7 +193,17 @@ class UamController @Inject constructor(
 
         // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
-        if (currentBgMmol < triggerThresholdMmol) {
+
+        // Wobble tolerance: allow a single dip up to 0.3 mmol below threshold without
+        // killing an active streak, as long as shortAvgDelta is still positive.
+        // CGM noise/compression commonly produces one low reading mid-rise — without this,
+        // a genuine upward trend gets reset by a single noisy point.
+        val aboveThreshold = currentBgMmol >= triggerThresholdMmol ||
+            (consecutiveRiseReadings > 0 &&
+                shortAvgDeltaMmol > 0.0 &&
+                currentBgMmol >= triggerThresholdMmol - WOBBLE_TOLERANCE_MMOL)
+
+        if (!aboveThreshold) {
             resetStreak(); return
         }
 
@@ -285,17 +298,19 @@ class UamController @Inject constructor(
 
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
 
-        // BG must be above threshold AND delta must be flat (not falling, not spiking)
+        // BG must be above threshold AND shortAvgDelta must be flat (not falling, not spiking).
+        // Using shortAvgDelta rather than instantaneous delta prevents a single noisy CGM
+        // reading (e.g. +0.3 on an otherwise flat plateau) from killing a 25-min streak.
         val isStuck = currentBgMmol >= triggerThresholdMmol &&
-            deltaMmol >= STUCK_DELTA_MIN_MMOL &&
-            deltaMmol <= STUCK_DELTA_MAX_MMOL
+            shortAvgDeltaMmol >= STUCK_DELTA_MIN_MMOL &&
+            shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL
 
         if (isStuck) {
             stuckHighReadings++
             aapsLogger.debug(LTag.APS,
                              "UAM_PROTEIN_FAT: stuck-high $stuckHighReadings/$STUCK_READINGS_NEEDED " +
                                  "bg=${String.format("%.1f", currentBgMmol)}mmol " +
-                                 "Δ=${String.format("%+.2f", deltaMmol)}mmol")
+                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)}mmol")
 
             if (stuckHighReadings >= STUCK_READINGS_NEEDED) {
                 aapsLogger.debug(LTag.APS,
@@ -308,7 +323,7 @@ class UamController @Inject constructor(
             if (stuckHighReadings > 0)
                 aapsLogger.debug(LTag.APS,
                                  "UAM_PROTEIN_FAT: stuck streak broken " +
-                                     "(bg=${String.format("%.1f", currentBgMmol)} Δ=${String.format("%+.2f", deltaMmol)}), reset")
+                                     "(bg=${String.format("%.1f", currentBgMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)}), reset")
             stuckHighReadings = 0
         }
     }
