@@ -511,6 +511,33 @@ open class SmartInsulinPlugin @Inject constructor(
             inPostMealLockout = inPostMealLockout
         )
 
+        // ── Re-read mealMode after UAM — if UAM just fired this cycle, use new ISF immediately ──
+        // Without this, the cycle that triggers UAM still runs with profile ISF.
+        // Re-reading activeMealMode captures the just-activated UAM mode in the same cycle.
+        val effectiveMealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
+        val effectiveModeIsfMmol = when (effectiveMealMode) {
+            MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+            MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+            MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+            MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+            MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+            MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+            MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+            MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
+            MealMode.FASTING       -> 0.0
+        }
+        val effectiveDosingIsfMgdl = when {
+            effectiveModeIsfMmol > 0.0 -> effectiveModeIsfMmol * 18.0
+            else                       -> dosingIsfMgdl  // unchanged if no mode ISF set
+        }
+        if (effectiveMealMode != mealMode) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: UAM fired this cycle — using ${effectiveMealMode.label} ISF " +
+                                 "${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}mmol immediately")
+        }
+
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
@@ -524,7 +551,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = stftTargetMgdl,
             carb_ratio                      = profile.getIc(),
-            sens                            = dosingIsfMgdl,  // meal mode ISF if set, else true profile ISF
+            sens                            = effectiveDosingIsfMgdl,  // uses UAM ISF immediately if UAM just fired this cycle
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
