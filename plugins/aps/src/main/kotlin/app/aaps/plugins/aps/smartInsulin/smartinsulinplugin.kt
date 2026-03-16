@@ -218,7 +218,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── STFT / UAM ────────────────────────")
             // STFT
-            val stftStatus = stftController.statusString(profile.getTargetMgdl())
+            val stftStatus = stftController.statusString(profileFunction.getProfile()?.getTargetMgdl() ?: (5.5 * 18.0))
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
             // UAM status
             val uamStatus = uamController.statusString()
