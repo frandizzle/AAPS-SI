@@ -122,6 +122,8 @@ open class SmartInsulinPlugin @Inject constructor(
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
     var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
+    var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
+    var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
@@ -150,6 +152,8 @@ open class SmartInsulinPlugin @Inject constructor(
         profileLearner.resetProfiles()
         bgWentLow          = false
         reboundWindowStartMs = 0L
+        learningDirtyUntilMs = 0L
+        previousMealModeForLockout = MealMode.FASTING
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
 
@@ -330,6 +334,24 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ── Meal mode — check override first, fall back to auto-detect ────────
         val mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
+
+        // ── Post-meal learning lockout ───────────────────────────────────────
+        // When any meal or UAM mode expires (transition back to FASTING), mark BG data
+        // as "dirty for learning" for a configurable window. Fat/protein tails and carb
+        // residuals won't corrupt basal/ISF/aggressiveness learning.
+        // UAM detection is completely unaffected — it runs independently of this flag.
+        if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
+            val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
+            if (lockoutMins > 0) {
+                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: ${previousMealModeForLockout.label} ended — " +
+                                     "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
+            }
+        }
+        previousMealModeForLockout = mealMode
+        val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
+        val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
         // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
         // Absolute ISF override per meal mode — 0.0 means not set, fall back to profile ISF
@@ -523,7 +545,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
         // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
-        val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
+        val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
@@ -573,6 +595,10 @@ open class SmartInsulinPlugin @Inject constructor(
             !learningEnabledCache                -> "off: Learning disabled"
             activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
             cgmState.suppressLearning            -> "off: CGM warmup"
+            inPostMealLockout                    -> {
+                val minsLeft = (learningDirtyUntilMs - now) / 60_000
+                "off: Post-meal (${minsLeft}min left)"
+            }
             highTempTarget                       -> "off: High temp target"
             isMealMode || mealMode.isUam         -> "limited"  // DIA/peak only — no basal/ISF learning
             else                                 -> "Learning"
@@ -934,7 +960,8 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinBreakfastCarbsG, title = R.string.si_breakfast_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinLunchCarbsG,     title = R.string.si_lunch_carbs_g_title))
             addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinDinnerCarbsG,    title = R.string.si_dinner_carbs_g_title))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,  title = R.string.si_mode_window_mins_title))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,        title = R.string.si_mode_window_mins_title))
+            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinPostModeLockoutMins,  title = R.string.si_post_mode_lockout_mins_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus,           title = R.string.si_max_prebolus_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinPreBolus2DefaultU,         title = R.string.si_prebolus2_default_u_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,    title = R.string.si_prebolus2_default_delay_title))
@@ -951,7 +978,6 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,           title = R.string.si_uam_night_cutoff_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamReArmDelayMins,            title = R.string.si_uam_rearm_delay_title))
 
             // Breakfast UAM
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamBreakfastEnabled,      title = R.string.si_uam_breakfast_enabled_title))

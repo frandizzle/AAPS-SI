@@ -32,10 +32,6 @@ import javax.inject.Singleton
  * All UAM modes are disabled at [nightCutoffHour] (default 23:00). STFT handles
  * overnight sticky BG instead.
  *
- * ## Re-arm
- * After a UAM mode expires, the controller waits [reArmDelayMins] before allowing
- * re-activation. If BG is still elevated after re-arm, it will trigger again.
- *
  * ## Safety blocks
  * UAM will not fire if:
  *   - A real low occurred recently (within [LOW_BLOCK_MINS])
@@ -58,7 +54,6 @@ class UamController @Inject constructor(
     private var lastUamMode:    MealMode? = null
     private var lastUamTimeMs:  Long      = 0L
     private var lastUamTriggerCount       = 0
-    private var uamExpiredAtMs: Long      = 0L
     private var previousMealMode: MealMode?  = null  // for expiry transition detection
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
@@ -115,14 +110,6 @@ class UamController @Inject constructor(
         highTempTarget:    Boolean,
         cgmInWarmup:       Boolean
     ) {
-        // ── Expiry detection — track mode transitions ─────────────────────────
-        // When we go from a UAM mode back to FASTING, the mode just expired
-        if (previousMealMode?.isUam == true && currentMealMode == MealMode.FASTING) {
-            if (uamExpiredAtMs == 0L) {
-                uamExpiredAtMs = System.currentTimeMillis()
-                aapsLogger.debug(LTag.APS, "UAM: ${previousMealMode!!.label} expired, re-arm timer started")
-            }
-        }
         previousMealMode = currentMealMode
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
@@ -185,15 +172,8 @@ class UamController @Inject constructor(
             return
         }
 
-        // ── Re-arm delay ─────────────────────────────────────────────────────
-        val reArmDelayMs = preferences.get(IntKey.ApsSmartInsulinUamReArmDelayMins) * 60_000L
-        if (uamExpiredAtMs > 0L && System.currentTimeMillis() - uamExpiredAtMs < reArmDelayMs) {
-            val waitMins = (reArmDelayMs - (System.currentTimeMillis() - uamExpiredAtMs)) / 60_000
-            aapsLogger.debug(LTag.APS, "UAM: re-arm delay active (${waitMins}min remaining)")
-            resetStreak()        // clear rise streak so it can't carry over into re-arm
-            stuckHighReadings = 0  // clear stuck streak too
-            return
-        }
+        // Re-arm deliberately removed — UAM fires once, loop handles the rest.
+        // A fresh genuine rise will be detected naturally without a re-arm gate.
 
         // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
         // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
@@ -382,7 +362,6 @@ class UamController @Inject constructor(
             now - lastUamTimeMs < 4 * 60 * 60 * 1000L) lastUamTriggerCount + 1 else 1
         lastUamMode    = mode
         lastUamTimeMs  = now
-        uamExpiredAtMs = 0L
 
         aapsLogger.debug(LTag.APS,
                          "UAM: TRIGGERING ${mode.label} " +

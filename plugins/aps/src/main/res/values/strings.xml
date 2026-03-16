@@ -307,6 +307,8 @@
     <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
     <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
 
+    <string name="si_post_mode_lockout_mins_title">Post-meal learning lockout (min, 0=off)</string>
+
     <!-- SmartInsulin STFT/UAM CGM warmup blocks -->
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
     <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
@@ -317,7 +319,6 @@
     <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading (mmol)</string>
     <string name="si_uam_rise_readings_title">UAM consecutive rise readings required</string>
     <string name="si_uam_night_cutoff_title">UAM night cutoff hour (0-23)</string>
-    <string name="si_uam_rearm_delay_title">UAM re-arm delay after expiry (min)</string>
 
     <string name="si_uam_breakfast_enabled_title">UAM Breakfast enabled</string>
     <string name="si_uam_breakfast_start_title">UAM Breakfast window start hour</string>

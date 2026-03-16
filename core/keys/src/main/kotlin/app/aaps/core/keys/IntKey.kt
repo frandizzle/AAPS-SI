@@ -39,6 +39,7 @@ enum class IntKey(
     ApsSmartInsulinExtendedCarbsG ("si_extended_carbs_g",    50, 10, 150, defaultedBySM = true),
     ApsSmartInsulinModeWindowMins ("si_mode_window_mins",   180, 30, 480, defaultedBySM = true),
     ApsSmartInsulinPreBolus2DefaultDelayMins("si_prebolus2_default_delay_mins", 25, 5, 120, defaultedBySM = true),
+    ApsSmartInsulinPostModeLockoutMins("si_post_mode_lockout_mins", 90, 0, 180, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
@@ -86,7 +87,6 @@ enum class IntKey(
 
     // UAM auto-detection
     ApsSmartInsulinUamNightCutoffHour("si_uam_night_cutoff_hour", 23, 20, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    ApsSmartInsulinUamReArmDelayMins("si_uam_rearm_delay_mins", 30, 10, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamRiseConsecutiveReadings("si_uam_rise_readings", 3, 2, 6, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     // Breakfast UAM window
     ApsSmartInsulinUamBreakfastStartHour("si_uam_breakfast_start", 6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
