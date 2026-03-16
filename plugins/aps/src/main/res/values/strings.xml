@@ -307,6 +307,10 @@
     <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
     <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
 
+    <!-- SmartInsulin STFT/UAM CGM warmup blocks -->
+    <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
+    <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
+
     <!-- SmartInsulin UAM auto-detection -->
     <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
     <string name="si_uam_trigger_threshold_title">UAM trigger threshold (mmol)</string>

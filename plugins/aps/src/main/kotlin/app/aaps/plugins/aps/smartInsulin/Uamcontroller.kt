@@ -100,6 +100,7 @@ class UamController @Inject constructor(
      * @param inReboundWindow    True if currently in post-low rebound window
      * @param lastLowTimeMs      Timestamp of last low event (0 if never)
      * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
+     * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
      */
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -111,7 +112,8 @@ class UamController @Inject constructor(
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
         lastLowTimeMs:     Long,
-        highTempTarget:    Boolean
+        highTempTarget:    Boolean,
+        cgmInWarmup:       Boolean
     ) {
         // ── Expiry detection — track mode transitions ─────────────────────────
         // When we go from a UAM mode back to FASTING, the mode just expired
@@ -140,6 +142,16 @@ class UamController @Inject constructor(
         if (highTempTarget) {
             if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
                 aapsLogger.debug(LTag.APS, "UAM: blocked — high temp target active, streak reset")
+                resetStreak()
+                stuckHighReadings = 0
+            }
+            return
+        }
+
+        // CGM warmup — deltas unreliable, block UAM detection
+        if (cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock)) {
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
+                aapsLogger.debug(LTag.APS, "UAM: blocked — CGM in warmup, streak reset")
                 resetStreak()
                 stuckHighReadings = 0
             }

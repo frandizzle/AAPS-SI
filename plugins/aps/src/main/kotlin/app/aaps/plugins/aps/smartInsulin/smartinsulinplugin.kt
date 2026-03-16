@@ -378,6 +378,36 @@ open class SmartInsulinPlugin @Inject constructor(
         // discard the adjusted value and keep the user's deliberate temp target.
         val profileTargetMgdl = profile.getTargetMgdl()
         val highTempTarget    = isTempTarget && targetBg > profileTargetMgdl
+
+        // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
+        // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
+        // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
+        val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
+        // Query last sensor change from DB — covers fresh installs/rebuilds mid-sensor
+        // where the gap-detection state was lost. Look back 30 days max.
+        val sensorInsertTimeMs: Long = try {
+            val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
+                now - 30 * 24 * 60 * 60 * 1000L,
+                TE.Type.SENSOR_CHANGE,
+                true
+            )
+            sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
+            0L
+        }
+        val cgmState = cgmWarmupGuard.evaluate(
+            enabled             = cgmGuardEnabled,
+            sensorInsertTimeMs  = sensorInsertTimeMs,
+            nowMs               = now,
+            latestBgTimestampMs = glucoseStatus.date,
+            deltaMmol           = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol   = glucoseStatus.shortAvgDelta / 18.0,
+            longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
+            noiseLevelRaw       = glucoseStatus.noise
+        )
+        val cgmInWarmup = cgmState.inWarmup
+
         val stftAdjusted = stftController.onLoopCycle(
             profileTargetMgdl = profileTargetMgdl,
             currentBgMgdl     = glucoseStatus.glucose,
@@ -385,7 +415,8 @@ open class SmartInsulinPlugin @Inject constructor(
             mealMode          = mealMode,
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
-            inReboundWindow   = inReboundWindow
+            inReboundWindow   = inReboundWindow,
+            cgmInWarmup       = cgmInWarmup
         )
         // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
         // The plugin-side TT guard is kept as a safety backstop.
@@ -412,7 +443,8 @@ open class SmartInsulinPlugin @Inject constructor(
             bgWentLow         = bgWentLow,
             inReboundWindow   = inReboundWindow,
             lastLowTimeMs     = uamLastLowTimeMs,
-            highTempTarget    = highTempTarget
+            highTempTarget    = highTempTarget,
+            cgmInWarmup       = cgmInWarmup
         )
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
@@ -487,33 +519,6 @@ open class SmartInsulinPlugin @Inject constructor(
         activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
-        // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
-        // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
-        // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
-        val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
-        // Query last sensor change from DB — covers fresh installs/rebuilds mid-sensor
-        // where the gap-detection state was lost. Look back 30 days max.
-        val sensorInsertTimeMs: Long = try {
-            val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
-                now - 30 * 24 * 60 * 60 * 1000L,
-                TE.Type.SENSOR_CHANGE,
-                true
-            )
-            sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
-            0L
-        }
-        val cgmState = cgmWarmupGuard.evaluate(
-            enabled             = cgmGuardEnabled,
-            sensorInsertTimeMs  = sensorInsertTimeMs,
-            nowMs               = now,
-            latestBgTimestampMs = glucoseStatus.date,
-            deltaMmol           = glucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol   = glucoseStatus.shortAvgDelta / 18.0,
-            longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
-            noiseLevelRaw       = glucoseStatus.noise
-        )
 
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
@@ -918,6 +923,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowStartHour,   title = R.string.si_dawn_start_hour_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowEndHour,     title = R.string.si_dawn_end_hour_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDawnSmbReduction,   title = R.string.si_dawn_smb_reduction_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,      title = R.string.si_stft_cgm_warmup_block_title))
             // Per-meal ISF multipliers
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf, title = R.string.si_breakfast_isf_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,     title = R.string.si_lunch_isf_title))
@@ -940,6 +946,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
             // ── UAM auto-detection ────────────────────────────────────────────
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,               title = R.string.si_uam_enabled_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,            title = R.string.si_uam_cgm_warmup_block_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol,   title = R.string.si_uam_trigger_threshold_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
