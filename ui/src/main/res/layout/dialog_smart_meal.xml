@@ -201,6 +201,19 @@
 
         </LinearLayout>
 
+        <!-- UAM active banner — shown when UAM auto-detected mode is active -->
+        <TextView
+            android:id="@+id/uam_active_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:padding="10dp"
+            android:backgroundTint="?attr/warningColor"
+            android:background="?attr/selectableItemBackground"
+            android:textColor="?attr/defaultTextColor"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <!-- Cancel active mode button (shown only if mode active) -->
         <Button
             android:id="@+id/cancel_mode_button"

@@ -180,16 +180,34 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val activeMode = mealOverrideManager.activeMealMode
         if (activeMode != null) {
             binding.cancelModeButton.visibility = View.VISIBLE
-            var cancelLabel = "Cancel ${activeMode.label} mode"
-            if (mealOverrideManager.preBolus2Pending) {
-                cancelLabel += "\n(${mealOverrideManager.preBolus2StatusText})"
+
+            // UAM modes show a clearer label and explain that selecting a mode will override
+            val cancelLabel = if (activeMode.isUam) {
+                "Cancel UAM (${activeMode.label})"
+            } else {
+                "Cancel ${activeMode.label} mode"
+            }.let { label ->
+                if (mealOverrideManager.preBolus2Pending) "$label\n(${mealOverrideManager.preBolus2StatusText})" else label
             }
             binding.cancelModeButton.text = cancelLabel
+
+            // If UAM is active, show a banner explaining that selecting a mode will override it
+            if (activeMode.isUam) {
+                binding.uamActiveBanner.visibility = View.VISIBLE
+                binding.uamActiveBanner.text = "⚡ ${activeMode.label} active — selecting a mode below will override it"
+            } else {
+                binding.uamActiveBanner.visibility = View.GONE
+            }
+
             binding.cancelModeButton.setOnClickListener {
                 activity?.let { act ->
+                    val confirmMsg = if (activeMode.isUam)
+                        "Cancel auto-detected ${activeMode.label}? The loop will return to fasting mode."
+                    else
+                        rh.gs(R.string.si_cancel_mode_confirm, activeMode.label)
                     OKDialog.showConfirmation(act,
                                               rh.gs(R.string.si_dialog_title),
-                                              rh.gs(R.string.si_cancel_mode_confirm, activeMode.label), {
+                                              confirmMsg, {
                                                   mealOverrideManager.cancelOverride()
                                                   ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_cancelled))
                                                   dismiss()
@@ -198,6 +216,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
             }
         } else {
             binding.cancelModeButton.visibility = View.GONE
+            binding.uamActiveBanner.visibility = View.GONE
         }
 
         // ── Cancel PB2 button (shown only when PB2 is pending, mode active) ──
