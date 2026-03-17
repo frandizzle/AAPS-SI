@@ -115,6 +115,7 @@ class UamController @Inject constructor(
      * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
      * @param inPostMealLockout  True if within post-meal dirty window — stricter thresholds apply
      * @param profileTargetMmol  Profile target in mmol — P/F streak resets if BG returns to target
+     * @param softLandingBypass  True if soft landing — UAM allowed during rebound window
      */
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -129,7 +130,8 @@ class UamController @Inject constructor(
         highTempTarget:    Boolean,
         cgmInWarmup:       Boolean,
         inPostMealLockout:  Boolean,
-        profileTargetMmol:  Double
+        profileTargetMmol:  Double,
+        softLandingBypass:  Boolean = false
     ) {
         previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
@@ -208,11 +210,16 @@ class UamController @Inject constructor(
             return
         }
         currentlyPastNightCutoff = false
+        if (softLandingBypass && (bgWentLow || inReboundWindow)) {
+            aapsLogger.debug(LTag.APS, "UAM: soft landing bypass active — detection allowed during rebound")
+        }
 
         // ── Safety block: recent low / rebound ───────────────────────────────
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
-        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
+        // softLandingBypass overrides bgWentLow/inReboundWindow but not the time-based block
+        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) && !softLandingBypass
+        if (blockedByLow) {
             if (consecutiveRiseReadings > 0) {
                 val reason = when {
                     inReboundWindow         -> "rebound window active"

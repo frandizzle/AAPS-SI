@@ -123,6 +123,11 @@ open class SmartInsulinPlugin @Inject constructor(
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
     var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
+    var minBgDuringLow: Double = Double.MAX_VALUE // lowest BG seen during current low event (mg/dL)
+    var iobAtLowTime: Double = 0.0               // IOB when BG first crossed lowGuard
+    var shortAvgDeltaAtLow: Double = 0.0         // shortAvgDelta (mmol) when BG first crossed lowGuard
+    var secondLowOccurred: Boolean = false        // true if BG went low a second time — full lockout
+    var softLandingBypass: Boolean = false        // true if soft landing — UAM allowed during rebound
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
@@ -152,10 +157,15 @@ open class SmartInsulinPlugin @Inject constructor(
         basalLearner.reset()
         circadianLearner.reset()
         profileLearner.resetProfiles()
-        bgWentLow          = false
+        bgWentLow            = false
         reboundWindowStartMs = 0L
         learningDirtyUntilMs = 0L
         previousMealModeForLockout = MealMode.FASTING
+        minBgDuringLow       = Double.MAX_VALUE
+        iobAtLowTime         = 0.0
+        shortAvgDeltaAtLow   = 0.0
+        secondLowOccurred    = false
+        softLandingBypass    = false
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
 
@@ -234,8 +244,20 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  Post-meal lockout: none")
             }
             // Safety state
-            if (inReboundWindow) appendLine("  ⚠ Rebound: ${msSinceLastSuspend / 60_000}min elapsed")
+            if (inReboundWindow) {
+                val bypassNote = if (softLandingBypass) " — SOFT LANDING BYPASS ACTIVE (UAM allowed)" else " — full lockout"
+                appendLine("  ⚠ Rebound: ${msSinceLastSuspend / 60_000}min elapsed$bypassNote")
+            }
             if (bgWentLow && !inReboundWindow) appendLine("  ⚠ Recent low: watching for recovery")
+            if (bgWentLow && minBgDuringLow < Double.MAX_VALUE) {
+                val depth = minBgDuringLow / 18.0
+                val vel   = shortAvgDeltaAtLow
+                val iob   = iobAtLowTime
+                appendLine("  Low detail: minBG=${String.format("%.1f", depth)}mmol " +
+                               "velAtLow=${String.format("%+.2f", vel)} " +
+                               "iobAtLow=${String.format("%.2f", iob)}U " +
+                               if (secondLowOccurred) "⚠ SECOND LOW — full lockout" else "")
+            }
 
             // ── Learning state ────────────────────────────────────────────────
             appendLine()
@@ -510,7 +532,8 @@ open class SmartInsulinPlugin @Inject constructor(
             highTempTarget     = highTempTarget,
             cgmInWarmup        = cgmInWarmup,
             inPostMealLockout  = inPostMealLockout,
-            profileTargetMmol  = profileTargetMgdl / 18.0
+            profileTargetMmol  = profileTargetMgdl / 18.0,
+            softLandingBypass  = softLandingBypass
         )
 
         // ── Apply UAM ISF immediately on trigger cycle ───────────────────────
@@ -759,18 +782,28 @@ open class SmartInsulinPlugin @Inject constructor(
         //    fresh once BG recovers again.
         if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
             if (!bgWentLow) {
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG went low (${currentBgMgdl} mg/dL), watching for recovery")
-                // Cancel any active UAM mode immediately — ISF override should not continue
-                // through a low. Re-activation is blocked by bgWentLow + rebound window guards.
+                // First crossing — capture conditions for soft landing evaluation
+                iobAtLowTime       = iobArray.firstOrNull()?.iob ?: 0.0
+                shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: BG went low (${String.format("%.1f", currentBgMgdl / 18.0)}mmol) " +
+                                     "iob=${String.format("%.2f", iobAtLowTime)}U " +
+                                     "shortAvgΔ=${String.format("%+.2f", shortAvgDeltaAtLow)}mmol")
                 if (mealMode.isUam) {
                     aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
                     mealOverrideManager.cancelOverride()
                 }
+            } else if (softLandingBypass && reboundWindowStartMs > 0L) {
+                // BG went low again after bypass was active — second low, full lockout
+                secondLowOccurred = true
+                softLandingBypass = false
+                aapsLogger.debug(LTag.APS, "SmartInsulin: second low — bypass revoked, full lockout")
             }
+            if (currentBgMgdl < minBgDuringLow) minBgDuringLow = currentBgMgdl
             bgWentLow = true
             if (reboundWindowStartMs > 0L) {
                 reboundWindowStartMs = 0L
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard (${currentBgMgdl} mg/dL) during rebound window — resetting timer")
+                aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard during rebound window — resetting timer")
             }
         }
 
@@ -784,8 +817,40 @@ open class SmartInsulinPlugin @Inject constructor(
         // 3) Clear state once the full 60-min rebound window has elapsed.
         if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
             reboundWindowStartMs = 0L
-            bgWentLow = false
+            bgWentLow            = false
+            minBgDuringLow       = Double.MAX_VALUE
+            secondLowOccurred    = false
+            softLandingBypass    = false
             aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
+        }
+
+        // ── Soft landing bypass ───────────────────────────────────────────────
+        // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
+        // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
+        val lowGuardMmol             = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
+        val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
+        val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
+        val bypassNightCutoff        = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
+        val inMealHoursForBypass     = if (bypassNightCutoff > bypassDayStart)
+            bypassHour in bypassDayStart until bypassNightCutoff
+        else
+            bypassHour >= bypassDayStart || bypassHour < bypassNightCutoff
+
+        softLandingBypass = bgWentLow &&
+            !secondLowOccurred &&
+            minBgDuringLow >= softLandingDepthMgdl &&
+            shortAvgDeltaAtLow > -0.15 &&
+            iobAtLowTime < 1.0 &&
+            inMealHoursForBypass
+
+        if (softLandingBypass) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: soft landing bypass ACTIVE — " +
+                                 "minBG=${String.format("%.1f", minBgDuringLow / 18.0)}mmol " +
+                                 "(≥${String.format("%.1f", softLandingDepthMgdl / 18.0)}) " +
+                                 "velAtLow=${String.format("%+.2f", shortAvgDeltaAtLow)} (>-0.15) " +
+                                 "iob=${String.format("%.2f", iobAtLowTime)}U (<1.0)")
         }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
