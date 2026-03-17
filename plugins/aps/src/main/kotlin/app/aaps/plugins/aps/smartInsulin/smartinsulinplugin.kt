@@ -513,8 +513,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ── Re-read mealMode after UAM — if UAM just fired this cycle, use new ISF immediately ──
         // Without this, the cycle that triggers UAM still runs with profile ISF.
-        // Re-reading activeMealMode captures the just-activated UAM mode in the same cycle.
-        val effectiveMealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
+        // Read activeMealMode directly (not via MealModeDetector) to catch same-cycle UAM activation.
+        val effectiveMealMode = mealOverrideManager.activeMealMode ?: MealMode.FASTING
         val effectiveModeIsfMmol = when (effectiveMealMode) {
             MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
             MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)

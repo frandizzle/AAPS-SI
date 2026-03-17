@@ -63,6 +63,7 @@ class UamController @Inject constructor(
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
+    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
 
@@ -130,7 +131,25 @@ class UamController @Inject constructor(
     ) {
         previousMealMode = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
-        currentlyInMealMode        = currentMealMode != MealMode.FASTING
+
+        // Reset lastMealEndedMs if it's from a previous calendar day
+        if (lastMealEndedMs > 0L) {
+            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = lastMealEndedMs }
+            val nowCal  = java.util.Calendar.getInstance()
+            if (mealCal.get(java.util.Calendar.DAY_OF_YEAR) != nowCal.get(java.util.Calendar.DAY_OF_YEAR) ||
+                mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)) {
+                aapsLogger.debug(LTag.APS, "UAM: new day — resetting lastMealEndedMs, P/F requires today's meal")
+                lastMealEndedMs = 0L
+            }
+        }
+
+        val wasMealMode = currentlyInMealMode
+        currentlyInMealMode = currentMealMode != MealMode.FASTING
+        // Track when meal mode expires so P/F knows a meal has happened
+        if (wasMealMode && !currentlyInMealMode) {
+            lastMealEndedMs = System.currentTimeMillis()
+            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail")
+        }
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
             resetStreak()
@@ -342,11 +361,15 @@ class UamController @Inject constructor(
 
         // Block P/F while a meal or UAM mode is active — let those handle the carb rise.
         // P/F is for the fat/protein TAIL after the meal mode expires, not the initial rise.
-        // Post-meal dirty window (fasting but recently ate) = P/F armed for the tail.
         if (currentMealMode != MealMode.FASTING) {
             if (stuckHighReadings > 0) stuckHighReadings = 0
             return
         }
+
+        // P/F runs as default fasting watchdog within the active time window.
+        // If BG is stuck above threshold during fasting, P/F handles it regardless of
+        // whether a meal has occurred — the time window + flat delta + 4 readings is
+        // sufficient filter. UAM rise detection overrides P/F if carbs arrive.
 
         // Respect the same safety blocks as rise detection
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
@@ -433,6 +456,7 @@ class UamController @Inject constructor(
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
                     currentlyInMealMode ->
                         appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
+
                     else -> {
                         val avgStr = String.format("%+.2f", lastStuckAvgDelta)
                         val bgStr  = String.format("%.1f", lastStuckBgMmol)
