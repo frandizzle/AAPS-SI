@@ -281,12 +281,14 @@ class UamController @Inject constructor(
         val unexpectedDelta = deltaMmol - bgiMmol
         val unexpectedShort = shortAvgDeltaMmol - bgiMmol
 
-        // Delta wobble tolerance: if shortAvgDelta confirms the trend (>= riseMinDelta),
-        // allow a single instantaneous delta to dip up to 30% below threshold without
-        // breaking the streak. Prevents a 0.17 reading killing a clear +0.4 avg trend.
-        val deltaWobbleTolerance = if (shortAvgDeltaMmol >= riseMinDelta) 0.7 else 1.0
+        // Delta wobble tolerance: if shortAvgDelta is close to riseMinDelta (>= 85%),
+        // allow both delta and shortAvg to be slightly below threshold.
+        // This handles the common case where delta consistently reads 0.17 but displays
+        // as 0.2 due to rounding — both values confirm a genuine rise just under threshold.
+        val closeToThreshold = shortAvgDeltaMmol >= riseMinDelta * 0.85
+        val deltaWobbleTolerance = if (closeToThreshold) 0.85 else 1.0
         val risingNow = deltaMmol >= riseMinDelta * deltaWobbleTolerance &&
-            shortAvgDeltaMmol >= shortAvgThreshold &&
+            shortAvgDeltaMmol >= shortAvgThreshold * deltaWobbleTolerance &&
             unexpectedDelta >= unexpectedMin &&
             unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
 
