@@ -511,11 +511,11 @@ open class SmartInsulinPlugin @Inject constructor(
             inPostMealLockout = inPostMealLockout
         )
 
-        // ── Re-read mealMode after UAM — if UAM just fired this cycle, use new ISF immediately ──
-        // Without this, the cycle that triggers UAM still runs with profile ISF.
-        // Read activeMealMode directly (not via MealModeDetector) to catch same-cycle UAM activation.
-        val effectiveMealMode = mealOverrideManager.activeMealMode ?: MealMode.FASTING
-        val effectiveModeIsfMmol = when (effectiveMealMode) {
+        // ── Apply UAM ISF immediately on trigger cycle ───────────────────────
+        // uamController.justFiredThisCycle is non-null if UAM fired this cycle.
+        // Using a dedicated field avoids relying on activeMealMode timing.
+        val justFiredMode = uamController.justFiredThisCycle
+        val effectiveModeIsfMmol = when (justFiredMode ?: mealMode) {
             MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
             MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
             MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
@@ -530,11 +530,11 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val effectiveDosingIsfMgdl = when {
             effectiveModeIsfMmol > 0.0 -> effectiveModeIsfMmol * 18.0
-            else                       -> dosingIsfMgdl  // unchanged if no mode ISF set
+            else                       -> dosingIsfMgdl
         }
-        if (effectiveMealMode != mealMode) {
+        if (justFiredMode != null) {
             aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: UAM fired this cycle — using ${effectiveMealMode.label} ISF " +
+                             "SmartInsulin: UAM fired this cycle — using ${justFiredMode.label} ISF " +
                                  "${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}mmol immediately")
         }
 

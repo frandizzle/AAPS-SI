@@ -129,8 +129,9 @@ class UamController @Inject constructor(
         cgmInWarmup:       Boolean,
         inPostMealLockout: Boolean
     ) {
-        previousMealMode = currentMealMode
+        previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
+        justFiredThisCycle         = null  // reset each cycle
 
         // Reset lastMealEndedMs if it's from a previous calendar day
         if (lastMealEndedMs > 0L) {
@@ -510,7 +511,12 @@ class UamController @Inject constructor(
         bgAtStreakStart         = 0.0
     }
 
+    /** The UAM mode fired this cycle — set by triggerUam, reset at start of each cycle. Null if nothing fired. */
+    var justFiredThisCycle: MealMode? = null
+        private set
+
     private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double) {
+        justFiredThisCycle = mode
         val durationMins = uamDurationMins(mode)
         val isfMmol      = uamIsfMmol(mode)
         val now          = System.currentTimeMillis()
