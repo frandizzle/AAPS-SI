@@ -536,11 +536,15 @@ open class SmartInsulinPlugin @Inject constructor(
             softLandingBypass  = softLandingBypass
         )
 
-        // ── Apply UAM ISF immediately on trigger cycle ───────────────────────
-        // uamController.justFiredThisCycle is non-null if UAM fired this cycle.
-        // Using a dedicated field avoids relying on activeMealMode timing.
+        // ── Apply correct ISF for active UAM mode ────────────────────────────
+        // Priority: justFiredThisCycle (trigger cycle) > activeMealMode (ongoing) > mealMode
+        // justFiredThisCycle handles the exact trigger cycle where mealMode is still FASTING.
+        // activeMealMode handles ongoing cycles where MealModeDetector hasn't caught up yet.
         val justFiredMode = uamController.justFiredThisCycle
-        val effectiveModeIsfMmol = when (justFiredMode ?: mealMode) {
+        val resolvedMode  = justFiredMode
+            ?: (mealOverrideManager.activeMealMode?.takeIf { it != mealMode })
+            ?: mealMode
+        val effectiveModeIsfMmol = when (resolvedMode) {
             MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
             MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
             MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
@@ -558,10 +562,14 @@ open class SmartInsulinPlugin @Inject constructor(
             effectiveModeIsfMmol > 0.0 -> effectiveModeIsfMmol * 18.0
             else                       -> dosingIsfMgdl
         }
-        if (justFiredMode != null) {
+        if (resolvedMode != mealMode) {
+            val source = when {
+                justFiredMode != null -> "trigger cycle"
+                else                 -> "activeMealMode"
+            }
             aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: UAM fired this cycle — using ${justFiredMode.label} ISF " +
-                                 "${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}mmol immediately")
+                             "SmartInsulin: using ${resolvedMode.label} ISF " +
+                                 "${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}mmol ($source)")
         }
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
