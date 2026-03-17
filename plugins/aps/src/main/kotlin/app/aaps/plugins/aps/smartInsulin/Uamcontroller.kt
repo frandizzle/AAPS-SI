@@ -380,7 +380,9 @@ class UamController @Inject constructor(
             return
         }
 
-        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+        // P/F uses its own threshold — higher than rise detection threshold
+        // since fat/protein genuinely elevates BG, don't want P/F firing near target
+        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol)
 
         // Track last values for SI tab debug display
         lastStuckAvgDelta = shortAvgDeltaMmol

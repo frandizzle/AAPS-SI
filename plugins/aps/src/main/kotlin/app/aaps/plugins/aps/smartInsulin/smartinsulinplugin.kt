@@ -1094,6 +1094,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,       title = R.string.si_uam_proteinfat_duration_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,     title = R.string.si_uam_proteinfat_stuck_readings_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatIsf,             title = R.string.si_uam_proteinfat_isf_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol,    title = R.string.si_uam_proteinfat_threshold_title))
         }
     }
 }
