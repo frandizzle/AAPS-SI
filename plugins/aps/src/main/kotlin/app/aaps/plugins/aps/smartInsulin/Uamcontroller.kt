@@ -114,6 +114,7 @@ class UamController @Inject constructor(
      * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
      * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
      * @param inPostMealLockout  True if within post-meal dirty window — stricter thresholds apply
+     * @param profileTargetMmol  Profile target in mmol — P/F streak resets if BG returns to target
      */
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -127,7 +128,8 @@ class UamController @Inject constructor(
         lastLowTimeMs:     Long,
         highTempTarget:    Boolean,
         cgmInWarmup:       Boolean,
-        inPostMealLockout: Boolean
+        inPostMealLockout:  Boolean,
+        profileTargetMmol:  Double
     ) {
         previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
@@ -229,7 +231,7 @@ class UamController @Inject constructor(
         // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
         // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
         // gated like meal slots. Runs every fasting cycle after safety checks pass.
-        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout)
+        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol)
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
@@ -354,7 +356,8 @@ class UamController @Inject constructor(
         inReboundWindow:   Boolean,
         lastLowTimeMs:     Long,
         currentMealMode:   MealMode,
-        inPostMealLockout: Boolean
+        inPostMealLockout: Boolean,
+        profileTargetMmol: Double
     ) {
         // Check P/F preference directly — uamModeEnabled() returns false for P/F
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
@@ -385,6 +388,15 @@ class UamController @Inject constructor(
         // P/F uses its own threshold — higher than rise detection threshold
         // since fat/protein genuinely elevates BG, don't want P/F firing near target
         val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol)
+
+        // Reset if BG has returned to profile target — stuck-high condition no longer valid
+        if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: streak reset — BG ${String.format("%.1f", currentBgMmol)} " +
+                                 "back at/below target ${String.format("%.1f", profileTargetMmol)}mmol")
+            stuckHighReadings = 0
+            return
+        }
 
         // Track last values for SI tab debug display
         lastStuckAvgDelta = shortAvgDeltaMmol

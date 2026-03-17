@@ -498,18 +498,19 @@ open class SmartInsulinPlugin @Inject constructor(
         // Negative = insulin pulling BG down. Used by UAM to detect rises beyond insulin prediction.
         val uamBgiMmol = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0
         uamController.onLoopCycle(
-            currentMealMode   = mealMode,
-            currentBgMmol     = glucoseStatus.glucose / 18.0,
-            deltaMmol         = glucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol = glucoseStatus.shortAvgDelta / 18.0,
-            bgiMmol           = uamBgiMmol,
-            currentHour       = uamCurrentHour,
-            bgWentLow         = bgWentLow,
-            inReboundWindow   = inReboundWindow,
-            lastLowTimeMs     = uamLastLowTimeMs,
-            highTempTarget    = highTempTarget,
-            cgmInWarmup       = cgmInWarmup,
-            inPostMealLockout = inPostMealLockout
+            currentMealMode    = mealMode,
+            currentBgMmol      = glucoseStatus.glucose / 18.0,
+            deltaMmol          = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol  = glucoseStatus.shortAvgDelta / 18.0,
+            bgiMmol            = uamBgiMmol,
+            currentHour        = uamCurrentHour,
+            bgWentLow          = bgWentLow,
+            inReboundWindow    = inReboundWindow,
+            lastLowTimeMs      = uamLastLowTimeMs,
+            highTempTarget     = highTempTarget,
+            cgmInWarmup        = cgmInWarmup,
+            inPostMealLockout  = inPostMealLockout,
+            profileTargetMmol  = profileTargetMgdl / 18.0
         )
 
         // ── Apply UAM ISF immediately on trigger cycle ───────────────────────
