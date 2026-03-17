@@ -80,6 +80,7 @@ enum class DoubleKey(
     ApsSmartInsulinUamLunchIsf("si_uam_lunch_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
     ApsSmartInsulinUamDinnerIsf("si_uam_dinner_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
     ApsSmartInsulinUamSnackIsf("si_uam_snack_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamAfternoonIsf("si_uam_afternoon_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     ApsSmartInsulinUamProteinFatIsf("si_uam_proteinfat_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
 
 }

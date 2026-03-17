@@ -407,6 +407,7 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
             MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
             MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
             MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
             MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
         }
@@ -525,6 +526,7 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
             MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
             MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
             MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
             MealMode.FASTING       -> 0.0
         }
@@ -1081,6 +1083,11 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackEndHour,              title = R.string.si_uam_snack_end_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,         title = R.string.si_uam_snack_duration_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamSnackIsf,               title = R.string.si_uam_snack_isf_title))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamAfternoonEnabled,           title = R.string.si_uam_afternoon_enabled_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonStartHour,            title = R.string.si_uam_afternoon_start_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonEndHour,              title = R.string.si_uam_afternoon_end_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonDurationMins,         title = R.string.si_uam_afternoon_duration_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamAfternoonIsf,               title = R.string.si_uam_afternoon_isf_title))
 
             // Protein/Fat UAM (stuck-high detection — no time window, runs all day until night cutoff)
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,        title = R.string.si_uam_proteinfat_enabled_title))

@@ -192,6 +192,14 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    ApsSmartInsulinProfileUamAfternoon(
+        "si_profile_uam_afternoon",
+        defaultValue          = "{\"peakMinutes\":55,\"diaMinutes\":360,\"sampleCount\":0}",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     ApsSmartInsulinProfileUamSnack(
         "si_profile_uam_snack",
         defaultValue          = "",

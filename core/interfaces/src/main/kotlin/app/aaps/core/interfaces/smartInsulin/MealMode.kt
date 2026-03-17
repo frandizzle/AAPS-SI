@@ -67,5 +67,11 @@ enum class MealMode(
         diaLearningEnabled = true,
         learningWeight     = 0.4,
         isUam              = true
+    ),
+    UAM_AFTERNOON(
+        label              = "Afternoon (UAM)",
+        diaLearningEnabled = true,
+        learningWeight     = 0.4,
+        isUam              = true
     )
 }

@@ -339,6 +339,11 @@
     <string name="si_uam_dinner_duration_title">UAM Dinner mode duration (min)</string>
     <string name="si_uam_dinner_isf_title">UAM Dinner ISF (mmol, 0 = profile)</string>
 
+    <string name="si_uam_afternoon_enabled_title">UAM Afternoon enabled</string>
+    <string name="si_uam_afternoon_start_title">UAM Afternoon window start hour</string>
+    <string name="si_uam_afternoon_end_title">UAM Afternoon window end hour</string>
+    <string name="si_uam_afternoon_duration_title">UAM Afternoon mode duration (min)</string>
+    <string name="si_uam_afternoon_isf_title">UAM Afternoon ISF (mmol, 0 = profile)</string>
     <string name="si_uam_snack_enabled_title">UAM Snack enabled</string>
     <string name="si_uam_snack_start_title">UAM Snack window start hour</string>
     <string name="si_uam_snack_end_title">UAM Snack window end hour</string>

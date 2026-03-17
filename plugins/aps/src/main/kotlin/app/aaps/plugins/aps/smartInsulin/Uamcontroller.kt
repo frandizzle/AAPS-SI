@@ -556,6 +556,9 @@ class UamController @Inject constructor(
             Triple(MealMode.UAM_SNACK,
                    preferences.get(IntKey.ApsSmartInsulinUamSnackStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamSnackEndHour)),
+            Triple(MealMode.UAM_AFTERNOON,
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
             // UAM_PROTEIN_FAT has no time window — handled separately by checkStuckHigh()
         )
         return candidates.firstOrNull { (mode, start, end) ->
@@ -572,6 +575,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(BooleanKey.ApsSmartInsulinUamLunchEnabled)
         MealMode.UAM_DINNER    -> preferences.get(BooleanKey.ApsSmartInsulinUamDinnerEnabled)
         MealMode.UAM_SNACK     -> preferences.get(BooleanKey.ApsSmartInsulinUamSnackEnabled)
+        MealMode.UAM_AFTERNOON -> preferences.get(BooleanKey.ApsSmartInsulinUamAfternoonEnabled)
         MealMode.UAM_PROTEIN_FAT  -> false  // no time window — P/F uses direct pref check in checkStuckHigh()
         else                   -> false
     }
@@ -580,7 +584,8 @@ class UamController @Inject constructor(
         MealMode.UAM_BREAKFAST -> preferences.get(IntKey.ApsSmartInsulinUamBreakfastDurationMins).toLong()
         MealMode.UAM_LUNCH     -> preferences.get(IntKey.ApsSmartInsulinUamLunchDurationMins).toLong()
         MealMode.UAM_DINNER    -> preferences.get(IntKey.ApsSmartInsulinUamDinnerDurationMins).toLong()
-        MealMode.UAM_SNACK     -> preferences.get(IntKey.ApsSmartInsulinUamSnackDurationMins).toLong()
+        MealMode.UAM_SNACK     -> preferences.get(IntKey.ApsSmartInsulinUamSnackDurationMins)
+        MealMode.UAM_AFTERNOON -> preferences.get(IntKey.ApsSmartInsulinUamAfternoonDurationMins).toLong()
         MealMode.UAM_PROTEIN_FAT  -> preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins).toLong()
         else                   -> 30L
     }
@@ -590,6 +595,7 @@ class UamController @Inject constructor(
         MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
         MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
         MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+        MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
         MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
         else                   -> 0.0  // no ISF override for unknown modes
     }
