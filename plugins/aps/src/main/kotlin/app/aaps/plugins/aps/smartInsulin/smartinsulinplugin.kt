@@ -685,6 +685,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_DINNER    -> "Dinner"
                     MealMode.UAM_SNACK     -> "Snack"
                     MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
+                    MealMode.UAM_AFTERNOON    -> "Afternoon"
                     else                   -> mode.label
                 }
                 "Meal: UAM ($uamLabel) ${mins}m"
