@@ -1,1173 +1,658 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import android.content.Context
-import androidx.preference.PreferenceCategory
-import androidx.preference.PreferenceManager
-import androidx.preference.PreferenceScreen
-import app.aaps.core.data.aps.SMBDefaults
-import app.aaps.core.data.model.GlucoseUnit
-import app.aaps.core.data.model.TE
-import app.aaps.core.data.plugin.PluginType
-import app.aaps.core.interfaces.aps.APS
-import app.aaps.core.interfaces.aps.APSResult
-import app.aaps.core.interfaces.aps.AutosensResult
-import app.aaps.core.interfaces.aps.CurrentTemp
-import app.aaps.core.interfaces.aps.GlucoseStatus
-import app.aaps.core.interfaces.aps.OapsProfile
-import app.aaps.core.interfaces.configuration.Config
-import app.aaps.core.interfaces.constraints.Constraint
-import app.aaps.core.interfaces.constraints.ConstraintsChecker
-import app.aaps.core.interfaces.constraints.PluginConstraints
-import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.db.ProcessedTbrEbData
-import app.aaps.core.interfaces.iob.GlucoseStatusProvider
-import app.aaps.plugins.aps.openAPSSMB.GlucoseStatusCalculatorSMB
-import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.plugin.ActivePlugin
-import app.aaps.core.interfaces.plugin.PluginBase
-import app.aaps.core.interfaces.plugin.PluginDescription
-import app.aaps.core.interfaces.profile.Profile
-import app.aaps.core.interfaces.profile.ProfileFunction
-import app.aaps.core.interfaces.profile.ProfileUtil
-import app.aaps.core.interfaces.resources.ResourceHelper
-import app.aaps.core.interfaces.rx.bus.RxBus
-import app.aaps.core.interfaces.overview.OverviewData
-import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
-import app.aaps.core.interfaces.utils.DateUtil
-import app.aaps.core.interfaces.utils.HardLimits
-import app.aaps.core.interfaces.utils.Round
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
-import app.aaps.core.keys.StringKey
-import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.constraints.ConstraintObject
-import app.aaps.core.objects.extensions.convertedToAbsolute
-import app.aaps.core.objects.extensions.getPassedDurationToTimeInMinutes
-import app.aaps.core.objects.extensions.plannedRemainingMinutes
-import app.aaps.core.objects.extensions.put
-import app.aaps.core.objects.extensions.store
-import app.aaps.core.objects.extensions.target
-import app.aaps.core.utils.MidnightUtils
-import app.aaps.core.validators.preferences.AdaptiveDoublePreference
-import app.aaps.core.validators.preferences.AdaptiveUnitPreference
-import app.aaps.core.validators.preferences.AdaptiveIntPreference
-import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
-import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
-import app.aaps.plugins.aps.R
-import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
-import app.aaps.plugins.aps.events.EventResetOpenAPSGui
-import org.json.JSONObject
+import java.util.Calendar
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.math.floor
 
+/**
+ * UAM (Unannounced Meal) auto-detection controller.
+ *
+ * Monitors fasting BG during configured time windows and auto-activates the
+ * appropriate UAM meal mode when a confirmed BG rise is detected.
+ *
+ * ## Detection logic
+ * - Current hour must fall within a UAM mode's configured window
+ * - No recent low / rebound window active (hard block)
+ * - BG must be above [triggerThresholdMmol] (default 6.0 mmol)
+ * - [riseConsecutiveReadings] consecutive readings with:
+ *     - delta >= [riseMinDeltaMmol]
+ *     - shortAvgDelta >= [riseMinDeltaMmol] * 0.75  (filters single-reading noise)
+ * - Total BG rise since streak start >= [RISE_TOTAL_MMOL_MIN] (filters wobble streaks)
+ * → auto-activate the matching UAM mode via [MealOverrideManager.activateOverride]
+ *
+ * ## Hard cutoff
+ * All UAM modes are disabled at [nightCutoffHour] (default 23:00). STFT handles
+ * overnight sticky BG instead.
+ *
+ * ## Safety blocks
+ * UAM will not fire if:
+ *   - A real low occurred recently (within [LOW_BLOCK_MINS])
+ *   - The rebound window is active
+ *
+ * ## Window priority
+ * Breakfast → Lunch → Dinner → Snack → Low Carb (first match wins).
+ * If windows overlap, the earlier meal slot takes priority.
+ */
 @Singleton
-open class SmartInsulinPlugin @Inject constructor(
-    aapsLogger: AAPSLogger,
-    rh: ResourceHelper,
-    private val rxBus: RxBus,
-    private val config: Config,
-    private val profileFunction: ProfileFunction,
-    private val profileUtil: ProfileUtil,
-    private val iobCobCalculator: IobCobCalculator,
+class UamController @Inject constructor(
+    private val preferences:         Preferences,
     private val mealOverrideManager: MealOverrideManager,
-    private val glucoseStatusProvider: GlucoseStatusProvider,
-    private val glucoseStatusCalculatorSMB: GlucoseStatusCalculatorSMB,
-    private val persistenceLayer: PersistenceLayer,
-    private val processedTbrEbData: ProcessedTbrEbData,
-    private val hardLimits: HardLimits,
-    private val preferences: Preferences,
-    private val constraintsChecker: ConstraintsChecker,
-    private val activePlugin: ActivePlugin,
-    private val dateUtil: DateUtil,
-    private val determineBasalSmartInsulin: DetermineBasalSmartInsulin,
-    private val stftController: StftController,
-    private val uamController: UamController,
-    private val profileLearner: ProfileLearner,
-    private val bolusCurveTracker: BolusCurveTracker,
-    private val aggressionLearner: AggressionLearner,
-    private val basalLearner: BasalLearner,
-    private val circadianLearner: CircadianLearner,
-    private val activityMonitor:  ActivityMonitor,
-    private val cgmWarmupGuard:   CgmWarmupGuard,
-    private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
-    private val csvLogger: LoopCsvLogger,
-    private val calculationWorkflow: CalculationWorkflow,
-    private val overviewData: OverviewData
-) : PluginBase(
-    PluginDescription()
-        .mainType(PluginType.APS)
-        .fragmentClass(SmartInsulinFragment::class.java.name)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_generic_icon)
-        .pluginName(R.string.smart_insulin)
-        .shortName(R.string.smart_insulin_short)
-        .preferencesId(PluginDescription.PREFERENCE_SCREEN)
-        .preferencesVisibleInSimpleMode(false)
-        .showInList { config.APS }
-        .description(R.string.smart_insulin_description),
-    aapsLogger, rh
-), APS, PluginConstraints, app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview {
+    private val aapsLogger:          AAPSLogger
+) {
 
-    override var lastAPSRun: Long = 0
-    override val algorithm = APSResult.Algorithm.SMB
-    override var lastAPSResult: APSResult? = null
+    // ── State ─────────────────────────────────────────────────────────────────
+    private var consecutiveRiseReadings = 0
+    private var bgAtStreakStart:          Double = 0.0
+    private var lastCountedBgTimestampMs: Long   = 0L  // CGM timestamp of last reading that incremented streak
+    private var lastStuckBgTimestampMs:   Long   = 0L  // CGM timestamp of last reading that incremented P/F streak
+    private var lastUamMode:    MealMode? = null
+    private var lastUamTimeMs:  Long      = 0L
+    private var lastUamTriggerCount       = 0
+    private var previousMealMode: MealMode?  = null  // for expiry transition detection
+    private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
-    // ── Suspend / rebound tracking ────────────────────────────────────────────
-    // Rebound protection only activates if BG actually went under the low threshold
-    // during a suspend. A precautionary suspend that never caused a real low does
-    // NOT trigger the rebound window.
-    var bgWentLow: Boolean = false               // true once BG crossed below suspend threshold during a zero temp
-    var minBgDuringLow: Double = Double.MAX_VALUE // lowest BG seen during current low event (mg/dL)
-    var iobAtLowTime: Double = 0.0               // IOB when BG first crossed lowGuard
-    var shortAvgDeltaAtLow: Double = 0.0         // shortAvgDelta (mmol) when BG first crossed lowGuard
-    var secondLowOccurred: Boolean = false        // true if BG went low a second time — full lockout
-    var softLandingBypass: Boolean = false        // true if soft landing — UAM allowed during rebound
-    var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
-    var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
-    private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
-    var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
-    val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
-    val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
-        bgWentLow &&
-        msSinceLastSuspend < REBOUND_GUARD_MS
+    // Stuck-high state for UAM_PROTEIN_FAT detection
+    private var stuckHighReadings = 0
+    // Post-meal lockout state — updated each cycle for statusString access
+    private var currentlyInPostMealLockout = false
+    private var currentlyPastNightCutoff   = false
+    private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
+    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
+    private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
+    private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
+
+    // Last reject tracking for debug display
+    private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
+                                  val unexpectedActual: Double, val unexpectedNeeded: Double,
+                                  val wasDirtyWindow: Boolean)
+    private var lastReject: RejectInfo? = null  // consecutive readings with BG above threshold and flat delta
 
     companion object {
-        const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
+        // How long after a real low to block UAM
+        private const val LOW_BLOCK_MINS            = 90L
+        // shortAvgDelta must be at least this fraction of riseMinDelta
+        private const val SHORT_AVG_DELTA_FRACTION   = 0.75
+        // Wobble tolerance: how far below trigger threshold a single reading can dip
+        // without resetting an active rise streak (CGM noise/compression mitigation)
+        private const val WOBBLE_TOLERANCE_MMOL       = 0.3
+        // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
+        private const val UNEXPECTED_RISE_MIN_MMOL        = 0.15
+        // Stricter thresholds during post-meal dirty window — distinguishes genuine
+        // second meal (strong sharp rise) from fat/protein tail (slow weak rise)
+        private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5   // 0.2 → 0.3
+        private const val DIRTY_WINDOW_UNEXPECTED_MULT    = 1.67  // 0.15 → 0.25
+
+        // Stuck-high detection for UAM_PROTEIN_FAT
+        // Delta must be in this range to count as "stuck" (not falling, not spiking)
+        private const val STUCK_DELTA_MIN_MMOL        = -0.15  // -0.1 with small noise tolerance — genuinely falling (-0.2+) excluded
+        private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
+        // 6 readings = 30 min at 5 min intervals
+        // STUCK_READINGS_NEEDED moved to user preference ApsSmartInsulinUamProteinFatStuckReadings
     }
 
-    // ── Cached Overview state ────────────────────────────────────────────────
-    // Updated each invoke() so overviewState() can be called any time from UI threads.
-    @Volatile private var cachedOverviewState: app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
-        app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
-            modeLine      = "Meal: Fasting",
-            pb2Line       = null,
-            learningState = "Learning"
-        )
+    // ── Public API ────────────────────────────────────────────────────────────
 
-    // ── Reset all learners ────────────────────────────────────────────────────
+    /**
+     * Call once per loop cycle from SmartInsulinPlugin.invoke().
+     *
+     * @param currentMealMode    Current active meal mode
+     * @param currentBgMmol      Current BG in mmol/L
+     * @param deltaMmol          5-min delta in mmol/L
+     * @param shortAvgDeltaMmol  Short average delta (~15 min) in mmol/L
+     * @param bgiMmol            Blood glucose impact from insulin activity (negative = insulin pulling BG down)
+     *                           Computed as: -(iobActivity * ISF * 5) / 18.0
+     * @param currentHour        Hour of day (0-23)
+     * @param bgWentLow          True if a real low occurred (rebound protection)
+     * @param inReboundWindow    True if currently in post-low rebound window
+     * @param lastLowTimeMs      Timestamp of last low event (0 if never)
+     * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
+     * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
+     * @param inPostMealLockout  True if within post-meal dirty window — stricter thresholds apply
+     * @param profileTargetMmol  Profile target in mmol — P/F streak resets if BG returns to target
+     * @param softLandingBypass  True if soft landing — UAM allowed during rebound window
+     */
+    fun onLoopCycle(
+        currentMealMode:   MealMode,
+        currentBgMmol:     Double,
+        deltaMmol:         Double,
+        shortAvgDeltaMmol: Double,
+        bgiMmol:           Double,
+        currentHour:       Int,
+        bgWentLow:         Boolean,
+        inReboundWindow:   Boolean,
+        lastLowTimeMs:     Long,
+        highTempTarget:    Boolean,
+        cgmInWarmup:       Boolean,
+        inPostMealLockout:  Boolean,
+        profileTargetMmol:  Double,
+        softLandingBypass:  Boolean = false,
+        bgTimestampMs:      Long    = 0L
+    ) {
+        previousMealMode           = currentMealMode
+        currentlyInPostMealLockout = inPostMealLockout
+        justFiredThisCycle         = null  // reset each cycle
 
-    fun resetAllLearners() {
-        aggressionLearner.reset()
-        basalLearner.reset()
-        circadianLearner.reset()
-        profileLearner.resetProfiles()
-        bgWentLow            = false
-        reboundWindowStartMs = 0L
-        learningDirtyUntilMs = 0L
-        previousMealModeForLockout = MealMode.FASTING
-        minBgDuringLow       = Double.MAX_VALUE
-        iobAtLowTime         = 0.0
-        shortAvgDeltaAtLow   = 0.0
-        secondLowOccurred    = false
-        softLandingBypass    = false
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
-    }
-
-    fun resetAggression() {
-        aggressionLearner.reset()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: aggression reset")
-    }
-
-    fun resetBasal() {
-        basalLearner.reset()
-        circadianLearner.resetBasal()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: basal learners reset")
-    }
-
-    fun resetCircadian() {
-        circadianLearner.reset()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: circadian reset")
-    }
-
-    fun resetProfiles() {
-        profileLearner.resetProfiles()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: profiles reset")
-    }
-
-    // ── Status summary for tab UI ─────────────────────────────────────────────
-
-    fun statusSummary(): String {
-        val cal  = java.util.Calendar.getInstance()
-        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        return buildString {
-            appendLine()
-
-            // ── Active cycle values ───────────────────────────────────────────
-            appendLine("── Active (Hour=${hour}:00, Day=$day) ─────────────────")
-            val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
-            appendLine("  Aggressiveness: ${"%.3f".format(effectiveAggr)}")
-            appendLine("  TIR score: ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
-            appendLine("  Circ ceiling: ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
-            appendLine("  Meal mode: aggressiveness locked to 1.0 during any non-fasting mode")
-            appendLine("  ISF multiplier: ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
-            appendLine("  Basal multiplier: ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
-                           "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
-            appendLine("  ${aggressionLearner.tirSummary}")
-            if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
-
-            // ── Meal override / pre-bolus 2 status ───────────────────────────
-            val activeMode = mealOverrideManager.activeMealMode
-            if (activeMode != null) {
-                val modeRemMins = mealOverrideManager.modeTimeRemainingMs / 60_000
-                appendLine("  Mode active   : ${activeMode.label} (${modeRemMins}min remaining)")
+        // Reset lastMealEndedMs if it's from a previous calendar day
+        if (lastMealEndedMs > 0L) {
+            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = lastMealEndedMs }
+            val nowCal  = java.util.Calendar.getInstance()
+            if (mealCal.get(java.util.Calendar.DAY_OF_YEAR) != nowCal.get(java.util.Calendar.DAY_OF_YEAR) ||
+                mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)) {
+                aapsLogger.debug(LTag.APS, "UAM: new day — resetting lastMealEndedMs, P/F requires today's meal")
+                lastMealEndedMs = 0L
             }
-            val pb2Status = mealOverrideManager.preBolus2StatusText
-            if (pb2Status.isNotEmpty()) {
-                appendLine("  ${pb2Status.replace("PB2 waiting:", "PB2:").replace("PB2 active:", "PB2:")}")
-            }
+        }
 
-            // ── STFT / UAM debug ──────────────────────────────────────────────
-            appendLine()
-            appendLine("── STFT / UAM ────────────────────────")
-            // STFT
-            val stftStatus = stftController.statusString(profileFunction.getProfile()?.getTargetMgdl() ?: (5.5 * 18.0))
-            if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
-            // UAM status
-            val uamStatus = uamController.statusString()
-            if (uamStatus != null) appendLine("  $uamStatus") else appendLine("  UAM: idle")
-            // UAM thresholds + last reject
-            appendLine(uamController.debugSummary())
-            // Post-meal lockout
-            val nowSi = System.currentTimeMillis()
-            if (learningDirtyUntilMs > 0L && nowSi < learningDirtyUntilMs) {
-                val minsLeft = (learningDirtyUntilMs - nowSi) / 60_000
-                appendLine("  Post-meal lockout: ${minsLeft}min left — UAM↑ thresholds ON")
+        val wasMealMode = currentlyInMealMode
+        currentlyInMealMode = currentMealMode != MealMode.FASTING
+        // Track when meal mode expires so P/F knows a meal has happened
+        if (wasMealMode && !currentlyInMealMode) {
+            lastMealEndedMs = System.currentTimeMillis()
+            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail")
+        }
+
+        if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
+            resetStreak()
+            stuckHighReadings = 0
+            return
+        }
+
+        // Only detect during fasting — don't stack on manual or active UAM mode
+        if (currentMealMode != MealMode.FASTING) {
+            resetStreak()
+            stuckHighReadings = 0
+            return
+        }
+
+        // High temp target — user deliberately conservative (exercise/illness). Block UAM.
+        if (highTempTarget) {
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
+                aapsLogger.debug(LTag.APS, "UAM: blocked — high temp target active, streak reset")
+                resetStreak()
+                stuckHighReadings = 0
+            }
+            return
+        }
+
+        // CGM warmup — deltas unreliable, block UAM detection
+        if (cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock)) {
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
+                aapsLogger.debug(LTag.APS, "UAM: blocked — CGM in warmup, streak reset")
+                resetStreak()
+                stuckHighReadings = 0
+            }
+            return
+        }
+
+        // ── Hard night cutoff ─────────────────────────────────────────────────
+        val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
+        val dayStart    = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
+        // UAM active window: dayStart until nightCutoff, wrapping midnight.
+        // e.g. dayStart=10, cutoff=1 → active 10am–1am (blocked 1am–10am).
+        // When cutoff < dayStart the window crosses midnight — split into two ranges.
+        val inActiveWindow = if (nightCutoff > dayStart) {
+            currentHour in dayStart until nightCutoff          // simple: e.g. 9am–11pm
+        } else {
+            currentHour >= dayStart || currentHour < nightCutoff  // wraps: e.g. 10am–1am
+        }
+        if (!inActiveWindow) {
+            currentlyPastNightCutoff = true
+            if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
+                aapsLogger.debug(LTag.APS, "UAM: outside active window (hour=$currentHour window=${dayStart}:00-${nightCutoff}:00), reset")
+                resetStreak()
+                stuckHighReadings = 0
+            }
+            return
+        }
+        currentlyPastNightCutoff = false
+        if (softLandingBypass && (bgWentLow || inReboundWindow)) {
+            aapsLogger.debug(LTag.APS, "UAM: soft landing bypass active — detection allowed during rebound")
+        }
+
+        // ── Safety block: recent low / rebound ───────────────────────────────
+        val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
+        val lowBlockMs = LOW_BLOCK_MINS * 60_000L
+        // softLandingBypass overrides bgWentLow/inReboundWindow but not the time-based block
+        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) && !softLandingBypass
+        if (blockedByLow) {
+            if (consecutiveRiseReadings > 0) {
+                val reason = when {
+                    inReboundWindow         -> "rebound window active"
+                    bgWentLow               -> "recent low (bgWentLow)"
+                    else                    -> "low ${msSinceLow / 60_000}min ago < ${LOW_BLOCK_MINS}min block"
+                }
+                aapsLogger.debug(LTag.APS, "UAM: blocked — $reason, streak reset")
+                resetStreak()
+            }
+            return
+        }
+
+        // Re-arm deliberately removed — UAM fires once, loop handles the rest.
+        // A fresh genuine rise will be detected naturally without a re-arm gate.
+
+        // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
+        // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
+        // gated like meal slots. Runs every fasting cycle after safety checks pass.
+        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol)
+
+        // ── Resolve time window ───────────────────────────────────────────────
+        val uamMode = resolveUamMode(currentHour) ?: run {
+            resetStreak(); return
+        }
+
+        // Reset streak if we've moved into a different meal window mid-streak.
+        // Avoids carrying a Lunch-window streak into the Dinner window.
+        if (consecutiveRiseReadings > 0 && lastResolvedMode != null && lastResolvedMode != uamMode) {
+            aapsLogger.debug(LTag.APS, "UAM: window changed ${lastResolvedMode!!.label}→${uamMode.label}, streak reset")
+            resetStreak()
+        }
+        lastResolvedMode = uamMode
+
+        // ── BG above trigger threshold ────────────────────────────────────────
+        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+
+        // Wobble tolerance: allow a single dip up to 0.3 mmol below threshold without
+        // killing an active streak, as long as shortAvgDelta is still positive.
+        // CGM noise/compression commonly produces one low reading mid-rise — without this,
+        // a genuine upward trend gets reset by a single noisy point.
+        val aboveThreshold = currentBgMmol >= triggerThresholdMmol ||
+            (consecutiveRiseReadings > 0 &&
+                shortAvgDeltaMmol > 0.0 &&
+                currentBgMmol >= triggerThresholdMmol - WOBBLE_TOLERANCE_MMOL)
+
+        if (!aboveThreshold) {
+            resetStreak(); return
+        }
+
+        // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
+        // unexpectedDelta = how much BG is rising beyond what insulin predicts.
+        // BGI is typically negative (insulin pulling BG down), so unexpectedDelta
+        // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
+        // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
+        // activity and is likely drift or noise rather than food.
+        val riseMinDeltaBase   = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+
+        // During post-meal dirty window, require a stronger rise to confirm it's a new
+        // meal rather than a fat/protein tail. Slow tails fail the stricter bar and
+        // fall through to STFT + UAM_PROTEIN_FAT stuck-high detection instead.
+        val dirtyMultiplier    = if (inPostMealLockout) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
+        val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
+        val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
+        val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
+        val unexpectedMin      = UNEXPECTED_RISE_MIN_MMOL * unexpectedMultiplier
+
+        val unexpectedDelta = deltaMmol - bgiMmol
+        val unexpectedShort = shortAvgDeltaMmol - bgiMmol
+
+        // shortAvgDelta is the primary trend confirmation — it smooths over single noisy
+        // readings. If shortAvgDelta confirms a genuine rise, allow instantaneous delta
+        // to be a CGM noise reading without resetting the streak.
+        // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
+        // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
+        val trendConfirmedByAvg = shortAvgDeltaMmol >= riseMinDelta
+        val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
+        val risingNow = deltaMmol >= deltaMin &&
+            shortAvgDeltaMmol >= shortAvgThreshold &&
+            unexpectedDelta >= unexpectedMin &&
+            unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
+
+        if (risingNow) {
+            // Only count each CGM reading once — prevents manual loop refreshes from gaming the streak
+            if (bgTimestampMs > 0L && bgTimestampMs == lastCountedBgTimestampMs) {
+                aapsLogger.debug(LTag.APS, "UAM: same CGM reading (${bgTimestampMs}), skipping streak increment")
             } else {
-                appendLine("  Post-meal lockout: none")
+                if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
+                consecutiveRiseReadings++
+                lastCountedBgTimestampMs = bgTimestampMs
             }
-            // Safety state
-            if (inReboundWindow) {
-                val bypassNote = if (softLandingBypass) " — SOFT LANDING BYPASS ACTIVE (UAM allowed)" else " — full lockout"
-                appendLine("  ⚠ Rebound: ${msSinceLastSuspend / 60_000}min elapsed$bypassNote")
+            val totalRise = currentBgMmol - bgAtStreakStart
+            val dirtyTag = if (inPostMealLockout) " [DIRTY×${String.format("%.1f", dirtyMultiplier)}]" else ""
+            aapsLogger.debug(LTag.APS,
+                             "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded$dirtyTag " +
+                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
+                                 "Δ=${String.format("%+.2f", deltaMmol)}(≥${String.format("%.2f", riseMinDelta)}) " +
+                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)} " +
+                                 "bgi=${String.format("%+.2f", bgiMmol)} " +
+                                 "uΔ=${String.format("%+.2f", unexpectedDelta)}(≥${String.format("%.2f", unexpectedMin)}) " +
+                                 "uAvg=${String.format("%+.2f", unexpectedShort)} " +
+                                 "total=${String.format("%+.1f", totalRise)}mmol mode=${uamMode.label}")
+        } else {
+            if (consecutiveRiseReadings > 0) {
+                val dirtyNote = if (inPostMealLockout) " [dirty-window stricter thresholds]" else ""
+                aapsLogger.debug(LTag.APS,
+                                 "UAM: streak broken$dirtyNote — " +
+                                     "Δ=${String.format("%+.2f", deltaMmol)}(need>=${String.format("%.2f", riseMinDelta)}) " +
+                                     "avg=${String.format("%+.2f", shortAvgDeltaMmol)}(need>=${String.format("%.2f", shortAvgThreshold)}) " +
+                                     "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=${String.format("%.2f", unexpectedMin)}) " +
+                                     "bgi=${String.format("%+.2f", bgiMmol)}, reset")
             }
-            if (bgWentLow && !inReboundWindow) appendLine("  ⚠ Recent low: watching for recovery")
-            if (bgWentLow && minBgDuringLow < Double.MAX_VALUE) {
-                val depth = minBgDuringLow / 18.0
-                val vel   = shortAvgDeltaAtLow
-                val iob   = iobAtLowTime
-                appendLine("  Low detail: minBG=${String.format("%.1f", depth)}mmol " +
-                               "velAtLow=${String.format("%+.2f", vel)} " +
-                               "iobAtLow=${String.format("%.2f", iob)}U " +
-                               if (secondLowOccurred) "⚠ SECOND LOW — full lockout" else "")
+            // Record reject reason for SI tab debug display
+            val rejectReason = when {
+                deltaMmol < deltaMin             -> "Δ ${String.format("%.2f", deltaMmol)} < ${String.format("%.2f", deltaMin)}"
+                shortAvgDeltaMmol < shortAvgThreshold -> "avg ${String.format("%.2f", shortAvgDeltaMmol)} < ${String.format("%.2f", shortAvgThreshold)}"
+                unexpectedDelta < unexpectedMin  -> "uΔ ${String.format("%.2f", unexpectedDelta)} < ${String.format("%.2f", unexpectedMin)}"
+                unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${String.format("%.2f", unexpectedShort)} < ${String.format("%.2f", unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
+                else                             -> "threshold not met"
             }
+            lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
+            resetStreak(); return
+        }
 
-            // ── Learning state ────────────────────────────────────────────────
-            appendLine()
-            appendLine("── Learning ──────────────────────────")
-            val state = cachedOverviewState
-            val learningDisplay = when (state.learningState) {
-                "limited" -> "Limited due to meal mode - DIA/Peak only"
-                else      -> state.learningState
+        // ── Burst trigger — fire immediately on large sudden rise ────────────
+        // If total rise from streak start exceeds burst threshold, don't wait for
+        // consecutive reading count — fire immediately. Catches sudden spikes that
+        // would otherwise take 15 min to confirm via the streak counter.
+        val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+        val totalRise = currentBgMmol - bgAtStreakStart
+        if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM: BURST trigger — totalRise=${String.format("%.2f", totalRise)}mmol " +
+                                 ">= threshold=${String.format("%.1f", burstThreshold)}mmol " +
+                                 "after $consecutiveRiseReadings readings — firing ${uamMode.label}")
+            triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
+            resetStreak()
+            return
+        }
+
+        // ── Normal trigger — consecutive readings met ─────────────────────────
+        if (consecutiveRiseReadings >= riseReadingsNeeded) {
+            triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
+            resetStreak()
+        }
+    }
+
+    /**
+     * Stuck-high detection for UAM_PROTEIN_FAT.
+     * Called every fasting loop cycle. Triggers when BG has been above threshold
+     * with flat delta for [STUCK_READINGS_NEEDED] consecutive readings (default 30 min).
+     * Only fires when no meal-slot UAM window is active — protein/fat is the fallback.
+     */
+    private fun checkStuckHigh(
+        currentBgMmol:     Double,
+        deltaMmol:         Double,
+        shortAvgDeltaMmol: Double,
+        currentHour:       Int,
+        bgWentLow:         Boolean,
+        inReboundWindow:   Boolean,
+        lastLowTimeMs:     Long,
+        currentMealMode:   MealMode,
+        inPostMealLockout: Boolean,
+        profileTargetMmol: Double
+    ) {
+        // Check P/F preference directly — uamModeEnabled() returns false for P/F
+        if (!preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
+            stuckHighReadings = 0
+            return
+        }
+
+        // Block P/F while a meal or UAM mode is active — let those handle the carb rise.
+        // P/F is for the fat/protein TAIL after the meal mode expires, not the initial rise.
+        if (currentMealMode != MealMode.FASTING) {
+            if (stuckHighReadings > 0) stuckHighReadings = 0
+            return
+        }
+
+        // P/F runs as default fasting watchdog within the active time window.
+        // If BG is stuck above threshold during fasting, P/F handles it regardless of
+        // whether a meal has occurred — the time window + flat delta + 4 readings is
+        // sufficient filter. UAM rise detection overrides P/F if carbs arrive.
+
+        // Respect the same safety blocks as rise detection
+        val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
+        val lowBlockMs = LOW_BLOCK_MINS * 60_000L
+        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
+            stuckHighReadings = 0
+            return
+        }
+
+        // P/F uses its own threshold — higher than rise detection threshold
+        // since fat/protein genuinely elevates BG, don't want P/F firing near target
+        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol)
+
+        // Reset if BG has returned to profile target — stuck-high condition no longer valid
+        if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: streak reset — BG ${String.format("%.1f", currentBgMmol)} " +
+                                 "back at/below target ${String.format("%.1f", profileTargetMmol)}mmol")
+            stuckHighReadings = 0
+            return
+        }
+
+        // Track last values for SI tab debug display
+        lastStuckAvgDelta = shortAvgDeltaMmol
+        lastStuckBgMmol   = currentBgMmol
+
+        // BG must be above threshold AND shortAvgDelta must be flat (not falling, not spiking).
+        // Using shortAvgDelta rather than instantaneous delta prevents a single noisy CGM
+        // reading (e.g. +0.3 on an otherwise flat plateau) from killing a 25-min streak.
+        val isStuck = currentBgMmol >= triggerThresholdMmol &&
+            shortAvgDeltaMmol >= STUCK_DELTA_MIN_MMOL &&
+            shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL
+
+        // Debug: always log isStuck evaluation so we can see why it's not counting
+        if (!isStuck) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: not stuck — " +
+                                 "bg=${String.format("%.2f", currentBgMmol)}(need>=${String.format("%.1f", triggerThresholdMmol)}) " +
+                                 "avg=${String.format("%+.3f", shortAvgDeltaMmol)}(need ${String.format("%.2f", STUCK_DELTA_MIN_MMOL)}→${String.format("%.2f", STUCK_DELTA_MAX_MMOL)})")
+        }
+
+        if (isStuck) {
+            // Only count each CGM reading once
+            if (bgTimestampMs > 0L && bgTimestampMs == lastStuckBgTimestampMs) {
+                aapsLogger.debug(LTag.APS, "UAM_PROTEIN_FAT: same CGM reading, skipping increment")
+                return
             }
-            appendLine("  Learning: $learningDisplay")
+            lastStuckBgTimestampMs = bgTimestampMs
+            stuckHighReadings++
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: stuck-high $stuckHighReadings/${preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)} " +
+                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
+                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)}mmol")
 
-            // ── Activity ─────────────────────────────────────────────────────
-            val actLevel = activityMonitor.level
-            appendLine("  Activity: ${actLevel.label} " +
-                           "hr=${activityMonitor.avgHrBpm.toInt()}avg " +
-                           "steps=${activityMonitor.lastSteps5min}/5m")
-            appendLine()
-
-            // ── Circadian tables ──────────────────────────────────────────────
-            appendLine("── Circadian 24h ─────────────────────")
-            appendLine("  h   ISF×   Bas×   Ceil   Conf%")
-            for (h in 0..23) {
-                val marker = if (h == hour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
-                               "${"%.0f".format(circadianLearner.confidencePct(h))}%")
+            if (stuckHighReadings >= preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)) {
+                aapsLogger.debug(LTag.APS,
+                                 "UAM_PROTEIN_FAT: TRIGGERING after ${stuckHighReadings * 5}min stuck above " +
+                                     "${triggerThresholdMmol}mmol")
+                triggerUam(MealMode.UAM_PROTEIN_FAT, currentBgMmol, deltaMmol, 0.0)
+                stuckHighReadings = 0
             }
-            appendLine()
+        } else {
+            if (stuckHighReadings > 0)
+                aapsLogger.debug(LTag.APS,
+                                 "UAM_PROTEIN_FAT: stuck streak broken " +
+                                     "(bg=${String.format("%.1f", currentBgMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)}), reset")
+            stuckHighReadings = 0
+            lastStuckBgTimestampMs = 0L
+        }
+    }
 
-            // ── Profiles ──────────────────────────────────────────────────────
-            appendLine("── Insulin Profiles ──────────────────")
-            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
-                appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
+    /**
+     * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
+     */
+    fun debugSummary(): String {
+        val riseMinDeltaBase = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val normalDelta      = riseMinDeltaBase
+        val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
+        val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
+        val dirtyUnexpected  = UNEXPECTED_RISE_MIN_MMOL * DIRTY_WINDOW_UNEXPECTED_MULT
+        val riseNeeded       = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+        val activeMode       = if (currentlyInPostMealLockout) "dirty" else "normal"
+
+        return buildString {
+            appendLine("  UAM thresholds:")
+            appendLine("    normal: Δ≥${String.format("%.2f", normalDelta)}  uΔ≥${String.format("%.2f", normalUnexpected)}  readings=$riseNeeded")
+            appendLine("    dirty : Δ≥${String.format("%.2f", dirtyDelta)}  uΔ≥${String.format("%.2f", dirtyUnexpected)}  readings=$riseNeeded")
+            appendLine("    active: $activeMode")
+            val reject = lastReject
+            if (reject != null) {
+                val dirtyTag = if (reject.wasDirtyWindow) " [dirty]" else ""
+                appendLine("  Last UAM reject$dirtyTag: ${reject.reason}")
+            }
+            // P/F stuck-high detail
+            val triggerMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
+            if (pfEnabled) {
+                val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
+                appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $stuckNeeded readings)")
+                when {
+                    currentlyPastNightCutoff ->
+                        appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
+                    currentlyInMealMode ->
+                        appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
+
+                    else -> {
+                        val avgStr = String.format("%+.2f", lastStuckAvgDelta)
+                        val bgStr  = String.format("%.1f", lastStuckBgMmol)
+                        val countStr = "$stuckHighReadings/$stuckNeeded"
+                        val rangeStr = "${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}"
+                        val meetsRange = lastStuckAvgDelta >= STUCK_DELTA_MIN_MMOL && lastStuckAvgDelta <= STUCK_DELTA_MAX_MMOL
+                        val meetsBg    = lastStuckBgMmol >= triggerMmol
+                        val blockReason = when {
+                            !meetsBg    -> " ✗ BG ${bgStr} < ${triggerMmol}"
+                            !meetsRange -> " ✗ avg ${avgStr} outside ${rangeStr}"
+                            else        -> " ✓ counting"
+                        }
+                        appendLine("  P/F stuck: $countStr  avg=${avgStr}mmol (${rangeStr})$blockReason")
+                    }
+                }
+            } else {
+                appendLine("  P/F detection: disabled")
             }
         }.trimEnd()
     }
 
-    // ── Public state accessors for Overview display ─────────────────────────
-
-    /**
-     * Returns a one-line suppression reason for the Overview "State" cell,
-     * or null if learning is currently active.
-     * Called from OverviewFragment.updateIobCob() each loop cycle.
-     */
-    override fun overviewState(): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
-        cachedOverviewState
-
-    // ── RxBus subscriptions for HR and steps from wear ───────────────────────
-    override fun onStart() {
-        super.onStart()
-        // ActivityMonitor now queries persistenceLayer directly each loop cycle.
-        // No RxBus subscription needed — HR and steps are read from DB on demand.
-        // Restore persisted learningDirtyUntilMs so lockout survives app restart
-        learningDirtyUntilMs = preferences.get(StringKey.ApsSmartInsulinLearningDirtyUntil).toLongOrNull() ?: 0L
-        if (learningDirtyUntilMs > 0L)
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: restored learningDirtyUntilMs=$learningDirtyUntilMs")
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
+    /** Status string for loop reason output — null if nothing to show */
+    fun statusString(): String? {
+        val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
+        if (consecutiveRiseReadings > 0) {
+            val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+            val totalRise = if (bgAtStreakStart > 0.0) lastStuckBgMmol - bgAtStreakStart else 0.0
+            val burstNote = if (burstThreshold > 0.0) " rise=${String.format("%.2f", totalRise)}/${String.format("%.1f", burstThreshold)}mmol" else ""
+            return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
+        }
+        // Always show P/F count if enabled and in active window
+        if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
+            val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
+            if (stuckHighReadings > 0 || consecutiveRiseReadings == 0) {
+                return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol"
+            }
+        }
+        if (lastUamMode != null && lastUamTimeMs > 0L) {
+            val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
+            val timeStr = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+            val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""
+            return "UAM: last ${lastUamMode!!.label} $timeStr$countStr"
+        }
+        return null
     }
 
-    override fun onStop() {
-        super.onStop()
-        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop")
+    // ── Private ───────────────────────────────────────────────────────────────
+
+    private fun resetStreak() {
+        consecutiveRiseReadings   = 0
+        bgAtStreakStart           = 0.0
+        lastCountedBgTimestampMs  = 0L
     }
 
-    override fun invoke(initiator: String, tempBasalFallback: Boolean) {
-        aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
-        val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
-        lastAPSResult = null
+    /** The UAM mode fired this cycle — set by triggerUam, reset at start of each cycle. Null if nothing fired. */
+    var justFiredThisCycle: MealMode? = null
+        private set
 
-        val profile = profileFunction.getProfile() ?: run {
-            rxBus.send(EventResetOpenAPSGui(rh.gs(app.aaps.core.ui.R.string.no_profile_set)))
-            return
-        }
-        if (!isEnabled()) {
-            rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_disabled)))
-            return
-        }
-        val glucoseStatus = glucoseStatusProvider.glucoseStatusData ?: run {
-            rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_no_glucose_data)))
-            return
-        }
+    private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double) {
+        justFiredThisCycle = mode
+        val durationMins = uamDurationMins(mode)
+        val isfMmol      = uamIsfMmol(mode)
+        val now          = System.currentTimeMillis()
 
-        if (!hardLimits.checkHardLimits(profile.dia, app.aaps.core.ui.R.string.profile_dia, hardLimits.minDia(), hardLimits.maxDia())) return
-        if (!hardLimits.checkHardLimits(
-                profile.getIcTimeFromMidnight(MidnightUtils.secondsFromMidnight()),
-                app.aaps.core.ui.R.string.profile_carbs_ratio_value,
-                hardLimits.minIC(), hardLimits.maxIC()
-            )
-        ) return
-        if (!hardLimits.checkHardLimits(profile.getIsfMgdl("SmartInsulinPlugin"), app.aaps.core.ui.R.string.profile_sensitivity_value, HardLimits.MIN_ISF, HardLimits.MAX_ISF)) return
-        if (!hardLimits.checkHardLimits(profile.getMaxDailyBasal(), app.aaps.core.ui.R.string.profile_max_daily_basal_value, 0.02, hardLimits.maxBasal())) return
+        lastUamTriggerCount = if (lastUamMode == mode &&
+            now - lastUamTimeMs < 4 * 60 * 60 * 1000L) lastUamTriggerCount + 1 else 1
+        lastUamMode    = mode
+        lastUamTimeMs  = now
 
-        val inputConstraints = ConstraintObject(0.0, aapsLogger)
+        aapsLogger.debug(LTag.APS,
+                         "UAM: TRIGGERING ${mode.label} " +
+                             "bg=${String.format("%.1f", bgMmol)}mmol " +
+                             "Δ=+${String.format("%.2f", deltaMmol)}mmol " +
+                             "totalRise=+${String.format("%.1f", totalRise)}mmol " +
+                             "isf=${isfMmol}mmol duration=${durationMins}min " +
+                             "(trigger #$lastUamTriggerCount)")
 
-        val now = dateUtil.now()
-        val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
-        val currentTemp = CurrentTemp(
-            duration       = tb?.plannedRemainingMinutes ?: 0,
-            rate           = tb?.convertedToAbsolute(now, profile) ?: 0.0,
-            minutesrunning = tb?.getPassedDurationToTimeInMinutes(now)
+        mealOverrideManager.activateOverride(
+            mode         = mode,
+            doseU        = null,
+            carbsG       = 0,
+            modeWindowMs = durationMins * 60_000L
         )
-
-        var minBg    = hardLimits.verifyHardLimits(Round.roundTo(profile.getTargetLowMgdl(), 0.1),  app.aaps.core.ui.R.string.profile_low_target,  HardLimits.LIMIT_MIN_BG[0],    HardLimits.LIMIT_MIN_BG[1])
-        var maxBg    = hardLimits.verifyHardLimits(Round.roundTo(profile.getTargetHighMgdl(), 0.1), app.aaps.core.ui.R.string.profile_high_target, HardLimits.LIMIT_MAX_BG[0],    HardLimits.LIMIT_MAX_BG[1])
-        var targetBg = hardLimits.verifyHardLimits(profile.getTargetMgdl(),                         app.aaps.core.ui.R.string.temp_target_value,   HardLimits.LIMIT_TARGET_BG[0], HardLimits.LIMIT_TARGET_BG[1])
-        var isTempTarget = false
-        persistenceLayer.getTemporaryTargetActiveAt(now)?.let { tt ->
-            isTempTarget = true
-            minBg    = hardLimits.verifyHardLimits(tt.lowTarget,  app.aaps.core.ui.R.string.temp_target_low_target,  HardLimits.LIMIT_TEMP_MIN_BG[0],    HardLimits.LIMIT_TEMP_MIN_BG[1])
-            maxBg    = hardLimits.verifyHardLimits(tt.highTarget, app.aaps.core.ui.R.string.temp_target_high_target, HardLimits.LIMIT_TEMP_MAX_BG[0],    HardLimits.LIMIT_TEMP_MAX_BG[1])
-            targetBg = hardLimits.verifyHardLimits(tt.target(),   app.aaps.core.ui.R.string.temp_target_value,       HardLimits.LIMIT_TEMP_TARGET_BG[0], HardLimits.LIMIT_TEMP_TARGET_BG[1])
-        }
-
-        val autosensResult = AutosensResult()
-        val iobArray = iobCobCalculator.calculateIobArrayForSMB(
-            autosensResult,
-            SMBDefaults.exercise_mode,
-            SMBDefaults.half_basal_exercise_target,
-            isTempTarget
-        )
-        val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
-
-        // ── Meal mode — check override first, fall back to auto-detect ────────
-        var mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
-
-        // ── Post-meal learning lockout ───────────────────────────────────────
-        // When any meal or UAM mode expires (transition back to FASTING), mark BG data
-        // as "dirty for learning" for a configurable window. Fat/protein tails and carb
-        // residuals won't corrupt basal/ISF/aggressiveness learning.
-        // UAM detection is completely unaffected — it runs independently of this flag.
-        // Initialize tracker to current mode on first loop — prevents fake transition at startup
-        if (!lockoutTrackerInitialized) {
-            previousMealModeForLockout = mealMode
-            lockoutTrackerInitialized = true
-        }
-
-        // P/F is a tail correction, not a real meal — don't trigger post-meal dirty window.
-        // UAM meal modes should still fire normally after P/F expires.
-        val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
-            previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
-        if (previousWasRealMeal && mealMode == MealMode.FASTING) {
-            val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
-            if (lockoutMins > 0) {
-                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
-                preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
-                aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin: ${previousMealModeForLockout.label} ended — " +
-                                     "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
-            }
-        }
-        previousMealModeForLockout = mealMode
-        val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
-        // Clear persisted dirty flag once window has passed
-        if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) {
-            learningDirtyUntilMs = 0L
-            preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, "0")
-        }
-        val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
-
-        // ── ISF multiplier — read from user prefs, not hardcoded enum default ─
-        // Absolute ISF override per meal mode — 0.0 means not set, fall back to profile ISF
-        // When set, this fully replaces profile ISF for both prediction and dosing
-        val modeIsfMmol = when (mealMode) {
-            MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
-            MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
-            MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
-            MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
-            MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
-            MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
-            MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
-            MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
-            MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-            MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
-            MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
-            MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
-        }
-        val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
-        // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
-        val circIsfMult   = circadianLearner.isfMultiplier()
-        val circBasalMult = circadianLearner.basalMultiplier()
-        val circAggrCeil  = circadianLearner.aggrCeiling()
-        // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
-        // Meal mode ISF overrides are user-set — don't touch them
-        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → less insulin (insulin weaker than profile)
-        // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
-        // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
-        var dosingIsfMgdl = when {
-            modeIsfMmol > 0.0 -> modeIsfMmol * 18.0               // user meal-mode override — absolute
-            else              -> trueIsfMgdl / circIsfMult         // divide: mult>1 → lower dosingISF → less insulin
-        }
-
-        // ── Tick the override manager — fires queued bolus when safe ──────────
-        mealOverrideManager.onLoopCycle(
-            glucoseStatus = glucoseStatus,
-            iobArray      = iobArray,
-            maxIobU       = constraintsChecker.getMaxIOBAllowed().value()
-        )
-
-        // ── STFT: short-term target reduction for stuck-high fasting BG ──────
-        // Only runs in fasting, never overrides a deliberate temp target.
-        // Adjusts targetBg downward to make the loop naturally more aggressive
-        // without touching ISF, basal, aggressiveness, or any learners.
-        // STFT runs every cycle — it handles meal mode and temp target suppression internally.
-        // When a temp target is active we still call it so it can reset cleanly, but we
-        // discard the adjusted value and keep the user's deliberate temp target.
-        val profileTargetMgdl = profile.getTargetMgdl()
-        val highTempTarget    = isTempTarget && targetBg > profileTargetMgdl
-
-        // Sensor start time: use gap detection (automatic) + TherapyEvent if available.
-        // Pass glucoseStatus.date as latestBgTimestampMs — guard tracks gaps internally.
-        // sensorInsertTimeMs = 0 means "unknown, use gap detection only".
-        val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
-        // Query last sensor change from DB — covers fresh installs/rebuilds mid-sensor
-        // where the gap-detection state was lost. Look back 30 days max.
-        val sensorInsertTimeMs: Long = try {
-            val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
-                now - 30 * 24 * 60 * 60 * 1000L,
-                TE.Type.SENSOR_CHANGE,
-                true
-            )
-            sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
-            0L
-        }
-        val cgmState = cgmWarmupGuard.evaluate(
-            enabled             = cgmGuardEnabled,
-            sensorInsertTimeMs  = sensorInsertTimeMs,
-            nowMs               = now,
-            latestBgTimestampMs = glucoseStatus.date,
-            deltaMmol           = glucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol   = glucoseStatus.shortAvgDelta / 18.0,
-            longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
-            noiseLevelRaw       = glucoseStatus.noise
-        )
-        val cgmInWarmup = cgmState.inWarmup
-
-        val stftAdjusted = stftController.onLoopCycle(
-            profileTargetMgdl = profileTargetMgdl,
-            currentBgMgdl     = glucoseStatus.glucose,
-            delta             = glucoseStatus.delta,
-            mealMode          = mealMode,
-            isTempTarget      = isTempTarget,
-            bgWentLow         = bgWentLow,
-            inReboundWindow   = inReboundWindow,
-            cgmInWarmup       = cgmInWarmup
-        )
-        // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
-        // The plugin-side TT guard is kept as a safety backstop.
-        val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
-
-        // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
-        // Only fires in FASTING mode within configured time windows.
-        // Expiry detection is handled internally by UamController via previousMealMode tracking.
-        // Safety inputs (bgWentLow, inReboundWindow) prevent false triggers from rebound rises.
-        val uamCurrentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        // Use reboundWindowStartMs as proxy for lastLowTimeMs — it's set when BG recovers above
-        // lowGuard, so it slightly underestimates time since low (conservative = safe).
-        val uamLastLowTimeMs = if (bgWentLow) reboundWindowStartMs else 0L
-        // BGI = expected BG change from insulin activity alone (mg/dL per 5 min, converted to mmol)
-        // Negative = insulin pulling BG down. Used by UAM to detect rises beyond insulin prediction.
-        val uamBgiMmol = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0
-        uamController.onLoopCycle(
-            currentMealMode    = mealMode,
-            currentBgMmol      = glucoseStatus.glucose / 18.0,
-            deltaMmol          = glucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol  = glucoseStatus.shortAvgDelta / 18.0,
-            bgiMmol            = uamBgiMmol,
-            currentHour        = uamCurrentHour,
-            bgWentLow          = bgWentLow,
-            inReboundWindow    = inReboundWindow,
-            lastLowTimeMs      = uamLastLowTimeMs,
-            highTempTarget     = highTempTarget,
-            cgmInWarmup        = cgmInWarmup,
-            inPostMealLockout  = inPostMealLockout,
-            profileTargetMmol  = profileTargetMgdl / 18.0,
-            softLandingBypass  = softLandingBypass
-        )
-
-        // ── Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired ──
-        // Using var reassignment so ALL downstream logic (determine_basal, learners, logging)
-        // sees the correct mode and ISF immediately. The previous approach only updated sens
-        // in OapsProfile but left dosingIsfMgdl stale everywhere else.
-        val latestMealMode = mealOverrideManager.activeMealMode ?: MealMode.FASTING
-        if (latestMealMode != mealMode) {
-            val latestModeIsfMmol = when (latestMealMode) {
-                MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
-                MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
-                MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
-                MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
-                MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
-                MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
-                MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
-                MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
-                MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-                MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
-                MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
-                MealMode.FASTING       -> 0.0
-            }
-            mealMode = latestMealMode
-            if (latestModeIsfMmol > 0.0) {
-                dosingIsfMgdl = latestModeIsfMmol * 18.0
-            }
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
-                                 "${String.format("%.1f", dosingIsfMgdl / 18.0)}mmol immediately")
-        }
-
-        // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
-        val pump       = activePlugin.activePump
-        val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
-        val oapsProfile = OapsProfile(
-            dia                              = profile.dia,
-            min_5m_carbimpact               = 0.0,
-            max_iob                         = constraintsChecker.getMaxIOBAllowed().also { inputConstraints.copyReasons(it) }.value(),
-            max_daily_basal                 = profile.getMaxDailyBasal(),
-            max_basal                       = constraintsChecker.getMaxBasalAllowed(profile).also { inputConstraints.copyReasons(it) }.value(),
-            min_bg                          = minBg,
-            max_bg                          = maxBg,
-            target_bg                       = stftTargetMgdl,
-            carb_ratio                      = profile.getIc(),
-            sens                            = dosingIsfMgdl,  // reassigned above if UAM fired this cycle
-            autosens_adjust_targets         = false,
-            max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
-            current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
-            high_temptarget_raises_sensitivity = false,
-            low_temptarget_lowers_sensitivity  = false,
-            sensitivity_raises_target       = preferences.get(BooleanKey.ApsSensitivityRaisesTarget),
-            resistance_lowers_target        = preferences.get(BooleanKey.ApsResistanceLowersTarget),
-            adv_target_adjustments          = SMBDefaults.adv_target_adjustments,
-            exercise_mode                   = SMBDefaults.exercise_mode,
-            half_basal_exercise_target      = SMBDefaults.half_basal_exercise_target,
-            maxCOB                          = SMBDefaults.maxCOB,
-            skip_neutral_temps              = pump.setNeutralTempAtFullHour(),
-            remainingCarbsCap               = SMBDefaults.remainingCarbsCap,
-            enableUAM                       = constraintsChecker.isUAMEnabled().also { inputConstraints.copyReasons(it) }.value(),
-            A52_risk_enable                 = SMBDefaults.A52_risk_enable,
-            SMBInterval                     = preferences.get(IntKey.ApsMaxSmbFrequency),
-            enableSMB_with_COB              = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithCob),
-            enableSMB_with_temptarget       = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithLowTt),
-            allowSMB_with_high_temptarget   = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithHighTt),
-            enableSMB_always                = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAlways),
-            enableSMB_after_carbs           = smbEnabled && preferences.get(BooleanKey.ApsUseSmbAfterCarbs),
-            // maxSMBBasalMinutes: set to max so it never constrains our flat ApsSmartInsulinMaxSmb cap
-            maxSMBBasalMinutes              = Int.MAX_VALUE,
-            maxUAMSMBBasalMinutes           = Int.MAX_VALUE,
-            bolus_increment                 = pump.pumpDescription.bolusStep,
-            carbsReqThreshold               = preferences.get(IntKey.ApsCarbsRequestThreshold),
-            current_basal                   = pump.baseBasalRate,
-            temptargetSet                   = isTempTarget,
-            autosens_max                    = preferences.get(DoubleKey.AutosensMax),
-            out_units                       = if (profileFunction.getUnits() == GlucoseUnit.MMOL) "mmol/L" else "mg/dl",
-            lgsThreshold                    = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt(),
-            variable_sens                   = 0.0,
-            insulinDivisor                  = 0,
-            TDD                             = 0.0
-        )
-
-        val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
-        // UAM modes share peak/DIA learning with their parent mode — they accumulate
-        // separate observations but start from the same profile. This means UAM_LUNCH
-        // uses LUNCH's learned peak/DIA until it has its own samples.
-        val learnedProfileMode = when (mealMode) {
-            MealMode.UAM_BREAKFAST -> MealMode.BREAKFAST
-            MealMode.UAM_LUNCH     -> MealMode.LUNCH
-            MealMode.UAM_DINNER    -> MealMode.DINNER
-            MealMode.UAM_SNACK     -> MealMode.DINNER   // closest equivalent
-            MealMode.UAM_PROTEIN_FAT  -> MealMode.LOW_CARB
-            else                   -> mealMode
-        }
-        val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
-
-        // ── Activity monitor — recompute from fed HR/steps data ─────────────
-        // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
-        // See WiringNotes.md for the subscription setup.
-        // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
-        activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
-
-        // ── CGM warmup guard ─────────────────────────────────────────────────
-
-        // Suppress learning during CGM warmup — noisy readings corrupt all learned models
-        // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
-        // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
-        val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
-        val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
-
-        // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
-        val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTargetMmol)
-        val activityHeavyTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol)
-        val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
-        val activityTargetOffsetMmol = if (activityTargetEnabled) {
-            activityMonitor.targetOffsetMmol(
-                lightMmol    = activityLightTarget,
-                moderateMmol = activityModerateTarget,
-                heavyMmol    = activityHeavyTarget
-            )
-        } else 0.0
-
-        if (suppressAdaptiveLearning) {
-            aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
-                "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
-        }
-
-        // Record current BG zone for aggression learning
-        // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
-        // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
-        aggressionLearner.recordBg(
-            bgMgdl          = glucoseStatus.glucose,
-            lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
-            highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
-            mealMode        = mealMode
-        )
-        // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
-        // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
-        val aggressiveness = if (mealMode != MealMode.FASTING) 1.0
-        else aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
-        val tirSummary     = aggressionLearner.tirSummary
-
-        // Feed basal learner — fasting only, no high temp target
-        // High TT = deliberate conservative mode (exercise/illness) — don't learn from it
-        // Meal modes = COB active, loop reacting to carbs — basal signal is meaningless
-        val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
-
-
-        // ── Cache Overview state — updated here where all conditions are in scope ──
-        // highTempTarget, mealMode, cgmState, activityMonitor all available now.
-        val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
-        val isMealMode = mealMode != MealMode.FASTING
-        val learningStateStr = when {
-            !learningEnabledCache                -> "off: Learning disabled"
-            activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
-            cgmState.suppressLearning            -> "off: CGM warmup"
-            inPostMealLockout                    -> {
-                val minsLeft = (learningDirtyUntilMs - now) / 60_000
-                "off: Post-meal (${minsLeft}min left)"
-            }
-            highTempTarget                       -> "off: High temp target"
-            isMealMode || mealMode.isUam         -> "limited"  // DIA/peak only — no basal/ISF learning
-            else                                 -> "Learning"
-        }
-        val modeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
-            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            if (mode.isUam) {
-                // UAM modes: "Meal: UAM (Dinner) 25m", "Meal: UAM (Low Carb) 25m"
-                val uamLabel = when (mode) {
-                    MealMode.UAM_BREAKFAST -> "Breakfast"
-                    MealMode.UAM_LUNCH     -> "Lunch"
-                    MealMode.UAM_DINNER    -> "Dinner"
-                    MealMode.UAM_SNACK     -> "Snack"
-                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
-                    MealMode.UAM_AFTERNOON    -> "Afternoon"
-                    else                   -> mode.label
-                }
-                "Meal: UAM ($uamLabel) ${mins}m"
-            } else {
-                // Manual modes: "Meal: Dinner 25m"
-                "Meal: ${mode.label} ${mins}m"
-            }
-        } ?: "Meal: Fasting"
-        val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
-            val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
-            when {
-                msRem == null || msRem <= 0 -> "PB2 active: due"
-                else                        -> "PB2 active: ${msRem / 60_000}m"
-            }
-        } else null
-        cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
-            modeLine      = modeLineStr,
-            pb2Line       = pb2LineStr,
-            learningState = learningStateStr
-        )
-
-        val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
-            ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
-            ?: Double.MAX_VALUE
-        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearning) {
-            basalLearner.onLoopCycle(
-                bgMgdl        = glucoseStatus.glucose,
-                deltaMgdl     = glucoseStatus.delta,
-                cobG          = mealData.mealCOB,
-                minsLastBolus = minsLastBolus,
-                isfMgdl       = trueIsfMgdl,
-                profileBasalU = profile.getBasal()
-            )
-        } else {
-            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
-        }
-        // Blend flat BasalLearner with circadian per-hour learning
-        // Circadian takes over proportionally as its confidence grows
-        val flatBasalMult  = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
-        val basalMultiplier = flatBasalMult * circBasalMult
-
-        val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
-        val dawnWindowStart   = preferences.get(IntKey.ApsSmartInsulinDawnWindowStartHour)
-        val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
-        val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
-
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMmol > 0.0) modeIsfMmol else null} dosingIsfMgdl=$dosingIsfMgdl learnedProfile=$learnedProfile")
-
-        // ── Rebound protection tracking ───────────────────────────────────────
-        // Computed BEFORE determine_basal() so inReboundWindow is correct on the
-        // exact cycle where BG first crosses back above the threshold.
-        // Matches the lowGuardMmol threshold used in determine_basal's SUSPEND decision.
-        val REBOUND_LOW_THRESHOLD_MGDL = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol) * 18.0
-        val currentBgMgdl = glucoseStatus.glucose
-
-        // Rebound window is only relevant during FASTING mode.
-        // If a meal mode is active, clear any stale rebound state so it doesn't carry over
-        // to the post-meal fasting period and cause unnecessary insulin restriction.
-        if (mealMode != MealMode.FASTING && (bgWentLow || reboundWindowStartMs > 0L)) {
-            bgWentLow = false
-            reboundWindowStartMs = 0L
-            aapsLogger.debug(LTag.APS, "SmartInsulin: rebound state cleared — meal mode active (${mealMode.label})")
-        }
-
-        // Rebound arming is keyed purely on actual BG threshold crossings — not on whether
-        // the previous APS result was suspending. This ensures the recovery taper starts on
-        // the exact loop where BG crosses back above lowGuard, with no one-cycle delay.
-
-        // 1) BG is below lowGuard: mark that a real low occurred.
-        //    If we were already in a rebound window, reset the timer so the cycle restarts
-        //    fresh once BG recovers again.
-        if (currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL) {
-            if (!bgWentLow) {
-                // First crossing — capture conditions for soft landing evaluation
-                iobAtLowTime       = iobArray.firstOrNull()?.iob ?: 0.0
-                shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0
-                aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin: BG went low (${String.format("%.1f", currentBgMgdl / 18.0)}mmol) " +
-                                     "iob=${String.format("%.2f", iobAtLowTime)}U " +
-                                     "shortAvgΔ=${String.format("%+.2f", shortAvgDeltaAtLow)}mmol")
-                if (mealMode.isUam) {
-                    aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
-                    mealOverrideManager.cancelOverride()
-                }
-            } else if (softLandingBypass && reboundWindowStartMs > 0L) {
-                // BG went low again after bypass was active — second low, full lockout
-                secondLowOccurred = true
-                softLandingBypass = false
-                aapsLogger.debug(LTag.APS, "SmartInsulin: second low — bypass revoked, full lockout")
-            }
-            if (currentBgMgdl < minBgDuringLow) minBgDuringLow = currentBgMgdl
-            bgWentLow = true
-            if (reboundWindowStartMs > 0L) {
-                reboundWindowStartMs = 0L
-                aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard during rebound window — resetting timer")
-            }
-        }
-
-        // 2) BG has recovered above lowGuard after a real low — arm the rebound window
-        //    immediately on this cycle.
-        if (bgWentLow && reboundWindowStartMs == 0L && currentBgMgdl >= REBOUND_LOW_THRESHOLD_MGDL) {
-            reboundWindowStartMs = now
-            aapsLogger.debug(LTag.APS, "SmartInsulin: BG above ${REBOUND_LOW_THRESHOLD_MGDL} mg/dL after low — rebound window armed")
-        }
-
-        // 3) Clear state once the full 60-min rebound window has elapsed.
-        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
-            reboundWindowStartMs = 0L
-            bgWentLow            = false
-            minBgDuringLow       = Double.MAX_VALUE
-            secondLowOccurred    = false
-            softLandingBypass    = false
-            aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
-        }
-
-        // ── Soft landing bypass ───────────────────────────────────────────────
-        // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
-        // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
-        val lowGuardMmol             = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol)
-        val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
-        val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
-        val bypassNightCutoff        = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
-        val inMealHoursForBypass     = if (bypassNightCutoff > bypassDayStart)
-            bypassHour in bypassDayStart until bypassNightCutoff
-        else
-            bypassHour >= bypassDayStart || bypassHour < bypassNightCutoff
-
-        softLandingBypass = bgWentLow &&
-            !secondLowOccurred &&
-            minBgDuringLow >= softLandingDepthMgdl &&
-            shortAvgDeltaAtLow > -0.15 &&
-            iobAtLowTime < 1.0 &&
-            inMealHoursForBypass
-
-        if (softLandingBypass) {
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: soft landing bypass ACTIVE — " +
-                                 "minBG=${String.format("%.1f", minBgDuringLow / 18.0)}mmol " +
-                                 "(≥${String.format("%.1f", softLandingDepthMgdl / 18.0)}) " +
-                                 "velAtLow=${String.format("%+.2f", shortAvgDeltaAtLow)} (>-0.15) " +
-                                 "iob=${String.format("%.2f", iobAtLowTime)}U (<1.0)")
-        }
-
-        val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
-            ConstraintObject(tempBasalFallback.not(), aapsLogger)
-        ).also { inputConstraints.copyReasons(it) }.value()
-
-        val apsResult = determineBasalSmartInsulin.determine_basal(
-            glucoseStatus            = glucoseStatus,
-            currentTemp              = currentTemp,
-            iobArray                 = iobArray,
-            oapsProfile              = oapsProfile,
-            mealData                 = mealData,
-            profile                  = profile,
-            learnedProfile           = learnedProfile,
-            mealMode                 = mealMode,
-            lowGuardMmol             = preferences.get(DoubleKey.ApsSmartInsulinLowGuardMmol),
-            warnGuardMmol            = preferences.get(DoubleKey.ApsSmartInsulinWarnGuardMmol),
-            maxSmbU                  = maxSmbU,
-            maxTbrU                  = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr),
-            aggressiveness           = aggressiveness,
-            tirSummary               = aggressionLearner.tirSummary,
-            basalMultiplier          = basalMultiplier,
-            dosingIsfMgdl            = dosingIsfMgdl,
-            microBolusAllowed        = microBolusAllowed,
-            inReboundWindow          = inReboundWindow,
-            msSinceLastSuspend       = msSinceLastSuspend,
-            currentTime              = now,
-            isTempTarget             = isTempTarget,
-            profileTargetMgdl        = profileTargetMgdl,
-            dawnWindowStartHour      = dawnWindowStart,
-            dawnWindowEndHour        = dawnWindowEnd,
-            dawnSmbReduction         = dawnSmbReduction,
-            bgWentLow                = bgWentLow,
-            activityLevel            = activityMonitor.level,
-            activityTargetOffsetMmol = activityTargetOffsetMmol,
-            cgmSmbFraction           = cgmState.smbFraction,
-            cgmDeltaPlausible        = cgmState.deltaPlausible,
-            cgmWarmupReason          = cgmState.reason
-        )
-
-        // Append STFT status to reason if active
-        stftController.statusString(profileTargetMgdl)?.let { apsResult.reason += " | $it" }
-        uamController.statusString()?.let  { apsResult.reason += " | $it" }
-        // Post-meal lockout in loop output
-        if (inPostMealLockout) {
-            val minsLeft = (learningDirtyUntilMs - now) / 60_000
-            apsResult.reason += " | postMeal: dirty(${minsLeft}min) UAM↑thresh"
-        }
-
-        apsResult.inputConstraints = inputConstraints
-        apsResult.autosensResult   = autosensResult
-        apsResult.iobData          = iobArray
-        apsResult.glucoseStatus    = glucoseStatus
-        apsResult.currentTemp      = currentTemp
-        apsResult.oapsProfile      = oapsProfile
-        apsResult.mealData         = mealData
-        lastAPSResult              = apsResult
-        lastAPSRun                 = now
-
-        // ── BolusCurveTracker — meal modes only (peak/DIA learning from bolus curves)
-        // This is intentionally NOT suppressed during high TT — a meal bolus during
-        // a high TT is still a valid peak/DIA observation.
-        if (learningEnabled) {
-            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
-            apsResult.reason += " | ${bolusCurveTracker.statusSummary(mealMode)}"
-        }
-
-        // ── Circadian learner — fasting + no high TT only ─────────────────────
-        // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
-        // The circadian learner itself also gates on mealMode==FASTING internally,
-        // but we gate highTempTarget here before the call to avoid polluting bgHistory.
-        // Circadian learner:
-        //   - Always call during normal conditions
-        //   - During CGM warmup: call with suppressAdaptiveLearning=true so rollercoaster still fires
-        //   - During activity or high TT: skip entirely (BG movement isn't insulin-driven)
-        if (!highTempTarget && !suppressRollercoaster) {
-            circadianLearner.update(
-                glucoseStatus            = glucoseStatus,
-                iobArray                 = iobArray,
-                mealMode                 = mealMode,
-                cobG                     = mealData.mealCOB,
-                profileIsfMgdl           = trueIsfMgdl,
-                targetMgdl               = oapsProfile.target_bg.toDouble(),
-                suppressAdaptiveLearning = suppressAdaptiveLearning
-            )
-        } else {
-            aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
-        }
-
-        // Append per-cycle learner summary to reason — visible in Loop tab
-        // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
-        val circHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        // Activity status for Loop tab reason string
-        // Always show HR and steps so data flow is visible even when sedentary
-        val activitySuffix = when (activityMonitor.level) {
-            ActivityMonitor.ActivityLevel.SEDENTARY ->
-                " | hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
-            else -> {
-                val offsetStr = "%.1f".format(activityTargetOffsetMmol)
-                " | activity=${activityMonitor.level.label}(+${offsetStr}mmol" +
-                    " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
-            }
-        }
-        // CGM warmup/block suffix
-        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
-
-        apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
-            " basal×${"%.2f".format(basalMultiplier)}" +
-            " aggr=${"%.2f".format(aggressiveness)}/${"%.2f".format(aggressionLearner.aggressiveness)}" +
-            (if (inReboundWindow) " rebound=${msSinceLastSuspend / 60_000}min" else "") +
-            activitySuffix +
-            cgmSuffix
-
-        // ── CSV logging ───────────────────────────────────────────────────────
-        val zone = when {
-            apsResult.reason.contains("LGS_SUSPEND") -> "LGS_SUSPEND"
-            apsResult.reason.contains("SUSPEND")     -> "SUSPEND"
-            apsResult.reason.contains("CAUTION")     -> "CAUTION"
-            else                                     -> "NORMAL"
-        }
-        csvLogger.log(LoopCsvLogger.LogRow(
-            timestampMs       = now,
-            bgMmol            = glucoseStatus.glucose / 18.0,
-            delta             = glucoseStatus.shortAvgDelta / 18.0,
-            iob               = iobArray.firstOrNull()?.iob ?: 0.0,
-            cob               = mealData.mealCOB,
-            mealMode          = mealMode.name,
-            isfUsedMmol       = dosingIsfMgdl / 18.0,
-            basalUsed         = profile.getBasal() * basalMultiplier,
-            aggrUsed          = aggressiveness,
-            circIsfMult       = circIsfMult,
-            circBasalMult     = circBasalMult,
-            circAggrCeil      = circAggrCeil,
-            smbU              = apsResult.smb,
-            tbrRate           = apsResult.rate ?: profile.getBasal(),
-            zone              = zone,
-            reboundActive     = inReboundWindow,
-            reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
-        ))
-
-        // Append mode time remaining if an override is active
-        val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
-        if (modeRemainingMs > 0L) {
-            val modeRemainingMins = modeRemainingMs / 60_000
-            apsResult.reason += " | Time left in ${mealMode.label} mode: ${modeRemainingMins}min"
-        }
-
-        aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
-
-        calculationWorkflow.runOnReceivedPredictions(overviewData)
-        rxBus.send(EventOpenAPSUpdateGui())
     }
 
-    override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
-        glucoseStatusCalculatorSMB.getGlucoseStatusData(allowOldData)
-
-    override fun configuration(): JSONObject =
-        JSONObject()
-            .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .put(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
-            .put(DoubleKey.ApsSmartInsulinLearningRate, preferences)
-            .put(DoubleKey.ApsSmartInsulinLowGuardMmol, preferences)
-            .put(DoubleKey.ApsSmartInsulinWarnGuardMmol, preferences)
-
-    override fun applyConfiguration(configuration: JSONObject) {
-        configuration
-            .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .store(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
-            .store(DoubleKey.ApsSmartInsulinLearningRate, preferences)
-            .store(DoubleKey.ApsSmartInsulinLowGuardMmol, preferences)
-            .store(DoubleKey.ApsSmartInsulinWarnGuardMmol, preferences)
+    private fun resolveUamMode(currentHour: Int): MealMode? {
+        val candidates = listOf(
+            Triple(MealMode.UAM_BREAKFAST,
+                   preferences.get(IntKey.ApsSmartInsulinUamBreakfastStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamBreakfastEndHour)),
+            Triple(MealMode.UAM_LUNCH,
+                   preferences.get(IntKey.ApsSmartInsulinUamLunchStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamLunchEndHour)),
+            Triple(MealMode.UAM_DINNER,
+                   preferences.get(IntKey.ApsSmartInsulinUamDinnerStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamDinnerEndHour)),
+            Triple(MealMode.UAM_SNACK,
+                   preferences.get(IntKey.ApsSmartInsulinUamSnackStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamSnackEndHour)),
+            Triple(MealMode.UAM_AFTERNOON,
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
+            // UAM_PROTEIN_FAT has no time window — handled separately by checkStuckHigh()
+        )
+        return candidates.firstOrNull { (mode, start, end) ->
+            uamModeEnabled(mode) && hourInWindow(currentHour, start, end)
+        }?.first
     }
 
-    override fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
-        if (isEnabled()) {
-            val maxIobPref = preferences.get(DoubleKey.ApsSmbMaxIob)
-            maxIob.setIfSmaller(maxIobPref, rh.gs(R.string.limiting_iob, maxIobPref, rh.gs(R.string.maxvalueinpreferences)), this)
-            maxIob.setIfSmaller(hardLimits.maxIobSMB(), rh.gs(R.string.limiting_iob, hardLimits.maxIobSMB(), rh.gs(R.string.hardlimit)), this)
-        }
-        return maxIob
+    private fun hourInWindow(hour: Int, start: Int, end: Int): Boolean =
+        if (start <= end) hour in start until end
+        else hour >= start || hour < end
+
+    private fun uamModeEnabled(mode: MealMode): Boolean = when (mode) {
+        MealMode.UAM_BREAKFAST -> preferences.get(BooleanKey.ApsSmartInsulinUamBreakfastEnabled)
+        MealMode.UAM_LUNCH     -> preferences.get(BooleanKey.ApsSmartInsulinUamLunchEnabled)
+        MealMode.UAM_DINNER    -> preferences.get(BooleanKey.ApsSmartInsulinUamDinnerEnabled)
+        MealMode.UAM_SNACK     -> preferences.get(BooleanKey.ApsSmartInsulinUamSnackEnabled)
+        MealMode.UAM_AFTERNOON -> preferences.get(BooleanKey.ApsSmartInsulinUamAfternoonEnabled)
+        MealMode.UAM_PROTEIN_FAT  -> false  // no time window — P/F uses direct pref check in checkStuckHigh()
+        else                   -> false
     }
 
-    override fun applyBasalConstraints(absoluteRate: Constraint<Double>, profile: Profile): Constraint<Double> {
-        if (isEnabled()) {
-            var maxBasal = preferences.get(DoubleKey.ApsMaxBasal)
-            if (maxBasal < profile.getMaxDailyBasal()) {
-                maxBasal = profile.getMaxDailyBasal()
-                absoluteRate.addReason(rh.gs(R.string.increasing_max_basal), this)
-            }
-            absoluteRate.setIfSmaller(maxBasal, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxBasal, rh.gs(R.string.maxvalueinpreferences)), this)
-            val maxFromBasalMultiplier = floor(preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier) * profile.getBasal() * 100) / 100
-            absoluteRate.setIfSmaller(maxFromBasalMultiplier, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromBasalMultiplier, rh.gs(R.string.max_basal_multiplier)), this)
-            val maxFromDaily = floor(profile.getMaxDailyBasal() * preferences.get(DoubleKey.ApsMaxDailyMultiplier) * 100) / 100
-            absoluteRate.setIfSmaller(maxFromDaily, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromDaily, rh.gs(R.string.max_daily_basal_multiplier)), this)
-        }
-        return absoluteRate
+    private fun uamDurationMins(mode: MealMode): Long = when (mode) {
+        MealMode.UAM_BREAKFAST -> preferences.get(IntKey.ApsSmartInsulinUamBreakfastDurationMins).toLong()
+        MealMode.UAM_LUNCH     -> preferences.get(IntKey.ApsSmartInsulinUamLunchDurationMins).toLong()
+        MealMode.UAM_DINNER    -> preferences.get(IntKey.ApsSmartInsulinUamDinnerDurationMins).toLong()
+        MealMode.UAM_SNACK     -> preferences.get(IntKey.ApsSmartInsulinUamSnackDurationMins).toLong()
+        MealMode.UAM_AFTERNOON -> preferences.get(IntKey.ApsSmartInsulinUamAfternoonDurationMins).toLong()
+        MealMode.UAM_PROTEIN_FAT  -> preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins).toLong()
+        else                   -> 30L
     }
 
-    override fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        if (!preferences.get(BooleanKey.ApsUseSmb))
-            value.set(false, rh.gs(R.string.smb_disabled_in_preferences), this)
-        return value
-    }
-
-    override fun isUAMEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        if (!preferences.get(BooleanKey.ApsUseUam))
-            value.set(false, rh.gs(R.string.uam_disabled_in_preferences), this)
-        return value
-    }
-
-    override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
-        if (requiredKey != null && requiredKey != "smart_insulin_settings") return
-        val category = PreferenceCategory(context)
-        parent.addPreference(category)
-        category.apply {
-            key = "smart_insulin_settings"
-            title = rh.gs(R.string.smart_insulin)
-            initialExpandedChildrenCount = 0
-
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,                        title = R.string.enable_smb))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAlways,                  title = R.string.enable_smb_always))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbWithCob,                 title = R.string.enable_smb_with_cob))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAfterCarbs,              title = R.string.enable_smb_after_carbs))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseUam,                        title = R.string.enable_uam))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,                      title = R.string.openapssmb_max_iob_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,       title = R.string.si_cgm_warmup_enabled_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,    title = R.string.smart_insulin_enable_learning))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,       title = R.string.smart_insulin_learning_rate))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowGuardMmol,       title = R.string.smart_insulin_low_guard))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinWarnGuardMmol,      title = R.string.smart_insulin_warn_guard))
-            addPreference(AdaptiveUnitPreference(ctx = context, unitKey = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowStartHour,   title = R.string.si_dawn_start_hour_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowEndHour,     title = R.string.si_dawn_end_hour_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDawnSmbReduction,   title = R.string.si_dawn_smb_reduction_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,      title = R.string.si_stft_cgm_warmup_block_title))
-            // Per-meal ISF multipliers
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf, title = R.string.si_breakfast_isf_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,     title = R.string.si_lunch_isf_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDinnerIsf,    title = R.string.si_dinner_isf_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowCarbIsf,   title = R.string.si_lowcarb_isf_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinExtendedIsf,  title = R.string.si_extended_isf_title))
-            // Per-meal carb defaults
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinBreakfastCarbsG, title = R.string.si_breakfast_carbs_g_title))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinLunchCarbsG,     title = R.string.si_lunch_carbs_g_title))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinDinnerCarbsG,    title = R.string.si_dinner_carbs_g_title))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinModeWindowMins,        title = R.string.si_mode_window_mins_title))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsSmartInsulinPostModeLockoutMins,  title = R.string.si_post_mode_lockout_mins_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinMaxPreBolus,           title = R.string.si_max_prebolus_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinPreBolus2DefaultU,         title = R.string.si_prebolus2_default_u_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,    title = R.string.si_prebolus2_default_delay_title))
-            // Activity monitor — target raises during exercise
-            addPreference(AdaptiveSwitchPreference(  ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,         title = R.string.si_activity_target_enabled_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
-
-            // ── UAM auto-detection ────────────────────────────────────────────
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,               title = R.string.si_uam_enabled_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,            title = R.string.si_uam_cgm_warmup_block_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol,   title = R.string.si_uam_trigger_threshold_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBurstThresholdMmol,        title = R.string.si_uam_burst_threshold_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,             title = R.string.si_uam_day_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,           title = R.string.si_uam_night_cutoff_title))
-
-            // Breakfast UAM
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamBreakfastEnabled,      title = R.string.si_uam_breakfast_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastStartHour,        title = R.string.si_uam_breakfast_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastEndHour,          title = R.string.si_uam_breakfast_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastDurationMins,     title = R.string.si_uam_breakfast_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBreakfastIsf,           title = R.string.si_uam_breakfast_isf_title))
-
-            // Lunch UAM
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLunchEnabled,          title = R.string.si_uam_lunch_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchStartHour,            title = R.string.si_uam_lunch_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchEndHour,              title = R.string.si_uam_lunch_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchDurationMins,         title = R.string.si_uam_lunch_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamLunchIsf,               title = R.string.si_uam_lunch_isf_title))
-
-            // Dinner UAM
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamDinnerEnabled,         title = R.string.si_uam_dinner_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerStartHour,           title = R.string.si_uam_dinner_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerEndHour,             title = R.string.si_uam_dinner_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerDurationMins,        title = R.string.si_uam_dinner_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamDinnerIsf,              title = R.string.si_uam_dinner_isf_title))
-
-            // Snack UAM
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamSnackEnabled,          title = R.string.si_uam_snack_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackStartHour,            title = R.string.si_uam_snack_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackEndHour,              title = R.string.si_uam_snack_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,         title = R.string.si_uam_snack_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamSnackIsf,               title = R.string.si_uam_snack_isf_title))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamAfternoonEnabled,           title = R.string.si_uam_afternoon_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonStartHour,            title = R.string.si_uam_afternoon_start_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonEndHour,              title = R.string.si_uam_afternoon_end_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonDurationMins,         title = R.string.si_uam_afternoon_duration_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamAfternoonIsf,               title = R.string.si_uam_afternoon_isf_title))
-
-            // Protein/Fat UAM (stuck-high detection — no time window, runs all day until night cutoff)
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,        title = R.string.si_uam_proteinfat_enabled_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,       title = R.string.si_uam_proteinfat_duration_title))
-            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,     title = R.string.si_uam_proteinfat_stuck_readings_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatIsf,             title = R.string.si_uam_proteinfat_isf_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol,    title = R.string.si_uam_proteinfat_threshold_title))
-        }
+    private fun uamIsfMmol(mode: MealMode): Double = when (mode) {
+        MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+        MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+        MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+        MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+        MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
+        MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
+        else                   -> 0.0  // no ISF override for unknown modes
     }
 }
