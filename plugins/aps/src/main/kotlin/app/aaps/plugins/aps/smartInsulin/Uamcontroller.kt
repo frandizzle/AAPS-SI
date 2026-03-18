@@ -290,14 +290,15 @@ class UamController @Inject constructor(
         val unexpectedDelta = deltaMmol - bgiMmol
         val unexpectedShort = shortAvgDeltaMmol - bgiMmol
 
-        // Delta wobble tolerance: if shortAvgDelta is close to riseMinDelta (>= 85%),
-        // allow both delta and shortAvg to be slightly below threshold.
-        // This handles the common case where delta consistently reads 0.17 but displays
-        // as 0.2 due to rounding — both values confirm a genuine rise just under threshold.
-        val closeToThreshold = shortAvgDeltaMmol >= riseMinDelta * 0.85
-        val deltaWobbleTolerance = if (closeToThreshold) 0.85 else 1.0
-        val risingNow = deltaMmol >= riseMinDelta * deltaWobbleTolerance &&
-            shortAvgDeltaMmol >= shortAvgThreshold * deltaWobbleTolerance &&
+        // shortAvgDelta is the primary trend confirmation — it smooths over single noisy
+        // readings. If shortAvgDelta confirms a genuine rise, allow instantaneous delta
+        // to be a CGM noise reading without resetting the streak.
+        // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
+        // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
+        val trendConfirmedByAvg = shortAvgDeltaMmol >= riseMinDelta
+        val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
+        val risingNow = deltaMmol >= deltaMin &&
+            shortAvgDeltaMmol >= shortAvgThreshold &&
             unexpectedDelta >= unexpectedMin &&
             unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
 
@@ -327,7 +328,7 @@ class UamController @Inject constructor(
             }
             // Record reject reason for SI tab debug display
             val rejectReason = when {
-                deltaMmol < riseMinDelta         -> "Δ ${String.format("%.2f", deltaMmol)} < ${String.format("%.2f", riseMinDelta)}"
+                deltaMmol < deltaMin             -> "Δ ${String.format("%.2f", deltaMmol)} < ${String.format("%.2f", deltaMin)}"
                 shortAvgDeltaMmol < shortAvgThreshold -> "avg ${String.format("%.2f", shortAvgDeltaMmol)} < ${String.format("%.2f", shortAvgThreshold)}"
                 unexpectedDelta < unexpectedMin  -> "uΔ ${String.format("%.2f", unexpectedDelta)} < ${String.format("%.2f", unexpectedMin)}"
                 unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${String.format("%.2f", unexpectedShort)} < ${String.format("%.2f", unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
