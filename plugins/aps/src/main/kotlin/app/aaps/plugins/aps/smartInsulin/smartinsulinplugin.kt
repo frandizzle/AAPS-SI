@@ -384,7 +384,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
 
         // ── Meal mode — check override first, fall back to auto-detect ────────
-        val mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
+        var mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
 
         // ── Post-meal learning lockout ───────────────────────────────────────
         // When any meal or UAM mode expires (transition back to FASTING), mark BG data
@@ -443,7 +443,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // circIsfMult > 1.0 → divide → dosingISF goes DOWN → less insulin (insulin weaker than profile)
         // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
         // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
-        val dosingIsfMgdl = when {
+        var dosingIsfMgdl = when {
             modeIsfMmol > 0.0 -> modeIsfMmol * 18.0               // user meal-mode override — absolute
             else              -> trueIsfMgdl / circIsfMult         // divide: mult>1 → lower dosingISF → less insulin
         }
@@ -536,44 +536,34 @@ open class SmartInsulinPlugin @Inject constructor(
             softLandingBypass  = softLandingBypass
         )
 
-        // ── Apply correct ISF for active UAM mode ────────────────────────────
-        // Priority: justFiredThisCycle (trigger cycle) > activeMealMode (ongoing) > mealMode
-        // justFiredThisCycle handles the exact trigger cycle where mealMode is still FASTING.
-        // activeMealMode handles ongoing cycles where MealModeDetector hasn't caught up yet.
-        val justFiredMode    = uamController.justFiredThisCycle
-        val activeOverride   = mealOverrideManager.activeMealMode
-        val resolvedMode     = justFiredMode
-            ?: (activeOverride?.takeIf { it != mealMode })
-            ?: mealMode
-        // Always log ISF resolution so we can diagnose same-cycle ISF bugs
-        aapsLogger.debug(LTag.APS,
-                         "SmartInsulin ISF resolution: " +
-                             "mealMode=${mealMode.label} " +
-                             "justFired=${justFiredMode?.label ?: "null"} " +
-                             "activeOverride=${activeOverride?.label ?: "null"} " +
-                             "resolved=${resolvedMode.label}")
-        val effectiveModeIsfMmol = when (resolvedMode) {
-            MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
-            MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
-            MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
-            MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
-            MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
-            MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
-            MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
-            MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
-            MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-            MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
-            MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
-            MealMode.FASTING       -> 0.0
+        // ── Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired ──
+        // Using var reassignment so ALL downstream logic (determine_basal, learners, logging)
+        // sees the correct mode and ISF immediately. The previous approach only updated sens
+        // in OapsProfile but left dosingIsfMgdl stale everywhere else.
+        val latestMealMode = mealOverrideManager.activeMealMode ?: MealMode.FASTING
+        if (latestMealMode != mealMode) {
+            val latestModeIsfMmol = when (latestMealMode) {
+                MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+                MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+                MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+                MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+                MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+                MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+                MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+                MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+                MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+                MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
+                MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
+                MealMode.FASTING       -> 0.0
+            }
+            mealMode = latestMealMode
+            if (latestModeIsfMmol > 0.0) {
+                dosingIsfMgdl = latestModeIsfMmol * 18.0
+            }
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
+                                 "${String.format("%.1f", dosingIsfMgdl / 18.0)}mmol immediately")
         }
-        val effectiveDosingIsfMgdl = when {
-            effectiveModeIsfMmol > 0.0 -> effectiveModeIsfMmol * 18.0
-            else                       -> dosingIsfMgdl
-        }
-        // Store ISF resolution info for appending to reason string after apsResult is built
-        val isfResDebug = if (justFiredMode != null || activeOverride != null)
-            " | isfRes: just=${justFiredMode?.label ?: "null"} active=${activeOverride?.label ?: "null"} resolved=${resolvedMode.label} ISF=${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}"
-        else null
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
@@ -588,7 +578,7 @@ open class SmartInsulinPlugin @Inject constructor(
             max_bg                          = maxBg,
             target_bg                       = stftTargetMgdl,
             carb_ratio                      = profile.getIc(),
-            sens                            = effectiveDosingIsfMgdl,  // uses UAM ISF immediately if UAM just fired this cycle
+            sens                            = dosingIsfMgdl,  // reassigned above if UAM fired this cycle
             autosens_adjust_targets         = false,
             max_daily_safety_multiplier     = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
@@ -903,7 +893,6 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Append STFT status to reason if active
-        isfResDebug?.let { apsResult.reason += it }
         stftController.statusString(profileTargetMgdl)?.let { apsResult.reason += " | $it" }
         uamController.statusString()?.let  { apsResult.reason += " | $it" }
         // Post-meal lockout in loop output
