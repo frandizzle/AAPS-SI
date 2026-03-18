@@ -397,7 +397,11 @@ open class SmartInsulinPlugin @Inject constructor(
             lockoutTrackerInitialized = true
         }
 
-        if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
+        // P/F is a tail correction, not a real meal — don't trigger post-meal dirty window.
+        // UAM meal modes should still fire normally after P/F expires.
+        val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
+            previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
+        if (previousWasRealMeal && mealMode == MealMode.FASTING) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
