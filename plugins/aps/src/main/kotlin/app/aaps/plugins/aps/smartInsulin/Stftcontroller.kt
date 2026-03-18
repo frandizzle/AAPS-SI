@@ -39,7 +39,8 @@ class StftController @Inject constructor(
     private var consecutiveAbove  = 0      // readings above trigger threshold
     private var stftActive        = false  // true once trigger fired
     private var stepsApplied      = 0      // how many 5-min steps of reduction applied
-    private var negDeltaStreak    = 0      // consecutive negative delta readings
+    private var negDeltaStreak         = 0      // consecutive negative delta readings
+    private var lastCountedTimestampMs = 0L     // CGM timestamp of last reading that incremented counters
 
     companion object {
         private const val MMOL_TO_MGDL          = 18.0
@@ -81,7 +82,8 @@ class StftController @Inject constructor(
         isTempTarget:      Boolean,
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
-        cgmInWarmup:       Boolean
+        cgmInWarmup:       Boolean,
+        bgTimestampMs:     Long = 0L
     ): Double {
 
         // STFT only runs in fasting — reset immediately if meal mode activates
@@ -148,6 +150,11 @@ class StftController @Inject constructor(
         // Only count if delta is non-negative — don't activate on BG falling through threshold
         // (e.g. post-meal descent from 10→6). STFT is for stuck-high, not falling BG.
         if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL && delta >= 0.0) {
+            if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs) return if (stftActive) {
+                val reduction = stepsApplied * STEP_MGDL
+                (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
+            } else profileTargetMgdl
+            lastCountedTimestampMs = bgTimestampMs
             consecutiveAbove++
         } else {
             if (consecutiveAbove > 0 && delta < 0.0)
@@ -165,7 +172,12 @@ class StftController @Inject constructor(
 
         if (!stftActive) return profileTargetMgdl
 
-        // Apply one step per loop cycle
+        // Apply one step per loop cycle — only once per CGM reading
+        if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs && stepsApplied > 0) {
+            val reduction = stepsApplied * STEP_MGDL
+            return (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
+        }
+        lastCountedTimestampMs = bgTimestampMs
         stepsApplied++
         val reduction    = (stepsApplied * STEP_MGDL)
         val adjustedTarget = (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
@@ -198,9 +210,10 @@ class StftController @Inject constructor(
     // ── Private ───────────────────────────────────────────────────────────────
 
     private fun reset() {
-        consecutiveAbove = 0
-        stftActive       = false
-        stepsApplied     = 0
-        negDeltaStreak   = 0
+        consecutiveAbove       = 0
+        stftActive             = false
+        stepsApplied           = 0
+        negDeltaStreak         = 0
+        lastCountedTimestampMs = 0L
     }
 }

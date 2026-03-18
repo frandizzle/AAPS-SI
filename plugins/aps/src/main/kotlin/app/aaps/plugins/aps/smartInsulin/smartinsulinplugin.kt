@@ -506,7 +506,8 @@ open class SmartInsulinPlugin @Inject constructor(
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
             inReboundWindow   = inReboundWindow,
-            cgmInWarmup       = cgmInWarmup
+            cgmInWarmup       = cgmInWarmup,
+            bgTimestampMs     = glucoseStatus.date
         )
         // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
         // The plugin-side TT guard is kept as a safety backstop.
@@ -537,7 +538,8 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmInWarmup        = cgmInWarmup,
             inPostMealLockout  = inPostMealLockout,
             profileTargetMmol  = profileTargetMgdl / 18.0,
-            softLandingBypass  = softLandingBypass
+            softLandingBypass  = softLandingBypass,
+            bgTimestampMs      = glucoseStatus.date
         )
 
         // ── Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired ──
