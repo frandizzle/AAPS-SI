@@ -241,7 +241,7 @@ class UamController @Inject constructor(
         // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
         // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
         // gated like meal slots. Runs every fasting cycle after safety checks pass.
-        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol)
+        checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol, bgTimestampMs)
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
@@ -386,7 +386,8 @@ class UamController @Inject constructor(
         lastLowTimeMs:     Long,
         currentMealMode:   MealMode,
         inPostMealLockout: Boolean,
-        profileTargetMmol: Double
+        profileTargetMmol: Double,
+        bgTimestampMs:     Long = 0L
     ) {
         // Check P/F preference directly — uamModeEnabled() returns false for P/F
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
