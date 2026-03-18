@@ -338,12 +338,24 @@ class UamController @Inject constructor(
             resetStreak(); return
         }
 
-        // ── Trigger once consecutive readings met ────────────────────────────
-        // The multi-layer confirmation (consecutive + shortAvgDelta + BGI gap) is
-        // sufficient — no additional total-rise gate needed. Fires exactly when
-        // settings say it should.
+        // ── Burst trigger — fire immediately on large sudden rise ────────────
+        // If total rise from streak start exceeds burst threshold, don't wait for
+        // consecutive reading count — fire immediately. Catches sudden spikes that
+        // would otherwise take 15 min to confirm via the streak counter.
+        val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+        val totalRise = currentBgMmol - bgAtStreakStart
+        if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM: BURST trigger — totalRise=${String.format("%.2f", totalRise)}mmol " +
+                                 ">= threshold=${String.format("%.1f", burstThreshold)}mmol " +
+                                 "after $consecutiveRiseReadings readings — firing ${uamMode.label}")
+            triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
+            resetStreak()
+            return
+        }
+
+        // ── Normal trigger — consecutive readings met ─────────────────────────
         if (consecutiveRiseReadings >= riseReadingsNeeded) {
-            val totalRise = currentBgMmol - bgAtStreakStart
             triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
             resetStreak()
         }
@@ -509,7 +521,10 @@ class UamController @Inject constructor(
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
             val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-            return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote)"
+            val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+            val totalRise = if (bgAtStreakStart > 0.0) lastStuckBgMmol - bgAtStreakStart else 0.0
+            val burstNote = if (burstThreshold > 0.0) " rise=${String.format("%.2f", totalRise)}/${String.format("%.1f", burstThreshold)}mmol" else ""
+            return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
         }
         // Always show P/F count if enabled and in active window
         if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {

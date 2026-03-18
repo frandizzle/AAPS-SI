@@ -540,10 +540,18 @@ open class SmartInsulinPlugin @Inject constructor(
         // Priority: justFiredThisCycle (trigger cycle) > activeMealMode (ongoing) > mealMode
         // justFiredThisCycle handles the exact trigger cycle where mealMode is still FASTING.
         // activeMealMode handles ongoing cycles where MealModeDetector hasn't caught up yet.
-        val justFiredMode = uamController.justFiredThisCycle
-        val resolvedMode  = justFiredMode
-            ?: (mealOverrideManager.activeMealMode?.takeIf { it != mealMode })
+        val justFiredMode    = uamController.justFiredThisCycle
+        val activeOverride   = mealOverrideManager.activeMealMode
+        val resolvedMode     = justFiredMode
+            ?: (activeOverride?.takeIf { it != mealMode })
             ?: mealMode
+        // Always log ISF resolution so we can diagnose same-cycle ISF bugs
+        aapsLogger.debug(LTag.APS,
+                         "SmartInsulin ISF resolution: " +
+                             "mealMode=${mealMode.label} " +
+                             "justFired=${justFiredMode?.label ?: "null"} " +
+                             "activeOverride=${activeOverride?.label ?: "null"} " +
+                             "resolved=${resolvedMode.label}")
         val effectiveModeIsfMmol = when (resolvedMode) {
             MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
             MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
@@ -562,15 +570,10 @@ open class SmartInsulinPlugin @Inject constructor(
             effectiveModeIsfMmol > 0.0 -> effectiveModeIsfMmol * 18.0
             else                       -> dosingIsfMgdl
         }
-        if (resolvedMode != mealMode) {
-            val source = when {
-                justFiredMode != null -> "trigger cycle"
-                else                 -> "activeMealMode"
-            }
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: using ${resolvedMode.label} ISF " +
-                                 "${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}mmol ($source)")
-        }
+        // Store ISF resolution info for appending to reason string after apsResult is built
+        val isfResDebug = if (justFiredMode != null || activeOverride != null)
+            " | isfRes: just=${justFiredMode?.label ?: "null"} active=${activeOverride?.label ?: "null"} resolved=${resolvedMode.label} ISF=${String.format("%.1f", effectiveDosingIsfMgdl / 18.0)}"
+        else null
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
@@ -900,6 +903,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Append STFT status to reason if active
+        isfResDebug?.let { apsResult.reason += it }
         stftController.statusString(profileTargetMgdl)?.let { apsResult.reason += " | $it" }
         uamController.statusString()?.let  { apsResult.reason += " | $it" }
         // Post-meal lockout in loop output
@@ -1127,6 +1131,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,            title = R.string.si_uam_cgm_warmup_block_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol,   title = R.string.si_uam_trigger_threshold_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBurstThresholdMmol,        title = R.string.si_uam_burst_threshold_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,             title = R.string.si_uam_day_start_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,           title = R.string.si_uam_night_cutoff_title))
