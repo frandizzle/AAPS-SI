@@ -1114,7 +1114,7 @@ open class SmartInsulinPlugin @Inject constructor(
         category.apply {
             key = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
-            initialExpandedChildrenCount = 0
+            initialExpandedChildrenCount = Int.MAX_VALUE
 
             // ── General & Safety ─────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
