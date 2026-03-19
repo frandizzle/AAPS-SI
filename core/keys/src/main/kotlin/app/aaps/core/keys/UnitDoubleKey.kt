@@ -23,5 +23,36 @@ enum class UnitDoubleKey(
     OverviewHypoTarget("hypo_target", 160.0, 108, 180, defaultedBySM = true),
     OverviewLowMark("low_mark", 72.0, 25, 160, showInNsClientMode = false, hideParentScreenIfHidden = true),
     OverviewHighMark("high_mark", 180.0, 90, 250, showInNsClientMode = false),
-    ApsLgsThreshold("lgsThreshold", 65.0, 60, 100, defaultedBySM = true, dependency = BooleanKey.ApsUseDynamicSensitivity)
+    ApsLgsThreshold("lgsThreshold", 65.0, 60, 100, defaultedBySM = true, dependency = BooleanKey.ApsUseDynamicSensitivity),
+
+    // ── SmartInsulin ─────────────────────────────────────────────────────────
+
+    // BG guards
+    ApsSmartInsulinLowGuard("si_low_guard_mmol",   72.0,  54,  90, defaultedBySM = true),   // 4.0 mmol
+    ApsSmartInsulinWarnGuard("si_warn_guard_mmol",  86.0,  63, 108, defaultedBySM = true),   // 4.8 mmol
+
+    // Activity target offsets above profile target
+    ApsSmartInsulinActivityLightTarget(   "si_activity_light_target_mmol",      9.0,   0, 54, defaultedBySM = true),  // 0.5 mmol
+    ApsSmartInsulinActivityModerateTarget("si_activity_moderate_target_mmol",  18.0,   0, 54, defaultedBySM = true),  // 1.0 mmol
+    ApsSmartInsulinActivityHeavyTarget(   "si_activity_heavy_target_mmol",     27.0,   0, 54, defaultedBySM = true),  // 1.5 mmol
+
+    // UAM detection thresholds
+    ApsSmartInsulinUamTriggerThreshold(   "si_uam_trigger_mmol",          108.0, 72, 180, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),  // 6.0 mmol
+    ApsSmartInsulinUamRiseMinDelta(       "si_uam_rise_min_delta_mmol",     3.6,  2,  18, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),  // 0.2 mmol
+    ApsSmartInsulinUamBurstThreshold(     "si_uam_burst_threshold_mmol",   18.0,  0,  54, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),  // 1.0 mmol
+    ApsSmartInsulinUamProteinFatThreshold("si_uam_proteinfat_threshold",  117.0, 90, 180, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),  // 6.5 mmol
+
+    // Per-meal ISF overrides — 0.0 means "use profile ISF" (sentinel preserved in any unit)
+    // Range max 360 mg/dL/U = ~20 mmol/U
+    ApsSmartInsulinBreakfastIsf(   "si_breakfast_isf",       0.0, 0, 360, defaultedBySM = true),
+    ApsSmartInsulinLunchIsf(       "si_lunch_isf",            0.0, 0, 360, defaultedBySM = true),
+    ApsSmartInsulinDinnerIsf(      "si_dinner_isf",           0.0, 0, 360, defaultedBySM = true),
+    ApsSmartInsulinLowCarbIsf(     "si_lowcarb_isf",          0.0, 0, 360, defaultedBySM = true),
+    ApsSmartInsulinExtendedIsf(    "si_extended_isf",         0.0, 0, 360, defaultedBySM = true),
+    ApsSmartInsulinUamBreakfastIsf("si_uam_breakfast_isf",    0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    ApsSmartInsulinUamLunchIsf(    "si_uam_lunch_isf",        0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    ApsSmartInsulinUamDinnerIsf(   "si_uam_dinner_isf",       0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamSnackIsf(    "si_uam_snack_isf",        0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamAfternoonIsf("si_uam_afternoon_isf",    0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
+    ApsSmartInsulinUamProteinFatIsf("si_uam_proteinfat_isf",  0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
 }
