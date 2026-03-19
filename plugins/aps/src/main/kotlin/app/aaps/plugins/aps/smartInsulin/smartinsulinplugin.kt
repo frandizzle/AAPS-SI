@@ -957,7 +957,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // a high TT is still a valid peak/DIA observation.
         if (learningEnabled) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
-            apsResult.reason += " | ${bolusCurveTracker.statusSummary(mealMode)}"
         }
 
         // ── Circadian learner — fasting + no high TT only ─────────────────────
@@ -1037,7 +1036,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
         if (modeRemainingMs > 0L) {
             val modeRemainingMins = modeRemainingMs / 60_000
-            apsResult.reason += " | Time left in ${mealMode.label} mode: ${modeRemainingMins}min"
+            apsResult.reason += " | ${modeRemainingMins}min left"
         }
 
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
@@ -1117,6 +1116,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_general"
                 cat.title = "General & Safety"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,                        title = R.string.enable_smb))
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAlways,                  title = R.string.enable_smb_always))
@@ -1141,6 +1141,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_learning"
                 cat.title = "Learning"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,      title = R.string.smart_insulin_enable_learning))
                 cat.addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,         title = R.string.smart_insulin_learning_rate))
@@ -1153,6 +1154,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_dawn"
                 cat.title = "Dawn Phenomenon"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowStartHour,  title = R.string.si_dawn_start_hour_title))
                 cat.addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDawnWindowEndHour,    title = R.string.si_dawn_end_hour_title))
@@ -1164,6 +1166,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_activity"
                 cat.title = "Activity"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveSwitchPreference(  ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,         title = R.string.si_activity_target_enabled_title))
                 cat.addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
@@ -1176,6 +1179,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_meal"
                 cat.title = "Meal Modes"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf, title = R.string.si_breakfast_isf_title))
                 cat.addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,     title = R.string.si_lunch_isf_title))
@@ -1196,6 +1200,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_stft"
                 cat.title = "STFT (Soft Target)"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, title = R.string.si_stft_cgm_warmup_block_title))
             }
@@ -1205,6 +1210,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_uam"
                 cat.title = "UAM Auto-Detection"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,             title = R.string.si_uam_enabled_title))
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,      title = R.string.si_uam_cgm_warmup_block_title))
@@ -1223,6 +1229,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cat.key   = "si_cat_uam_windows"
                 cat.title = "UAM Windows"
                 cat.isIconSpaceReserved = false
+                cat.initialExpandedChildrenCount = 0
                 addPreference(cat)
                 // Breakfast
                 cat.addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamBreakfastEnabled,  title = R.string.si_uam_breakfast_enabled_title))

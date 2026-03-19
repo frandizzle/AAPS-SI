@@ -195,28 +195,30 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
-        sb.append("SI mode=${mealMode.label} ")
-        sb.append("BG=${fmt(currentBg)} d=%.2f IOB=%.2f/%.2f ".format(Locale.US, delta, currentIob, oapsProfile.max_iob))
-        sb.append("pred_min=${fmt(predictedMin)} pred30=${fmt(predictedAt30)} pred60=${fmt(predictedAt60)} $units ")
-        sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
-        sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
-        if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
-            sb.append("Peak: ${learnedProfile.peakMinutes.toInt()}m DIA: ${learnedProfile.diaMinutes.toInt()}m (n=${learnedProfile.sampleCount}) ")
-        else
-            sb.append("Learned peak: ${learnedProfile.peakMinutes.toInt()}m Learned DIA: ${learnedProfile.diaMinutes.toInt()}m (n=${learnedProfile.sampleCount}) ")
-        sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
-        if (inDawnWindow) sb.append("dawnWindow(reduction=%.0f%%) ".format(Locale.US, dawnSmbReduction * 100))
-        if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
+        // Pipe-separated compact format — each key piece separated by " | "
+        sb.append("SI mode=${mealMode.label}")
+        sb.append(" | BG=${fmt(currentBg)}")
+        sb.append(" | d=${"%.2f".format(Locale.US, delta)}")
+        sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
+        sb.append(" | pred_min=${fmt(predictedMin)}")
+        sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
+        sb.append(" | ISF=${fmt(dosingIsfMgdl)}")
+        sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
+        val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
+        sb.append(" | ${pkLabel}=${learnedProfile.peakMinutes.toInt()}m DIA=${learnedProfile.diaMinutes.toInt()}m")
+        sb.append(" | aggr=${"%.2f".format(Locale.US, aggressiveness)}")
+        if (inDawnWindow) sb.append(" | dawn(-${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
+        if (highTempTargetActive) sb.append(" | highTT=smbOff")
         if (inReboundWindow) {
             val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
-            sb.append("rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f) ".format(Locale.US, reboundMins, reboundMinsLeft, reboundTaperFraction))
+            sb.append(" | rebound(${reboundMins.toInt()}min left=${reboundMinsLeft.toInt()}min taper=${"%.2f".format(Locale.US, reboundTaperFraction)})")
         } else if (bgWentLow) {
-            sb.append("rebound=watching ")
+            sb.append(" | rebound=watching")
         }
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
-            sb.append("activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol) ")
-        if (cgmWarmupReason.isNotEmpty()) sb.append("$cgmWarmupReason ")
-        sb.append("$tirSummary ")
+            sb.append(" | activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)")
+        if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
+        sb.append(" | $tirSummary")
 
         // ── Decision ──────────────────────────────────────────────────────────
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
@@ -229,7 +231,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         when {
             // ── LGS hard suspend ─────────────────────────────────────────────
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
-                sb.append("LGS_SUSPEND BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
+                sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
                 setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -239,7 +241,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)}"
                     else           -> "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
                 }
-                sb.append(reason)
+                sb.append(" | $reason")
                 setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -248,7 +250,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val guardGap   = warnGuardMgdl - predictedMin
                 val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
-                sb.append("CAUTION pred_min=${fmt(predictedMin)} warnGuard=${fmt(warnGuardMgdl)} tbrFrac=%.2f tbr=%.3f".format(Locale.US, warnFrac, cautionTbr))
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMin)} | warnGuard=${fmt(warnGuardMgdl)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -320,8 +322,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     else                  -> ""
                 }
 
-                sb.append("NORMAL targetBG=${fmt(targetBg)} microBolus=$microBolusAllowed trigger=$trigger ")
-                sb.append("smb=%.3f tbr=%.3f%s%s%s".format(Locale.US, finalSmb, tbrRate, reboundStr, activityStr, cgmBlockStr))
+                sb.append(" | NORMAL | targetBG=${fmt(targetBg)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=${"%.3f".format(Locale.US, finalSmb)} | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
