@@ -198,7 +198,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Pipe-separated compact format — each key piece separated by " | "
         sb.append("SI mode=${mealMode.label}")
         sb.append(" | BG=${fmt(currentBg)}")
-        sb.append(" | d=${"%.2f".format(Locale.US, delta)}")
+        sb.append(" | d=${"%.2f".format(Locale.US, delta / MMOL_TO_MGDL)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMin)}")
         sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
@@ -238,7 +238,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // ── Predictive suspend ───────────────────────────────────────────
             predictedMin < lowGuardMgdl || fallingIntoLow -> {
                 val reason = when {
-                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)}"
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.2f", delta / MMOL_TO_MGDL)}"
                     else           -> "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
                 }
                 sb.append(" | $reason")

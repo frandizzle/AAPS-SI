@@ -283,7 +283,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
                     .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
         actions.add(
-            rh.gs(R.string.si_isf_label) + ": " +
+            "ISF override: " +
                 (if (isfValue > 0.0) "$isfValue ${if (isMmol) "mmol" else "mg/dL"}" else "Profile ISF")
                     .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
