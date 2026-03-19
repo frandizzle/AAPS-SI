@@ -114,6 +114,29 @@ class UamController @Inject constructor(
         return if (v == 0.0) 0.0 else profileUtil.convertToMgdlDetect(v)
     }
 
+    // ── Unit-aware display helpers ────────────────────────────────────────────
+    // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
+    // when the user has selected mg/dL units. Delta values follow the same rule.
+    private val isMmol: Boolean get() =
+        profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
+
+    private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
+
+    /** Format a BG or threshold value (internal mmol) for display in user units */
+    private fun fmtBg(mmol: Double): String =
+        if (isMmol) String.format("%.1f", mmol)
+        else        String.format("%.0f", mmol * 18.0)
+
+    /** Format a delta value (internal mmol) for display in user units */
+    private fun fmtDelta(mmol: Double): String =
+        if (isMmol) String.format("%+.2f", mmol)
+        else        String.format("%+.1f", mmol * 18.0)
+
+    /** Format a delta threshold (internal mmol, no sign) for display in user units */
+    private fun fmtThresh(mmol: Double): String =
+        if (isMmol) String.format("%.2f", mmol)
+        else        String.format("%.1f", mmol * 18.0)
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
@@ -334,29 +357,29 @@ class UamController @Inject constructor(
             val dirtyTag = if (inPostMealLockout) " [DIRTY×${String.format("%.1f", dirtyMultiplier)}]" else ""
             aapsLogger.debug(LTag.APS,
                              "UAM: rise $consecutiveRiseReadings/$riseReadingsNeeded$dirtyTag " +
-                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
-                                 "Δ=${String.format("%+.2f", deltaMmol)}(≥${String.format("%.2f", riseMinDelta)}) " +
-                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)} " +
-                                 "bgi=${String.format("%+.2f", bgiMmol)} " +
-                                 "uΔ=${String.format("%+.2f", unexpectedDelta)}(≥${String.format("%.2f", unexpectedMin)}) " +
-                                 "uAvg=${String.format("%+.2f", unexpectedShort)} " +
-                                 "total=${String.format("%+.1f", totalRise)}mmol mode=${uamMode.label}")
+                                 "bg=${fmtBg(currentBgMmol)}$unitLabel " +
+                                 "Δ=${fmtDelta(deltaMmol)}(≥${fmtThresh(riseMinDelta)}) " +
+                                 "avg=${fmtDelta(shortAvgDeltaMmol)} " +
+                                 "bgi=${fmtDelta(bgiMmol)} " +
+                                 "uΔ=${fmtDelta(unexpectedDelta)}(≥${fmtThresh(unexpectedMin)}) " +
+                                 "uAvg=${fmtDelta(unexpectedShort)} " +
+                                 "total=${fmtDelta(totalRise)} mode=${uamMode.label}")
         } else {
             if (consecutiveRiseReadings > 0) {
                 val dirtyNote = if (inPostMealLockout) " [dirty-window stricter thresholds]" else ""
                 aapsLogger.debug(LTag.APS,
                                  "UAM: streak broken$dirtyNote — " +
-                                     "Δ=${String.format("%+.2f", deltaMmol)}(need>=${String.format("%.2f", riseMinDelta)}) " +
-                                     "avg=${String.format("%+.2f", shortAvgDeltaMmol)}(need>=${String.format("%.2f", shortAvgThreshold)}) " +
-                                     "uΔ=${String.format("%+.2f", unexpectedDelta)}(need>=${String.format("%.2f", unexpectedMin)}) " +
-                                     "bgi=${String.format("%+.2f", bgiMmol)}, reset")
+                                     "Δ=${fmtDelta(deltaMmol)}(need>=${fmtThresh(riseMinDelta)}) " +
+                                     "avg=${fmtDelta(shortAvgDeltaMmol)}(need>=${fmtThresh(shortAvgThreshold)}) " +
+                                     "uΔ=${fmtDelta(unexpectedDelta)}(need>=${fmtThresh(unexpectedMin)}) " +
+                                     "bgi=${fmtDelta(bgiMmol)}, reset")
             }
             // Record reject reason for SI tab debug display
             val rejectReason = when {
-                deltaMmol < deltaMin             -> "Δ ${String.format("%.2f", deltaMmol)} < ${String.format("%.2f", deltaMin)}"
-                shortAvgDeltaMmol < shortAvgThreshold -> "avg ${String.format("%.2f", shortAvgDeltaMmol)} < ${String.format("%.2f", shortAvgThreshold)}"
-                unexpectedDelta < unexpectedMin  -> "uΔ ${String.format("%.2f", unexpectedDelta)} < ${String.format("%.2f", unexpectedMin)}"
-                unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${String.format("%.2f", unexpectedShort)} < ${String.format("%.2f", unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
+                deltaMmol < deltaMin             -> "Δ ${fmtDelta(deltaMmol)} < ${fmtThresh(deltaMin)}"
+                shortAvgDeltaMmol < shortAvgThreshold -> "avg ${fmtDelta(shortAvgDeltaMmol)} < ${fmtThresh(shortAvgThreshold)}"
+                unexpectedDelta < unexpectedMin  -> "uΔ ${fmtDelta(unexpectedDelta)} < ${fmtThresh(unexpectedMin)}"
+                unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${fmtDelta(unexpectedShort)} < ${fmtThresh(unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
                 else                             -> "threshold not met"
             }
             lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
@@ -371,8 +394,8 @@ class UamController @Inject constructor(
         val totalRise = currentBgMmol - bgAtStreakStart
         if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
-                             "UAM: BURST trigger — totalRise=${String.format("%.2f", totalRise)}mmol " +
-                                 ">= threshold=${String.format("%.1f", burstThreshold)}mmol " +
+                             "UAM: BURST trigger — totalRise=${fmtDelta(totalRise)}$unitLabel " +
+                                 ">= threshold=${fmtBg(burstThreshold)}$unitLabel " +
                                  "after $consecutiveRiseReadings readings — firing ${uamMode.label}")
             triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
             resetStreak()
@@ -438,8 +461,8 @@ class UamController @Inject constructor(
         // Reset if BG has returned to profile target — stuck-high condition no longer valid
         if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
             aapsLogger.debug(LTag.APS,
-                             "UAM_PROTEIN_FAT: streak reset — BG ${String.format("%.1f", currentBgMmol)} " +
-                                 "back at/below target ${String.format("%.1f", profileTargetMmol)}mmol")
+                             "UAM_PROTEIN_FAT: streak reset — BG ${fmtBg(currentBgMmol)}$unitLabel " +
+                                 "back at/below target ${fmtBg(profileTargetMmol)}$unitLabel")
             stuckHighReadings = 0
             return
         }
@@ -459,8 +482,8 @@ class UamController @Inject constructor(
         if (!isStuck) {
             aapsLogger.debug(LTag.APS,
                              "UAM_PROTEIN_FAT: not stuck — " +
-                                 "bg=${String.format("%.2f", currentBgMmol)}(need>=${String.format("%.1f", triggerThresholdMmol)}) " +
-                                 "avg=${String.format("%+.3f", shortAvgDeltaMmol)}(need ${String.format("%.2f", STUCK_DELTA_MIN_MMOL)}→${String.format("%.2f", STUCK_DELTA_MAX_MMOL)})")
+                                 "bg=${fmtBg(currentBgMmol)}(need>=${fmtBg(triggerThresholdMmol)}) " +
+                                 "avg=${fmtDelta(shortAvgDeltaMmol)}(need ${fmtThresh(STUCK_DELTA_MIN_MMOL)}→${fmtThresh(STUCK_DELTA_MAX_MMOL)})")
         }
 
         if (isStuck) {
@@ -473,13 +496,13 @@ class UamController @Inject constructor(
             stuckHighReadings++
             aapsLogger.debug(LTag.APS,
                              "UAM_PROTEIN_FAT: stuck-high $stuckHighReadings/${preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)} " +
-                                 "bg=${String.format("%.1f", currentBgMmol)}mmol " +
-                                 "avg=${String.format("%+.2f", shortAvgDeltaMmol)}mmol")
+                                 "bg=${fmtBg(currentBgMmol)}$unitLabel " +
+                                 "avg=${fmtDelta(shortAvgDeltaMmol)}$unitLabel")
 
             if (stuckHighReadings >= preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)) {
                 aapsLogger.debug(LTag.APS,
                                  "UAM_PROTEIN_FAT: TRIGGERING after ${stuckHighReadings * 5}min stuck above " +
-                                     "${triggerThresholdMmol}mmol")
+                                     "${fmtBg(triggerThresholdMmol)}$unitLabel")
                 triggerUam(MealMode.UAM_PROTEIN_FAT, currentBgMmol, deltaMmol, 0.0)
                 stuckHighReadings = 0
             }
@@ -487,7 +510,7 @@ class UamController @Inject constructor(
             if (stuckHighReadings > 0)
                 aapsLogger.debug(LTag.APS,
                                  "UAM_PROTEIN_FAT: stuck streak broken " +
-                                     "(bg=${String.format("%.1f", currentBgMmol)} avg=${String.format("%+.2f", shortAvgDeltaMmol)}), reset")
+                                     "(bg=${fmtBg(currentBgMmol)} avg=${fmtDelta(shortAvgDeltaMmol)}), reset")
             stuckHighReadings = 0
             lastStuckBgTimestampMs = 0L
         }
@@ -504,11 +527,12 @@ class UamController @Inject constructor(
         val dirtyUnexpected  = UNEXPECTED_RISE_MIN_MMOL * DIRTY_WINDOW_UNEXPECTED_MULT
         val riseNeeded       = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
         val activeMode       = if (currentlyInPostMealLockout) "dirty" else "normal"
+        val u                = unitLabel
 
         return buildString {
             appendLine("  UAM thresholds:")
-            appendLine("    normal: Δ≥${String.format("%.2f", normalDelta)}  uΔ≥${String.format("%.2f", normalUnexpected)}  readings=$riseNeeded")
-            appendLine("    dirty : Δ≥${String.format("%.2f", dirtyDelta)}  uΔ≥${String.format("%.2f", dirtyUnexpected)}  readings=$riseNeeded")
+            appendLine("    normal: Δ≥${fmtThresh(normalDelta)}$u  uΔ≥${fmtThresh(normalUnexpected)}$u  readings=$riseNeeded")
+            appendLine("    dirty : Δ≥${fmtThresh(dirtyDelta)}$u  uΔ≥${fmtThresh(dirtyUnexpected)}$u  readings=$riseNeeded")
             appendLine("    active: $activeMode")
             val reject = lastReject
             if (reject != null) {
@@ -520,26 +544,25 @@ class UamController @Inject constructor(
             val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
             if (pfEnabled) {
                 val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
-                appendLine("  P/F detection: enabled (flat Δ ${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}mmol for $stuckNeeded readings)")
+                appendLine("  P/F detection: enabled (flat Δ ${fmtThresh(STUCK_DELTA_MIN_MMOL)}→${fmtThresh(STUCK_DELTA_MAX_MMOL)}$u for $stuckNeeded readings)")
                 when {
                     currentlyPastNightCutoff ->
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
                     currentlyInMealMode ->
                         appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
-
                     else -> {
-                        val avgStr = String.format("%+.2f", lastStuckAvgDelta)
-                        val bgStr  = String.format("%.1f", lastStuckBgMmol)
+                        val avgStr   = fmtDelta(lastStuckAvgDelta)
+                        val bgStr    = fmtBg(lastStuckBgMmol)
                         val countStr = "$stuckHighReadings/$stuckNeeded"
-                        val rangeStr = "${STUCK_DELTA_MIN_MMOL}→${STUCK_DELTA_MAX_MMOL}"
+                        val rangeStr = "${fmtThresh(STUCK_DELTA_MIN_MMOL)}→${fmtThresh(STUCK_DELTA_MAX_MMOL)}"
                         val meetsRange = lastStuckAvgDelta >= STUCK_DELTA_MIN_MMOL && lastStuckAvgDelta <= STUCK_DELTA_MAX_MMOL
                         val meetsBg    = lastStuckBgMmol >= triggerMmol
                         val blockReason = when {
-                            !meetsBg    -> " ✗ BG ${bgStr} < ${triggerMmol}"
-                            !meetsRange -> " ✗ avg ${avgStr} outside ${rangeStr}"
+                            !meetsBg    -> " ✗ BG $bgStr < ${fmtBg(triggerMmol)}"
+                            !meetsRange -> " ✗ avg $avgStr outside $rangeStr"
                             else        -> " ✓ counting"
                         }
-                        appendLine("  P/F stuck: $countStr  avg=${avgStr}mmol (${rangeStr})$blockReason")
+                        appendLine("  P/F stuck: $countStr  avg=$avgStr$u ($rangeStr)$blockReason")
                     }
                 }
             } else {
@@ -553,18 +576,18 @@ class UamController @Inject constructor(
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
             val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
             val totalRise = if (bgAtStreakStart > 0.0) lastStuckBgMmol - bgAtStreakStart else 0.0
-            val burstNote = if (burstThreshold > 0.0) " rise=${String.format("%.2f", totalRise)}/${String.format("%.1f", burstThreshold)}mmol" else ""
+            val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
         }
         // Always show P/F count if enabled and in active window
         if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
-            val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
+            val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
             val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
             if (stuckHighReadings > 0 || consecutiveRiseReadings == 0) {
-                return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol"
+                return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
             }
         }
         if (lastUamMode != null && lastUamTimeMs > 0L) {
@@ -601,10 +624,10 @@ class UamController @Inject constructor(
 
         aapsLogger.debug(LTag.APS,
                          "UAM: TRIGGERING ${mode.label} " +
-                             "bg=${String.format("%.1f", bgMmol)}mmol " +
-                             "Δ=+${String.format("%.2f", deltaMmol)}mmol " +
-                             "totalRise=+${String.format("%.1f", totalRise)}mmol " +
-                             "isf=${if (isfMgdl > 0.0) String.format("%.1f", isfMgdl / 18.0) + "mmol" else "profile"} duration=${durationMins}min " +
+                             "bg=${fmtBg(bgMmol)}$unitLabel " +
+                             "Δ=${fmtDelta(deltaMmol)}$unitLabel " +
+                             "totalRise=${fmtDelta(totalRise)}$unitLabel " +
+                             "isf=${if (isfMgdl > 0.0) "${if (isMmol) String.format("%.1f", isfMgdl / 18.0) else String.format("%.0f", isfMgdl)}$unitLabel" else "profile"} duration=${durationMins}min " +
                              "(trigger #$lastUamTriggerCount)")
 
         mealOverrideManager.activateOverride(

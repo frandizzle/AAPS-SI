@@ -143,6 +143,26 @@ open class SmartInsulinPlugin @Inject constructor(
         const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
     }
 
+    // ── Unit-aware display helpers ────────────────────────────────────────────
+    // Internal BG values are always mg/dL; deltas from glucoseStatus are mg/dL.
+    // shortAvgDeltaAtLow is stored in mmol (converted at capture site).
+    // Use these for all user-visible strings.
+    private val isMmol: Boolean get() =
+        profileFunction.getUnits() == GlucoseUnit.MMOL
+    private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
+    /** Format a BG value in mg/dL to user units */
+    private fun fmtBg(mgdl: Double): String =
+        if (isMmol) String.format("%.1f", mgdl / 18.0)
+        else        String.format("%.0f", mgdl)
+    /** Format a delta value (internal mmol) to user units */
+    private fun fmtDelta(mmol: Double): String =
+        if (isMmol) String.format("%+.2f", mmol)
+        else        String.format("%+.1f", mmol * 18.0)
+    /** Format an ISF value in mg/dL to user units */
+    private fun fmtIsf(mgdl: Double): String =
+        if (isMmol) String.format("%.1f", mgdl / 18.0)
+        else        String.format("%.0f", mgdl)
+
     // ── Cached Overview state ────────────────────────────────────────────────
     // Updated each invoke() so overviewState() can be called any time from UI threads.
     @Volatile private var cachedOverviewState: app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
@@ -254,11 +274,9 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             if (bgWentLow && !inReboundWindow) appendLine("  ⚠ Recent low: watching for recovery")
             if (bgWentLow && minBgDuringLow < Double.MAX_VALUE) {
-                val depth = minBgDuringLow / 18.0
-                val vel   = shortAvgDeltaAtLow
-                val iob   = iobAtLowTime
-                appendLine("  Low detail: minBG=${String.format("%.1f", depth)}mmol " +
-                               "velAtLow=${String.format("%+.2f", vel)} " +
+                val iob = iobAtLowTime
+                appendLine("  Low detail: minBG=${fmtBg(minBgDuringLow)}$unitLabel " +
+                               "velAtLow=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel " +
                                "iobAtLow=${String.format("%.2f", iob)}U " +
                                if (secondLowOccurred) "⚠ SECOND LOW — full lockout" else "")
             }
@@ -598,7 +616,7 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
-                                 "${String.format("%.1f", dosingIsfMgdl / 18.0)}mmol immediately")
+                                 "${fmtIsf(dosingIsfMgdl)}$unitLabel immediately")
         }
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
@@ -792,7 +810,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMmol > 0.0) modeIsfMmol else null} dosingIsfMgdl=$dosingIsfMgdl learnedProfile=$learnedProfile")
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
 
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
@@ -823,9 +841,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 iobAtLowTime       = iobArray.firstOrNull()?.iob ?: 0.0
                 shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0
                 aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin: BG went low (${String.format("%.1f", currentBgMgdl / 18.0)}mmol) " +
+                                 "SmartInsulin: BG went low (${fmtBg(currentBgMgdl)}$unitLabel) " +
                                      "iob=${String.format("%.2f", iobAtLowTime)}U " +
-                                     "shortAvgΔ=${String.format("%+.2f", shortAvgDeltaAtLow)}mmol")
+                                     "shortAvgΔ=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel")
                 if (mealMode.isUam) {
                     aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
                     mealOverrideManager.cancelOverride()
@@ -884,9 +902,9 @@ open class SmartInsulinPlugin @Inject constructor(
         if (softLandingBypass) {
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: soft landing bypass ACTIVE — " +
-                                 "minBG=${String.format("%.1f", minBgDuringLow / 18.0)}mmol " +
-                                 "(≥${String.format("%.1f", softLandingDepthMgdl / 18.0)}) " +
-                                 "velAtLow=${String.format("%+.2f", shortAvgDeltaAtLow)} (>-0.15) " +
+                                 "minBG=${fmtBg(minBgDuringLow)}$unitLabel " +
+                                 "(≥${fmtBg(softLandingDepthMgdl)}) " +
+                                 "velAtLow=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel (>-0.15) " +
                                  "iob=${String.format("%.2f", iobAtLowTime)}U (<1.0)")
         }
 
@@ -997,8 +1015,9 @@ open class SmartInsulinPlugin @Inject constructor(
             ActivityMonitor.ActivityLevel.SEDENTARY ->
                 " | hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m"
             else -> {
-                val offsetStr = "%.1f".format(activityTargetOffsetMmol)
-                " | activity=${activityMonitor.level.label}(+${offsetStr}mmol" +
+                val offsetStr = if (isMmol) "%.1f".format(activityTargetOffsetMmol)
+                else        "%.0f".format(activityTargetOffsetMmol * 18.0)
+                " | activity=${activityMonitor.level.label}(+$offsetStr$unitLabel" +
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
             }
         }
