@@ -42,9 +42,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private val apsResultProvider: Provider<APSResult>
 ) {
 
-    private fun fmt(mgdl: Double): String =
-        String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
-
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
@@ -90,8 +87,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmSmbFraction:           Double,
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
-        uamSmbFraction:           Double = 1.0
+        uamSmbFraction:           Double = 1.0,
+        isMmol:                   Boolean = true
     ): APSResult {
+
+        // Unit-aware display helpers — all internal BG/ISF values are in mg/dL
+        val unitLabel = if (isMmol) "mmol" else "mg/dL"
+        fun fmt(mgdl: Double): String =
+            if (isMmol) String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
+            else        String.format(Locale.US, "%.0f", mgdl)
+        fun fmtDelta(mmol: Double): String =
+            if (isMmol) String.format(Locale.US, "%+.2f", mmol)
+            else        String.format(Locale.US, "%+.1f", mmol * MMOL_TO_MGDL)
 
         val result = apsResultProvider.get()
         var rT = RT(
@@ -102,7 +109,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
             consoleError = mutableListOf()
         )
 
-        val units          = "mmol"
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -216,7 +222,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(" | rebound=watching")
         }
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
-            sb.append(" | activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)")
+            sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(Locale.US, activityTargetOffsetMmol) else "%.0f".format(Locale.US, activityTargetOffsetMmol * MMOL_TO_MGDL)}$unitLabel)")
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
         sb.append(" | $tirSummary")
 
@@ -297,7 +303,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val trigger = when {
                     !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
                     !smbAllowed -> "blocked"
-                    else        -> "predMinGap(${String.format(Locale.US, "%.1f", predictedMin / 18.0)}->${String.format(Locale.US, "%.1f", targetBg / 18.0)})"
+                    else        -> "predMinGap(${fmt(predictedMin)}->${fmt(targetBg)})"
                 }
 
                 val reboundStr = when {
@@ -313,7 +319,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // Activity/CGM suffix
                 val activityStr = when (activityLevel) {
                     ActivityMonitor.ActivityLevel.SEDENTARY -> ""
-                    else -> " activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)"
+                    else -> " activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(Locale.US, activityTargetOffsetMmol) else "%.0f".format(Locale.US, activityTargetOffsetMmol * MMOL_TO_MGDL)}$unitLabel)"
                 }
                 val cgmBlockStr = when {
                     !cgmDeltaPlausible    -> " cgm=smbBlocked(artefactDelta)"

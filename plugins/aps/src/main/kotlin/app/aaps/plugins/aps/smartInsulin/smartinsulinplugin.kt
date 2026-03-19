@@ -944,7 +944,8 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
-            uamSmbFraction           = uamSmbFraction
+            uamSmbFraction           = uamSmbFraction,
+            isMmol                   = isMmol
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
