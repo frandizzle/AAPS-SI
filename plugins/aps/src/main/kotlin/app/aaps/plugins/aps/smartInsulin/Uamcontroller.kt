@@ -2,11 +2,13 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import java.util.Calendar
 import javax.inject.Inject
@@ -45,6 +47,7 @@ import javax.inject.Singleton
 class UamController @Inject constructor(
     private val preferences:         Preferences,
     private val mealOverrideManager: MealOverrideManager,
+    private val profileUtil:         ProfileUtil,
     private val aapsLogger:          AAPSLogger
 ) {
 
@@ -96,6 +99,19 @@ class UamController @Inject constructor(
         private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
         // 6 readings = 30 min at 5 min intervals
         // STUCK_READINGS_NEEDED moved to user preference ApsSmartInsulinUamProteinFatStuckReadings
+    }
+
+    // ── Unit conversion helpers ───────────────────────────────────────────────
+    // UnitDoubleKey values are stored in the user's display unit.
+    // convertToMgdlDetect converts to mg/dL for internal logic.
+    // divide by 18 gives mmol for display/comparison in this class.
+    private fun unitPrefMmol(key: UnitDoubleKey): Double =
+        profileUtil.convertToMgdlDetect(preferences.get(key)) / 18.0
+
+    // ISF overrides: 0.0 = "use profile ISF" sentinel — preserve through conversion
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double {
+        val v = preferences.get(key)
+        return if (v == 0.0) 0.0 else profileUtil.convertToMgdlDetect(v)
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -257,7 +273,7 @@ class UamController @Inject constructor(
         lastResolvedMode = uamMode
 
         // ── BG above trigger threshold ────────────────────────────────────────
-        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+        val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
 
         // Wobble tolerance: allow a single dip up to 0.3 mmol below threshold without
         // killing an active streak, as long as shortAvgDelta is still positive.
@@ -278,7 +294,7 @@ class UamController @Inject constructor(
         // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
         // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
         // activity and is likely drift or noise rather than food.
-        val riseMinDeltaBase   = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val riseMinDeltaBase   = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
 
         // During post-meal dirty window, require a stronger rise to confirm it's a new
@@ -351,7 +367,7 @@ class UamController @Inject constructor(
         // If total rise from streak start exceeds burst threshold, don't wait for
         // consecutive reading count — fire immediately. Catches sudden spikes that
         // would otherwise take 15 min to confirm via the streak counter.
-        val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+        val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
         val totalRise = currentBgMmol - bgAtStreakStart
         if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
@@ -417,7 +433,7 @@ class UamController @Inject constructor(
 
         // P/F uses its own threshold — higher than rise detection threshold
         // since fat/protein genuinely elevates BG, don't want P/F firing near target
-        val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatThresholdMmol)
+        val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
 
         // Reset if BG has returned to profile target — stuck-high condition no longer valid
         if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
@@ -481,7 +497,7 @@ class UamController @Inject constructor(
      * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
      */
     fun debugSummary(): String {
-        val riseMinDeltaBase = preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol)
+        val riseMinDeltaBase = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
         val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
         val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
@@ -500,7 +516,7 @@ class UamController @Inject constructor(
                 appendLine("  Last UAM reject$dirtyTag: ${reject.reason}")
             }
             // P/F stuck-high detail
-            val triggerMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            val triggerMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
             val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
             if (pfEnabled) {
                 val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
@@ -537,15 +553,15 @@ class UamController @Inject constructor(
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", preferences.get(DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-            val burstThreshold = preferences.get(DoubleKey.ApsSmartInsulinUamBurstThresholdMmol)
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${String.format("%.2f", unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
             val totalRise = if (bgAtStreakStart > 0.0) lastStuckBgMmol - bgAtStreakStart else 0.0
             val burstNote = if (burstThreshold > 0.0) " rise=${String.format("%.2f", totalRise)}/${String.format("%.1f", burstThreshold)}mmol" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
         }
         // Always show P/F count if enabled and in active window
         if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
-            val triggerThresholdMmol = preferences.get(DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol)
+            val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
             val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
             if (stuckHighReadings > 0 || consecutiveRiseReadings == 0) {
                 return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${String.format("%.1f", triggerThresholdMmol)}mmol"
@@ -575,7 +591,7 @@ class UamController @Inject constructor(
     private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double) {
         justFiredThisCycle = mode
         val durationMins = uamDurationMins(mode)
-        val isfMmol      = uamIsfMmol(mode)
+        val isfMgdl      = uamIsfMgdl(mode)
         val now          = System.currentTimeMillis()
 
         lastUamTriggerCount = if (lastUamMode == mode &&
@@ -588,7 +604,7 @@ class UamController @Inject constructor(
                              "bg=${String.format("%.1f", bgMmol)}mmol " +
                              "Δ=+${String.format("%.2f", deltaMmol)}mmol " +
                              "totalRise=+${String.format("%.1f", totalRise)}mmol " +
-                             "isf=${isfMmol}mmol duration=${durationMins}min " +
+                             "isf=${if (isfMgdl > 0.0) String.format("%.1f", isfMgdl / 18.0) + "mmol" else "profile"} duration=${durationMins}min " +
                              "(trigger #$lastUamTriggerCount)")
 
         mealOverrideManager.activateOverride(
@@ -647,13 +663,13 @@ class UamController @Inject constructor(
         else                   -> 30L
     }
 
-    private fun uamIsfMmol(mode: MealMode): Double = when (mode) {
-        MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
-        MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
-        MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
-        MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
-        MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
-        MealMode.UAM_PROTEIN_FAT  -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
-        else                   -> 0.0  // no ISF override for unknown modes
+    private fun uamIsfMgdl(mode: MealMode): Double = when (mode) {
+        MealMode.UAM_BREAKFAST   -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
+        MealMode.UAM_LUNCH       -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)
+        MealMode.UAM_DINNER      -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf)
+        MealMode.UAM_SNACK       -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf)
+        MealMode.UAM_AFTERNOON   -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf)
+        MealMode.UAM_PROTEIN_FAT -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
+        else                     -> 0.0
     }
 }

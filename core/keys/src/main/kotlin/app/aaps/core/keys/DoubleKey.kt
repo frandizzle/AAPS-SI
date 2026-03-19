@@ -54,36 +54,19 @@ enum class DoubleKey(
     ApsSmartInsulinMaxSmb("si_max_smb_u", 3.0, 0.1, 20.0, defaultedBySM = true),
     ApsSmartInsulinMaxTbr("si_max_tbr_u", 3.0, 0.5, 10.0, defaultedBySM = true),
     ApsSmartInsulinAggressionMax("si_aggression_max", 1.5, 1.0, 2.5, defaultedBySM = true),
-    ApsSmartInsulinBreakfastIsf("si_breakfast_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
-    ApsSmartInsulinLunchIsf("si_lunch_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
-    ApsSmartInsulinDinnerIsf("si_dinner_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
-    ApsSmartInsulinLowCarbIsf("si_lowcarb_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
-    ApsSmartInsulinExtendedIsf("si_extended_isf", 0.0, 0.0, 20.0, defaultedBySM = true),
+    // ISF overrides moved to UnitDoubleKey (ApsSmartInsulinBreakfastIsf etc.)
     ApsSmartInsulinMaxPreBolus("si_max_prebolus_u", 8.0, 0.5, 15.0, defaultedBySM = true),
     // Pre-bolus 2: default amount in units (user can override per-activation in SmartMealDialog)
     ApsSmartInsulinPreBolus2DefaultU("si_prebolus2_default_u", 2.0, 0.5, 10.0, defaultedBySM = true),
     ApsSmartInsulinLearningRate("si_learning_rate", 0.15, 0.05, 0.5, defaultedBySM = true),
-    ApsSmartInsulinLowGuardMmol("si_low_guard_mmol", 4.0, 3.0, 5.0, defaultedBySM = true),
-    ApsSmartInsulinWarnGuardMmol("si_warn_guard_mmol", 4.8, 3.5, 6.0, defaultedBySM = true),
+    // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm("si_resting_hr_bpm", 70.0, 50.0, 110.0, defaultedBySM = true),
 
-    // Activity monitor — target raises during exercise (mmol/L above profile target)
-    ApsSmartInsulinActivityLightTargetMmol("si_activity_light_target_mmol", 0.5, 0.0, 3.0, defaultedBySM = true),
-    ApsSmartInsulinActivityModerateTargetMmol("si_activity_moderate_target_mmol", 1.0, 0.0, 3.0, defaultedBySM = true),
-    ApsSmartInsulinActivityHeavyTargetMmol("si_activity_heavy_target_mmol", 1.5, 0.0, 3.0, defaultedBySM = true),
+    // Activity offsets moved to UnitDoubleKey (ApsSmartInsulinActivityLightTarget etc.)
 
-    // UAM auto-detection
-    ApsSmartInsulinUamTriggerThresholdMmol("si_uam_trigger_mmol", 6.0, 4.0, 10.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    ApsSmartInsulinUamRiseMinDeltaMmol("si_uam_rise_min_delta_mmol", 0.2, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    ApsSmartInsulinUamBurstThresholdMmol("si_uam_burst_threshold_mmol", 1.0, 0.0, 3.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    // UAM auto-detection — threshold/delta keys moved to UnitDoubleKey
     ApsSmartInsulinUamEntrySmbFraction("si_uam_entry_smb_fraction", 0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    ApsSmartInsulinUamBreakfastIsf("si_uam_breakfast_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
-    ApsSmartInsulinUamLunchIsf("si_uam_lunch_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
-    ApsSmartInsulinUamDinnerIsf("si_uam_dinner_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
-    ApsSmartInsulinUamSnackIsf("si_uam_snack_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
-    ApsSmartInsulinUamAfternoonIsf("si_uam_afternoon_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
-    ApsSmartInsulinUamProteinFatIsf("si_uam_proteinfat_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatThresholdMmol("si_uam_proteinfat_threshold", 6.5, 5.0, 10.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    // UAM per-window ISF overrides moved to UnitDoubleKey (ApsSmartInsulinUamBreakfastIsf etc.)
 
 }
