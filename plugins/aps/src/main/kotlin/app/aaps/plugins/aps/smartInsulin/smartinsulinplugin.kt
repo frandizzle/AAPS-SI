@@ -895,8 +895,20 @@ open class SmartInsulinPlugin @Inject constructor(
             activityTargetOffsetMmol = activityTargetOffsetMmol,
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
-            cgmWarmupReason          = cgmState.reason
+            cgmWarmupReason          = cgmState.reason,
+            uamSmbFraction           = uamSmbFraction
         )
+
+        // Increment UAM entry SMB counter if an SMB was delivered this cycle
+        if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount) {
+            uamEntrySmbsDelivered++
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: UAM entry SMB ${uamEntrySmbsDelivered}/$entrySmbCount " +
+                                 "at ${(entrySmbFraction * 100).toInt()}% fraction")
+        }
+        if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount) {
+            apsResult.reason += " | uamEntry: SMB ${uamEntrySmbsDelivered+1}/$entrySmbCount @${(uamSmbFraction*100).toInt()}%"
+        }
 
         // Append STFT status to reason if active
         stftController.statusString(profileTargetMgdl)?.let { apsResult.reason += " | $it" }
@@ -1126,6 +1138,8 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,            title = R.string.si_uam_cgm_warmup_block_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamTriggerThresholdMmol,   title = R.string.si_uam_trigger_threshold_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDeltaMmol,       title = R.string.si_uam_rise_min_delta_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamEntrySmbFraction,        title = R.string.si_uam_entry_smb_fraction_title))
+            addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamEntrySmbCount,              title = R.string.si_uam_entry_smb_count_title))
             addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBurstThresholdMmol,        title = R.string.si_uam_burst_threshold_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
             addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,             title = R.string.si_uam_day_start_title))

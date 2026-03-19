@@ -89,6 +89,7 @@ enum class IntKey(
     ApsSmartInsulinUamNightCutoffHour("si_uam_night_cutoff_hour", 23, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamDayStartHour("si_uam_day_start_hour", 9, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamRiseConsecutiveReadings("si_uam_rise_readings", 3, 2, 6, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamEntrySmbCount("si_uam_entry_smb_count", 3, 1, 10, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     // Breakfast UAM window
     ApsSmartInsulinUamBreakfastStartHour("si_uam_breakfast_start", 6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
     ApsSmartInsulinUamBreakfastEndHour("si_uam_breakfast_end", 10, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),

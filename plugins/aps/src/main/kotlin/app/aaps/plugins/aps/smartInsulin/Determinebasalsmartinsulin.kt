@@ -89,7 +89,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         activityTargetOffsetMmol: Double,
         cgmSmbFraction:           Double,
         cgmDeltaPlausible:        Boolean,
-        cgmWarmupReason:          String
+        cgmWarmupReason:          String,
+        uamSmbFraction:           Double = 1.0
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -200,9 +201,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""} ")
         sb.append("ISF=${fmt(dosingIsfMgdl)} basal=%.3f(x%.2f) ".format(Locale.US, profileBasal, basalMultiplier))
         if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
-            sb.append("Peak: ${learnedProfile.peakMinutes.toInt()}m DIA: ${learnedProfile.diaMinutes.toInt()}m ")
+            sb.append("Peak: ${learnedProfile.peakMinutes.toInt()}m DIA: ${learnedProfile.diaMinutes.toInt()}m (n=${learnedProfile.sampleCount}) ")
         else
-            sb.append("Learned peak: ${learnedProfile.peakMinutes.toInt()}m Learned DIA: ${learnedProfile.diaMinutes.toInt()}m ")
+            sb.append("Learned peak: ${learnedProfile.peakMinutes.toInt()}m Learned DIA: ${learnedProfile.diaMinutes.toInt()}m (n=${learnedProfile.sampleCount}) ")
         sb.append("aggr=%.2f ".format(Locale.US, aggressiveness))
         if (inDawnWindow) sb.append("dawnWindow(reduction=%.0f%%) ".format(Locale.US, dawnSmbReduction * 100))
         if (highTempTargetActive) sb.append("highTempTarget=smbOff ")
@@ -263,7 +264,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
-                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
+                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction * uamSmbFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05

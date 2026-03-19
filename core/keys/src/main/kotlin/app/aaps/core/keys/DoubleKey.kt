@@ -77,6 +77,7 @@ enum class DoubleKey(
     ApsSmartInsulinUamTriggerThresholdMmol("si_uam_trigger_mmol", 6.0, 4.0, 10.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamRiseMinDeltaMmol("si_uam_rise_min_delta_mmol", 0.2, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamBurstThresholdMmol("si_uam_burst_threshold_mmol", 1.0, 0.0, 3.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamEntrySmbFraction("si_uam_entry_smb_fraction", 0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamBreakfastIsf("si_uam_breakfast_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
     ApsSmartInsulinUamLunchIsf("si_uam_lunch_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
     ApsSmartInsulinUamDinnerIsf("si_uam_dinner_isf", 0.0, 0.0, 20.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),

@@ -318,6 +318,8 @@
     <string name="si_uam_trigger_threshold_title">UAM trigger threshold (mmol)</string>
     <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading (mmol)</string>
     <string name="si_uam_burst_threshold_title">UAM burst trigger threshold (mmol total rise, 0=off)</string>
+    <string name="si_uam_entry_smb_fraction_title">UAM entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_count_title">UAM entry SMB count (apply fraction to first N SMBs)</string>
     <string name="si_uam_rise_readings_title">UAM consecutive rise readings required</string>
     <string name="si_uam_day_start_title">UAM day start hour (0-23)</string>
     <string name="si_uam_night_cutoff_title">UAM night cutoff hour (0-23)</string>
