@@ -128,6 +128,8 @@ open class SmartInsulinPlugin @Inject constructor(
     var shortAvgDeltaAtLow: Double = 0.0         // shortAvgDelta (mmol) when BG first crossed lowGuard
     var secondLowOccurred: Boolean = false        // true if BG went low a second time — full lockout
     var softLandingBypass: Boolean = false        // true if soft landing — UAM allowed during rebound
+    var uamEntrySmbsDelivered: Int = 0             // SMBs delivered since current UAM mode activated
+    var uamEntryModeStartMs: Long = 0L             // timestamp when current UAM mode started
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
@@ -165,7 +167,9 @@ open class SmartInsulinPlugin @Inject constructor(
         iobAtLowTime         = 0.0
         shortAvgDeltaAtLow   = 0.0
         secondLowOccurred    = false
-        softLandingBypass    = false
+        softLandingBypass        = false
+        uamEntrySmbsDelivered    = 0
+        uamEntryModeStartMs      = 0L
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
 
