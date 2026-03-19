@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
 import app.aaps.core.interfaces.queue.Callback
@@ -22,6 +23,7 @@ import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.objects.extensions.formatColor
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.toast.ToastUtils
@@ -41,6 +43,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
     @Inject lateinit var constraintChecker: ConstraintsChecker
     @Inject lateinit var rh: ResourceHelper
     @Inject lateinit var profileFunction: ProfileFunction
+    @Inject lateinit var profileUtil: ProfileUtil
     @Inject lateinit var commandQueue: CommandQueue
     @Inject lateinit var activePlugin: ActivePlugin
     @Inject lateinit var ctx: Context
@@ -63,19 +66,20 @@ class SmartMealDialog : DialogFragmentWithDate() {
         MealMode.EXTENDED
     )
 
-    /** Returns the DoubleKey for the ISF pref of the given mode (null for FASTING) */
-    private fun isfKeyFor(mode: MealMode): DoubleKey? = when (mode) {
-        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastIsf
-        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchIsf
-        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerIsf
-        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbIsf
-        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedIsf
+    /** Returns the UnitDoubleKey for the ISF pref of the given mode (null for non-manual modes) */
+    private fun isfKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
+        MealMode.BREAKFAST -> UnitDoubleKey.ApsSmartInsulinBreakfastIsf
+        MealMode.LUNCH     -> UnitDoubleKey.ApsSmartInsulinLunchIsf
+        MealMode.DINNER    -> UnitDoubleKey.ApsSmartInsulinDinnerIsf
+        MealMode.LOW_CARB  -> UnitDoubleKey.ApsSmartInsulinLowCarbIsf
+        MealMode.EXTENDED  -> UnitDoubleKey.ApsSmartInsulinExtendedIsf
         else               -> null
     }
 
-    /** Load the stored ISF for the current mode into the picker */
+    /** Load the stored ISF for the current mode into the picker (value in user's display unit) */
     private fun loadIsfForMode(mode: MealMode) {
         val key = isfKeyFor(mode) ?: return
+        // UnitDoubleKey stores in user's display unit — read directly, no conversion needed for display
         binding.isfAmount.value = preferences.get(key)
     }
 
@@ -121,10 +125,16 @@ class SmartMealDialog : DialogFragmentWithDate() {
         )
 
         // ── ISF picker ────────────────────────────────────────────────────────
+        // Range and step are unit-aware: mmol users see 0–20 step 0.1, mg/dL users see 0–360 step 1
+        val isMmol   = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
+        val isfMax   = if (isMmol) 20.0 else 360.0
+        val isfStep  = if (isMmol) 0.1  else 1.0
+        val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
+        val isfFallback = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
         binding.isfAmount.setParams(
-            savedInstanceState?.getDouble("isfAmount") ?: preferences.get(isfKeyFor(selectedMode) ?: DoubleKey.ApsSmartInsulinLunchIsf),
-            0.0, 20.0, 0.1,
-            DecimalFormat("0.0"), false, binding.okcancel.ok, null
+            savedInstanceState?.getDouble("isfAmount") ?: isfFallback,
+            0.0, isfMax, isfStep,
+            isfFmt, false, binding.okcancel.ok, null
         )
         if (savedInstanceState == null) loadIsfForMode(selectedMode)
 
@@ -257,6 +267,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val bolusStep     = activePlugin.activePump.pumpDescription.bolusStep
         val maxPreBolus   = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
         val isfValue      = binding.isfAmount.value
+        val isMmol        = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
 
         val pb1Clamped = if (preBolus > 0.0) maxPreBolus.coerceAtMost(preBolus) else 0.0
         val pb2Clamped = if (pb2U > 0.0)     maxPreBolus.coerceAtMost(pb2U)     else 0.0
@@ -273,7 +284,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         )
         actions.add(
             rh.gs(R.string.si_isf_label) + ": " +
-                (if (isfValue > 0.0) "${isfValue} mmol" else "Profile ISF")
+                (if (isfValue > 0.0) "$isfValue ${if (isMmol) "mmol" else "mg/dL"}" else "Profile ISF")
                     .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
         )
         if (pb1Clamped > 0.0) {
@@ -304,7 +315,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 rh.gs(R.string.si_dialog_title),
                 HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
                 {
-                    // Save updated ISF back to preferences
+                    // Save updated ISF back to preferences (stored in user's display unit)
                     isfKeyFor(selectedMode)?.let { key ->
                         preferences.put(key, isfValue)
                     }
