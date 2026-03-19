@@ -386,6 +386,25 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Meal mode — check override first, fall back to auto-detect ────────
         var mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
 
+        // ── UAM entry SMB fraction tracking ──────────────────────────────────
+        // For the first N SMBs after a UAM meal mode fires, apply a reduced delivery
+        // fraction. Softens the front-end of the UAM response to avoid overcorrection
+        // stacking before existing IOB has had time to affect predictions.
+        // P/F excluded — it's a tail correction, not a meal entry event.
+        val currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+        if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+            uamEntryModeStartMs   = now
+            uamEntrySmbsDelivered = 0
+            aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking started for ${mealMode.label}")
+        } else if (!currentModeIsUam) {
+            uamEntryModeStartMs   = 0L
+            uamEntrySmbsDelivered = 0
+        }
+        val entrySmbCount    = preferences.get(IntKey.ApsSmartInsulinUamEntrySmbCount)
+        val entrySmbFraction = preferences.get(DoubleKey.ApsSmartInsulinUamEntrySmbFraction)
+        val uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+            entrySmbFraction else 1.0
+
         // ── Post-meal learning lockout ───────────────────────────────────────
         // When any meal or UAM mode expires (transition back to FASTING), mark BG data
         // as "dirty for learning" for a configurable window. Fat/protein tails and carb
