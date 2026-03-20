@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -32,7 +33,8 @@ import javax.inject.Singleton
 @Singleton
 class StftController @Inject constructor(
     private val aapsLogger:   AAPSLogger,
-    private val preferences:  Preferences
+    private val preferences:  Preferences,
+    private val profileUtil:  ProfileUtil
 ) {
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -63,6 +65,15 @@ class StftController @Inject constructor(
         // Consecutive negative deltas required to reset
         private const val NEG_DELTA_RESET_COUNT = 2
     }
+
+    // ── Unit-aware display helpers ────────────────────────────────────────────
+    private val isMmol: Boolean get() =
+        profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
+    private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
+    private fun fmtBg(mgdl: Double): String =
+        if (isMmol) String.format("%.1f", mgdl / MMOL_TO_MGDL) else String.format("%.0f", mgdl)
+    private fun fmtDelta(mgdl: Double): String =
+        if (isMmol) String.format("%.2f", mgdl / MMOL_TO_MGDL) else String.format("%.1f", mgdl)
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -130,7 +141,7 @@ class StftController @Inject constructor(
             negDeltaStreak++
             if (negDeltaStreak >= NEG_DELTA_RESET_COUNT && stftActive) {
                 aapsLogger.debug(LTag.APS,
-                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative deltas (delta=${"%.2f".format(delta / MMOL_TO_MGDL)}mmol)")
+                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative deltas (delta=${fmtDelta(delta)}$unitLabel)")
                 reset()
                 return profileTargetMgdl
             }
@@ -141,7 +152,7 @@ class StftController @Inject constructor(
         // Reset if BG has returned to profile target
         if (stftActive && currentBgMgdl <= profileTargetMgdl) {
             aapsLogger.debug(LTag.APS,
-                             "STFT: reset — BG ${currentBgMgdl / MMOL_TO_MGDL} back at/below target ${profileTargetMgdl / MMOL_TO_MGDL}")
+                             "STFT: reset — BG ${fmtBg(currentBgMgdl)}$unitLabel back at/below target ${fmtBg(profileTargetMgdl)}$unitLabel")
             reset()
             return profileTargetMgdl
         }
@@ -158,7 +169,7 @@ class StftController @Inject constructor(
             consecutiveAbove++
         } else {
             if (consecutiveAbove > 0 && delta < 0.0)
-                aapsLogger.debug(LTag.APS, "STFT: streak reset — BG falling (delta=%.2f)".format(delta / MMOL_TO_MGDL))
+                aapsLogger.debug(LTag.APS, "STFT: streak reset — BG falling (delta=${fmtDelta(delta)}$unitLabel)")
             consecutiveAbove = 0
             if (!stftActive) return profileTargetMgdl
         }
@@ -167,7 +178,7 @@ class StftController @Inject constructor(
         if (!stftActive && consecutiveAbove >= TRIGGER_READINGS) {
             stftActive = true
             aapsLogger.debug(LTag.APS,
-                             "STFT: activated — BG above ${TRIGGER_THRESHOLD_MMOL}mmol for $TRIGGER_READINGS readings (non-negative delta)")
+                             "STFT: activated — BG above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel for $TRIGGER_READINGS readings (non-negative delta)")
         }
 
         if (!stftActive) return profileTargetMgdl
@@ -183,8 +194,7 @@ class StftController @Inject constructor(
         val adjustedTarget = (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
 
         aapsLogger.debug(LTag.APS,
-                         "STFT: active steps=$stepsApplied target %.1f→%.1f mmol (floor=$TARGET_FLOOR_MMOL)".format(
-                             profileTargetMgdl / MMOL_TO_MGDL, adjustedTarget / MMOL_TO_MGDL))
+                         "STFT: active steps=$stepsApplied target ${fmtBg(profileTargetMgdl)}→${fmtBg(adjustedTarget)}$unitLabel (floor=${fmtBg(TARGET_FLOOR_MGDL)}$unitLabel)")
 
         return adjustedTarget
     }
@@ -192,14 +202,17 @@ class StftController @Inject constructor(
     /** Current STFT status for display — null if inactive and not watching */
     fun statusString(profileTargetMgdl: Double = TARGET_FLOOR_MGDL + STEP_MGDL): String? {
         if (stftActive) {
-            // Show actual applied reduction (clamped to floor), not raw steps * step size
             val theoreticalTarget = profileTargetMgdl - (stepsApplied * STEP_MGDL)
-            val actualTarget = theoreticalTarget.coerceAtLeast(TARGET_FLOOR_MGDL)
-            val actualReduction = (profileTargetMgdl - actualTarget) / MMOL_TO_MGDL
-            return "STFT: -${"%.1f".format(actualReduction)}mmol target (${stepsApplied * 5}min above target)"
+            val actualTarget      = theoreticalTarget.coerceAtLeast(TARGET_FLOOR_MGDL)
+            val actualReductionMgdl = profileTargetMgdl - actualTarget
+            val reductionStr = if (isMmol)
+                "${"%.1f".format(actualReductionMgdl / MMOL_TO_MGDL)}mmol"
+            else
+                "${"%.0f".format(actualReductionMgdl)}mg/dL"
+            return "STFT: -$reductionStr target (${stepsApplied * 5}min above target)"
         }
         if (consecutiveAbove > 0) {
-            return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${TRIGGER_THRESHOLD_MMOL}mmol)"
+            return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel)"
         }
         return null
     }
