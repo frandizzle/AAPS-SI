@@ -1147,6 +1147,9 @@ open class SmartInsulinPlugin @Inject constructor(
             title = rh.gs(R.string.smart_insulin)
             initialExpandedChildrenCount = 0
 
+            // One flat pref required to generate the ∨ collapse arrow
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb, title = R.string.enable_smb))
+
             // ── General & Safety ──────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_general"
