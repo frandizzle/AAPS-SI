@@ -39,6 +39,10 @@ class AdaptiveUnitPreference(
 
     private var converted: BigDecimal
 
+    // Flag to indicate we're in onSetInitialValue — persistString must NOT re-convert in this case
+    // because the value is the display-unit string for the UI; storage already has correct mg/dL.
+    private var isInitializing = false
+
     init {
         (context.applicationContext as HasAndroidInjector).androidInjector().inject(this)
 
@@ -49,13 +53,11 @@ class AdaptiveUnitPreference(
 
         preferenceKey = unitKey ?: preferences.get(key) as UnitDoublePreferenceKey
 
-        // preferences.get(UnitDoubleKey) already returns value in current display units.
-        // No conversion needed — just display it directly.
+        // preferences.get(UnitDoubleKey) returns the raw stored float (always mg/dL).
+        // Convert to display units for showing to the user.
         val storedMgdl = preferences.get(preferenceKey)
-        val displayValue = storedMgdl  // already in display units
+        val displayValue = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
-        android.util.Log.e("SmartInsulinPref",
-                           "init key=${preferenceKey.key} storedRaw=$storedMgdl units=${profileUtil.units} display=$displayValue")
         converted = BigDecimal(displayValue).setScale(precision, RoundingMode.HALF_UP)
         summary = converted.toPlainString()
 
@@ -119,17 +121,29 @@ class AdaptiveUnitPreference(
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
+        // Setting text triggers persistString via EditTextPreference.setText().
+        // Flag isInitializing so persistString writes back the already-correct stored mg/dL
+        // instead of re-applying convertToMgdl on the display-unit string.
+        isInitializing = true
         text = converted.toPlainString()
+        isInitializing = false
     }
 
     override fun persistString(value: String?): Boolean {
+        if (isInitializing) {
+            // Called from onSetInitialValue — just write back the unchanged stored mg/dL value.
+            val storedMgdl = preferences.get(preferenceKey)
+            summary = converted.toPlainString()
+            return try {
+                super.persistFloat(storedMgdl.toFloat())
+            } catch (_: Exception) {
+                super.persistString(storedMgdl.toString())
+            }
+        }
+        // User entered a new value — it's in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         summary = numericValue.toString()
-        // User entered value is in display units — convert to mg/dL for storage
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        android.util.Log.e("SmartInsulinPref",
-                           "persistString key=${preferenceKey.key} value=$value numeric=$numericValue units=${profileUtil.units} storeMgdl=$store",
-                           Exception("stack trace"))
         return try {
             super.persistFloat(store.toFloat())
         } catch (_: Exception) {
