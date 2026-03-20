@@ -9,6 +9,7 @@ import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.interfaces.Preferences
 import java.util.Calendar
 import javax.inject.Inject
@@ -46,6 +47,7 @@ import javax.inject.Singleton
 @Singleton
 class UamController @Inject constructor(
     private val preferences:         Preferences,
+    private val sp:                  SP,
     private val mealOverrideManager: MealOverrideManager,
     private val profileUtil:         ProfileUtil,
     private val aapsLogger:          AAPSLogger
@@ -104,9 +106,15 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
-    // All SI UnitDoubleKey values store mg/dL. Divide by 18 for mmol.
-    private fun unitPrefMmol(key: UnitDoubleKey): Double = preferences.get(key) / 18.0
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = preferences.get(key)
+    // All SI UnitDoubleKey values store raw mg/dL in SharedPreferences.
+    // We MUST NOT use preferences.get(UnitDoubleKey) here — PreferencesImpl applies
+    // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small
+    // mg/dL values (e.g. 3.6 riseMinDelta, 9/18/27 activity targets) as mmol and
+    // multiplies by 18, making thresholds 18× too high for mg/dL users.
+    private fun rawMgdl(key: UnitDoubleKey): Double =
+        sp.getDouble(key.key, key.defaultValue)
+    private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = rawMgdl(key)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
