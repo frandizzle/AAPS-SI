@@ -121,12 +121,14 @@ class AdaptiveUnitPreference(
         }
 
     // Precision derived from the key's maxMgdl:
-    // - mmol always uses 1 decimal place
-    // - mg/dL uses 1 decimal place for small-range keys (max <= 36, e.g. delta/threshold values)
-    //   and 0 for normal BG range keys (max > 36, e.g. guards/targets → shows 65, not 65.0)
+    // - Normal BG range keys (max > 36): mg/dL → 0 decimals (65, 97), mmol → 1 decimal (3.6)
+    // - Small-range delta/threshold keys (max <= 36): mg/dL → 1 decimal (2.9), mmol → 2 decimals (0.15)
     private fun displayScale(): Int =
-        if (profileUtil.units == GlucoseUnit.MMOL) 1
-        else if (preferenceKey.maxMgdl <= 36) 1 else 0
+        if (preferenceKey.maxMgdl <= 36) {
+            if (profileUtil.units == GlucoseUnit.MMOL) 2 else 1
+        } else {
+            if (profileUtil.units == GlucoseUnit.MMOL) 1 else 0
+        }
 
     private fun displayValue(): String {
         val storedMgdl = rawStoredMgdl()
