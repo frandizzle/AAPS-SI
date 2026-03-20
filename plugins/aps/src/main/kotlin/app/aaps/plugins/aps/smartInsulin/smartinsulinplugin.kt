@@ -1141,7 +1141,6 @@ open class SmartInsulinPlugin @Inject constructor(
         category.apply {
             key   = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
-            initialExpandedChildrenCount = 0
 
             // Single "Advanced" wrapper — matches Loop/Protection/Overview pattern
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
