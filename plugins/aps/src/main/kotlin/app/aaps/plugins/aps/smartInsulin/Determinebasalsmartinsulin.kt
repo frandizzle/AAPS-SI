@@ -173,6 +173,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             else
                 ticks.coerceIn(10, 24)  // hard rails: 50–120 min once learned
         }
+        // Full-curve min for SAFETY — suspends if BG predicted below lowGuard at any point
+        val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
+        // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
         else
@@ -206,7 +209,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | BG=${fmt(currentBg)}")
         sb.append(" | d=${"%.2f".format(Locale.US, delta / MMOL_TO_MGDL)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
-        sb.append(" | pred_min=${fmt(predictedMin)}")
+        sb.append(" | pred_min=${fmt(predictedMinSafety)}")
         sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
         sb.append(" | ISF=${fmt(dosingIsfMgdl)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
@@ -242,21 +245,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
-            predictedMin < lowGuardMgdl || fallingIntoLow -> {
+            predictedMinSafety < lowGuardMgdl || fallingIntoLow -> {
                 val reason = when {
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.2f", delta / MMOL_TO_MGDL)}"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMin)} < lowGuard=${fmt(lowGuardMgdl)}"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)}"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
-            predictedMin < warnGuardMgdl -> {
-                val guardGap   = warnGuardMgdl - predictedMin
+            predictedMinSafety < warnGuardMgdl -> {
+                val guardGap   = warnGuardMgdl - predictedMinSafety
                 val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMin)} | warnGuard=${fmt(warnGuardMgdl)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety)} | warnGuard=${fmt(warnGuardMgdl)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
             }
 
