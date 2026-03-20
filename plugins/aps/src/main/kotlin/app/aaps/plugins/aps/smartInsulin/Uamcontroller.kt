@@ -64,6 +64,8 @@ class UamController @Inject constructor(
 
     // Stuck-high state for UAM_PROTEIN_FAT detection
     private var stuckHighReadings = 0
+    // Last BG seen during a rise streak — for statusString display only
+    private var lastRiseBgMmol = 0.0
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
@@ -353,6 +355,7 @@ class UamController @Inject constructor(
                 consecutiveRiseReadings++
                 lastCountedBgTimestampMs = bgTimestampMs
             }
+            lastRiseBgMmol = currentBgMmol
             val totalRise = currentBgMmol - bgAtStreakStart
             val dirtyTag = if (inPostMealLockout) " [DIRTY×${String.format("%.1f", dirtyMultiplier)}]" else ""
             aapsLogger.debug(LTag.APS,
@@ -578,7 +581,7 @@ class UamController @Inject constructor(
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
             val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
             val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-            val totalRise = if (bgAtStreakStart > 0.0) lastStuckBgMmol - bgAtStreakStart else 0.0
+            val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
             val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
         }
@@ -605,6 +608,7 @@ class UamController @Inject constructor(
         consecutiveRiseReadings   = 0
         bgAtStreakStart           = 0.0
         lastCountedBgTimestampMs  = 0L
+        lastRiseBgMmol            = 0.0
     }
 
     /** The UAM mode fired this cycle — set by triggerUam, reset at start of each cycle. Null if nothing fired. */

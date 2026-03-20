@@ -413,7 +413,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // fraction. Softens the front-end of the UAM response to avoid overcorrection
         // stacking before existing IOB has had time to affect predictions.
         // P/F excluded — it's a tail correction, not a meal entry event.
-        val currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+        var currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
         if (currentModeIsUam && uamEntryModeStartMs == 0L) {
             uamEntryModeStartMs   = now
             uamEntrySmbsDelivered = 0
@@ -424,7 +424,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val entrySmbCount    = preferences.get(IntKey.ApsSmartInsulinUamEntrySmbCount)
         val entrySmbFraction = preferences.get(DoubleKey.ApsSmartInsulinUamEntrySmbFraction)
-        val uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+        var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else 1.0
 
         // ── Post-meal learning lockout ───────────────────────────────────────
@@ -614,6 +614,16 @@ open class SmartInsulinPlugin @Inject constructor(
             if (latestModeIsfMgdl > 0.0) {
                 dosingIsfMgdl = latestModeIsfMgdl
             }
+            // Re-evaluate UAM entry tracking now that mealMode is correct for this cycle
+            currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+            if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+                uamEntryModeStartMs   = now
+                uamEntrySmbsDelivered = 0
+                aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking armed (same-cycle fire) for ${mealMode.label}")
+            }
+            // Recompute fraction — first-cycle SMBs should be reduced even when UAM fires this cycle
+            uamSmbFraction = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+                entrySmbFraction else 1.0
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
                                  "${fmtIsf(dosingIsfMgdl)}$unitLabel immediately")
@@ -1275,7 +1285,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,       title = R.string.si_uam_proteinfat_stuck_readings_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
-            })
-        }
+            }) // end UAM Windows
+        } // end category.apply
     }
 }
