@@ -1141,17 +1141,25 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
         if (requiredKey != null && requiredKey !in listOf(
-                "smart_insulin_settings",
+                "smart_insulin_settings", "si_screen_advanced",
                 "si_screen_general", "si_screen_learning", "si_screen_dawn",
                 "si_screen_activity", "si_screen_meal", "si_screen_stft",
                 "si_screen_uam", "si_screen_uam_windows"
             )) return
+
+        // Teal section header
         val category = PreferenceCategory(context)
         parent.addPreference(category)
         category.apply {
             key   = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
-            initialExpandedChildrenCount = 0
+        }
+
+        // Navigable "Advanced" row — added to parent (not category) so it renders as a
+        // clickable row with > arrow, same visual weight as other Advanced rows
+        parent.addPreference(preferenceManager.createPreferenceScreen(context).apply {
+            key   = "si_screen_advanced"
+            title = rh.gs(app.aaps.core.ui.R.string.advanced_settings_title)
 
             // ── General & Safety ──────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
@@ -1286,6 +1294,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
             }) // end UAM Windows
-        } // end category.apply
+        }) // end si_screen_advanced
     }
 }
