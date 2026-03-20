@@ -463,8 +463,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ISF overrides are stored in user units via UnitDoubleKey.
         // 0.0 means "not set — use profile ISF". Convert non-zero values to mg/dL for internal use.
-        fun isfPrefMgdl(unitVal: Double): Double =
-            if (unitVal == 0.0) 0.0 else profileUtil.convertToMgdlDetect(unitVal)
+        // ISF overrides: UnitDoubleKey stores in mg/dL always. 0.0 = "use profile ISF" sentinel.
+        fun isfPrefMgdl(unitVal: Double): Double = unitVal  // already mg/dL from UnitDoubleKey
 
         val modeIsfMgdl = when (mealMode) {
             MealMode.BREAKFAST     -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinBreakfastIsf))
@@ -608,7 +608,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_PROTEIN_FAT -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
                     MealMode.FASTING       -> 0.0
                 }
-                if (unitVal == 0.0) 0.0 else profileUtil.convertToMgdlDetect(unitVal)
+                if (unitVal == 0.0) 0.0 else unitVal  // UnitDoubleKey already stores in mg/dL
             }
             mealMode = latestMealMode
             if (latestModeIsfMgdl > 0.0) {
@@ -709,9 +709,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget))    / 18.0
-        val activityModerateTarget = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget)) / 18.0
-        val activityHeavyTarget    = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget))    / 18.0
+        val activityLightTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
+        val activityModerateTarget = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
+        val activityHeavyTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
@@ -826,7 +826,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
         // Matches the lowGuardMmol threshold used in determine_basal's SUSPEND decision.
-        val REBOUND_LOW_THRESHOLD_MGDL = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard))
+        val REBOUND_LOW_THRESHOLD_MGDL = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard)
         val currentBgMgdl = glucoseStatus.glucose
 
         // Rebound window is only relevant during FASTING mode.
@@ -892,7 +892,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Soft landing bypass ───────────────────────────────────────────────
         // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
         // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
-        val lowGuardMmol             = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard)) / 18.0
+        val lowGuardMmol             = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
         val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
         val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
@@ -931,8 +931,8 @@ open class SmartInsulinPlugin @Inject constructor(
             profile                  = profile,
             learnedProfile           = learnedProfile,
             mealMode                 = mealMode,
-            lowGuardMmol             = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard))  / 18.0,
-            warnGuardMmol            = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsSmartInsulinWarnGuard)) / 18.0,
+            lowGuardMmol             = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard)  / 18.0,
+            warnGuardMmol            = preferences.get(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0,
             maxSmbU                  = maxSmbU,
             maxTbrU                  = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr),
             aggressiveness           = aggressiveness,
@@ -1152,13 +1152,6 @@ open class SmartInsulinPlugin @Inject constructor(
             key   = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
             initialExpandedChildrenCount = 0
-
-            // ── Flat prefs shown in summary / collapsed view ───────────────
-            // These are what generate the ∨ arrow and summary text — same pattern as OpenAPSBoostV2
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,               title = R.string.enable_smb))
-            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled, title = R.string.si_uam_enabled_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,              title = R.string.openapssmb_max_iob_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,     title = R.string.si_max_smb_title))
 
             // ── General & Safety ──────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {

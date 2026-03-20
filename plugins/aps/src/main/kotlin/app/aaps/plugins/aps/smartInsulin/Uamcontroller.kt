@@ -104,17 +104,14 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
-    // UnitDoubleKey values are stored in the user's display unit.
-    // convertToMgdlDetect converts to mg/dL for internal logic.
-    // divide by 18 gives mmol for display/comparison in this class.
+    // UnitDoubleKey preferences are stored and returned in mg/dL always.
+    // Divide by 18 to get mmol for internal logic comparisons.
     private fun unitPrefMmol(key: UnitDoubleKey): Double =
-        profileUtil.convertToMgdlDetect(preferences.get(key)) / 18.0
+        preferences.get(key) / 18.0
 
-    // ISF overrides: 0.0 = "use profile ISF" sentinel — preserve through conversion
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double {
-        val v = preferences.get(key)
-        return if (v == 0.0) 0.0 else profileUtil.convertToMgdlDetect(v)
-    }
+    // ISF overrides: 0.0 = "use profile ISF" sentinel — mg/dL stored directly
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double =
+        preferences.get(key)  // already mg/dL; 0.0 sentinel preserved
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
