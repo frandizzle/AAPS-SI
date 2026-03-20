@@ -1131,7 +1131,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
         if (requiredKey != null && requiredKey !in listOf(
-                "smart_insulin_settings",
+                "smart_insulin_settings", "si_screen_advanced",
                 "si_screen_general", "si_screen_learning", "si_screen_dawn",
                 "si_screen_activity", "si_screen_meal", "si_screen_stft",
                 "si_screen_uam", "si_screen_uam_windows"
@@ -1139,143 +1139,150 @@ open class SmartInsulinPlugin @Inject constructor(
         val category = PreferenceCategory(context)
         parent.addPreference(category)
         category.apply {
-            key = "smart_insulin_settings"
+            key   = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
             initialExpandedChildrenCount = 0
 
-            // ── General & Safety ─────────────────────────────────────────
+            // Single "Advanced" wrapper — matches Loop/Protection/Overview pattern
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_general"
-                title = "General & Safety"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,                        title = R.string.enable_smb))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAlways,                  title = R.string.enable_smb_always))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbWithCob,                 title = R.string.enable_smb_with_cob))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAfterCarbs,              title = R.string.enable_smb_after_carbs))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseUam,                        title = R.string.enable_uam))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,                      title = R.string.openapssmb_max_iob_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowGuard,        title = R.string.smart_insulin_low_guard))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinWarnGuard,       title = R.string.smart_insulin_warn_guard))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,  title = R.string.si_cgm_warmup_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
-            })
+                key     = "si_screen_advanced"
+                title   = rh.gs(R.string.advanced_settings_title)
+                summary = "General & Safety, Learning, Meal Modes, UAM, STFT"
 
-            // ── Learning ──────────────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_learning"
-                title = "Learning"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,       title = R.string.smart_insulin_enable_learning))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,          title = R.string.smart_insulin_learning_rate))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPostModeLockoutMins,      title = R.string.si_post_mode_lockout_mins_title))
-            })
+                // ── General & Safety ──────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_general"
+                    title = "General & Safety"
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,                        title = R.string.enable_smb))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAlways,                  title = R.string.enable_smb_always))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbWithCob,                 title = R.string.enable_smb_with_cob))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAfterCarbs,              title = R.string.enable_smb_after_carbs))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseUam,                        title = R.string.enable_uam))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,                      title = R.string.openapssmb_max_iob_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowGuard,       title = R.string.smart_insulin_low_guard))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinWarnGuard,      title = R.string.smart_insulin_warn_guard))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,  title = R.string.si_cgm_warmup_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
+                })
 
-            // ── Dawn Phenomenon ───────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_dawn"
-                title = "Dawn Phenomenon"
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinDawnWindowStartHour,  title = R.string.si_dawn_start_hour_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinDawnWindowEndHour,    title = R.string.si_dawn_end_hour_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinDawnSmbReduction,  title = R.string.si_dawn_smb_reduction_title))
-            })
+                // ── Learning ──────────────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_learning"
+                    title = "Learning"
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,       title = R.string.smart_insulin_enable_learning))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLearningRate,          title = R.string.smart_insulin_learning_rate))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPostModeLockoutMins,      title = R.string.si_post_mode_lockout_mins_title))
+                })
 
-            // ── Activity ──────────────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_activity"
-                title = "Activity"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,         title = R.string.si_activity_target_enabled_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,    title = R.string.si_activity_light_target_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,  title = R.string.si_activity_moderate_target_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,     title = R.string.si_activity_heavy_target_title))
-            })
+                // ── Dawn Phenomenon ───────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_dawn"
+                    title = "Dawn Phenomenon"
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinDawnWindowStartHour, title = R.string.si_dawn_start_hour_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey    = IntKey.ApsSmartInsulinDawnWindowEndHour,   title = R.string.si_dawn_end_hour_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinDawnSmbReduction, title = R.string.si_dawn_smb_reduction_title))
+                })
 
-            // ── Meal Modes ────────────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_meal"
-                title = "Meal Modes"
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinBreakfastIsf,       title = R.string.si_breakfast_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLunchIsf,           title = R.string.si_lunch_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinDinnerIsf,          title = R.string.si_dinner_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowCarbIsf,         title = R.string.si_lowcarb_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinExtendedIsf,        title = R.string.si_extended_isf_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinBreakfastCarbsG,          title = R.string.si_breakfast_carbs_g_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinLunchCarbsG,              title = R.string.si_lunch_carbs_g_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDinnerCarbsG,             title = R.string.si_dinner_carbs_g_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinModeWindowMins,           title = R.string.si_mode_window_mins_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxPreBolus,           title = R.string.si_max_prebolus_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinPreBolus2DefaultU,     title = R.string.si_prebolus2_default_u_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins, title = R.string.si_prebolus2_default_delay_title))
-            })
+                // ── Activity ──────────────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_activity"
+                    title = "Activity"
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,       title = R.string.si_activity_target_enabled_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
+                })
 
-            // ── STFT ──────────────────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_stft"
-                title = "STFT (Soft Target)"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, title = R.string.si_stft_cgm_warmup_block_title))
-            })
+                // ── Meal Modes ────────────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_meal"
+                    title = "Meal Modes"
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinBreakfastIsf,        title = R.string.si_breakfast_isf_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLunchIsf,            title = R.string.si_lunch_isf_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinDinnerIsf,           title = R.string.si_dinner_isf_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowCarbIsf,          title = R.string.si_lowcarb_isf_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinExtendedIsf,         title = R.string.si_extended_isf_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinBreakfastCarbsG,            title = R.string.si_breakfast_carbs_g_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinLunchCarbsG,                title = R.string.si_lunch_carbs_g_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDinnerCarbsG,               title = R.string.si_dinner_carbs_g_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinModeWindowMins,             title = R.string.si_mode_window_mins_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxPreBolus,             title = R.string.si_max_prebolus_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinPreBolus2DefaultU,       title = R.string.si_prebolus2_default_u_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,  title = R.string.si_prebolus2_default_delay_title))
+                })
 
-            // ── UAM Auto-Detection ────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_uam"
-                title = "UAM Auto-Detection"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,               title = R.string.si_uam_enabled_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,        title = R.string.si_uam_cgm_warmup_block_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,   title = R.string.si_uam_trigger_threshold_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,       title = R.string.si_uam_rise_min_delta_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,    title = R.string.si_uam_rise_readings_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBurstThreshold,     title = R.string.si_uam_burst_threshold_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,              title = R.string.si_uam_day_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,           title = R.string.si_uam_night_cutoff_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamEntrySmbFraction,       title = R.string.si_uam_entry_smb_fraction_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamEntrySmbCount,             title = R.string.si_uam_entry_smb_count_title))
-            })
+                // ── STFT ──────────────────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_stft"
+                    title = "STFT (Soft Target)"
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, title = R.string.si_stft_cgm_warmup_block_title))
+                })
 
-            // ── UAM Windows ───────────────────────────────────────────────
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key   = "si_screen_uam_windows"
-                title = "UAM Windows"
-                // Breakfast
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamBreakfastEnabled,      title = R.string.si_uam_breakfast_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastStartHour,        title = R.string.si_uam_breakfast_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastEndHour,          title = R.string.si_uam_breakfast_end_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastDurationMins,     title = R.string.si_uam_breakfast_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,        title = R.string.si_uam_breakfast_isf_title))
-                // Lunch
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLunchEnabled,          title = R.string.si_uam_lunch_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchStartHour,            title = R.string.si_uam_lunch_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchEndHour,              title = R.string.si_uam_lunch_end_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchDurationMins,         title = R.string.si_uam_lunch_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamLunchIsf,           title = R.string.si_uam_lunch_isf_title))
-                // Afternoon
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamAfternoonEnabled,      title = R.string.si_uam_afternoon_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonStartHour,        title = R.string.si_uam_afternoon_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonEndHour,          title = R.string.si_uam_afternoon_end_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonDurationMins,     title = R.string.si_uam_afternoon_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,       title = R.string.si_uam_afternoon_isf_title))
-                // Dinner
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamDinnerEnabled,         title = R.string.si_uam_dinner_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerStartHour,           title = R.string.si_uam_dinner_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerEndHour,             title = R.string.si_uam_dinner_end_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerDurationMins,        title = R.string.si_uam_dinner_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,          title = R.string.si_uam_dinner_isf_title))
-                // Snack
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamSnackEnabled,          title = R.string.si_uam_snack_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackStartHour,            title = R.string.si_uam_snack_start_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackEndHour,              title = R.string.si_uam_snack_end_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,         title = R.string.si_uam_snack_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamSnackIsf,           title = R.string.si_uam_snack_isf_title))
-                // Protein/Fat
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,          title = R.string.si_uam_proteinfat_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,         title = R.string.si_uam_proteinfat_duration_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,        title = R.string.si_uam_proteinfat_stuck_readings_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,           title = R.string.si_uam_proteinfat_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,     title = R.string.si_uam_proteinfat_threshold_title))
-            })
+                // ── UAM Auto-Detection ────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_uam"
+                    title = "UAM Auto-Detection"
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,       title = R.string.si_uam_cgm_warmup_block_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBurstThreshold,   title = R.string.si_uam_burst_threshold_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,            title = R.string.si_uam_day_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,         title = R.string.si_uam_night_cutoff_title))
+                    addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamEntrySmbFraction,     title = R.string.si_uam_entry_smb_fraction_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamEntrySmbCount,           title = R.string.si_uam_entry_smb_count_title))
+                })
+
+                // ── UAM Windows ───────────────────────────────────────────
+                addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                    key   = "si_screen_uam_windows"
+                    title = "UAM Windows"
+                    // Breakfast
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamBreakfastEnabled,     title = R.string.si_uam_breakfast_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastStartHour,       title = R.string.si_uam_breakfast_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastEndHour,         title = R.string.si_uam_breakfast_end_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastDurationMins,    title = R.string.si_uam_breakfast_duration_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,      title = R.string.si_uam_breakfast_isf_title))
+                    // Lunch
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLunchEnabled,         title = R.string.si_uam_lunch_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchStartHour,           title = R.string.si_uam_lunch_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchEndHour,             title = R.string.si_uam_lunch_end_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchDurationMins,        title = R.string.si_uam_lunch_duration_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamLunchIsf,          title = R.string.si_uam_lunch_isf_title))
+                    // Afternoon
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamAfternoonEnabled,     title = R.string.si_uam_afternoon_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonStartHour,       title = R.string.si_uam_afternoon_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonEndHour,         title = R.string.si_uam_afternoon_end_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonDurationMins,    title = R.string.si_uam_afternoon_duration_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,      title = R.string.si_uam_afternoon_isf_title))
+                    // Dinner
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamDinnerEnabled,        title = R.string.si_uam_dinner_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerStartHour,          title = R.string.si_uam_dinner_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerEndHour,            title = R.string.si_uam_dinner_end_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerDurationMins,       title = R.string.si_uam_dinner_duration_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,         title = R.string.si_uam_dinner_isf_title))
+                    // Snack
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamSnackEnabled,         title = R.string.si_uam_snack_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackStartHour,           title = R.string.si_uam_snack_start_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackEndHour,             title = R.string.si_uam_snack_end_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,        title = R.string.si_uam_snack_duration_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamSnackIsf,          title = R.string.si_uam_snack_isf_title))
+                    // Protein/Fat
+                    addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,         title = R.string.si_uam_proteinfat_enabled_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,        title = R.string.si_uam_proteinfat_duration_title))
+                    addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,       title = R.string.si_uam_proteinfat_stuck_readings_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
+                    addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
+                })
+            }) // end si_screen_advanced
         }
     }
 }
