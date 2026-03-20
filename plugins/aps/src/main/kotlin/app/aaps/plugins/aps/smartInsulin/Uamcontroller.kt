@@ -607,7 +607,12 @@ class UamController @Inject constructor(
                 val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""
                 "UAM: last ${lastUamMode!!.label} $timeStr$countStr"
             }
-            else -> "UAM: idle"
+            else -> {
+                val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+                val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
+                val dirtyNote = if (currentlyInPostMealLockout) " [dirty]" else ""
+                "UAM: ${dirtyTag}armed (0/$riseReadingsNeeded >=${fmtBg(triggerThresholdMmol)}$unitLabel$dirtyNote)"
+            }
         }
 
         // ── P/F stuck-high status ─────────────────────────────────────────────
