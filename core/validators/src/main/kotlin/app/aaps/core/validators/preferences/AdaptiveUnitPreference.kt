@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.utils.SafeParse
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.validators.DefaultEditTextValidator
 import app.aaps.core.validators.EditTextValidator
 import app.aaps.core.validators.R
@@ -33,6 +34,7 @@ class AdaptiveUnitPreference(
 
     @Inject lateinit var profileUtil: ProfileUtil
     @Inject lateinit var preferences: Preferences
+    @Inject lateinit var sp: SP
 
     // Inflater constructor
     constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, unitKey = null, title = null)
@@ -109,33 +111,16 @@ class AdaptiveUnitPreference(
         }
     }
 
-    // Read raw mg/dL from SharedPreferences directly — same pattern as AdaptiveDoublePreference.
-    // We MUST NOT use preferences.get(UnitDoubleKey) here because PreferencesImpl applies
-    // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small mg/dL
-    // values (e.g. 9, 18, 27 mg/dL activity targets) as mmol and multiplies by 18.
-    //
-    // Must handle both float and string storage formats: the previous AdaptiveUnitPreference
-    // stored values via super.persistString(), so existing stored values are strings.
-    // getPersistedFloat throws ClassCastException on string-stored values, falling back
-    // to the default — which is why values snap back to default after upgrade.
-    private fun rawStoredMgdl(): Double {
-        // sp.putDouble() stores as a String in Android SharedPreferences.
-        // This must match the write path in persistString() below (which calls sp.putDouble)
-        // and in PreferencesImpl.put(UnitDoublePreferenceKey) (which also calls sp.putDouble).
-        // Try string first (current format), then float (migration from old persistFloat format).
-        return try {
-            getPersistedString(null)?.toDoubleOrNull()
-                ?: try {
-                    getPersistedFloat(Float.MIN_VALUE).let { raw ->
-                        if (raw == Float.MIN_VALUE) preferenceKey.defaultValue else raw.toDouble()
-                    }
-                } catch (_: Exception) {
-                    preferenceKey.defaultValue
-                }
-        } catch (_: Exception) {
-            preferenceKey.defaultValue
-        }
-    }
+    // Read raw mg/dL via sp.getDouble — same path as the plugin and PreferencesImpl.put.
+    // sp.getDouble tries getFloat first then getString (see SPImpl), so it reads correctly
+    // regardless of whether the value was stored by sp.putDouble (float) or old string format.
+    // We MUST NOT use preferences.get(UnitDoubleKey) — it applies valueInCurrentUnitsDetect()
+    // which corrupts values below 36 (e.g. 9/18/27 mg/dL activity targets, ISF overrides).
+    // We MUST NOT use getPersistedFloat/getPersistedString — those go through the Android
+    // preference framework's PreferenceDataStore which may not be backed by the same
+    // SharedPreferences instance as sp, causing reads to always return the default.
+    private fun rawStoredMgdl(): Double =
+        sp.getDouble(preferenceKey.key, preferenceKey.defaultValue)
 
     // Precision derived from the key's maxMgdl:
     // - Normal BG range keys (max > 36): mg/dL → 0 decimals (65, 97), mmol → 1 decimal (3.6)
@@ -168,18 +153,18 @@ class AdaptiveUnitPreference(
 
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
-            // Called from onSetInitialValue — do NOT write back to storage.
-            // The value is already correctly on disk; writing here risks overwriting
-            // a freshly saved correct value with a stale rawStoredMgdl() read.
+            // Called from onSetInitialValue — do NOT write to storage.
+            // Value is already on disk; any write here risks corrupting it.
             return true
         }
-        // User entered a new value — it is in display units, convert to mg/dL for storage.
+        // User confirmed a new value — convert from display units to mg/dL and store.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         summary = BigDecimal(numericValue).setScale(displayScale(), RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        // preferences.put(UnitDoublePreferenceKey) calls sp.putDouble — same path as
-        // PreferencesImpl.put(UnitDoublePreferenceKey), matching sp.getDouble() in the plugin.
-        preferences.put(preferenceKey, store)
+        // Write via sp.putDouble — stores as float in SharedPreferences (see SPImpl).
+        // sp.getDouble reads float-first, so this round-trips correctly.
+        // Must match the read path: sp.getDouble(key, default) used by the plugin.
+        sp.putDouble(preferenceKey.key, store)
         return true
     }
 }
