@@ -330,7 +330,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 // Show insulinReq and cap detail when SMB was limited
                 val smbDetail = if (rawSmb > finalSmb && finalSmb > 0.0)
-                    "${"%.3f".format(Locale.US, finalSmb)}(req=${"%.2f".format(Locale.US, insulinReq)} raw=${"%.2f".format(Locale.US, rawSmb)} cap=${"%.2f".format(Locale.US, smbCap)})"
+                    "${"%.3f".format(Locale.US, finalSmb)}(req=${"%.1f".format(Locale.US, insulinReq)} maxSMB=${"%.1f".format(Locale.US, maxSmbU)} IOBheadroom=${"%.0f".format(Locale.US, iobHeadroom)}U)"
                 else
                     "%.3f".format(Locale.US, finalSmb)
                 sb.append(" | NORMAL | targetBG=${fmt(targetBg)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=$smbDetail | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
