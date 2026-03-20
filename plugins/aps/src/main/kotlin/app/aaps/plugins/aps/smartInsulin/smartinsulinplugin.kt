@@ -45,6 +45,7 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.objects.extensions.convertedToAbsolute
@@ -83,6 +84,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val processedTbrEbData: ProcessedTbrEbData,
     private val hardLimits: HardLimits,
     private val preferences: Preferences,
+    private val sp: SP,
     private val constraintsChecker: ConstraintsChecker,
     private val activePlugin: ActivePlugin,
     private val dateUtil: DateUtil,
@@ -703,9 +705,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
-        val activityModerateTarget = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
-        val activityHeavyTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
+        // Activity targets are stored in mg/dL (9/18/27). Must read via sp.getDouble to bypass
+        // PreferencesImpl.valueInCurrentUnitsDetect() which misidentifies values <36 as mmol.
+        val activityLightTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue)    / 18.0
+        val activityModerateTarget = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue) / 18.0
+        val activityHeavyTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(

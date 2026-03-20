@@ -36,6 +36,7 @@ import java.util.LinkedList
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import kotlin.math.abs
+import app.aaps.core.interfaces.sharedPreferences.SP
 import kotlin.math.roundToInt
 
 class SmartMealDialog : DialogFragmentWithDate() {
@@ -50,6 +51,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
     @Inject lateinit var protectionCheck: ProtectionCheck
     @Inject lateinit var uiInteraction: UiInteraction
     @Inject lateinit var decimalFormatter: DecimalFormatter
+    @Inject lateinit var sp: SP
     @Inject lateinit var mealOverrideManager: MealOverrideManager
 
     private var queryingProtection = false
@@ -79,7 +81,9 @@ class SmartMealDialog : DialogFragmentWithDate() {
     /** Load the stored ISF for the current mode into the picker (converts mg/dL → display units) */
     private fun loadIsfForMode(mode: MealMode) {
         val key = isfKeyFor(mode) ?: return
-        val storedMgdl = preferences.get(key)  // UnitDoubleKey always stores mg/dL
+        // Must use sp.getDouble to bypass valueInCurrentUnitsDetect heuristic which
+        // misidentifies ISF values <36 mg/dL/U as mmol (e.g. 18 mg/dL/U → 324).
+        val storedMgdl = sp.getDouble(key.key, key.defaultValue)
         binding.isfAmount.value = if (storedMgdl == 0.0) 0.0
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
             storedMgdl / 18.0
@@ -133,7 +137,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val isfMax   = if (isMmol) 20.0 else 360.0
         val isfStep  = if (isMmol) 0.1  else 1.0
         val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
-        val isfFallbackMgdl = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
+        val isfFallbackMgdl = sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key, UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
         val isfFallback = if (isfFallbackMgdl == 0.0) 0.0
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
             isfFallbackMgdl / 18.0
