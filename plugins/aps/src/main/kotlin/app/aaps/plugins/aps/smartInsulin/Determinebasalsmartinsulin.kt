@@ -209,7 +209,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | BG=${fmt(currentBg)}")
         sb.append(" | d=${"%.2f".format(Locale.US, delta / MMOL_TO_MGDL)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
-        sb.append(" | pred_min=${fmt(predictedMinSafety)}")
+        sb.append(" | pred_min=${fmt(predictedMinSafety)} lo=${fmt(lowGuardMgdl)} warn=${fmt(warnGuardMgdl)}")
         sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
         sb.append(" | ISF=${fmt(dosingIsfMgdl)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
