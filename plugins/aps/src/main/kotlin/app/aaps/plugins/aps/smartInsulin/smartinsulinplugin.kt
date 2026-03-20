@@ -1146,7 +1146,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // Single "Advanced" wrapper — matches Loop/Protection/Overview pattern
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key     = "si_screen_advanced"
-                title   = rh.gs(R.string.advanced_settings_title)
+                title   = "Advanced"
                 summary = "General & Safety, Learning, Meal Modes, UAM, STFT"
 
                 // ── General & Safety ──────────────────────────────────────
