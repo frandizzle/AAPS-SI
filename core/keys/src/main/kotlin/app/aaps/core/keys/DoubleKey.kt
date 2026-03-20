@@ -63,11 +63,6 @@ enum class DoubleKey(
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm("si_resting_hr_bpm", 70.0, 50.0, 110.0, defaultedBySM = true),
 
-    // Activity offsets — mmol above profile target, NOT glucose BG values, so plain DoubleKey
-    ApsSmartInsulinActivityLightTargetMmol(   "si_activity_light_target",    0.5, 0.0, 3.0, defaultedBySM = true),
-    ApsSmartInsulinActivityModerateTargetMmol("si_activity_moderate_target", 1.0, 0.0, 3.0, defaultedBySM = true),
-    ApsSmartInsulinActivityHeavyTargetMmol(   "si_activity_heavy_target",    1.5, 0.0, 3.0, defaultedBySM = true),
-
     // UAM auto-detection — threshold/delta keys moved to UnitDoubleKey
     ApsSmartInsulinUamEntrySmbFraction("si_uam_entry_smb_fraction", 0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     // UAM per-window ISF overrides moved to UnitDoubleKey (ApsSmartInsulinUamBreakfastIsf etc.)

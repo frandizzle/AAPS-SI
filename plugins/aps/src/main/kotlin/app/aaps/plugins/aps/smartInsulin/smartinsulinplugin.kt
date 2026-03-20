@@ -703,9 +703,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTargetMmol)
-        val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTargetMmol)
-        val activityHeavyTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol)
+        val activityLightTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
+        val activityModerateTarget = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
+        val activityHeavyTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
@@ -1197,9 +1197,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_activity"
                 title = "Activity"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,            title = R.string.si_activity_target_enabled_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityLightTargetMmol,    title = R.string.si_activity_light_target_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityModerateTargetMmol, title = R.string.si_activity_moderate_target_title))
-                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityHeavyTargetMmol,    title = R.string.si_activity_heavy_target_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
             })
 
             // ── Meal Modes ────────────────────────────────────────────────
