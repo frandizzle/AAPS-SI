@@ -72,6 +72,7 @@ class UamController @Inject constructor(
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
+    private var currentlyCgmWarmup         = false  // true when CGM is in warmup — UAM/P/F blocked
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
@@ -121,11 +122,8 @@ class UamController @Inject constructor(
         return if (raw < mmolThreshold) raw * 18.0 else raw
     }
     private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
-    // For small mg/dL values (riseMinDelta=3.6, burstThreshold=18) correctly stored
-    // as mg/dL but < 20, which rawMgdl would wrongly multiply by 18.
     private fun purePrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
-    // ISF stored correctly as mg/dL — no threshold conversion needed
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue)
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
@@ -190,6 +188,7 @@ class UamController @Inject constructor(
     ) {
         previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
+        currentlyCgmWarmup         = cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock)
         justFiredThisCycle         = null  // reset each cycle
 
         // Reset lastMealEndedMs if it's from a previous calendar day
@@ -588,29 +587,46 @@ class UamController @Inject constructor(
     /** Status string for loop reason output — null if nothing to show */
     fun statusString(): String? {
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
-        if (consecutiveRiseReadings > 0) {
-            val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-            val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-            val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
-            val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
-            return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
+
+        // ── UAM meal detection status ─────────────────────────────────────────
+        val uamLine = when {
+            currentlyInMealMode        -> null  // meal mode active — UAM not needed
+            currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
+            currentlyPastNightCutoff   -> "UAM: off (outside hours)"
+            consecutiveRiseReadings > 0 -> {
+                val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
+                val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+                val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
+                val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
+                "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
+            }
+            lastUamMode != null && lastUamTimeMs > 0L -> {
+                val cal = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
+                val timeStr = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
+                val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""
+                "UAM: last ${lastUamMode!!.label} $timeStr$countStr"
+            }
+            else -> "UAM: idle"
         }
-        // Always show P/F count if enabled and in active window
-        if (!currentlyPastNightCutoff && preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
-            val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
-            val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
-            if (stuckHighReadings > 0 || consecutiveRiseReadings == 0) {
-                return "UAM: P/F $stuckHighReadings/$stuckNeeded stuck ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
+
+        // ── P/F stuck-high status ─────────────────────────────────────────────
+        val pfLine = when {
+            !preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled) -> null
+            currentlyCgmWarmup       -> "P/F: off (new sensor <24h)"
+            currentlyPastNightCutoff -> "P/F: off (outside hours)"
+            currentlyInMealMode      -> "P/F: armed (after meal expires)"
+            else -> {
+                val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
+                val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
+                if (stuckHighReadings > 0)
+                    "P/F: $stuckHighReadings/$stuckNeeded stuck ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
+                else
+                    "P/F: 0/$stuckNeeded below ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
             }
         }
-        if (lastUamMode != null && lastUamTimeMs > 0L) {
-            val cal     = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
-            val timeStr = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
-            val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""
-            return "UAM: last ${lastUamMode!!.label} $timeStr$countStr"
-        }
-        return null
+
+        return listOfNotNull(uamLine, pfLine).joinToString(" | ").ifEmpty { null }
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
