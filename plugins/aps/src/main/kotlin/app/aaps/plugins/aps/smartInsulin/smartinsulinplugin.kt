@@ -349,6 +349,24 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop")
     }
 
+    /**
+     * Read a UnitDoubleKey value from SharedPreferences, handling both storage formats:
+     *  - New format (after AdaptiveUnitPreference fix): stored as mg/dL float via sp.putDouble
+     *  - Old format (before fix): stored as mmol display value float (e.g. 5.0 for 5.0 mmol)
+     *
+     * Detection: if raw value < threshold (20.0 for BG keys, 36.0 for ISF keys), it was
+     * stored in the old mmol format and needs ×18 to convert to mg/dL.
+     * Once AdaptiveUnitPreference has written the correct mg/dL value, raw will be ≥ threshold
+     * and no conversion is needed.
+     *
+     * This makes the plugin robust to the stored format — old values work correctly AND
+     * newly saved values work correctly, with no need to re-enter settings.
+     */
+    private fun spMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
+        val raw = sp.getDouble(key.key, key.defaultValue)
+        return if (raw < mmolThreshold) raw * 18.0 else raw
+    }
+
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
@@ -463,21 +481,20 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
-        // ISF overrides: UnitDoubleKey stores in mg/dL always. 0.0 = "use profile ISF" sentinel.
-        // Must use sp.getDouble to bypass valueInCurrentUnitsDetect — ISF values <36 mg/dL/U
-        // (e.g. 13) are misidentified as mmol and multiplied by 18.
+        // Must use spMgdl() to handle both old mmol-stored and new mg/dL-stored formats.
+        // ISF values <36 mg/dL/U were stored as mmol by old AdaptiveUnitPreference — spMgdl detects and converts.
         val modeIsfMgdl = when (mealMode) {
-            MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
-            MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
-            MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
-            MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
-            MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
-            MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
-            MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
-            MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
-            MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
-            MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-            MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+            MealMode.BREAKFAST     -> spMgdl(UnitDoubleKey.ApsSmartInsulinBreakfastIsf,     36.0)
+            MealMode.LUNCH         -> spMgdl(UnitDoubleKey.ApsSmartInsulinLunchIsf,         36.0)
+            MealMode.DINNER        -> spMgdl(UnitDoubleKey.ApsSmartInsulinDinnerIsf,        36.0)
+            MealMode.LOW_CARB      -> spMgdl(UnitDoubleKey.ApsSmartInsulinLowCarbIsf,       36.0)
+            MealMode.EXTENDED      -> spMgdl(UnitDoubleKey.ApsSmartInsulinExtendedIsf,      36.0)
+            MealMode.UAM_BREAKFAST -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,  36.0)
+            MealMode.UAM_LUNCH     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf,      36.0)
+            MealMode.UAM_DINNER    -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,     36.0)
+            MealMode.UAM_SNACK     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf,      36.0)
+            MealMode.UAM_AFTERNOON -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,  36.0)
+            MealMode.UAM_PROTEIN_FAT -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, 36.0)
             MealMode.FASTING       -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
@@ -593,20 +610,20 @@ open class SmartInsulinPlugin @Inject constructor(
         if (latestMealMode != mealMode) {
             val latestModeIsfMgdl = run {
                 val unitVal = when (latestMealMode) {
-                    MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
-                    MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
-                    MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
-                    MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
-                    MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
-                    MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
-                    MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
-                    MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
-                    MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
-                    MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-                    MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+                    MealMode.BREAKFAST     -> spMgdl(UnitDoubleKey.ApsSmartInsulinBreakfastIsf,     36.0)
+                    MealMode.LUNCH         -> spMgdl(UnitDoubleKey.ApsSmartInsulinLunchIsf,         36.0)
+                    MealMode.DINNER        -> spMgdl(UnitDoubleKey.ApsSmartInsulinDinnerIsf,        36.0)
+                    MealMode.LOW_CARB      -> spMgdl(UnitDoubleKey.ApsSmartInsulinLowCarbIsf,       36.0)
+                    MealMode.EXTENDED      -> spMgdl(UnitDoubleKey.ApsSmartInsulinExtendedIsf,      36.0)
+                    MealMode.UAM_BREAKFAST -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,  36.0)
+                    MealMode.UAM_LUNCH     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf,      36.0)
+                    MealMode.UAM_DINNER    -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,     36.0)
+                    MealMode.UAM_SNACK     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf,      36.0)
+                    MealMode.UAM_AFTERNOON -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,  36.0)
+                    MealMode.UAM_PROTEIN_FAT -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, 36.0)
                     MealMode.FASTING       -> 0.0
                 }
-                if (unitVal == 0.0) 0.0 else unitVal  // UnitDoubleKey already stores in mg/dL
+                if (unitVal == 0.0) 0.0 else unitVal
             }
             mealMode = latestMealMode
             if (latestModeIsfMgdl > 0.0) {
@@ -706,12 +723,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
-        // Activity target offset (user-configured mg/dL offsets stored in SharedPreferences)
-        // Must use sp.getDouble to bypass valueInCurrentUnitsDetect — these values (9, 18, 27 mg/dL)
-        // are all below 36 and would be misidentified as mmol and multiplied by 18 (→ 162/324/486 mg/dL)
-        val activityLightTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue)    / 18.0
-        val activityModerateTarget = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue) / 18.0
-        val activityHeavyTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue)    / 18.0
+        // spMgdl handles both old mmol-stored and new mg/dL-stored formats transparently
+        val activityLightTarget    = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
+        val activityModerateTarget = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
+        val activityHeavyTarget    = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
@@ -826,7 +841,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
         // Matches the lowGuardMmol threshold used in determine_basal's SUSPEND decision.
-        val REBOUND_LOW_THRESHOLD_MGDL = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard)
+        val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         val currentBgMgdl = glucoseStatus.glucose
 
         // Rebound window is only relevant during FASTING mode.
@@ -892,7 +907,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Soft landing bypass ───────────────────────────────────────────────
         // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
         // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
-        val lowGuardMmol = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
+        val lowGuardMmol = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
         val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
         val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
@@ -931,8 +946,8 @@ open class SmartInsulinPlugin @Inject constructor(
             profile                  = profile,
             learnedProfile           = learnedProfile,
             mealMode                 = mealMode,
-            lowGuardMmol             = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard)  / 18.0,
-            warnGuardMmol            = preferences.get(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0,
+            lowGuardMmol             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)  / 18.0,
+            warnGuardMmol            = spMgdl(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0,
             maxSmbU                  = maxSmbU,
             maxTbrU                  = preferences.get(DoubleKey.ApsSmartInsulinMaxTbr),
             aggressiveness           = aggressiveness,

@@ -111,10 +111,17 @@ class UamController @Inject constructor(
     // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small
     // mg/dL values (e.g. 3.6 riseMinDelta, 9/18/27 activity targets) as mmol and
     // multiplies by 18, making thresholds 18× too high for mg/dL users.
-    private fun rawMgdl(key: UnitDoubleKey): Double =
-        sp.getDouble(key.key, key.defaultValue)
+    // Read a UnitDoubleKey value, handling both storage formats:
+    //  - New format: stored as mg/dL float (after AdaptiveUnitPreference fix)
+    //  - Old format: stored as mmol display value float (before fix)
+    // BG/threshold keys: values <20 were stored as mmol → ×18 to get mg/dL
+    // ISF keys: values <36 were stored as mmol/U → ×18 to get mg/dL/U
+    private fun rawMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
+        val raw = sp.getDouble(key.key, key.defaultValue)
+        return if (raw < mmolThreshold) raw * 18.0 else raw
+    }
     private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = rawMgdl(key)
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = rawMgdl(key, 36.0)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
