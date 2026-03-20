@@ -461,27 +461,21 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
-        // ISF overrides are stored in user units via UnitDoubleKey.
-        // 0.0 means "not set — use profile ISF". Convert non-zero values to mg/dL for internal use.
         // ISF overrides: UnitDoubleKey stores in mg/dL always. 0.0 = "use profile ISF" sentinel.
-        fun isfPrefMgdl(unitVal: Double): Double = unitVal  // already mg/dL from UnitDoubleKey
-
         val modeIsfMgdl = when (mealMode) {
-            MealMode.BREAKFAST     -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinBreakfastIsf))
-            MealMode.LUNCH         -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf))
-            MealMode.DINNER        -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinDinnerIsf))
-            MealMode.LOW_CARB      -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinLowCarbIsf))
-            MealMode.EXTENDED      -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinExtendedIsf))
-            MealMode.UAM_BREAKFAST -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf))
-            MealMode.UAM_LUNCH     -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamLunchIsf))
-            MealMode.UAM_DINNER    -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf))
-            MealMode.UAM_SNACK     -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamSnackIsf))
-            MealMode.UAM_AFTERNOON -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf))
-            MealMode.UAM_PROTEIN_FAT  -> isfPrefMgdl(preferences.get(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf))
-            MealMode.FASTING   -> 0.0  // always use profile ISF in fasting
+            MealMode.BREAKFAST     -> preferences.get(UnitDoubleKey.ApsSmartInsulinBreakfastIsf)
+            MealMode.LUNCH         -> preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
+            MealMode.DINNER        -> preferences.get(UnitDoubleKey.ApsSmartInsulinDinnerIsf)
+            MealMode.LOW_CARB      -> preferences.get(UnitDoubleKey.ApsSmartInsulinLowCarbIsf)
+            MealMode.EXTENDED      -> preferences.get(UnitDoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.UAM_BREAKFAST -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
+            MealMode.UAM_LUNCH     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)
+            MealMode.UAM_DINNER    -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf)
+            MealMode.UAM_SNACK     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_AFTERNOON -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf)
+            MealMode.UAM_PROTEIN_FAT -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
+            MealMode.FASTING       -> 0.0  // always use profile ISF in fasting
         }
-        // Keep modeIsfMmol as the mmol equivalent for legacy display paths
-        val modeIsfMmol = modeIsfMgdl / 18.0
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
         // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
         val circIsfMult   = circadianLearner.isfMultiplier()

@@ -76,11 +76,12 @@ class SmartMealDialog : DialogFragmentWithDate() {
         else               -> null
     }
 
-    /** Load the stored ISF for the current mode into the picker (value in user's display unit) */
+    /** Load the stored ISF for the current mode into the picker (converts mg/dL → display units) */
     private fun loadIsfForMode(mode: MealMode) {
         val key = isfKeyFor(mode) ?: return
-        // UnitDoubleKey stores in user's display unit — read directly, no conversion needed for display
-        binding.isfAmount.value = preferences.get(key)
+        val storedMgdl = preferences.get(key)  // stored in mg/dL by AdaptiveUnitPreference
+        binding.isfAmount.value = if (storedMgdl == 0.0) 0.0
+        else profileUtil.valueInCurrentUnitsDetect(storedMgdl)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -130,7 +131,9 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val isfMax   = if (isMmol) 20.0 else 360.0
         val isfStep  = if (isMmol) 0.1  else 1.0
         val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
-        val isfFallback = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
+        val isfFallbackMgdl = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
+        val isfFallback = if (isfFallbackMgdl == 0.0) 0.0
+        else profileUtil.valueInCurrentUnitsDetect(isfFallbackMgdl)
         binding.isfAmount.setParams(
             savedInstanceState?.getDouble("isfAmount") ?: isfFallback,
             0.0, isfMax, isfStep,
@@ -316,8 +319,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
                 {
                     // Save updated ISF back to preferences (stored in user's display unit)
+                    // AdaptiveUnitPreference stores in mg/dL — match that format
                     isfKeyFor(selectedMode)?.let { key ->
-                        preferences.put(key, isfValue)
+                        val isfMgdl = if (isfValue == 0.0) 0.0
+                        else profileUtil.convertToMgdl(isfValue, profileUtil.units)
+                        preferences.put(key, isfMgdl)
                     }
 
                     // Activate meal mode — PB2 params passed to manager for scheduled delivery
