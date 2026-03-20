@@ -463,17 +463,17 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ISF overrides: UnitDoubleKey stores in mg/dL always. 0.0 = "use profile ISF" sentinel.
         val modeIsfMgdl = when (mealMode) {
-            MealMode.BREAKFAST     -> preferences.get(UnitDoubleKey.ApsSmartInsulinBreakfastIsf)
-            MealMode.LUNCH         -> preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
-            MealMode.DINNER        -> preferences.get(UnitDoubleKey.ApsSmartInsulinDinnerIsf)
-            MealMode.LOW_CARB      -> preferences.get(UnitDoubleKey.ApsSmartInsulinLowCarbIsf)
-            MealMode.EXTENDED      -> preferences.get(UnitDoubleKey.ApsSmartInsulinExtendedIsf)
-            MealMode.UAM_BREAKFAST -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
-            MealMode.UAM_LUNCH     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)
-            MealMode.UAM_DINNER    -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf)
-            MealMode.UAM_SNACK     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamSnackIsf)
-            MealMode.UAM_AFTERNOON -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf)
-            MealMode.UAM_PROTEIN_FAT -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
+            MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+            MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+            MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+            MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+            MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+            MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+            MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+            MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+            MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+            MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
+            MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
             MealMode.FASTING       -> 0.0  // always use profile ISF in fasting
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
@@ -589,17 +589,17 @@ open class SmartInsulinPlugin @Inject constructor(
         if (latestMealMode != mealMode) {
             val latestModeIsfMgdl = run {
                 val unitVal = when (latestMealMode) {
-                    MealMode.BREAKFAST     -> preferences.get(UnitDoubleKey.ApsSmartInsulinBreakfastIsf)
-                    MealMode.LUNCH         -> preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
-                    MealMode.DINNER        -> preferences.get(UnitDoubleKey.ApsSmartInsulinDinnerIsf)
-                    MealMode.LOW_CARB      -> preferences.get(UnitDoubleKey.ApsSmartInsulinLowCarbIsf)
-                    MealMode.EXTENDED      -> preferences.get(UnitDoubleKey.ApsSmartInsulinExtendedIsf)
-                    MealMode.UAM_BREAKFAST -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
-                    MealMode.UAM_LUNCH     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)
-                    MealMode.UAM_DINNER    -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf)
-                    MealMode.UAM_SNACK     -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamSnackIsf)
-                    MealMode.UAM_AFTERNOON -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf)
-                    MealMode.UAM_PROTEIN_FAT -> preferences.get(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
+                    MealMode.BREAKFAST     -> preferences.get(DoubleKey.ApsSmartInsulinBreakfastIsf)
+                    MealMode.LUNCH         -> preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+                    MealMode.DINNER        -> preferences.get(DoubleKey.ApsSmartInsulinDinnerIsf)
+                    MealMode.LOW_CARB      -> preferences.get(DoubleKey.ApsSmartInsulinLowCarbIsf)
+                    MealMode.EXTENDED      -> preferences.get(DoubleKey.ApsSmartInsulinExtendedIsf)
+                    MealMode.UAM_BREAKFAST -> preferences.get(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
+                    MealMode.UAM_LUNCH     -> preferences.get(DoubleKey.ApsSmartInsulinUamLunchIsf)
+                    MealMode.UAM_DINNER    -> preferences.get(DoubleKey.ApsSmartInsulinUamDinnerIsf)
+                    MealMode.UAM_SNACK     -> preferences.get(DoubleKey.ApsSmartInsulinUamSnackIsf)
+                    MealMode.UAM_AFTERNOON -> preferences.get(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
+                    MealMode.UAM_PROTEIN_FAT -> preferences.get(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
                     MealMode.FASTING       -> 0.0
                 }
                 if (unitVal == 0.0) 0.0 else unitVal  // UnitDoubleKey already stores in mg/dL
@@ -703,9 +703,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
         // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
-        val activityModerateTarget = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
-        val activityHeavyTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
+        val activityLightTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
+        val activityModerateTarget = preferences.get(DoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
+        val activityHeavyTarget    = preferences.get(DoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
@@ -1195,20 +1195,20 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_activity"
                 title = "Activity"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,            title = R.string.si_activity_target_enabled_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
             })
 
             // ── Meal Modes ────────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_meal"
                 title = "Meal Modes"
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinBreakfastIsf,        title = R.string.si_breakfast_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLunchIsf,            title = R.string.si_lunch_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinDinnerIsf,           title = R.string.si_dinner_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowCarbIsf,          title = R.string.si_lowcarb_isf_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinExtendedIsf,         title = R.string.si_extended_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBreakfastIsf,        title = R.string.si_breakfast_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLunchIsf,            title = R.string.si_lunch_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinDinnerIsf,           title = R.string.si_dinner_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinLowCarbIsf,          title = R.string.si_lowcarb_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinExtendedIsf,         title = R.string.si_extended_isf_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinBreakfastCarbsG,            title = R.string.si_breakfast_carbs_g_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinLunchCarbsG,                title = R.string.si_lunch_carbs_g_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinDinnerCarbsG,               title = R.string.si_dinner_carbs_g_title))
@@ -1232,9 +1232,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,       title = R.string.si_uam_cgm_warmup_block_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBurstThreshold,   title = R.string.si_uam_burst_threshold_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBurstThreshold,   title = R.string.si_uam_burst_threshold_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDayStartHour,            title = R.string.si_uam_day_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamNightCutoffHour,         title = R.string.si_uam_night_cutoff_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamEntrySmbFraction,     title = R.string.si_uam_entry_smb_fraction_title))
@@ -1250,36 +1250,36 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastStartHour,       title = R.string.si_uam_breakfast_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastEndHour,         title = R.string.si_uam_breakfast_end_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamBreakfastDurationMins,    title = R.string.si_uam_breakfast_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,      title = R.string.si_uam_breakfast_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamBreakfastIsf,      title = R.string.si_uam_breakfast_isf_title))
                 // Lunch
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamLunchEnabled,         title = R.string.si_uam_lunch_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchStartHour,           title = R.string.si_uam_lunch_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchEndHour,             title = R.string.si_uam_lunch_end_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamLunchDurationMins,        title = R.string.si_uam_lunch_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamLunchIsf,          title = R.string.si_uam_lunch_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamLunchIsf,          title = R.string.si_uam_lunch_isf_title))
                 // Afternoon
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamAfternoonEnabled,     title = R.string.si_uam_afternoon_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonStartHour,       title = R.string.si_uam_afternoon_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonEndHour,         title = R.string.si_uam_afternoon_end_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamAfternoonDurationMins,    title = R.string.si_uam_afternoon_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,      title = R.string.si_uam_afternoon_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamAfternoonIsf,      title = R.string.si_uam_afternoon_isf_title))
                 // Dinner
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamDinnerEnabled,        title = R.string.si_uam_dinner_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerStartHour,          title = R.string.si_uam_dinner_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerEndHour,            title = R.string.si_uam_dinner_end_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamDinnerDurationMins,       title = R.string.si_uam_dinner_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,         title = R.string.si_uam_dinner_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamDinnerIsf,         title = R.string.si_uam_dinner_isf_title))
                 // Snack
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamSnackEnabled,         title = R.string.si_uam_snack_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackStartHour,           title = R.string.si_uam_snack_start_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackEndHour,             title = R.string.si_uam_snack_end_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamSnackDurationMins,        title = R.string.si_uam_snack_duration_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamSnackIsf,          title = R.string.si_uam_snack_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamSnackIsf,          title = R.string.si_uam_snack_isf_title))
                 // Protein/Fat
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,         title = R.string.si_uam_proteinfat_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,        title = R.string.si_uam_proteinfat_duration_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,       title = R.string.si_uam_proteinfat_stuck_readings_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
             })
         }

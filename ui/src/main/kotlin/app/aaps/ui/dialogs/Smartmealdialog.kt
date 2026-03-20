@@ -68,20 +68,24 @@ class SmartMealDialog : DialogFragmentWithDate() {
 
     /** Returns the UnitDoubleKey for the ISF pref of the given mode (null for non-manual modes) */
     private fun isfKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
-        MealMode.BREAKFAST -> UnitDoubleKey.ApsSmartInsulinBreakfastIsf
-        MealMode.LUNCH     -> UnitDoubleKey.ApsSmartInsulinLunchIsf
-        MealMode.DINNER    -> UnitDoubleKey.ApsSmartInsulinDinnerIsf
-        MealMode.LOW_CARB  -> UnitDoubleKey.ApsSmartInsulinLowCarbIsf
-        MealMode.EXTENDED  -> UnitDoubleKey.ApsSmartInsulinExtendedIsf
+        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastIsf
+        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchIsf
+        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerIsf
+        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbIsf
+        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedIsf
         else               -> null
     }
 
     /** Load the stored ISF for the current mode into the picker (converts mg/dL → display units) */
     private fun loadIsfForMode(mode: MealMode) {
         val key = isfKeyFor(mode) ?: return
-        val storedMgdl = preferences.get(key)  // stored in mg/dL by AdaptiveUnitPreference
+        val storedMgdl = preferences.get(key)  // stored in mg/dL
+        // Use explicit conversion — don't use valueInCurrentUnitsDetect which uses a
+        // < 36 heuristic that misidentifies small mg/dL ISF values (e.g. 18) as mmol
         binding.isfAmount.value = if (storedMgdl == 0.0) 0.0
-        else profileUtil.valueInCurrentUnitsDetect(storedMgdl)
+        else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
+            storedMgdl / 18.0
+        else storedMgdl
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -131,9 +135,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val isfMax   = if (isMmol) 20.0 else 360.0
         val isfStep  = if (isMmol) 0.1  else 1.0
         val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
-        val isfFallbackMgdl = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
+        val isfFallbackMgdl = preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
         val isfFallback = if (isfFallbackMgdl == 0.0) 0.0
-        else profileUtil.valueInCurrentUnitsDetect(isfFallbackMgdl)
+        else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
+            isfFallbackMgdl / 18.0
+        else isfFallbackMgdl
         binding.isfAmount.setParams(
             savedInstanceState?.getDouble("isfAmount") ?: isfFallback,
             0.0, isfMax, isfStep,
