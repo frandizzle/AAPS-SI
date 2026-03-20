@@ -890,7 +890,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Soft landing bypass ───────────────────────────────────────────────
         // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
         // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
-        val lowGuardMmol             = preferences.get(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
+        val lowGuardMmol = preferences.get(UnitDoubleKey.ApsLgsThreshold) / 18.0
         val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
         val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
