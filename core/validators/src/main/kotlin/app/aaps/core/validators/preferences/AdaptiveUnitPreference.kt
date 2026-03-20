@@ -113,12 +113,31 @@ class AdaptiveUnitPreference(
     // We MUST NOT use preferences.get(UnitDoubleKey) here because PreferencesImpl applies
     // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small mg/dL
     // values (e.g. 9, 18, 27 mg/dL activity targets) as mmol and multiplies by 18.
-    private fun rawStoredMgdl(): Double =
-        try {
-            getPersistedFloat(preferenceKey.defaultValue.toFloat()).toDouble()
+    //
+    // Must handle both float and string storage formats: the previous AdaptiveUnitPreference
+    // stored values via super.persistString(), so existing stored values are strings.
+    // getPersistedFloat throws ClassCastException on string-stored values, falling back
+    // to the default — which is why values snap back to default after upgrade.
+    private fun rawStoredMgdl(): Double {
+        // Try float first (new format written by this class)
+        return try {
+            getPersistedFloat(Float.MIN_VALUE).let { raw ->
+                if (raw == Float.MIN_VALUE) {
+                    // Not stored as float — try string (old format)
+                    getPersistedString(null)?.toDoubleOrNull() ?: preferenceKey.defaultValue
+                } else {
+                    raw.toDouble()
+                }
+            }
         } catch (_: Exception) {
-            preferenceKey.defaultValue
+            // Float read threw (e.g. ClassCastException from string-stored value) — try string
+            try {
+                getPersistedString(null)?.toDoubleOrNull() ?: preferenceKey.defaultValue
+            } catch (_: Exception) {
+                preferenceKey.defaultValue
+            }
         }
+    }
 
     // Precision derived from the key's maxMgdl:
     // - Normal BG range keys (max > 36): mg/dL → 0 decimals (65, 97), mmol → 1 decimal (3.6)
