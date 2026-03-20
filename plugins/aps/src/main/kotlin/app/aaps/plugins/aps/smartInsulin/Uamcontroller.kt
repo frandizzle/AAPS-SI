@@ -121,6 +121,9 @@ class UamController @Inject constructor(
         return if (raw < mmolThreshold) raw * 18.0 else raw
     }
     private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
+    // For small mg/dL values (riseMinDelta=3.6, burstThreshold=18) correctly stored
+    // as mg/dL but < 20, which rawMgdl would wrongly multiply by 18.
+    private fun purePrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     // ISF stored correctly as mg/dL — no threshold conversion needed
     private fun isfPrefMgdl(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue)
 
@@ -327,7 +330,7 @@ class UamController @Inject constructor(
         // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
         // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
         // activity and is likely drift or noise rather than food.
-        val riseMinDeltaBase   = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase   = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
 
         // During post-meal dirty window, require a stronger rise to confirm it's a new
@@ -401,7 +404,7 @@ class UamController @Inject constructor(
         // If total rise from streak start exceeds burst threshold, don't wait for
         // consecutive reading count — fire immediately. Catches sudden spikes that
         // would otherwise take 15 min to confirm via the streak counter.
-        val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+        val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
         val totalRise = currentBgMmol - bgAtStreakStart
         if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
@@ -531,7 +534,7 @@ class UamController @Inject constructor(
      * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
      */
     fun debugSummary(): String {
-        val riseMinDeltaBase = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
         val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
         val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
@@ -587,8 +590,8 @@ class UamController @Inject constructor(
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-            val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
             val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
             val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
