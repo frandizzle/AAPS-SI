@@ -91,8 +91,6 @@ class UamController @Inject constructor(
         // Wobble tolerance: how far below trigger threshold a single reading can dip
         // without resetting an active rise streak (CGM noise/compression mitigation)
         private const val WOBBLE_TOLERANCE_MMOL       = 0.3
-        // Minimum unexpected rise (delta - BGI) to confirm UAM vs natural drift
-        private const val UNEXPECTED_RISE_MIN_MMOL        = 0.15
         // Stricter thresholds during post-meal dirty window — distinguishes genuine
         // second meal (strong sharp rise) from fat/protein tail (slow weak rise)
         private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5   // 0.2 → 0.3
@@ -339,7 +337,11 @@ class UamController @Inject constructor(
         val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
-        val unexpectedMin      = UNEXPECTED_RISE_MIN_MMOL * unexpectedMultiplier
+        // unexpectedMin scales with riseMinDeltaBase so the ratio stays consistent
+        // regardless of what the user sets riseMinDelta to.
+        // At default 0.2mmol: unexpectedMin = 0.2 * 0.75 = 0.15mmol (same as before)
+        // At 0.01mmol: unexpectedMin = 0.01 * 0.75 = 0.0075mmol (proportional)
+        val unexpectedMin      = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * unexpectedMultiplier
 
         val unexpectedDelta = deltaMmol - bgiMmol
         val unexpectedShort = shortAvgDeltaMmol - bgiMmol
@@ -536,8 +538,8 @@ class UamController @Inject constructor(
         val riseMinDeltaBase = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
         val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
-        val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
-        val dirtyUnexpected  = UNEXPECTED_RISE_MIN_MMOL * DIRTY_WINDOW_UNEXPECTED_MULT
+        val normalUnexpected = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION
+        val dirtyUnexpected  = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * DIRTY_WINDOW_UNEXPECTED_MULT
         val riseNeeded       = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
         val activeMode       = if (currentlyInPostMealLockout) "dirty" else "normal"
         val u                = unitLabel
