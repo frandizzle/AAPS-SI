@@ -82,7 +82,7 @@ class AdaptiveUnitPreference(
         validatorParameters = obtainValidatorParameters(attrs)
         setOnBindEditTextListener { editText ->
             validator = DefaultEditTextValidator(editText, validatorParameters, context)
-            editText.inputType = InputType.TYPE_NUMBER_FLAG_DECIMAL
+            editText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             editText.setSelection(editText.length())
         }
         setOnPreferenceChangeListener { _, _ -> validator?.testValidity(false) != false }
@@ -125,13 +125,16 @@ class AdaptiveUnitPreference(
         // Flag isInitializing so persistString writes back the already-correct stored mg/dL
         // instead of re-applying convertToMgdl on the display-unit string.
         isInitializing = true
-        text = converted.toPlainString()
-        isInitializing = false
+        try {
+            text = converted.toPlainString()
+        } finally {
+            isInitializing = false
+        }
     }
 
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
-            // Called from onSetInitialValue — just write back the unchanged stored mg/dL value.
+            // Called from onSetInitialValue — write back the unchanged stored mg/dL value.
             val storedMgdl = preferences.get(preferenceKey)
             summary = converted.toPlainString()
             return try {
@@ -142,7 +145,8 @@ class AdaptiveUnitPreference(
         }
         // User entered a new value — it's in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
-        summary = numericValue.toString()
+        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
+        summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
         return try {
             super.persistFloat(store.toFloat())
