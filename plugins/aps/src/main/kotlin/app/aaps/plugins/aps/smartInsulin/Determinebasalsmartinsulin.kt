@@ -328,7 +328,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     else                  -> ""
                 }
 
-                sb.append(" | NORMAL | targetBG=${fmt(targetBg)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=${"%.3f".format(Locale.US, finalSmb)} | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
+                // Show insulinReq and cap detail when SMB was limited
+                val smbDetail = if (rawSmb > finalSmb && finalSmb > 0.0)
+                    "${"%.3f".format(Locale.US, finalSmb)}(req=${"%.2f".format(Locale.US, insulinReq)} raw=${"%.2f".format(Locale.US, rawSmb)} cap=${"%.2f".format(Locale.US, smbCap)})"
+                else
+                    "%.3f".format(Locale.US, finalSmb)
+                sb.append(" | NORMAL | targetBG=${fmt(targetBg)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=$smbDetail | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
