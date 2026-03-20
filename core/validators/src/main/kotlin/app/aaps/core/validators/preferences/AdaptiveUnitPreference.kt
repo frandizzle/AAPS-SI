@@ -119,23 +119,21 @@ class AdaptiveUnitPreference(
     // getPersistedFloat throws ClassCastException on string-stored values, falling back
     // to the default — which is why values snap back to default after upgrade.
     private fun rawStoredMgdl(): Double {
-        // Try float first (new format written by this class)
+        // sp.putDouble() stores as a String in Android SharedPreferences.
+        // This must match the write path in persistString() below (which calls sp.putDouble)
+        // and in PreferencesImpl.put(UnitDoublePreferenceKey) (which also calls sp.putDouble).
+        // Try string first (current format), then float (migration from old persistFloat format).
         return try {
-            getPersistedFloat(Float.MIN_VALUE).let { raw ->
-                if (raw == Float.MIN_VALUE) {
-                    // Not stored as float — try string (old format)
-                    getPersistedString(null)?.toDoubleOrNull() ?: preferenceKey.defaultValue
-                } else {
-                    raw.toDouble()
+            getPersistedString(null)?.toDoubleOrNull()
+                ?: try {
+                    getPersistedFloat(Float.MIN_VALUE).let { raw ->
+                        if (raw == Float.MIN_VALUE) preferenceKey.defaultValue else raw.toDouble()
+                    }
+                } catch (_: Exception) {
+                    preferenceKey.defaultValue
                 }
-            }
         } catch (_: Exception) {
-            // Float read threw (e.g. ClassCastException from string-stored value) — try string
-            try {
-                getPersistedString(null)?.toDoubleOrNull() ?: preferenceKey.defaultValue
-            } catch (_: Exception) {
-                preferenceKey.defaultValue
-            }
+            preferenceKey.defaultValue
         }
     }
 
@@ -171,21 +169,18 @@ class AdaptiveUnitPreference(
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
             // Called from onSetInitialValue — storage is already correct, write it back unchanged.
+            // Use sp.putDouble to match the read path (sp.getDouble in plugin and rawStoredMgdl).
             val storedMgdl = rawStoredMgdl()
-            return try {
-                super.persistFloat(storedMgdl.toFloat())
-            } catch (_: Exception) {
-                super.persistString(storedMgdl.toString())
-            }
+            sp.putDouble(preferenceKey.key, storedMgdl)
+            return true
         }
         // User entered a new value — it is in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         summary = BigDecimal(numericValue).setScale(displayScale(), RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        return try {
-            super.persistFloat(store.toFloat())
-        } catch (_: Exception) {
-            super.persistString(store.toString())
-        }
+        // Write via sp.putDouble — this is the same path as PreferencesImpl.put(UnitDoubleKey)
+        // and must match sp.getDouble() used by the plugin and rawStoredMgdl() above.
+        sp.putDouble(preferenceKey.key, store)
+        return true
     }
 }

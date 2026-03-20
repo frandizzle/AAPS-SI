@@ -326,12 +326,14 @@ class SmartMealDialog : DialogFragmentWithDate() {
                 rh.gs(R.string.si_dialog_title),
                 HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
                 {
-                    // Save updated ISF back to preferences (stored in user's display unit)
-                    // AdaptiveUnitPreference stores in mg/dL — match that format
+                    // Save updated ISF to SharedPreferences via sp.putDouble — must match
+                    // the read path: sp.getDouble(key.key) in the plugin and rawStoredMgdl()
+                    // in AdaptiveUnitPreference. preferences.put(UnitDoubleKey) also calls
+                    // sp.putDouble internally, but has a type inference compile error here.
                     isfKeyFor(selectedMode)?.let { key ->
                         val isfMgdl = if (isfValue == 0.0) 0.0
                         else profileUtil.convertToMgdl(isfValue, profileUtil.units)
-                        preferences.put(key, isfMgdl)
+                        sp.putDouble(key.key, isfMgdl)
                     }
 
                     // Activate meal mode — PB2 params passed to manager for scheduled delivery
