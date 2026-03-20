@@ -6,6 +6,7 @@ import android.util.AttributeSet
 import androidx.annotation.StringRes
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceViewHolder
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.utils.SafeParse
 import app.aaps.core.keys.interfaces.Preferences
@@ -119,11 +120,18 @@ class AdaptiveUnitPreference(
             preferenceKey.defaultValue
         }
 
+    // Precision derived from the key's maxMgdl:
+    // - mmol always uses 1 decimal place
+    // - mg/dL uses 1 decimal place for small-range keys (max <= 36, e.g. delta/threshold values)
+    //   and 0 for normal BG range keys (max > 36, e.g. guards/targets → shows 65, not 65.0)
+    private fun displayScale(): Int =
+        if (profileUtil.units == GlucoseUnit.MMOL) 1
+        else if (preferenceKey.maxMgdl <= 36) 1 else 0
+
     private fun displayValue(): String {
         val storedMgdl = rawStoredMgdl()
         val display = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
-        // Use 1 decimal place for both units — mg/dL delta values like 2.9 must not round to integers
-        return BigDecimal(display).setScale(1, RoundingMode.HALF_UP).toPlainString()
+        return BigDecimal(display).setScale(displayScale(), RoundingMode.HALF_UP).toPlainString()
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
@@ -151,7 +159,7 @@ class AdaptiveUnitPreference(
         }
         // User entered a new value — it is in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
-        summary = BigDecimal(numericValue).setScale(1, RoundingMode.HALF_UP).toPlainString()
+        summary = BigDecimal(numericValue).setScale(displayScale(), RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
         return try {
             super.persistFloat(store.toFloat())
