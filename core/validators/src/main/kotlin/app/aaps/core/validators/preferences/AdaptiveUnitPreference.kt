@@ -169,18 +169,18 @@ class AdaptiveUnitPreference(
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
             // Called from onSetInitialValue — storage is already correct, write it back unchanged.
-            // Use sp.putDouble to match the read path (sp.getDouble in plugin and rawStoredMgdl).
-            val storedMgdl = rawStoredMgdl()
-            sp.putDouble(preferenceKey.key, storedMgdl)
+            // Use preferences.put(preferenceKey) which calls sp.putDouble internally — matching
+            // the sp.getDouble() read path used by the plugin and rawStoredMgdl().
+            preferences.put(preferenceKey, rawStoredMgdl())
             return true
         }
         // User entered a new value — it is in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         summary = BigDecimal(numericValue).setScale(displayScale(), RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        // Write via sp.putDouble — this is the same path as PreferencesImpl.put(UnitDoubleKey)
-        // and must match sp.getDouble() used by the plugin and rawStoredMgdl() above.
-        sp.putDouble(preferenceKey.key, store)
+        // preferences.put(UnitDoublePreferenceKey) calls sp.putDouble — same path as
+        // PreferencesImpl.put(UnitDoublePreferenceKey), matching sp.getDouble() in the plugin.
+        preferences.put(preferenceKey, store)
         return true
     }
 }
