@@ -49,13 +49,13 @@ class AdaptiveUnitPreference(
 
         preferenceKey = unitKey ?: preferences.get(key) as UnitDoublePreferenceKey
 
-        // FIX: stored value is always mg/dL (written by persistString below).
-        // Use fromMgdlToUnits() which converts from known mg/dL — no heuristic guessing.
-        // The original valueInCurrentUnitsDetect() uses a < 36 threshold to detect units,
-        // which misidentifies small mg/dL values (e.g. 9, 18, 27) as mmol and multiplies by 18.
+        // preferences.get(UnitDoubleKey) already returns value in current display units.
+        // No conversion needed — just display it directly.
         val storedMgdl = preferences.get(preferenceKey)
-        val displayValue = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
+        val displayValue = storedMgdl  // already in display units
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
+        android.util.Log.e("SmartInsulinPref",
+                           "init key=${preferenceKey.key} storedRaw=$storedMgdl units=${profileUtil.units} display=$displayValue")
         converted = BigDecimal(displayValue).setScale(precision, RoundingMode.HALF_UP)
         summary = converted.toPlainString()
 
@@ -127,6 +127,9 @@ class AdaptiveUnitPreference(
         summary = numericValue.toString()
         // User entered value is in display units — convert to mg/dL for storage
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
+        android.util.Log.e("SmartInsulinPref",
+                           "persistString key=${preferenceKey.key} value=$value numeric=$numericValue units=${profileUtil.units} storeMgdl=$store",
+                           Exception("stack trace"))
         return try {
             super.persistFloat(store.toFloat())
         } catch (_: Exception) {
