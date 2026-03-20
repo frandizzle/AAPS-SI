@@ -6,7 +6,6 @@ import android.util.AttributeSet
 import androidx.annotation.StringRes
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceViewHolder
-import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.utils.SafeParse
 import app.aaps.core.keys.interfaces.Preferences
@@ -123,8 +122,8 @@ class AdaptiveUnitPreference(
     private fun displayValue(): String {
         val storedMgdl = rawStoredMgdl()
         val display = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
-        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
-        return BigDecimal(display).setScale(precision, RoundingMode.HALF_UP).toPlainString()
+        // Use 1 decimal place for both units — mg/dL delta values like 2.9 must not round to integers
+        return BigDecimal(display).setScale(1, RoundingMode.HALF_UP).toPlainString()
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
@@ -152,8 +151,7 @@ class AdaptiveUnitPreference(
         }
         // User entered a new value — it is in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
-        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
-        summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
+        summary = BigDecimal(numericValue).setScale(1, RoundingMode.HALF_UP).toPlainString()
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
         return try {
             super.persistFloat(store.toFloat())
