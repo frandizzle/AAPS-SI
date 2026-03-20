@@ -31,10 +31,6 @@ enum class UnitDoubleKey(
     ApsSmartInsulinLowGuard("si_low_guard",   72.0,  54,  90, defaultedBySM = true),   // 4.0 mmol
     ApsSmartInsulinWarnGuard("si_warn_guard",  86.0,  63, 108, defaultedBySM = true),   // 4.8 mmol
 
-    // Activity target offsets above profile target
-    ApsSmartInsulinActivityLightTarget(   "si_activity_light_target",      9.0,   0, 54, defaultedBySM = true),  // 0.5 mmol
-    ApsSmartInsulinActivityModerateTarget("si_activity_moderate_target",  18.0,   0, 54, defaultedBySM = true),  // 1.0 mmol
-    ApsSmartInsulinActivityHeavyTarget(   "si_activity_heavy_target",     27.0,   0, 54, defaultedBySM = true),  // 1.5 mmol
 
     // UAM detection thresholds
     ApsSmartInsulinUamTriggerThreshold(   "si_uam_trigger",          108.0, 72, 180, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),  // 6.0 mmol
