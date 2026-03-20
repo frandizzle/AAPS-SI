@@ -1146,22 +1146,21 @@ open class SmartInsulinPlugin @Inject constructor(
                 "si_screen_activity", "si_screen_meal", "si_screen_stft",
                 "si_screen_uam", "si_screen_uam_windows"
             )) return
-
-        // Teal section header
         val category = PreferenceCategory(context)
         parent.addPreference(category)
         category.apply {
             key   = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
-        }
+            initialExpandedChildrenCount = 0
 
-        // Navigable "Advanced" row — added to parent (not category) so it renders as a
-        // clickable row with > arrow, same visual weight as other Advanced rows
-        parent.addPreference(preferenceManager.createPreferenceScreen(context).apply {
-            key   = "si_screen_advanced"
-            title = rh.gs(app.aaps.core.ui.R.string.advanced_settings_title)
+            // ── Flat prefs shown in summary / collapsed view ───────────────
+            // These are what generate the ∨ arrow and summary text — same pattern as OpenAPSBoostV2
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmb,               title = R.string.enable_smb))
+            addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled, title = R.string.si_uam_enabled_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,              title = R.string.openapssmb_max_iob_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,     title = R.string.si_max_smb_title))
 
-            // ── General & Safety ──────────────────────────────────────
+            // ── General & Safety ──────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_general"
                 title = "General & Safety"
@@ -1183,7 +1182,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
             })
 
-            // ── Learning ──────────────────────────────────────────────
+            // ── Learning ──────────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_learning"
                 title = "Learning"
@@ -1193,7 +1192,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPostModeLockoutMins,      title = R.string.si_post_mode_lockout_mins_title))
             })
 
-            // ── Dawn Phenomenon ───────────────────────────────────────
+            // ── Dawn Phenomenon ───────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_dawn"
                 title = "Dawn Phenomenon"
@@ -1202,7 +1201,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmartInsulinDawnSmbReduction, title = R.string.si_dawn_smb_reduction_title))
             })
 
-            // ── Activity ──────────────────────────────────────────────
+            // ── Activity ──────────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_activity"
                 title = "Activity"
@@ -1212,7 +1211,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
             })
 
-            // ── Meal Modes ────────────────────────────────────────────
+            // ── Meal Modes ────────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_meal"
                 title = "Meal Modes"
@@ -1230,14 +1229,14 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,  title = R.string.si_prebolus2_default_delay_title))
             })
 
-            // ── STFT ──────────────────────────────────────────────────
+            // ── STFT ──────────────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_stft"
                 title = "STFT (Soft Target)"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, title = R.string.si_stft_cgm_warmup_block_title))
             })
 
-            // ── UAM Auto-Detection ────────────────────────────────────
+            // ── UAM Auto-Detection ────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_uam"
                 title = "UAM Auto-Detection"
@@ -1253,7 +1252,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamEntrySmbCount,           title = R.string.si_uam_entry_smb_count_title))
             })
 
-            // ── UAM Windows ───────────────────────────────────────────
+            // ── UAM Windows ───────────────────────────────────────────────
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_uam_windows"
                 title = "UAM Windows"
@@ -1293,7 +1292,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,       title = R.string.si_uam_proteinfat_stuck_readings_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
-            }) // end UAM Windows
-        }) // end si_screen_advanced
+            })
+        }
     }
 }
