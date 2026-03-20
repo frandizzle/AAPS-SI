@@ -706,10 +706,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
-        // Activity target offset (user-configured mmol offsets per activity level)
-        val activityLightTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
-        val activityModerateTarget = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
-        val activityHeavyTarget    = preferences.get(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
+        // Activity target offset (user-configured mg/dL offsets stored in SharedPreferences)
+        // Must use sp.getDouble to bypass valueInCurrentUnitsDetect — these values (9, 18, 27 mg/dL)
+        // are all below 36 and would be misidentified as mmol and multiplied by 18 (→ 162/324/486 mg/dL)
+        val activityLightTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue)    / 18.0
+        val activityModerateTarget = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue) / 18.0
+        val activityHeavyTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(

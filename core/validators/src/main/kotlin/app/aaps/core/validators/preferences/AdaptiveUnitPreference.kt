@@ -168,10 +168,9 @@ class AdaptiveUnitPreference(
 
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
-            // Called from onSetInitialValue — storage is already correct, write it back unchanged.
-            // Use preferences.put(preferenceKey) which calls sp.putDouble internally — matching
-            // the sp.getDouble() read path used by the plugin and rawStoredMgdl().
-            preferences.put(preferenceKey, rawStoredMgdl())
+            // Called from onSetInitialValue — do NOT write back to storage.
+            // The value is already correctly on disk; writing here risks overwriting
+            // a freshly saved correct value with a stale rawStoredMgdl() read.
             return true
         }
         // User entered a new value — it is in display units, convert to mg/dL for storage.
