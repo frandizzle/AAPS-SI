@@ -37,10 +37,7 @@ class AdaptiveUnitPreference(
     // Inflater constructor
     constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, unitKey = null, title = null)
 
-    private var converted: BigDecimal
-
-    // Flag to indicate we're in onSetInitialValue — persistString must NOT re-convert in this case
-    // because the value is the display-unit string for the UI; storage already has correct mg/dL.
+    // Flag: true while onSetInitialValue is running so persistString does not re-convert
     private var isInitializing = false
 
     init {
@@ -52,14 +49,6 @@ class AdaptiveUnitPreference(
         title?.let { this.title = context.getString(it) }
 
         preferenceKey = unitKey ?: preferences.get(key) as UnitDoublePreferenceKey
-
-        // preferences.get(UnitDoubleKey) returns the raw stored float (always mg/dL).
-        // Convert to display units for showing to the user.
-        val storedMgdl = preferences.get(preferenceKey)
-        val displayValue = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
-        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
-        converted = BigDecimal(displayValue).setScale(precision, RoundingMode.HALF_UP)
-        summary = converted.toPlainString()
 
         if (preferences.simpleMode && preferenceKey.defaultedBySM) isVisible = false
         if (preferences.apsMode && !preferenceKey.showInApsMode) {
@@ -120,13 +109,32 @@ class AdaptiveUnitPreference(
         }
     }
 
+    // Read raw mg/dL from SharedPreferences directly — same pattern as AdaptiveDoublePreference.
+    // We MUST NOT use preferences.get(UnitDoubleKey) here because PreferencesImpl applies
+    // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small mg/dL
+    // values (e.g. 9, 18, 27 mg/dL activity targets) as mmol and multiplies by 18.
+    private fun rawStoredMgdl(): Double =
+        try {
+            getPersistedFloat(preferenceKey.defaultValue.toFloat()).toDouble()
+        } catch (_: Exception) {
+            preferenceKey.defaultValue
+        }
+
+    private fun displayValue(): String {
+        val storedMgdl = rawStoredMgdl()
+        val display = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
+        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
+        return BigDecimal(display).setScale(precision, RoundingMode.HALF_UP).toPlainString()
+    }
+
     override fun onSetInitialValue(defaultValue: Any?) {
-        // Setting text triggers persistString via EditTextPreference.setText().
-        // Flag isInitializing so persistString writes back the already-correct stored mg/dL
+        // Setting text triggers EditTextPreference.setText() → persistString().
+        // Guard with isInitializing so persistString writes back the unchanged raw mg/dL
         // instead of re-applying convertToMgdl on the display-unit string.
         isInitializing = true
         try {
-            text = converted.toPlainString()
+            text = displayValue()
+            summary = text
         } finally {
             isInitializing = false
         }
@@ -134,16 +142,15 @@ class AdaptiveUnitPreference(
 
     override fun persistString(value: String?): Boolean {
         if (isInitializing) {
-            // Called from onSetInitialValue — write back the unchanged stored mg/dL value.
-            val storedMgdl = preferences.get(preferenceKey)
-            summary = converted.toPlainString()
+            // Called from onSetInitialValue — storage is already correct, write it back unchanged.
+            val storedMgdl = rawStoredMgdl()
             return try {
                 super.persistFloat(storedMgdl.toFloat())
             } catch (_: Exception) {
                 super.persistString(storedMgdl.toString())
             }
         }
-        // User entered a new value — it's in display units, convert to mg/dL for storage.
+        // User entered a new value — it is in display units, convert to mg/dL for storage.
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
         summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
