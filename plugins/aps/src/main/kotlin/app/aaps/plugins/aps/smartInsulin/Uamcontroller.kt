@@ -337,10 +337,11 @@ class UamController @Inject constructor(
         val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
-        // unexpectedMin scales with riseMinDeltaBase so the ratio stays consistent
-        // regardless of what the user sets riseMinDelta to.
-        // At default 0.2mmol: unexpectedMin = 0.2 * 0.75 = 0.15mmol (same as before)
-        // At 0.01mmol: unexpectedMin = 0.01 * 0.75 = 0.0075mmol (proportional)
+        // unexpectedMin = 75% of riseMinDeltaBase — scales with user setting.
+        // Gate 1 (Δ >= riseMinDelta) always evaluated first, so a rise smaller than
+        // riseMinDelta can never trigger UAM regardless of unexpectedMin.
+        // The 75% gives slight tolerance for meals eaten with active IOB — if BG rises
+        // 0.20 but IOB accounts for -0.02, unexpected = 0.18 which passes 0.15 gate.
         val unexpectedMin      = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * unexpectedMultiplier
 
         val unexpectedDelta = deltaMmol - bgiMmol
@@ -389,13 +390,13 @@ class UamController @Inject constructor(
                                      "uΔ=${fmtDelta(unexpectedDelta)}(need>=${fmtThresh(unexpectedMin)}) " +
                                      "bgi=${fmtDelta(bgiMmol)}, reset")
             }
-            // Record reject reason for SI tab debug display
+            // Always record reject reason — even at streak=0 so SI tab shows why UAM isn't counting
             val rejectReason = when {
-                deltaMmol < deltaMin             -> "Δ ${fmtDelta(deltaMmol)} < ${fmtThresh(deltaMin)}"
+                deltaMmol < deltaMin                  -> "Δ ${fmtDelta(deltaMmol)} < ${fmtThresh(deltaMin)}"
                 shortAvgDeltaMmol < shortAvgThreshold -> "avg ${fmtDelta(shortAvgDeltaMmol)} < ${fmtThresh(shortAvgThreshold)}"
-                unexpectedDelta < unexpectedMin  -> "uΔ ${fmtDelta(unexpectedDelta)} < ${fmtThresh(unexpectedMin)}"
+                unexpectedDelta < unexpectedMin       -> "uΔ ${fmtDelta(unexpectedDelta)} < ${fmtThresh(unexpectedMin)}"
                 unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${fmtDelta(unexpectedShort)} < ${fmtThresh(unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
-                else                             -> "threshold not met"
+                else                                  -> "threshold not met"
             }
             lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
             resetStreak(); return
