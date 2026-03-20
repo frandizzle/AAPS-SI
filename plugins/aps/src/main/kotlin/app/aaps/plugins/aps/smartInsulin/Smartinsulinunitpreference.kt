@@ -76,20 +76,21 @@ class SmartInsulinUnitPreference(
             parent?.isVisible = isVisible
             parent?.isEnabled = isEnabled
         }
-        updateSummary()
+        // Post to avoid calling setSummary during a layout pass
+        android.os.Handler(android.os.Looper.getMainLooper()).post { updateSummary() }
     }
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
         holder.isDividerAllowedAbove = false
         holder.isDividerAllowedBelow = false
-        updateSummary()
+        // Do NOT call updateSummary() here — setSummary triggers notifyChanged()
+        // which crashes if called during RecyclerView layout pass
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
-        // Do NOT call super or setText here — that would trigger persistString
-        // with a stale display value. Summary is updated in onAttached/onBindViewHolder.
-        updateSummary()
+        // Do NOT call updateSummary() here — may be called during layout
+        // Summary is set in init and onAttached
     }
 
     override fun persistString(value: String?): Boolean {
