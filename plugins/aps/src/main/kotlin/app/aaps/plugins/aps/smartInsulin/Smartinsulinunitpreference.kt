@@ -16,9 +16,7 @@ import java.math.RoundingMode
 /**
  * Unit-aware preference for SmartInsulin.
  *
- * Stores mg/dL always. Displays using fromMgdlToUnits() — no < 36 magnitude
- * heuristic that breaks small values like ISF (18 mg/dL/U) or activity targets (9 mg/dL).
- *
+ * Stores mg/dL always. Uses fromMgdlToUnits() for display — no < 36 heuristic.
  * Dependencies passed directly — no Dagger registration needed.
  */
 class SmartInsulinUnitPreference(
@@ -35,6 +33,7 @@ class SmartInsulinUnitPreference(
         dialogMessage?.let { setDialogMessage(it) }
         title?.let { dialogTitle = ctx.getString(it) }
         title?.let { this.title = ctx.getString(it) }
+        isPersistent = false  // We handle persistence ourselves in persistString
 
         if (preferences.simpleMode && unitKey.defaultedBySM) isVisible = false
         if (preferences.apsMode && !unitKey.showInApsMode) { isVisible = false; isEnabled = false }
@@ -45,29 +44,39 @@ class SmartInsulinUnitPreference(
 
         setOnBindEditTextListener { editText ->
             editText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-            // Show current display value in dialog input
-            editText.setText(currentDisplayString())
             editText.setSelection(editText.length())
         }
-        // Update summary to show current converted value
-        updateSummary()
+
+        summary = displayString()
     }
 
-    /** Converts stored mg/dL → current display units, no heuristic. */
-    private fun currentDisplayValue(): Double {
-        val storedMgdl = preferences.get(unitKey)
-        return profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
-    }
+    /** Reads stored mg/dL and converts to current display units — fresh every call. */
+    private fun toDisplay(): Double =
+        profileUtil.fromMgdlToUnits(preferences.get(unitKey), profileUtil.units)
 
-    private fun currentDisplayString(): String {
+    private fun displayString(): String {
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
-        return BigDecimal(currentDisplayValue())
-            .setScale(precision, RoundingMode.HALF_UP)
-            .toPlainString()
+        return BigDecimal(toDisplay()).setScale(precision, RoundingMode.HALF_UP).toPlainString()
     }
 
-    private fun updateSummary() {
-        summary = currentDisplayString()
+    // EditTextPreference uses getText() to populate the dialog — return display value
+    override fun getText(): String = displayString()
+
+    // EditTextPreference calls setText() when user confirms — we intercept to convert & store
+    override fun setText(text: String?) {
+        if (text == null) return
+        val numericValue = SafeParse.stringToDouble(text, unitKey.defaultValue)
+        val storeMgdl = profileUtil.convertToMgdl(numericValue, profileUtil.units)
+        try {
+            preferenceDataStore?.putFloat(key, storeMgdl.toFloat())
+                ?: sharedPreferences?.edit()?.putFloat(key, storeMgdl.toFloat())?.apply()
+        } catch (_: Exception) {
+            preferenceDataStore?.putString(key, storeMgdl.toString())
+                ?: sharedPreferences?.edit()?.putString(key, storeMgdl.toString())?.apply()
+        }
+        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
+        summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
+        notifyChanged()
     }
 
     override fun onAttached() {
@@ -76,34 +85,17 @@ class SmartInsulinUnitPreference(
             parent?.isVisible = isVisible
             parent?.isEnabled = isEnabled
         }
-        // Post to avoid calling setSummary during a layout pass
-        android.os.Handler(android.os.Looper.getMainLooper()).post { updateSummary() }
     }
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
         holder.isDividerAllowedAbove = false
         holder.isDividerAllowedBelow = false
-        // Do NOT call updateSummary() here — setSummary triggers notifyChanged()
-        // which crashes if called during RecyclerView layout pass
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
-        // Do NOT call updateSummary() here — may be called during layout
-        // Summary is set in init and onAttached
-    }
-
-    override fun persistString(value: String?): Boolean {
-        // value is what the user typed in display units
-        val numericValue = SafeParse.stringToDouble(value, unitKey.defaultValue)
-        // Convert display units → mg/dL for storage
-        val storeMgdl = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
-        summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
-        return try {
-            super.persistFloat(storeMgdl.toFloat())
-        } catch (_: Exception) {
-            super.persistString(storeMgdl.toString())
-        }
+        // Don't call super — it would call setText() with persisted string
+        // which would trigger our setText() and double-convert
+        summary = displayString()
     }
 }
