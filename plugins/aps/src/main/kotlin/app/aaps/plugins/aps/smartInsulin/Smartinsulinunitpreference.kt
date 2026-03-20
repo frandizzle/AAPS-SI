@@ -14,38 +14,27 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 
 /**
- * Unit-aware preference for SmartInsulin that correctly handles values < 36 mg/dL.
+ * Unit-aware preference for SmartInsulin.
  *
- * The stock AdaptiveUnitPreference uses valueInCurrentUnitsDetect() which treats
- * values < 36 as mmol — misidentifying small mg/dL values like ISF overrides
- * (18 mg/dL/U) or activity targets (9 mg/dL).
+ * Stores mg/dL always. Displays using fromMgdlToUnits() — no < 36 magnitude
+ * heuristic that breaks small values like ISF (18 mg/dL/U) or activity targets (9 mg/dL).
  *
- * This class uses fromMgdlToUnits() — explicit conversion, no magnitude heuristic.
- * Dependencies passed directly to avoid Dagger registration requirement.
+ * Dependencies passed directly — no Dagger registration needed.
  */
 class SmartInsulinUnitPreference(
     ctx: Context,
     val unitKey: UnitDoublePreferenceKey,
     private val profileUtil: ProfileUtil,
     private val preferences: Preferences,
-    @StringRes dialogMessage: Int? = null,
+    @StringRes private val dialogMessage: Int? = null,
     @StringRes title: Int?,
 ) : EditTextPreference(ctx) {
-
-    private var displayValue: BigDecimal
 
     init {
         key = unitKey.key
         dialogMessage?.let { setDialogMessage(it) }
         title?.let { dialogTitle = ctx.getString(it) }
         title?.let { this.title = ctx.getString(it) }
-
-        // Explicit conversion — fromMgdlToUnits has no < 36 heuristic
-        val storedMgdl = preferences.get(unitKey)
-        val converted = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
-        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
-        displayValue = BigDecimal(converted).setScale(precision, RoundingMode.HALF_UP)
-        summary = displayValue.toPlainString()
 
         if (preferences.simpleMode && unitKey.defaultedBySM) isVisible = false
         if (preferences.apsMode && !unitKey.showInApsMode) { isVisible = false; isEnabled = false }
@@ -56,9 +45,29 @@ class SmartInsulinUnitPreference(
 
         setOnBindEditTextListener { editText ->
             editText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            // Show current display value in dialog input
+            editText.setText(currentDisplayString())
             editText.setSelection(editText.length())
         }
-        setDefaultValue(unitKey.defaultValue)
+        // Update summary to show current converted value
+        updateSummary()
+    }
+
+    /** Converts stored mg/dL → current display units, no heuristic. */
+    private fun currentDisplayValue(): Double {
+        val storedMgdl = preferences.get(unitKey)
+        return profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
+    }
+
+    private fun currentDisplayString(): String {
+        val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
+        return BigDecimal(currentDisplayValue())
+            .setScale(precision, RoundingMode.HALF_UP)
+            .toPlainString()
+    }
+
+    private fun updateSummary() {
+        summary = currentDisplayString()
     }
 
     override fun onAttached() {
@@ -67,20 +76,26 @@ class SmartInsulinUnitPreference(
             parent?.isVisible = isVisible
             parent?.isEnabled = isEnabled
         }
+        updateSummary()
     }
 
     override fun onBindViewHolder(holder: PreferenceViewHolder) {
         super.onBindViewHolder(holder)
         holder.isDividerAllowedAbove = false
         holder.isDividerAllowedBelow = false
+        updateSummary()
     }
 
     override fun onSetInitialValue(defaultValue: Any?) {
-        text = displayValue.toPlainString()
+        // Do NOT call super or setText here — that would trigger persistString
+        // with a stale display value. Summary is updated in onAttached/onBindViewHolder.
+        updateSummary()
     }
 
     override fun persistString(value: String?): Boolean {
+        // value is what the user typed in display units
         val numericValue = SafeParse.stringToDouble(value, unitKey.defaultValue)
+        // Convert display units → mg/dL for storage
         val storeMgdl = profileUtil.convertToMgdl(numericValue, profileUtil.units)
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
         summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
