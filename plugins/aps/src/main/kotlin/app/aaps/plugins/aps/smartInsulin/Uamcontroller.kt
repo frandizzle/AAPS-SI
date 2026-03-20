@@ -115,13 +115,14 @@ class UamController @Inject constructor(
     //  - New format: stored as mg/dL float (after AdaptiveUnitPreference fix)
     //  - Old format: stored as mmol display value float (before fix)
     // BG/threshold keys: values <20 were stored as mmol → ×18 to get mg/dL
-    // ISF keys: values <36 were stored as mmol/U → ×18 to get mg/dL/U
+    // ISF keys: already stored as mg/dL by sp.putDouble — use sp.getDouble directly
     private fun rawMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
         val raw = sp.getDouble(key.key, key.defaultValue)
         return if (raw < mmolThreshold) raw * 18.0 else raw
     }
     private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = rawMgdl(key, 36.0)
+    // ISF stored correctly as mg/dL — no threshold conversion needed
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display

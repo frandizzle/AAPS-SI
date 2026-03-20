@@ -481,21 +481,22 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
-        // Must use spMgdl() to handle both old mmol-stored and new mg/dL-stored formats.
-        // ISF values <36 mg/dL/U were stored as mmol by old AdaptiveUnitPreference — spMgdl detects and converts.
+        // ISF overrides: correctly stored as mg/dL by sp.putDouble — use sp.getDouble directly.
+        // Do NOT use spMgdl() here — ISF values are already in mg/dL (e.g. 12.6), not mmol.
+        // spMgdl would incorrectly multiply by 18 since 12.6 < 36.
         val modeIsfMgdl = when (mealMode) {
-            MealMode.BREAKFAST     -> spMgdl(UnitDoubleKey.ApsSmartInsulinBreakfastIsf,     36.0)
-            MealMode.LUNCH         -> spMgdl(UnitDoubleKey.ApsSmartInsulinLunchIsf,         36.0)
-            MealMode.DINNER        -> spMgdl(UnitDoubleKey.ApsSmartInsulinDinnerIsf,        36.0)
-            MealMode.LOW_CARB      -> spMgdl(UnitDoubleKey.ApsSmartInsulinLowCarbIsf,       36.0)
-            MealMode.EXTENDED      -> spMgdl(UnitDoubleKey.ApsSmartInsulinExtendedIsf,      36.0)
-            MealMode.UAM_BREAKFAST -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,  36.0)
-            MealMode.UAM_LUNCH     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf,      36.0)
-            MealMode.UAM_DINNER    -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,     36.0)
-            MealMode.UAM_SNACK     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf,      36.0)
-            MealMode.UAM_AFTERNOON -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,  36.0)
-            MealMode.UAM_PROTEIN_FAT -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, 36.0)
-            MealMode.FASTING       -> 0.0  // always use profile ISF in fasting
+            MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
+            MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
+            MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
+            MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
+            MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
+            MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
+            MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
+            MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
+            MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
+            MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
+            MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+            MealMode.FASTING       -> 0.0
         }
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
         // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
@@ -610,17 +611,17 @@ open class SmartInsulinPlugin @Inject constructor(
         if (latestMealMode != mealMode) {
             val latestModeIsfMgdl = run {
                 val unitVal = when (latestMealMode) {
-                    MealMode.BREAKFAST     -> spMgdl(UnitDoubleKey.ApsSmartInsulinBreakfastIsf,     36.0)
-                    MealMode.LUNCH         -> spMgdl(UnitDoubleKey.ApsSmartInsulinLunchIsf,         36.0)
-                    MealMode.DINNER        -> spMgdl(UnitDoubleKey.ApsSmartInsulinDinnerIsf,        36.0)
-                    MealMode.LOW_CARB      -> spMgdl(UnitDoubleKey.ApsSmartInsulinLowCarbIsf,       36.0)
-                    MealMode.EXTENDED      -> spMgdl(UnitDoubleKey.ApsSmartInsulinExtendedIsf,      36.0)
-                    MealMode.UAM_BREAKFAST -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,  36.0)
-                    MealMode.UAM_LUNCH     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf,      36.0)
-                    MealMode.UAM_DINNER    -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,     36.0)
-                    MealMode.UAM_SNACK     -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf,      36.0)
-                    MealMode.UAM_AFTERNOON -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,  36.0)
-                    MealMode.UAM_PROTEIN_FAT -> spMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, 36.0)
+                    MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
+                    MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
+                    MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
+                    MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
+                    MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
+                    MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
+                    MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
+                    MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
+                    MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
+                    MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
+                    MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
                     MealMode.FASTING       -> 0.0
                 }
                 if (unitVal == 0.0) 0.0 else unitVal
