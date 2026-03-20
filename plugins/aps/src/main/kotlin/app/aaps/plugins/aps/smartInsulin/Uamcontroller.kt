@@ -294,6 +294,7 @@ class UamController @Inject constructor(
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
+            lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, inPostMealLockout)
             resetStreak(); return
         }
 
