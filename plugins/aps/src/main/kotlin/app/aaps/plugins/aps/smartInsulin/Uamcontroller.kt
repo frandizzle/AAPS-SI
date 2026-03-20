@@ -104,14 +104,14 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
-    // UnitDoubleKey preferences are stored and returned in mg/dL always.
-    // Divide by 18 to get mmol for internal logic comparisons.
-    private fun unitPrefMmol(key: UnitDoubleKey): Double =
-        preferences.get(key) / 18.0
+    // UnitDoubleKey: stored and returned in mg/dL. Divide by 18 for mmol.
+    private fun unitPrefMmol(key: UnitDoubleKey): Double = preferences.get(key) / 18.0
+    // DoubleKey ISF/delta overrides: also stored in mg/dL. Divide by 18 for mmol.
+    private fun unitPrefMmol(key: DoubleKey): Double = preferences.get(key) / 18.0
 
     // ISF overrides: 0.0 = "use profile ISF" sentinel — mg/dL stored directly
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double =
-        preferences.get(key)  // already mg/dL; 0.0 sentinel preserved
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double = preferences.get(key)
+    private fun isfPrefMgdl(key: DoubleKey): Double = preferences.get(key)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display

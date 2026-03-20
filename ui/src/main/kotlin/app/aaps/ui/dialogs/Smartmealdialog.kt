@@ -23,7 +23,6 @@ import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
-import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.objects.extensions.formatColor
 import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.toast.ToastUtils
@@ -66,8 +65,8 @@ class SmartMealDialog : DialogFragmentWithDate() {
         MealMode.EXTENDED
     )
 
-    /** Returns the UnitDoubleKey for the ISF pref of the given mode (null for non-manual modes) */
-    private fun isfKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
+    /** Returns the DoubleKey for the ISF pref of the given mode (null for non-manual modes) */
+    private fun isfKeyFor(mode: MealMode): DoubleKey? = when (mode) {
         MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastIsf
         MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchIsf
         MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerIsf
