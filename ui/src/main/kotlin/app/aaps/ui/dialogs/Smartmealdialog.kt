@@ -22,6 +22,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.objects.extensions.formatColor
 import app.aaps.core.ui.dialogs.OKDialog
@@ -65,22 +66,20 @@ class SmartMealDialog : DialogFragmentWithDate() {
         MealMode.EXTENDED
     )
 
-    /** Returns the DoubleKey for the ISF pref of the given mode (null for non-manual modes) */
-    private fun isfKeyFor(mode: MealMode): DoubleKey? = when (mode) {
-        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastIsf
-        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchIsf
-        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerIsf
-        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbIsf
-        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedIsf
+    /** Returns the UnitDoubleKey for the ISF pref of the given mode (null for non-manual modes) */
+    private fun isfKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
+        MealMode.BREAKFAST -> UnitDoubleKey.ApsSmartInsulinBreakfastIsf
+        MealMode.LUNCH     -> UnitDoubleKey.ApsSmartInsulinLunchIsf
+        MealMode.DINNER    -> UnitDoubleKey.ApsSmartInsulinDinnerIsf
+        MealMode.LOW_CARB  -> UnitDoubleKey.ApsSmartInsulinLowCarbIsf
+        MealMode.EXTENDED  -> UnitDoubleKey.ApsSmartInsulinExtendedIsf
         else               -> null
     }
 
     /** Load the stored ISF for the current mode into the picker (converts mg/dL → display units) */
     private fun loadIsfForMode(mode: MealMode) {
         val key = isfKeyFor(mode) ?: return
-        val storedMgdl = preferences.get(key)  // stored in mg/dL
-        // Use explicit conversion — don't use valueInCurrentUnitsDetect which uses a
-        // < 36 heuristic that misidentifies small mg/dL ISF values (e.g. 18) as mmol
+        val storedMgdl = preferences.get(key)  // UnitDoubleKey always stores mg/dL
         binding.isfAmount.value = if (storedMgdl == 0.0) 0.0
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
             storedMgdl / 18.0
@@ -134,7 +133,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val isfMax   = if (isMmol) 20.0 else 360.0
         val isfStep  = if (isMmol) 0.1  else 1.0
         val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
-        val isfFallbackMgdl = preferences.get(DoubleKey.ApsSmartInsulinLunchIsf)
+        val isfFallbackMgdl = preferences.get(UnitDoubleKey.ApsSmartInsulinLunchIsf)
         val isfFallback = if (isfFallbackMgdl == 0.0) 0.0
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
             isfFallbackMgdl / 18.0

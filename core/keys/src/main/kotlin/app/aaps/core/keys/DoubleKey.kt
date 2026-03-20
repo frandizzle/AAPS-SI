@@ -62,30 +62,6 @@ enum class DoubleKey(
     // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm("si_resting_hr_bpm", 70.0, 50.0, 110.0, defaultedBySM = true),
-
-    // UAM auto-detection — delta and burst can be < 36 mg/dL so use DoubleKey not UnitDoubleKey
-    ApsSmartInsulinUamRiseMinDelta(  "si_uam_rise_min_delta",  3.6, 0.0, 18.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    ApsSmartInsulinUamBurstThreshold("si_uam_burst_threshold", 18.0, 0.0, 54.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-
-    // Activity target raises (mg/dL above profile target) — < 36 so cannot use UnitDoubleKey
-    ApsSmartInsulinActivityLightTarget(   "si_activity_light_target",     9.0, 0.0, 54.0, defaultedBySM = true),
-    ApsSmartInsulinActivityModerateTarget("si_activity_moderate_target", 18.0, 0.0, 54.0, defaultedBySM = true),
-    ApsSmartInsulinActivityHeavyTarget(   "si_activity_heavy_target",    27.0, 0.0, 54.0, defaultedBySM = true),
-
-    // Per-meal ISF overrides (mg/dL/U) — 0.0 = use profile ISF sentinel
-    // Can be < 36 so cannot use UnitDoubleKey
-    ApsSmartInsulinBreakfastIsf(    "si_breakfast_isf2",       0.0, 0.0, 360.0, defaultedBySM = true),
-    ApsSmartInsulinLunchIsf(        "si_lunch_isf2",           0.0, 0.0, 360.0, defaultedBySM = true),
-    ApsSmartInsulinDinnerIsf(       "si_dinner_isf2",          0.0, 0.0, 360.0, defaultedBySM = true),
-    ApsSmartInsulinLowCarbIsf(      "si_lowcarb_isf2",         0.0, 0.0, 360.0, defaultedBySM = true),
-    ApsSmartInsulinExtendedIsf(     "si_extended_isf2",        0.0, 0.0, 360.0, defaultedBySM = true),
-    ApsSmartInsulinUamBreakfastIsf( "si_uam_breakfast_isf2",   0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
-    ApsSmartInsulinUamLunchIsf(     "si_uam_lunch_isf2",       0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
-    ApsSmartInsulinUamDinnerIsf(    "si_uam_dinner_isf2",      0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
-    ApsSmartInsulinUamSnackIsf(     "si_uam_snack_isf2",       0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
-    ApsSmartInsulinUamAfternoonIsf( "si_uam_afternoon_isf2",   0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
-    ApsSmartInsulinUamProteinFatIsf("si_uam_proteinfat_isf2",  0.0, 0.0, 360.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinUamEntrySmbFraction("si_uam_entry_smb_fraction", 0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
-    // UAM per-window ISF overrides moved to UnitDoubleKey (ApsSmartInsulinUamBreakfastIsf etc.)
-
+    // UAM thresholds, ISF overrides, activity targets all in UnitDoubleKey
 }

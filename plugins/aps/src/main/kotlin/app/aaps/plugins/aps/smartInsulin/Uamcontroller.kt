@@ -104,14 +104,9 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
-    // UnitDoubleKey: stored and returned in mg/dL. Divide by 18 for mmol.
+    // All SI UnitDoubleKey values store mg/dL. Divide by 18 for mmol.
     private fun unitPrefMmol(key: UnitDoubleKey): Double = preferences.get(key) / 18.0
-    // DoubleKey ISF/delta overrides: also stored in mg/dL. Divide by 18 for mmol.
-    private fun unitPrefMmol(key: DoubleKey): Double = preferences.get(key) / 18.0
-
-    // ISF overrides: 0.0 = "use profile ISF" sentinel — mg/dL stored directly
-    private fun isfPrefMgdl(key: UnitDoubleKey): Double = preferences.get(key)
-    private fun isfPrefMgdl(key: DoubleKey): Double = preferences.get(key)
+    private fun isfPrefMgdl(key: UnitDoubleKey): Double  = preferences.get(key)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
@@ -316,7 +311,7 @@ class UamController @Inject constructor(
         // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
         // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
         // activity and is likely drift or noise rather than food.
-        val riseMinDeltaBase   = unitPrefMmol(DoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase   = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
 
         // During post-meal dirty window, require a stronger rise to confirm it's a new
@@ -390,7 +385,7 @@ class UamController @Inject constructor(
         // If total rise from streak start exceeds burst threshold, don't wait for
         // consecutive reading count — fire immediately. Catches sudden spikes that
         // would otherwise take 15 min to confirm via the streak counter.
-        val burstThreshold = unitPrefMmol(DoubleKey.ApsSmartInsulinUamBurstThreshold)
+        val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
         val totalRise = currentBgMmol - bgAtStreakStart
         if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
@@ -520,7 +515,7 @@ class UamController @Inject constructor(
      * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
      */
     fun debugSummary(): String {
-        val riseMinDeltaBase = unitPrefMmol(DoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
         val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
         val normalUnexpected = UNEXPECTED_RISE_MIN_MMOL
@@ -576,8 +571,8 @@ class UamController @Inject constructor(
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         if (consecutiveRiseReadings > 0) {
             val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(unitPrefMmol(DoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-            val burstThreshold = unitPrefMmol(DoubleKey.ApsSmartInsulinUamBurstThreshold)
+            val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+            val burstThreshold = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
             val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
             val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
             return "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
@@ -688,12 +683,12 @@ class UamController @Inject constructor(
     }
 
     private fun uamIsfMgdl(mode: MealMode): Double = when (mode) {
-        MealMode.UAM_BREAKFAST   -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamBreakfastIsf)
-        MealMode.UAM_LUNCH       -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamLunchIsf)
-        MealMode.UAM_DINNER      -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamDinnerIsf)
-        MealMode.UAM_SNACK       -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamSnackIsf)
-        MealMode.UAM_AFTERNOON   -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamAfternoonIsf)
-        MealMode.UAM_PROTEIN_FAT -> isfPrefMgdl(DoubleKey.ApsSmartInsulinUamProteinFatIsf)
+        MealMode.UAM_BREAKFAST   -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
+        MealMode.UAM_LUNCH       -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)
+        MealMode.UAM_DINNER      -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf)
+        MealMode.UAM_SNACK       -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamSnackIsf)
+        MealMode.UAM_AFTERNOON   -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf)
+        MealMode.UAM_PROTEIN_FAT -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf)
         else                     -> 0.0
     }
 }

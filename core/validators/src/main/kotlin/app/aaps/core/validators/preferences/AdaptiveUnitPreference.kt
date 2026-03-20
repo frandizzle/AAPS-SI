@@ -49,10 +49,14 @@ class AdaptiveUnitPreference(
 
         preferenceKey = unitKey ?: preferences.get(key) as UnitDoublePreferenceKey
 
-        // convert to current unit
-        val value = profileUtil.valueInCurrentUnitsDetect(preferences.get(preferenceKey)).toString()
+        // FIX: stored value is always mg/dL (written by persistString below).
+        // Use fromMgdlToUnits() which converts from known mg/dL — no heuristic guessing.
+        // The original valueInCurrentUnitsDetect() uses a < 36 threshold to detect units,
+        // which misidentifies small mg/dL values (e.g. 9, 18, 27) as mmol and multiplies by 18.
+        val storedMgdl = preferences.get(preferenceKey)
+        val displayValue = profileUtil.fromMgdlToUnits(storedMgdl, profileUtil.units)
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 0 else 1
-        converted = BigDecimal(value).setScale(precision, RoundingMode.HALF_UP)
+        converted = BigDecimal(displayValue).setScale(precision, RoundingMode.HALF_UP)
         summary = converted.toPlainString()
 
         if (preferences.simpleMode && preferenceKey.defaultedBySM) isVisible = false
@@ -121,6 +125,7 @@ class AdaptiveUnitPreference(
     override fun persistString(value: String?): Boolean {
         val numericValue = SafeParse.stringToDouble(value, preferenceKey.defaultValue)
         summary = numericValue.toString()
+        // User entered value is in display units — convert to mg/dL for storage
         val store = profileUtil.convertToMgdl(numericValue, profileUtil.units)
         return try {
             super.persistFloat(store.toFloat())
