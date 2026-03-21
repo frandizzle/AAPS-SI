@@ -202,7 +202,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Pipe-separated compact format — each key piece separated by " | "
         sb.append("SI mode=${mealMode.label}")
         sb.append(" | BG=${fmt(currentBg)}")
-        sb.append(" | d=${"%.2f".format(Locale.US, delta)}")
+        sb.append(" | d=${fmt(delta)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety)} lo=${fmt(lowGuardMgdl)} warn=${fmt(warnGuardMgdl)}")
         sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
@@ -311,7 +311,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val trigger = when {
                     !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
                     !smbAllowed -> "blocked"
-                    else        -> "predMinGap(${String.format(Locale.US, "%.1f", predictedMin / 18.0)}->${String.format(Locale.US, "%.1f", targetBg / 18.0)})"
+                    else        -> "predMinGap(${fmt(predictedMin)}->${fmt(targetBg)})"
                 }
 
                 val reboundStr = when {
