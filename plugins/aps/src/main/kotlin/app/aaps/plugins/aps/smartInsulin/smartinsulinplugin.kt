@@ -724,10 +724,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
         val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
-        // spMgdl handles both old mmol-stored and new mg/dL-stored formats transparently
-        val activityLightTarget    = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)    / 18.0
-        val activityModerateTarget = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget) / 18.0
-        val activityHeavyTarget    = spMgdl(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)    / 18.0
+        // Activity targets stored as mg/dL (9/18/27) — use sp.getDouble directly.
+        // Do NOT use spMgdl() — these values are < 20 and would be wrongly multiplied by 18.
+        val activityLightTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue)    / 18.0
+        val activityModerateTarget = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue) / 18.0
+        val activityHeavyTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue)    / 18.0
         val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
@@ -970,8 +971,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
-            uamSmbFraction           = uamSmbFraction,
-            isMmol                   = isMmol
+            uamSmbFraction           = uamSmbFraction
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
