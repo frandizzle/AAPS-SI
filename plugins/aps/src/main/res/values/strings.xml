@@ -25,6 +25,7 @@
 
     <!-- Activity target on/off switch -->
     <string name="si_activity_target_enabled_title">Enable activity target raise (HR/steps)</string>
+    <string name="si_target_respect_enabled_title">Enable target assist (ISF-based basal reduction)</string>
     <!-- Pre-bolus 2 settings -->
     <string name="si_prebolus2_default_u_title">Pre-bolus 2: default amount (U)</string>
     <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>

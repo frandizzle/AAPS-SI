@@ -90,7 +90,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmSmbFraction:           Double,
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
-        uamSmbFraction:           Double = 1.0
+        uamSmbFraction:           Double = 1.0,
+        targetRespectEnabled:     Boolean = false
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -290,6 +291,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
+                    // Target respect: reduce basal when pred_min is below target.
+                    // Gate: only fires for targets > 6.0 mmol normally, OR always if switch is on.
+                    // Uses ISF math so small gaps → tiny reduction, large gaps → zero basal.
+                    predictedMin < targetBg &&
+                        (targetRespectEnabled || targetBg > (6.0 * MMOL_TO_MGDL)) -> {
+                        val missingBgMgdl   = targetBg - predictedMin
+                        val missingInsulinU = missingBgMgdl / dosingIsfMgdl
+                        val reducedBasal    = profileBasal - (missingInsulinU / TBR_WINDOW_HOURS)
+                        reducedBasal.coerceIn(0.0, profileBasal)
+                    }
                     else             -> profileBasal
                 }
                 val tbrRate = tbrRateRaw * reboundTaperFraction

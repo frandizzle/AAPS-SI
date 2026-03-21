@@ -971,7 +971,8 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
-            uamSmbFraction           = uamSmbFraction
+            uamSmbFraction           = uamSmbFraction,
+            targetRespectEnabled     = preferences.get(BooleanKey.ApsSmartInsulinTargetRespectEnabled)
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
@@ -1218,6 +1219,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_activity"
                 title = "Activity"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,            title = R.string.si_activity_target_enabled_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinTargetRespectEnabled,             title = R.string.si_target_respect_enabled_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
