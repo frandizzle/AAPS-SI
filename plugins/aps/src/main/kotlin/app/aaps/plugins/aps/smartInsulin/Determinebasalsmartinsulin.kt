@@ -296,6 +296,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
+                    predictedMin < targetBg -> 0.0  // pred below target — don't add more insulin
                     else             -> profileBasal
                 }
                 val tbrRate = tbrRateRaw * reboundTaperFraction
