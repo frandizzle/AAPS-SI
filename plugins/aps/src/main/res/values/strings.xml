@@ -313,6 +313,8 @@
     <!-- SmartInsulin STFT/UAM CGM warmup blocks -->
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
     <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
+    <string name="si_first_day_cgm_smoothing_title">First-day CGM smoothing (UKF, G6)</string>
+    <string name="si_first_day_cgm_smoothing_summary">Apply Unscented Kalman Filter smoothing during the first 24 h of a new sensor session. Reduces phantom spikes from sensor settling. Auto-expires after 24 h — no action needed. G6 users: enable this. G7 users: select UKF from the AAPS smoothing menu instead.</string>
 
     <!-- SmartInsulin UAM auto-detection -->
     <string name="si_uam_enabled_title">UAM auto-detection enabled</string>

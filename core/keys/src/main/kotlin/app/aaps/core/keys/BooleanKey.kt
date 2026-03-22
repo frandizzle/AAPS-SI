@@ -47,6 +47,7 @@ enum class BooleanKey(
     ApsSmartInsulinLowCarbMode("si_low_carb_mode", false, defaultedBySM = true),
     ApsSmartInsulinActivityTargetEnabled("si_activity_target_enabled", true, defaultedBySM = true),
     ApsSmartInsulinTargetRespectEnabled("si_target_respect_enabled", false, defaultedBySM = true),
+    ApsSmartInsulinFirstDayCgmSmoothing("si_first_day_cgm_smoothing", false, defaultedBySM = true),
     // UAM auto-detection
     ApsSmartInsulinUamEnabled("si_uam_enabled", false, defaultedBySM = true),
     ApsSmartInsulinUamCgmWarmupBlock("si_uam_cgm_warmup_block", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
