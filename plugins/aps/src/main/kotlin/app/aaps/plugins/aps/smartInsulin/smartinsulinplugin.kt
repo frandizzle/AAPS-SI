@@ -548,81 +548,74 @@ open class SmartInsulinPlugin @Inject constructor(
             0L
         }
         // ── First-day CGM smoothing (UKF) ────────────────────────────────────
-        // Applies UKF smoothing to the raw BG history during the first 24 h of a new
-        // sensor session, then expires automatically. Designed for G6 day-1 noise from
-        // sensor settling — the G6 transmitter smooths from day 2 onward so this is
-        // only needed on day 1. G7 users should select UKF from the AAPS smoothing menu.
-        // sensorInsertTimeMs is already resolved above from persistenceLayer.
-        // When inactive, glucoseStatus passes through unmodified — exactly stock behaviour.
+        // Applies UKF smoothing during the first 24 h of a new sensor session, then
+        // expires automatically. For G6 day-1 settling noise only — transmitter handles
+        // smoothing from day 2 onward. G7 users: select UKF from the AAPS smoothing menu.
+        //
+        // GlucoseStatus is an interface with no constructor. We carry three smoothed
+        // Doubles alongside the original glucoseStatus and substitute at every call site
+        // that drives loop decisions. Raw glucoseStatus is kept for safety thresholds
+        // (rebound, low detection) that must always track real measured BG.
         val ukfEnabled  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
         val sensorAgeMs = if (sensorInsertTimeMs > 0L) now - sensorInsertTimeMs else Long.MAX_VALUE
         val inFirstDay  = sensorAgeMs < 24L * 60 * 60 * 1000L
         val ukfActive   = ukfEnabled && inFirstDay
 
-        val effectiveGlucoseStatus: GlucoseStatus = if (ukfActive) {
+        // Smoothed values — initialised to raw, overridden below if UKF runs successfully.
+        var smoothedGlucose:       Double = glucoseStatus.glucose
+        var smoothedDelta:         Double = glucoseStatus.delta
+        var smoothedShortAvgDelta: Double = glucoseStatus.shortAvgDelta
+
+        if (ukfActive) {
             try {
-                // Pull 3 h of raw BG history — enough for RTS smoother to converge.
-                // persistenceLayer is already injected and used above.
-                val rawHistory = persistenceLayer.getBgReadingsDataFromTime(
-                    now - 3L * 60 * 60 * 1000L, true
-                )
-                if (rawHistory.size >= 2) {
-                    // Convert to newest-first (timestampMs, mg/dL) pairs for CgmSmoother
-                    val readings = rawHistory
+                // iobCobCalculator.ads is the AutosensDataStore — provides BG history
+                // as List<GlucoseValue> sorted oldest-first (stock AAPS 3.x behaviour).
+                val fromMs  = now - 3L * 60 * 60 * 1000L
+                val rawList = iobCobCalculator.ads.getBgReadingsDataTableStartingFrom(fromMs)
+                if (rawList.size >= 2) {
+                    // CgmSmoother expects newest-first List<Pair<Long, Double>>
+                    val readings = rawList
                         .sortedByDescending { it.timestamp }
                         .map { Pair(it.timestamp, it.value) }
                     val result = CgmSmoother().smooth(readings)
                     if (result.filtered) {
-                        // Construct new GlucoseStatus with smoothed values.
-                        // All other fields (longAvgDelta, noise, date) kept from original.
-                        GlucoseStatus(
-                            glucose       = result.smoothedMgdl[0],
-                            date          = glucoseStatus.date,
-                            noise         = glucoseStatus.noise,
-                            delta         = result.deltaMgdl,
-                            shortAvgDelta = result.shortAvgDeltaMgdl,
-                            longAvgDelta  = glucoseStatus.longAvgDelta
-                        )
-                    } else glucoseStatus  // < 2 valid readings — passthrough
-                } else glucoseStatus     // insufficient history — passthrough
+                        smoothedGlucose       = result.smoothedMgdl[0]
+                        smoothedDelta         = result.deltaMgdl
+                        smoothedShortAvgDelta = result.shortAvgDeltaMgdl
+                    }
+                }
             } catch (e: Exception) {
-                aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw values: ${e.message}")
-                glucoseStatus
+                aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
+                // smoothed vars already hold raw values — safe passthrough
             }
-        } else glucoseStatus
-
-        if (ukfActive) {
-            val ageH = sensorAgeMs / 3_600_000.0
             aapsLogger.debug(LTag.APS,
-                             "SmartInsulin UKF day-1: age=${"%.1f".format(ageH)}h " +
-                                 "raw=${glucoseStatus.glucose / 18.0} " +
-                                 "smoothed=${effectiveGlucoseStatus.glucose / 18.0} " +
-                                 "delta raw=${glucoseStatus.delta / 18.0} " +
-                                 "smoothed=${effectiveGlucoseStatus.delta / 18.0}")
+                             "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
+                                 "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
+                                 "rawΔ=${glucoseStatus.delta / 18.0} smoothedΔ=${smoothedDelta / 18.0}")
         }
 
         val cgmState = cgmWarmupGuard.evaluate(
             enabled             = cgmGuardEnabled,
             sensorInsertTimeMs  = sensorInsertTimeMs,
             nowMs               = now,
-            latestBgTimestampMs = effectiveGlucoseStatus.date,
-            deltaMmol           = effectiveGlucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol   = effectiveGlucoseStatus.shortAvgDelta / 18.0,
-            longAvgDeltaMmol    = effectiveGlucoseStatus.longAvgDelta / 18.0,
-            noiseLevelRaw       = effectiveGlucoseStatus.noise
+            latestBgTimestampMs = glucoseStatus.date,
+            deltaMmol           = smoothedDelta / 18.0,
+            shortAvgDeltaMmol   = smoothedShortAvgDelta / 18.0,
+            longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
+            noiseLevelRaw       = glucoseStatus.noise
         )
         val cgmInWarmup = cgmState.inWarmup
 
         val stftAdjusted = stftController.onLoopCycle(
             profileTargetMgdl = profileTargetMgdl,
-            currentBgMgdl     = effectiveGlucoseStatus.glucose,
-            delta             = effectiveGlucoseStatus.delta,
+            currentBgMgdl     = smoothedGlucose,
+            delta             = smoothedDelta,
             mealMode          = mealMode,
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
             inReboundWindow   = inReboundWindow,
             cgmInWarmup       = cgmInWarmup,
-            bgTimestampMs     = effectiveGlucoseStatus.date
+            bgTimestampMs     = glucoseStatus.date
         )
         // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
         // The plugin-side TT guard is kept as a safety backstop.
@@ -641,9 +634,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val uamBgiMmol = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0
         uamController.onLoopCycle(
             currentMealMode    = mealMode,
-            currentBgMmol      = effectiveGlucoseStatus.glucose / 18.0,
-            deltaMmol          = effectiveGlucoseStatus.delta / 18.0,
-            shortAvgDeltaMmol  = effectiveGlucoseStatus.shortAvgDelta / 18.0,
+            currentBgMmol      = smoothedGlucose / 18.0,
+            deltaMmol          = smoothedDelta / 18.0,
+            shortAvgDeltaMmol  = smoothedShortAvgDelta / 18.0,
             bgiMmol            = uamBgiMmol,
             currentHour        = uamCurrentHour,
             bgWentLow          = bgWentLow,
@@ -654,7 +647,7 @@ open class SmartInsulinPlugin @Inject constructor(
             inPostMealLockout  = inPostMealLockout,
             profileTargetMmol  = profileTargetMgdl / 18.0,
             softLandingBypass  = softLandingBypass,
-            bgTimestampMs      = effectiveGlucoseStatus.date
+            bgTimestampMs      = glucoseStatus.date
         )
 
         // ── Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired ──
@@ -801,7 +794,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
         // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
         aggressionLearner.recordBg(
-            bgMgdl          = effectiveGlucoseStatus.glucose,
+            bgMgdl          = smoothedGlucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
             mealMode        = mealMode
@@ -871,8 +864,8 @@ open class SmartInsulinPlugin @Inject constructor(
             ?: Double.MAX_VALUE
         if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearning) {
             basalLearner.onLoopCycle(
-                bgMgdl        = effectiveGlucoseStatus.glucose,
-                deltaMgdl     = effectiveGlucoseStatus.delta,
+                bgMgdl        = smoothedGlucose,
+                deltaMgdl     = smoothedDelta,
                 cobG          = mealData.mealCOB,
                 minsLastBolus = minsLastBolus,
                 isfMgdl       = trueIsfMgdl,
@@ -993,8 +986,20 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
+        // Pass smoothed BG values into determine_basal via a local GlucoseStatus-shaped
+        // object. glucoseStatus is the original interface instance; we substitute the three
+        // smoothed fields inline at the call site using a wrapper object.
+        // When ukfActive=false, smoothed* == glucoseStatus.*, so this is a no-op.
+        val gsForDetermineBasal = object : GlucoseStatus {
+            override val glucose:       Double = smoothedGlucose
+            override val date:          Long   = glucoseStatus.date
+            override val noise:         Double = glucoseStatus.noise
+            override val delta:         Double = smoothedDelta
+            override val shortAvgDelta: Double = smoothedShortAvgDelta
+            override val longAvgDelta:  Double = glucoseStatus.longAvgDelta
+        }
         val apsResult = determineBasalSmartInsulin.determine_basal(
-            glucoseStatus            = effectiveGlucoseStatus,
+            glucoseStatus            = gsForDetermineBasal,
             currentTemp              = currentTemp,
             iobArray                 = iobArray,
             oapsProfile              = oapsProfile,
@@ -1124,8 +1129,8 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         csvLogger.log(LoopCsvLogger.LogRow(
             timestampMs       = now,
-            bgMmol            = effectiveGlucoseStatus.glucose / 18.0,
-            delta             = effectiveGlucoseStatus.shortAvgDelta / 18.0,
+            bgMmol            = smoothedGlucose / 18.0,
+            delta             = smoothedShortAvgDelta / 18.0,
             iob               = iobArray.firstOrNull()?.iob ?: 0.0,
             cob               = mealData.mealCOB,
             mealMode          = mealMode.name,
@@ -1302,8 +1307,8 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_stft"
                 title = "STFT (Soft Target)"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,      title = R.string.si_stft_cgm_warmup_block_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing,    title = R.string.si_first_day_cgm_smoothing_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,   title = R.string.si_stft_cgm_warmup_block_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing, title = R.string.si_first_day_cgm_smoothing_title))
             })
 
             // ── UAM Auto-Detection ────────────────────────────────────────
