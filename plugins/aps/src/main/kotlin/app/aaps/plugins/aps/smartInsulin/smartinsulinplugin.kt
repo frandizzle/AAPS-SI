@@ -1054,12 +1054,28 @@ open class SmartInsulinPlugin @Inject constructor(
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
 
+        // UKF first-day status — shown when UKF plugin is active and first-day toggle is on
+        val ukfFirstDaySuffix: String = run {
+            val ukfSelected  = activePlugin.activeSmoothing.javaClass.simpleName == "UnscentedKalmanFilterPlugin"
+            val firstDayOn   = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
+            if (ukfSelected && firstDayOn && sensorInsertTimeMs > 0L) {
+                val sensorAgeMs  = now - sensorInsertTimeMs
+                val remainingMs  = 24L * 60 * 60 * 1000L - sensorAgeMs
+                if (remainingMs > 0L) {
+                    val remainingH   = remainingMs / 3_600_000L
+                    val remainingMin = (remainingMs % 3_600_000L) / 60_000L
+                    " | UKF active ${remainingH}h${remainingMin}m left"
+                } else ""  // past 24h — gate closed, no need to show
+            } else ""
+        }
+
         apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
             " basal×${"%.2f".format(basalMultiplier)}" +
             " aggr=${"%.2f".format(aggressiveness)}/${"%.2f".format(aggressionLearner.aggressiveness)}" +
             (if (inReboundWindow) " rebound=${msSinceLastSuspend / 60_000}min" else "") +
             activitySuffix +
-            cgmSuffix
+            cgmSuffix +
+            ukfFirstDaySuffix
 
         // ── CSV logging ───────────────────────────────────────────────────────
         val zone = when {
