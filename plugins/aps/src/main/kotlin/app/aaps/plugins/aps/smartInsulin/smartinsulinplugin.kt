@@ -142,12 +142,11 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     // ── Rolling BG buffer for UKF first-day smoothing ────────────────────────
-    // Accumulates (timestampMs, mg/dL) pairs across invoke() cycles.
-    // Kept newest-first, capped at 3 h of readings (36 × 5-min readings).
-    // Cleared automatically when a new sensor is detected (sensorInsertTimeMs changes).
+    // Accumulates (timestampMs, mg/dL) newest-first across invoke() cycles.
+    // Resets when a new sensor is detected. No external BG history API needed.
     private val ukfBgBuffer = ArrayDeque<Pair<Long, Double>>()
     private var ukfLastSensorInsertTimeMs: Long = -1L
-    private val UKF_BUFFER_MAX   = 36          // 3 h at 5-min intervals
+    private val UKF_BUFFER_MAX    = 36           // 3 h at 5-min intervals
     private val UKF_BUFFER_MAX_MS = 3L * 60 * 60 * 1000L
 
     companion object {
@@ -558,25 +557,23 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         // ── First-day CGM smoothing (UKF) ────────────────────────────────────
         // Applies UKF smoothing during the first 24 h of a new sensor session, then
-        // expires automatically. For G6 day-1 settling noise only — the transmitter
+        // expires automatically. For G6 day-1 settling noise — the G6 transmitter
         // handles smoothing from day 2. G7 users: select UKF from the AAPS smoothing menu.
         //
-        // Uses an internal rolling buffer accumulated across invoke() cycles — no external
-        // BG history API needed, avoiding dependency on iobCobCalculator internals.
-        // GlucoseStatus is an interface with no constructor; smoothed values are carried
-        // as plain Doubles and substituted at each downstream call site.
+        // Safety gate: requires ≥4 readings in the buffer (~15–20 min) before activating.
+        // On app restart the buffer starts empty — the gate prevents 0.0 deltas being fed
+        // to the loop while the buffer rebuilds. Reason string shows buffering progress.
         val ukfEnabled  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
         val sensorAgeMs = if (sensorInsertTimeMs > 0L) now - sensorInsertTimeMs else Long.MAX_VALUE
         val inFirstDay  = sensorAgeMs < 24L * 60 * 60 * 1000L
         val ukfActive   = ukfEnabled && inFirstDay
 
-        // Reset buffer when a new sensor is detected
+        // Reset buffer on new sensor
         if (sensorInsertTimeMs != ukfLastSensorInsertTimeMs) {
             ukfBgBuffer.clear()
             ukfLastSensorInsertTimeMs = sensorInsertTimeMs
         }
-
-        // Accumulate current reading into buffer (newest-first, deduplicated by timestamp)
+        // Accumulate current reading (newest-first, deduplicated by timestamp)
         val currentReading = Pair(glucoseStatus.date, glucoseStatus.glucose)
         if (ukfBgBuffer.isEmpty() || ukfBgBuffer.first().first != currentReading.first) {
             ukfBgBuffer.addFirst(currentReading)
@@ -592,23 +589,33 @@ open class SmartInsulinPlugin @Inject constructor(
         var smoothedGlucose:       Double = glucoseStatus.glucose
         var smoothedDelta:         Double = glucoseStatus.delta
         var smoothedShortAvgDelta: Double = glucoseStatus.shortAvgDelta
+        var ukfReasonTag:          String = ""
 
-        if (ukfActive && ukfBgBuffer.size >= 2) {
-            try {
-                val result = CgmSmoother().smooth(ukfBgBuffer.toList())
-                if (result.filtered) {
-                    smoothedGlucose       = result.smoothedMgdl[0]
-                    smoothedDelta         = result.deltaMgdl
-                    smoothedShortAvgDelta = result.shortAvgDeltaMgdl
+        if (ukfActive) {
+            if (ukfBgBuffer.size >= 4) {
+                // Buffer has enough history — run the filter
+                try {
+                    val result = CgmSmoother().smooth(ukfBgBuffer.toList())
+                    if (result.filtered) {
+                        smoothedGlucose       = result.smoothedMgdl[0]
+                        smoothedDelta         = result.deltaMgdl
+                        smoothedShortAvgDelta = result.shortAvgDeltaMgdl
+                        ukfReasonTag = " ukf=day1(${"%.1f".format(sensorAgeMs / 3_600_000.0)}h)"
+                        aapsLogger.debug(LTag.APS,
+                                         "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
+                                             "buf=${ukfBgBuffer.size} " +
+                                             "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
+                                             "rawΔ=${glucoseStatus.delta / 18.0} smoothedΔ=${smoothedDelta / 18.0}")
+                    }
+                } catch (e: Exception) {
+                    aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
+                    // smoothed vars already hold raw values — safe passthrough
                 }
-            } catch (e: Exception) {
-                aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
+            } else {
+                // Buffer still filling after app restart — passthrough, show progress
+                ukfReasonTag = " ukf=buffering(${ukfBgBuffer.size}/4)"
+                aapsLogger.debug(LTag.APS, "SmartInsulin UKF: buffer building ${ukfBgBuffer.size}/4 readings")
             }
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
-                                 "buf=${ukfBgBuffer.size} " +
-                                 "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
-                                 "rawΔ=${glucoseStatus.delta / 18.0} smoothedΔ=${smoothedDelta / 18.0}")
         }
 
         val cgmState = cgmWarmupGuard.evaluate(
@@ -1003,8 +1010,10 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
-        // Pass smoothed values to determine_basal via an anonymous GlucoseStatus object.
-        // When ukfActive=false, smoothed* == glucoseStatus.*, so behaviour is identical.
+        // Anonymous GlucoseStatus passes smoothed values to determine_basal.
+        // When ukfActive=false or buffer still filling, smoothed* == glucoseStatus.* — no-op.
+        // If GlucoseStatus gains new fields in future: hover red squiggle → Implement Members
+        // → set each new field to return glucoseStatus.fieldName.
         val gsForDetermineBasal = object : GlucoseStatus {
             override val glucose:       Double = smoothedGlucose
             override val date:          Long   = glucoseStatus.date
@@ -1124,9 +1133,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
             }
         }
-        // CGM warmup/block suffix — append UKF tag when active
-        val ukfSuffix = if (ukfActive) " ukf=day1(${"%.1f".format(sensorAgeMs / 3_600_000.0)}h)" else ""
-        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}$ukfSuffix" else if (ukfActive) " | $ukfSuffix" else ""
+        // CGM warmup/block suffix — ukfReasonTag appended when UKF active or buffering
+        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}$ukfReasonTag"
+        else if (ukfReasonTag.isNotEmpty()) " |$ukfReasonTag"
+        else ""
 
         apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
             " basal×${"%.2f".format(basalMultiplier)}" +
