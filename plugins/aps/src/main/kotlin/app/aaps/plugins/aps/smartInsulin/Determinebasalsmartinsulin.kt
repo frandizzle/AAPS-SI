@@ -224,7 +224,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
         sb.append(" | $tirSummary")
 
-        // ── Decision ──────────────────────────────────────────────────────────
+        // ── Dynamic zero-temp duration ────────────────────────────────────────
+        // How long should a zero temp run if the loop goes offline?
+        // Uses AutoISF-style math: bgUndershoot / ISF / basal → hours → minutes
+        // Rounded to nearest 30 min, clamped 30–90 min.
+        // This ensures a suspend set now will protect for long enough even if
+        // the loop doesn't run again for 60+ minutes (connectivity loss, etc).
+        fun suspendDurationMins(worstBgMgdl: Double): Int {
+            val bgUndershoot    = targetBg - worstBgMgdl  // how far below target worst case goes
+            val insulinReqU     = bgUndershoot / dosingIsfMgdl
+            val durationHours   = insulinReqU / profileBasal
+            val durationMins    = (durationHours * 60.0).coerceIn(30.0, 90.0)
+            return (Math.round(durationMins / 30.0) * 30).toInt().coerceIn(30, 90)
+        }
+
+
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
@@ -236,17 +250,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // ── LGS hard suspend ─────────────────────────────────────────────
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
                 sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(0.0, suspendDurationMins(currentBg), oapsProfile, rT, currentTemp)
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
             predictedMinSafety < lowGuardMgdl || fallingIntoLow -> {
+                val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
+                val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
-                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)}"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)}"
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
