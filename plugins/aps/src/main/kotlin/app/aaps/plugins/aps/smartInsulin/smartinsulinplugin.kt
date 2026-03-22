@@ -556,14 +556,17 @@ open class SmartInsulinPlugin @Inject constructor(
             0L
         }
         // ── First-day CGM smoothing (UKF) ────────────────────────────────────
-        // Applies UKF smoothing during the first 24 h of a new sensor session, then
-        // expires automatically. For G6 day-1 settling noise — the G6 transmitter
-        // handles smoothing from day 2. G7 users: select UKF from the AAPS smoothing menu.
-        //
-        // Safety gate: requires ≥4 readings in the buffer (~15–20 min) before activating.
-        // On app restart the buffer starts empty — the gate prevents 0.0 deltas being fed
-        // to the loop while the buffer rebuilds. Reason string shows buffering progress.
+        // Applies UKF smoothing during the first 24 h of a new sensor session.
+        // Auto-disables if UKF is already selected as the system smoothing plugin —
+        // running UKF twice (pipeline + here) would double-smooth and lag BG response.
+        // Class name check used instead of direct import — smoothing module is not a
+        // dependency of the APS module and cannot be imported directly.
+        // Safety gate: requires ≥4 readings in buffer before activating — prevents
+        // 0.0 deltas being fed to the loop after an app restart while buffer rebuilds.
+        val ukfAlreadyActive = activePlugin.activeSmoothing
+            .javaClass.simpleName == "UnscentedKalmanFilterPlugin"
         val ukfEnabled  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
+            && !ukfAlreadyActive
         val sensorAgeMs = if (sensorInsertTimeMs > 0L) now - sensorInsertTimeMs else Long.MAX_VALUE
         val inFirstDay  = sensorAgeMs < 24L * 60 * 60 * 1000L
         val ukfActive   = ukfEnabled && inFirstDay
@@ -593,7 +596,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         if (ukfActive) {
             if (ukfBgBuffer.size >= 4) {
-                // Buffer has enough history — run the filter
                 try {
                     val result = CgmSmoother().smooth(ukfBgBuffer.toList())
                     if (result.filtered) {
@@ -609,13 +611,15 @@ open class SmartInsulinPlugin @Inject constructor(
                     }
                 } catch (e: Exception) {
                     aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
-                    // smoothed vars already hold raw values — safe passthrough
                 }
             } else {
                 // Buffer still filling after app restart — passthrough, show progress
                 ukfReasonTag = " ukf=buffering(${ukfBgBuffer.size}/4)"
                 aapsLogger.debug(LTag.APS, "SmartInsulin UKF: buffer building ${ukfBgBuffer.size}/4 readings")
             }
+        } else if (ukfAlreadyActive && preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)) {
+            // Both switches on — log so user knows the toggle was suppressed
+            ukfReasonTag = " ukf=suppressed(UKFpluginActive)"
         }
 
         val cgmState = cgmWarmupGuard.evaluate(
@@ -1011,9 +1015,9 @@ open class SmartInsulinPlugin @Inject constructor(
         ).also { inputConstraints.copyReasons(it) }.value()
 
         // Anonymous GlucoseStatus passes smoothed values to determine_basal.
-        // When ukfActive=false or buffer still filling, smoothed* == glucoseStatus.* — no-op.
-        // If GlucoseStatus gains new fields in future: hover red squiggle → Implement Members
-        // → set each new field to return glucoseStatus.fieldName.
+        // When UKF not active, smoothed* == glucoseStatus.* — identical to stock behaviour.
+        // If GlucoseStatus gains new fields: hover red squiggle → Implement Members
+        // → set each to return glucoseStatus.fieldName.
         val gsForDetermineBasal = object : GlucoseStatus {
             override val glucose:       Double = smoothedGlucose
             override val date:          Long   = glucoseStatus.date
@@ -1133,7 +1137,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
             }
         }
-        // CGM warmup/block suffix — ukfReasonTag appended when UKF active or buffering
+        // CGM warmup/block suffix — ukfReasonTag shows active/buffering/suppressed state
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}$ukfReasonTag"
         else if (ukfReasonTag.isNotEmpty()) " |$ukfReasonTag"
         else ""
