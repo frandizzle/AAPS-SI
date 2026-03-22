@@ -141,15 +141,6 @@ open class SmartInsulinPlugin @Inject constructor(
         bgWentLow &&
         msSinceLastSuspend < REBOUND_GUARD_MS
 
-    // ── Rolling BG buffer for UKF first-day smoothing ────────────────────────
-    // Only smooths the BG value — deltas are kept from AAPS (already correct).
-    // CgmSmoother delta computation is unreliable when built from glucoseStatus
-    // snapshots due to timestamp precision issues causing division explosions.
-    private val ukfBgBuffer = ArrayDeque<Pair<Long, Double>>()
-    private var ukfLastSensorInsertTimeMs: Long = -1L
-    private val UKF_BUFFER_MAX    = 36
-    private val UKF_BUFFER_MAX_MS = 3L * 60 * 60 * 1000L
-
     companion object {
         const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
     }
@@ -557,81 +548,13 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
             0L
         }
-        // ── First-day CGM smoothing (UKF) ────────────────────────────────────
-        // Smooths the BG value only — delta and shortAvgDelta are left as AAPS computes
-        // them from real consecutive readings. CgmSmoother's delta computation from
-        // glucoseStatus snapshots is unreliable due to timestamp precision, causing
-        // catastrophic delta values that destroy the prediction curve.
-        // Auto-disables if UKF smoothing plugin is already active (avoids double-smoothing).
-        // Safety gate: requires ≥4 readings before activating (restart blindspot protection).
-        val ukfAlreadyActive = activePlugin.activeSmoothing
-            .javaClass.simpleName == "UnscentedKalmanFilterPlugin"
-        val ukfEnabled  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
-            && !ukfAlreadyActive
-        val sensorAgeMs = if (sensorInsertTimeMs > 0L) now - sensorInsertTimeMs else Long.MAX_VALUE
-        val inFirstDay  = sensorAgeMs < 24L * 60 * 60 * 1000L
-        val ukfActive   = ukfEnabled && inFirstDay
-
-        // Reset buffer on new sensor
-        if (sensorInsertTimeMs != ukfLastSensorInsertTimeMs) {
-            ukfBgBuffer.clear()
-            ukfLastSensorInsertTimeMs = sensorInsertTimeMs
-        }
-        // Accumulate current reading (newest-first, deduplicated by timestamp)
-        val currentReading = Pair(glucoseStatus.date, glucoseStatus.glucose)
-        if (ukfBgBuffer.isEmpty() || ukfBgBuffer.first().first != currentReading.first) {
-            ukfBgBuffer.addFirst(currentReading)
-        }
-        while (ukfBgBuffer.size > UKF_BUFFER_MAX) ukfBgBuffer.removeLast()
-        while (ukfBgBuffer.size > 1 &&
-            ukfBgBuffer.first().first - ukfBgBuffer.last().first > UKF_BUFFER_MAX_MS) {
-            ukfBgBuffer.removeLast()
-        }
-
-        // Only smoothedGlucose is substituted — deltas stay raw from AAPS
-        var smoothedGlucose:       Double = glucoseStatus.glucose
-        val smoothedDelta:         Double = glucoseStatus.delta
-        val smoothedShortAvgDelta: Double = glucoseStatus.shortAvgDelta
-        var ukfReasonTag:          String = ""
-
-        if (ukfActive) {
-            if (ukfBgBuffer.size >= 4) {
-                try {
-                    val result = CgmSmoother().smooth(ukfBgBuffer.toList())
-                    if (result.filtered) {
-                        val sBg = result.smoothedMgdl[0]
-                        // Plausibility check on BG only — discard if outside sensor range
-                        if (sBg in 39.0..400.0) {
-                            smoothedGlucose = sBg
-                            ukfReasonTag = " ukf=day1(${"%.1f".format(sensorAgeMs / 3_600_000.0)}h)"
-                            aapsLogger.debug(LTag.APS,
-                                             "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
-                                                 "buf=${ukfBgBuffer.size} " +
-                                                 "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
-                                                 "Δ kept raw=${glucoseStatus.delta / 18.0}")
-                        } else {
-                            ukfReasonTag = " ukf=fallback(BG=${sBg / 18.0}oob)"
-                            aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothed BG ${sBg / 18.0} out of bounds, using raw")
-                        }
-                    }
-                } catch (e: Exception) {
-                    aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
-                }
-            } else {
-                ukfReasonTag = " ukf=buffering(${ukfBgBuffer.size}/4)"
-                aapsLogger.debug(LTag.APS, "SmartInsulin UKF: buffer building ${ukfBgBuffer.size}/4 readings")
-            }
-        } else if (ukfAlreadyActive && preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)) {
-            ukfReasonTag = " ukf=suppressed(UKFpluginActive)"
-        }
-
         val cgmState = cgmWarmupGuard.evaluate(
             enabled             = cgmGuardEnabled,
             sensorInsertTimeMs  = sensorInsertTimeMs,
             nowMs               = now,
             latestBgTimestampMs = glucoseStatus.date,
-            deltaMmol           = smoothedDelta / 18.0,
-            shortAvgDeltaMmol   = smoothedShortAvgDelta / 18.0,
+            deltaMmol           = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol   = glucoseStatus.shortAvgDelta / 18.0,
             longAvgDeltaMmol    = glucoseStatus.longAvgDelta / 18.0,
             noiseLevelRaw       = glucoseStatus.noise
         )
@@ -639,8 +562,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val stftAdjusted = stftController.onLoopCycle(
             profileTargetMgdl = profileTargetMgdl,
-            currentBgMgdl     = smoothedGlucose,
-            delta             = smoothedDelta,
+            currentBgMgdl     = glucoseStatus.glucose,
+            delta             = glucoseStatus.delta,
             mealMode          = mealMode,
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
@@ -665,9 +588,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val uamBgiMmol = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0
         uamController.onLoopCycle(
             currentMealMode    = mealMode,
-            currentBgMmol      = smoothedGlucose / 18.0,
-            deltaMmol          = smoothedDelta / 18.0,
-            shortAvgDeltaMmol  = smoothedShortAvgDelta / 18.0,
+            currentBgMmol      = glucoseStatus.glucose / 18.0,
+            deltaMmol          = glucoseStatus.delta / 18.0,
+            shortAvgDeltaMmol  = glucoseStatus.shortAvgDelta / 18.0,
             bgiMmol            = uamBgiMmol,
             currentHour        = uamCurrentHour,
             bgWentLow          = bgWentLow,
@@ -825,7 +748,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
         // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
         aggressionLearner.recordBg(
-            bgMgdl          = smoothedGlucose,
+            bgMgdl          = glucoseStatus.glucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
             mealMode        = mealMode
@@ -895,8 +818,8 @@ open class SmartInsulinPlugin @Inject constructor(
             ?: Double.MAX_VALUE
         if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearning) {
             basalLearner.onLoopCycle(
-                bgMgdl        = smoothedGlucose,
-                deltaMgdl     = smoothedDelta,
+                bgMgdl        = glucoseStatus.glucose,
+                deltaMgdl     = glucoseStatus.delta,
                 cobG          = mealData.mealCOB,
                 minsLastBolus = minsLastBolus,
                 isfMgdl       = trueIsfMgdl,
@@ -1017,18 +940,8 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
-        // smoothedGlucose is UKF-filtered; delta/shortAvgDelta are raw AAPS values.
-        // When UKF not active, smoothedGlucose == glucoseStatus.glucose — no-op.
-        val gsForDetermineBasal = object : GlucoseStatus {
-            override val glucose:       Double = smoothedGlucose
-            override val date:          Long   = glucoseStatus.date
-            override val noise:         Double = glucoseStatus.noise
-            override val delta:         Double = smoothedDelta
-            override val shortAvgDelta: Double = smoothedShortAvgDelta
-            override val longAvgDelta:  Double = glucoseStatus.longAvgDelta
-        }
         val apsResult = determineBasalSmartInsulin.determine_basal(
-            glucoseStatus            = gsForDetermineBasal,
+            glucoseStatus            = glucoseStatus,
             currentTemp              = currentTemp,
             iobArray                 = iobArray,
             oapsProfile              = oapsProfile,
@@ -1138,9 +1051,8 @@ open class SmartInsulinPlugin @Inject constructor(
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
             }
         }
-        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}$ukfReasonTag"
-        else if (ukfReasonTag.isNotEmpty()) " |$ukfReasonTag"
-        else ""
+        // CGM warmup/block suffix
+        val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
 
         apsResult.reason += " | circ(ISF×${"%.2f".format(circIsfMult)} bas×${"%.2f".format(circBasalMult)} ceil=${"%.2f".format(circAggrCeil)})" +
             " basal×${"%.2f".format(basalMultiplier)}" +
@@ -1158,8 +1070,8 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         csvLogger.log(LoopCsvLogger.LogRow(
             timestampMs       = now,
-            bgMmol            = smoothedGlucose / 18.0,
-            delta             = smoothedShortAvgDelta / 18.0,
+            bgMmol            = glucoseStatus.glucose / 18.0,
+            delta             = glucoseStatus.shortAvgDelta / 18.0,
             iob               = iobArray.firstOrNull()?.iob ?: 0.0,
             cob               = mealData.mealCOB,
             mealMode          = mealMode.name,

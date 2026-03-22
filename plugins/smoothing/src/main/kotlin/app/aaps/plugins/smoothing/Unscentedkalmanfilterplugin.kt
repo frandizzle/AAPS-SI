@@ -487,6 +487,31 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
             resetLearning()
         }
 
+        // ── First-day only gate ───────────────────────────────────────────────
+        // When "si_first_day_cgm_smoothing" is enabled, UKF only runs for the
+        // first 24 h after a sensor change. After that it passes raw values through,
+        // behaving identically to NoSmoothingPlugin. This allows G6 users to select
+        // UKF in the smoothing menu and enable this toggle — day 1 gets full UKF,
+        // day 2+ gets no smoothing (G6 transmitter handles it from then on).
+        // G7 users: leave this toggle off — UKF runs always as normal.
+        // lastSensorChangeTimestamp is already maintained by the sensor change listener.
+        if (sp.getBoolean("si_first_day_cgm_smoothing", false)) {
+            val sensorAgeMs = if (lastSensorChangeTimestamp > 0L)
+                System.currentTimeMillis() - lastSensorChangeTimestamp
+            else
+                Long.MAX_VALUE
+            if (sensorAgeMs >= 24L * 60 * 60 * 1000L) {
+                aapsLogger.debug(LTag.GLUCOSE,
+                                 "UKF: first-day mode — sensor age ${sensorAgeMs / 3_600_000}h >= 24h, passing raw")
+                copyRawToSmoothed(data)
+                return data
+            } else {
+                aapsLogger.debug(LTag.GLUCOSE,
+                                 "UKF: first-day mode — sensor age ${String.format("%.1f", sensorAgeMs / 3_600_000.0)}h < 24h, smoothing")
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         val segments = findDataSegments(data)
 
         if (segments.isEmpty()) {
