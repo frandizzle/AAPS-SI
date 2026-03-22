@@ -142,11 +142,12 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     // ── Rolling BG buffer for UKF first-day smoothing ────────────────────────
-    // Accumulates (timestampMs, mg/dL) newest-first across invoke() cycles.
-    // Resets when a new sensor is detected. No external BG history API needed.
+    // Only smooths the BG value — deltas are kept from AAPS (already correct).
+    // CgmSmoother delta computation is unreliable when built from glucoseStatus
+    // snapshots due to timestamp precision issues causing division explosions.
     private val ukfBgBuffer = ArrayDeque<Pair<Long, Double>>()
     private var ukfLastSensorInsertTimeMs: Long = -1L
-    private val UKF_BUFFER_MAX    = 36           // 3 h at 5-min intervals
+    private val UKF_BUFFER_MAX    = 36
     private val UKF_BUFFER_MAX_MS = 3L * 60 * 60 * 1000L
 
     companion object {
@@ -205,6 +206,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     fun resetAggression() {
         aggressionLearner.reset()
+        aggressionLearner.recalculate()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: aggression reset")
     }
 
@@ -556,13 +558,12 @@ open class SmartInsulinPlugin @Inject constructor(
             0L
         }
         // ── First-day CGM smoothing (UKF) ────────────────────────────────────
-        // Applies UKF smoothing during the first 24 h of a new sensor session.
-        // Auto-disables if UKF is already selected as the system smoothing plugin —
-        // running UKF twice (pipeline + here) would double-smooth and lag BG response.
-        // Class name check used instead of direct import — smoothing module is not a
-        // dependency of the APS module and cannot be imported directly.
-        // Safety gate: requires ≥4 readings in buffer before activating — prevents
-        // 0.0 deltas being fed to the loop after an app restart while buffer rebuilds.
+        // Smooths the BG value only — delta and shortAvgDelta are left as AAPS computes
+        // them from real consecutive readings. CgmSmoother's delta computation from
+        // glucoseStatus snapshots is unreliable due to timestamp precision, causing
+        // catastrophic delta values that destroy the prediction curve.
+        // Auto-disables if UKF smoothing plugin is already active (avoids double-smoothing).
+        // Safety gate: requires ≥4 readings before activating (restart blindspot protection).
         val ukfAlreadyActive = activePlugin.activeSmoothing
             .javaClass.simpleName == "UnscentedKalmanFilterPlugin"
         val ukfEnabled  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
@@ -581,17 +582,16 @@ open class SmartInsulinPlugin @Inject constructor(
         if (ukfBgBuffer.isEmpty() || ukfBgBuffer.first().first != currentReading.first) {
             ukfBgBuffer.addFirst(currentReading)
         }
-        // Prune to 3 h window and max size
         while (ukfBgBuffer.size > UKF_BUFFER_MAX) ukfBgBuffer.removeLast()
         while (ukfBgBuffer.size > 1 &&
             ukfBgBuffer.first().first - ukfBgBuffer.last().first > UKF_BUFFER_MAX_MS) {
             ukfBgBuffer.removeLast()
         }
 
-        // Smoothed values — initialised to raw, overridden below if UKF runs
+        // Only smoothedGlucose is substituted — deltas stay raw from AAPS
         var smoothedGlucose:       Double = glucoseStatus.glucose
-        var smoothedDelta:         Double = glucoseStatus.delta
-        var smoothedShortAvgDelta: Double = glucoseStatus.shortAvgDelta
+        val smoothedDelta:         Double = glucoseStatus.delta
+        val smoothedShortAvgDelta: Double = glucoseStatus.shortAvgDelta
         var ukfReasonTag:          String = ""
 
         if (ukfActive) {
@@ -599,26 +599,29 @@ open class SmartInsulinPlugin @Inject constructor(
                 try {
                     val result = CgmSmoother().smooth(ukfBgBuffer.toList())
                     if (result.filtered) {
-                        smoothedGlucose       = result.smoothedMgdl[0]
-                        smoothedDelta         = result.deltaMgdl
-                        smoothedShortAvgDelta = result.shortAvgDeltaMgdl
-                        ukfReasonTag = " ukf=day1(${"%.1f".format(sensorAgeMs / 3_600_000.0)}h)"
-                        aapsLogger.debug(LTag.APS,
-                                         "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
-                                             "buf=${ukfBgBuffer.size} " +
-                                             "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
-                                             "rawΔ=${glucoseStatus.delta / 18.0} smoothedΔ=${smoothedDelta / 18.0}")
+                        val sBg = result.smoothedMgdl[0]
+                        // Plausibility check on BG only — discard if outside sensor range
+                        if (sBg in 39.0..400.0) {
+                            smoothedGlucose = sBg
+                            ukfReasonTag = " ukf=day1(${"%.1f".format(sensorAgeMs / 3_600_000.0)}h)"
+                            aapsLogger.debug(LTag.APS,
+                                             "SmartInsulin UKF day-1: age=${"%.1f".format(sensorAgeMs / 3_600_000.0)}h " +
+                                                 "buf=${ukfBgBuffer.size} " +
+                                                 "rawBG=${glucoseStatus.glucose / 18.0} smoothedBG=${smoothedGlucose / 18.0} " +
+                                                 "Δ kept raw=${glucoseStatus.delta / 18.0}")
+                        } else {
+                            ukfReasonTag = " ukf=fallback(BG=${sBg / 18.0}oob)"
+                            aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothed BG ${sBg / 18.0} out of bounds, using raw")
+                        }
                     }
                 } catch (e: Exception) {
                     aapsLogger.warn(LTag.APS, "SmartInsulin UKF: smoothing failed, using raw: ${e.message}")
                 }
             } else {
-                // Buffer still filling after app restart — passthrough, show progress
                 ukfReasonTag = " ukf=buffering(${ukfBgBuffer.size}/4)"
                 aapsLogger.debug(LTag.APS, "SmartInsulin UKF: buffer building ${ukfBgBuffer.size}/4 readings")
             }
         } else if (ukfAlreadyActive && preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)) {
-            // Both switches on — log so user knows the toggle was suppressed
             ukfReasonTag = " ukf=suppressed(UKFpluginActive)"
         }
 
@@ -1014,10 +1017,8 @@ open class SmartInsulinPlugin @Inject constructor(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
 
-        // Anonymous GlucoseStatus passes smoothed values to determine_basal.
-        // When UKF not active, smoothed* == glucoseStatus.* — identical to stock behaviour.
-        // If GlucoseStatus gains new fields: hover red squiggle → Implement Members
-        // → set each to return glucoseStatus.fieldName.
+        // smoothedGlucose is UKF-filtered; delta/shortAvgDelta are raw AAPS values.
+        // When UKF not active, smoothedGlucose == glucoseStatus.glucose — no-op.
         val gsForDetermineBasal = object : GlucoseStatus {
             override val glucose:       Double = smoothedGlucose
             override val date:          Long   = glucoseStatus.date
@@ -1137,7 +1138,6 @@ open class SmartInsulinPlugin @Inject constructor(
                     " hr=${activityMonitor.avgHrBpm.toInt()} steps=${activityMonitor.lastSteps5min}/5m)"
             }
         }
-        // CGM warmup/block suffix — ukfReasonTag shows active/buffering/suppressed state
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}$ukfReasonTag"
         else if (ukfReasonTag.isNotEmpty()) " |$ukfReasonTag"
         else ""
