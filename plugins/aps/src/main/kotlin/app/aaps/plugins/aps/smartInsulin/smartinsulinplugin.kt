@@ -369,6 +369,32 @@ open class SmartInsulinPlugin @Inject constructor(
         return if (raw < mmolThreshold) raw * 18.0 else raw
     }
 
+    /**
+     * Returns the P/F ISF for a given hour, respecting day/night windows.
+     * Day window is checked first, then night window, then fallback ISF.
+     * 0.0 in day/night ISF means "skip this window, try next".
+     * Fallback 0.0 means "use profile ISF" (handled by dosingIsfMgdl logic).
+     * Both windows support midnight crossing (start > end).
+     */
+    private fun pfIsfMgdl(hour: Int): Double {
+        val dayStart  = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayStartHour)
+        val dayEnd    = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayEndHour)
+        val nightStart = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightStartHour)
+        val nightEnd   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightEndHour)
+        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart   until dayEnd
+        else hour >= dayStart   || hour < dayEnd
+        val inNight = if (nightStart <= nightEnd) hour in nightStart until nightEnd
+        else hour >= nightStart || hour < nightEnd
+        val dayIsf   = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key,   UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
+        val nightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
+        val fallback = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key,      UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+        return when {
+            inDay   && dayIsf   > 0.0 -> dayIsf
+            inNight && nightIsf > 0.0 -> nightIsf
+            else                      -> fallback
+        }
+    }
+
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
@@ -460,9 +486,8 @@ open class SmartInsulinPlugin @Inject constructor(
             lockoutTrackerInitialized = true
         }
 
-        // All meal modes trigger the dirty window except P/F — it's a tail correction,
-        // not a real meal entry, so letting it dirty the window would suppress learning
-        // unnecessarily after every fat/protein phase.
+        // P/F is a tail correction, not a real meal — don't trigger post-meal dirty window.
+        // UAM meal modes should still fire normally after P/F expires.
         val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
         if (previousWasRealMeal && mealMode == MealMode.FASTING) {
@@ -498,10 +523,9 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
             MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
             MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-            MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+            MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(currentHour)
             MealMode.FASTING       -> 0.0
-        }
-        val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
+        }   = profile.getIsfMgdl("SmartInsulinPlugin")
         // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
         val circIsfMult   = circadianLearner.isfMultiplier()
         val circBasalMult = circadianLearner.basalMultiplier()
@@ -624,7 +648,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
                     MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
                     MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-                    MealMode.UAM_PROTEIN_FAT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+                    MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(currentHour)
                     MealMode.FASTING       -> 0.0
                 }
                 if (unitVal == 0.0) 0.0 else unitVal
@@ -1324,8 +1348,14 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamProteinFatEnabled,         title = R.string.si_uam_proteinfat_enabled_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDurationMins,        title = R.string.si_uam_proteinfat_duration_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatStuckReadings,       title = R.string.si_uam_proteinfat_stuck_readings_title))
-                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,    title = R.string.si_uam_proteinfat_threshold_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,          title = R.string.si_uam_proteinfat_isf_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf,       title = R.string.si_uam_proteinfat_day_isf_title))
+                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDayStartHour,        title = R.string.si_uam_proteinfat_day_start_title))
+                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatDayEndHour,          title = R.string.si_uam_proteinfat_day_end_title))
+                addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,     title = R.string.si_uam_proteinfat_night_isf_title))
+                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatNightStartHour,      title = R.string.si_uam_proteinfat_night_start_title))
+                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamProteinFatNightEndHour,        title = R.string.si_uam_proteinfat_night_end_title))
             })
         }
     }
