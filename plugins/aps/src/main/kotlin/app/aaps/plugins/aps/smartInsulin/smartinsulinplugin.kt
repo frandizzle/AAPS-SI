@@ -142,8 +142,8 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     companion object {
-        const val REBOUND_GUARD_MS      = 60 * 60 * 1000L  // 60 min rebound protection window
-        const val SMB_DELIVERY_FRACTION = 0.5               // matches DetermineBasalSmartInsulin
+        const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
+        const val SMB_DELIVERY_FRACTION = 0.5
     }
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -446,9 +446,6 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val entrySmbCount    = preferences.get(IntKey.ApsSmartInsulinUamEntrySmbCount)
         val entrySmbFraction = preferences.get(DoubleKey.ApsSmartInsulinUamEntrySmbFraction)
-        // During entry window: use entrySmbFraction (e.g. 0.8) as the delivery fraction.
-        // Outside entry window: fall back to SMB_DELIVERY_FRACTION (0.5) — normal behaviour.
-        // uamSmbFraction replaces SMB_DELIVERY_FRACTION in determine_basal, not multiplies it.
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else SMB_DELIVERY_FRACTION
 
@@ -642,7 +639,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 uamEntrySmbsDelivered = 0
                 aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking armed (same-cycle fire) for ${mealMode.label}")
             }
-            // Recompute fraction — first-cycle SMBs at entry fraction, then back to normal 0.5
+            // Recompute fraction — first-cycle SMBs should be reduced even when UAM fires this cycle
             uamSmbFraction = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
                 entrySmbFraction else SMB_DELIVERY_FRACTION
             aapsLogger.debug(LTag.APS,
@@ -981,7 +978,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
-        val fractionUsed = uamSmbFraction  // capture before potential increment
+        val fractionUsed = uamSmbFraction  // capture before increment
         if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount) {
             uamEntrySmbsDelivered++
             aapsLogger.debug(LTag.APS,
@@ -990,7 +987,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         // Only show uamEntry when an SMB was actually delivered this cycle
         if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered <= entrySmbCount && uamEntrySmbsDelivered > 0) {
-            apsResult.reason += " | uamEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
+            apsResult.reason += " | UAMEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
         }
 
         // Append STFT status to reason if active
