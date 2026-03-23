@@ -142,7 +142,8 @@ open class SmartInsulinPlugin @Inject constructor(
         msSinceLastSuspend < REBOUND_GUARD_MS
 
     companion object {
-        const val REBOUND_GUARD_MS = 60 * 60 * 1000L  // 60 min rebound protection window
+        const val REBOUND_GUARD_MS      = 60 * 60 * 1000L  // 60 min rebound protection window
+        const val SMB_DELIVERY_FRACTION = 0.5               // matches DetermineBasalSmartInsulin
     }
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -445,8 +446,11 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val entrySmbCount    = preferences.get(IntKey.ApsSmartInsulinUamEntrySmbCount)
         val entrySmbFraction = preferences.get(DoubleKey.ApsSmartInsulinUamEntrySmbFraction)
+        // During entry window: use entrySmbFraction (e.g. 0.8) as the delivery fraction.
+        // Outside entry window: fall back to SMB_DELIVERY_FRACTION (0.5) — normal behaviour.
+        // uamSmbFraction replaces SMB_DELIVERY_FRACTION in determine_basal, not multiplies it.
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
-            entrySmbFraction else 1.0
+            entrySmbFraction else SMB_DELIVERY_FRACTION
 
         // ── Post-meal learning lockout ───────────────────────────────────────
         // When any meal or UAM mode expires (transition back to FASTING), mark BG data
@@ -638,9 +642,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 uamEntrySmbsDelivered = 0
                 aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking armed (same-cycle fire) for ${mealMode.label}")
             }
-            // Recompute fraction — first-cycle SMBs should be reduced even when UAM fires this cycle
+            // Recompute fraction — first-cycle SMBs at entry fraction, then back to normal 0.5
             uamSmbFraction = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
-                entrySmbFraction else 1.0
+                entrySmbFraction else SMB_DELIVERY_FRACTION
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
                                  "${fmtIsf(dosingIsfMgdl)}$unitLabel immediately")
@@ -977,15 +981,16 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
+        val fractionUsed = uamSmbFraction  // capture before potential increment
         if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount) {
             uamEntrySmbsDelivered++
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: UAM entry SMB ${uamEntrySmbsDelivered}/$entrySmbCount " +
-                                 "at ${(entrySmbFraction * 100).toInt()}% fraction")
+                                 "at ${(fractionUsed * 100).toInt()}% fraction")
         }
         // Only show uamEntry when an SMB was actually delivered this cycle
         if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered <= entrySmbCount && uamEntrySmbsDelivered > 0) {
-            apsResult.reason += " | uamEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(uamSmbFraction*100).toInt()}%"
+            apsResult.reason += " | uamEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
         }
 
         // Append STFT status to reason if active
@@ -1054,18 +1059,17 @@ open class SmartInsulinPlugin @Inject constructor(
         // CGM warmup/block suffix
         val cgmSuffix = if (cgmState.reason.isNotEmpty()) " | ${cgmState.reason}" else ""
 
-        // UKF first-day status — shown when UKF plugin is active and first-day toggle is on
+        // UKF first-day status tag
         val ukfFirstDaySuffix: String = run {
-            val ukfSelected  = activePlugin.activeSmoothing.javaClass.simpleName == "UnscentedKalmanFilterPlugin"
-            val firstDayOn   = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
+            val ukfSelected = activePlugin.activeSmoothing.javaClass.simpleName == "UnscentedKalmanFilterPlugin"
+            val firstDayOn  = preferences.get(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing)
             if (ukfSelected && firstDayOn && sensorInsertTimeMs > 0L) {
-                val sensorAgeMs  = now - sensorInsertTimeMs
-                val remainingMs  = 24L * 60 * 60 * 1000L - sensorAgeMs
+                val remainingMs = 24L * 60 * 60 * 1000L - (now - sensorInsertTimeMs)
                 if (remainingMs > 0L) {
                     val remainingH   = remainingMs / 3_600_000L
                     val remainingMin = (remainingMs % 3_600_000L) / 60_000L
                     " | UKF active ${remainingH}h${remainingMin}m left"
-                } else ""  // past 24h — gate closed, no need to show
+                } else ""
             } else ""
         }
 

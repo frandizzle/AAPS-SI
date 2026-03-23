@@ -90,7 +90,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmSmbFraction:           Double,
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
-        uamSmbFraction:           Double = 1.0,
+        uamSmbFraction:           Double = SMB_DELIVERY_FRACTION,
         targetRespectEnabled:     Boolean = false
     ): APSResult {
 
@@ -286,7 +286,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
-                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction * uamSmbFraction
+                    // uamSmbFraction replaces SMB_DELIVERY_FRACTION during UAM entry
+                    // (first N SMBs at a higher fraction to front-load the response).
+                    // Outside entry window uamSmbFraction == SMB_DELIVERY_FRACTION (0.5).
+                    insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
