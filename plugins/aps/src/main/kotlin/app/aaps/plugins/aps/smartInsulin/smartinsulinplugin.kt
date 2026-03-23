@@ -460,8 +460,9 @@ open class SmartInsulinPlugin @Inject constructor(
             lockoutTrackerInitialized = true
         }
 
-        // P/F is a tail correction, not a real meal — don't trigger post-meal dirty window.
-        // UAM meal modes should still fire normally after P/F expires.
+        // All meal modes trigger the dirty window except P/F — it's a tail correction,
+        // not a real meal entry, so letting it dirty the window would suppress learning
+        // unnecessarily after every fat/protein phase.
         val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
         if (previousWasRealMeal && mealMode == MealMode.FASTING) {
@@ -985,7 +986,7 @@ open class SmartInsulinPlugin @Inject constructor(
                              "SmartInsulin: UAM entry SMB ${uamEntrySmbsDelivered}/$entrySmbCount " +
                                  "at ${(fractionUsed * 100).toInt()}% fraction")
         }
-        // Only show uamEntry when an SMB was actually delivered this cycle
+        // Only show UAMEntry when an SMB was actually delivered this cycle
         if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered <= entrySmbCount && uamEntrySmbsDelivered > 0) {
             apsResult.reason += " | UAMEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
         }
