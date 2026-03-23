@@ -523,9 +523,10 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
             MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
             MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-            MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(currentHour)
+            MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
             MealMode.FASTING       -> 0.0
-        }   = profile.getIsfMgdl("SmartInsulinPlugin")
+        }
+        val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
         // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
         val circIsfMult   = circadianLearner.isfMultiplier()
         val circBasalMult = circadianLearner.basalMultiplier()
@@ -648,7 +649,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
                     MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
                     MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-                    MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(currentHour)
+                    MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(uamCurrentHour)
                     MealMode.FASTING       -> 0.0
                 }
                 if (unitVal == 0.0) 0.0 else unitVal
