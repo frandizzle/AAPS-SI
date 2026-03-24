@@ -42,9 +42,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private val apsResultProvider: Provider<APSResult>
 ) {
 
-    private fun fmt(mgdl: Double): String =
-        String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
-
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
@@ -91,7 +88,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
         uamSmbFraction:           Double = SMB_DELIVERY_FRACTION,
-        targetRespectEnabled:     Boolean = false
+        targetRespectEnabled:     Boolean = false,
+        isMmol:                   Boolean = true
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -103,7 +101,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
             consoleError = mutableListOf()
         )
 
-        val units          = "mmol"
+        fun fmt(mgdl: Double) = if (isMmol)
+            String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
+        else
+            String.format(Locale.US, "%.0f", mgdl)
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -258,7 +259,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
-                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${fmt(delta)} dur=${suspendMins}m"
                     else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
@@ -287,8 +288,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 val correctionUnits = if (smbAllowed) {
                     // uamSmbFraction replaces SMB_DELIVERY_FRACTION during UAM entry
-                    // (first N SMBs at a higher fraction to front-load the response).
-                    // Outside entry window uamSmbFraction == SMB_DELIVERY_FRACTION (0.5).
                     insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 

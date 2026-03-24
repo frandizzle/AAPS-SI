@@ -1130,7 +1130,8 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
-            targetRespectEnabled     = preferences.get(BooleanKey.ApsSmartInsulinTargetRespectEnabled)
+            targetRespectEnabled     = preferences.get(BooleanKey.ApsSmartInsulinTargetRespectEnabled),
+            isMmol                   = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
