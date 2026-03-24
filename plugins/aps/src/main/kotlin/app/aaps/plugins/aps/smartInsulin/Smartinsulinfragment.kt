@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.plugins.aps.databinding.FragmentSmartInsulinBinding
 import dagger.android.support.DaggerFragment
 import java.util.Calendar
@@ -224,21 +225,45 @@ class SmartInsulinFragment : DaggerFragment() {
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.")
 
-        if (d.pb2Status.isNotEmpty()) {
+        if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
+            val gate     = d.pb2GateData
+            val isActive = d.pb2Status.contains("active")
             val pb2Primary = when {
-                d.pb2Status.contains("active: due") -> "Pre-bolus 2 due now — ready to deliver"
+                d.pb2Status.contains("active: due") -> "Pre-bolus 2 — ready to deliver now"
                 d.pb2Status.contains("active:")     -> {
-                    val mins = Regex("""active:\s*(\d+)m""").find(d.pb2Status)?.groupValues?.get(1)
-                    "Pre-bolus 2 active — delivers in ${mins ?: "?"}min"
+                    val mins = Regex("""(\d+)min""").find(d.pb2Status)?.groupValues?.get(1)
+                    "Pre-bolus 2 — delivers in ${mins ?: "?"}min"
                 }
-                d.pb2Status.contains("waiting")     -> "Pre-bolus 2 waiting — conditions not yet met"
-                else                                -> "Pre-bolus 2: ${d.pb2Status}"
+                gate != null -> "Pre-bolus 2 — waiting for safety gates"
+                else         -> "Pre-bolus 2"
             }
-            val pb2Detail = if (d.pb2Status.contains("waiting")) {
-                // Extract readable conditions from "PB2 waiting: BG x < y min, BG x not above target y, IOB x high (max y)"
-                d.pb2Status.removePrefix("PB2 waiting:").trim()
-            } else null
-            addRow(c, pb2Primary, pb2Detail, Color.parseColor("#FF64B5F6"))
+            addRow(c, pb2Primary, primaryColor = if (isActive) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+
+            if (gate != null) {
+                val isMmol = gate.isMmol
+                fun fmtBg(mgdl: Double)    = if (isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
+                fun fmtDelta(mgdl: Double) = if (isMmol) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
+                fun fmtIob(u: Double)      = "%.2fU".format(u)
+
+                val minBgMgdl   = MealOverrideManager.MIN_BG_FOR_PB2_MGDL
+                val bgOk        = gate.bgMgdl >= minBgMgdl
+                val bgDiff      = if (bgOk) "(+${fmtBg(gate.bgMgdl - minBgMgdl)} above min)" else "(${fmtBg(minBgMgdl - gate.bgMgdl)} below min — waiting)"
+                addGateRow(c, "BG: ${fmtBg(gate.bgMgdl)}  $bgDiff", "Minimum: ${fmtBg(minBgMgdl)}", bgOk)
+
+                val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                val iobOk         = gate.iobU < maxAllowedIob
+                val iobDetail     = if (iobOk) "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (${fmtIob(maxAllowedIob - gate.iobU)} headroom)"
+                else "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (IOB too high — waiting)"
+                addGateRow(c, "IOB: $iobDetail", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob(maxAllowedIob)})", iobOk)
+
+                val deltaOk   = gate.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+                addGateRow(c, "Delta: ${fmtDelta(gate.deltaMgdl)}  (${if (deltaOk) "not falling fast" else "falling — waiting"})",
+                           "Blocked below ${fmtDelta(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk)
+
+                val shortOk   = gate.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+                addGateRow(c, "15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)}  (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
+                           "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
+            }
         }
     }
 
@@ -356,6 +381,12 @@ class SmartInsulinFragment : DaggerFragment() {
             setBackgroundColor(Color.parseColor("#FF444444"))
         }
         container.addView(v)
+    }
+
+    private fun addGateRow(container: LinearLayout, primary: String, detail: String, passed: Boolean) {
+        val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
+        val prefix = if (passed) "✓ " else "✗ "
+        addRow(container, "$prefix$primary", detail, color)
     }
 
     private fun addSectionHeader(container: LinearLayout, title: String) {

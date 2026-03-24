@@ -141,6 +141,14 @@ open class SmartInsulinPlugin @Inject constructor(
         bgWentLow &&
         msSinceLastSuspend < REBOUND_GUARD_MS
 
+    // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
+    @Volatile var pb2LastBgMgdl:          Double = 0.0
+    @Volatile var pb2LastDeltaMgdl:       Double = 0.0
+    @Volatile var pb2LastShortAvgDeltaMgdl: Double = 0.0
+    @Volatile var pb2LastIobU:            Double = 0.0
+    @Volatile var pb2LastMaxIobU:         Double = 0.0
+    @Volatile var pb2ProfileTargetMgdl:   Double = 0.0
+
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
         const val SMB_DELIVERY_FRACTION = 0.5
@@ -326,6 +334,16 @@ open class SmartInsulinPlugin @Inject constructor(
 
     // ── Structured data for fragment cards ───────────────────────────────────
 
+    data class Pb2GateData(
+        val bgMgdl:            Double,
+        val deltaMgdl:         Double,
+        val shortAvgDeltaMgdl: Double,
+        val iobU:              Double,
+        val maxIobU:           Double,
+        val profileTargetMgdl: Double,
+        val isMmol:            Boolean
+    )
+
     data class FragmentData(
         // General
         val hour:               Int,
@@ -368,7 +386,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // Insulin profiles — raw string
         val profilesRawStatus:  String,
         // TIR
-        val tirRawLine:         String
+        val tirRawLine:         String,
+        val pb2GateData:        Pb2GateData?        // null if PB2 not pending
     )
 
     fun fragmentData(): FragmentData {
@@ -448,7 +467,16 @@ open class SmartInsulinPlugin @Inject constructor(
             uamDebug           = uamController.debugSummary(),
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
-            tirRawLine         = aggressionLearner.tirSummary
+            tirRawLine         = aggressionLearner.tirSummary,
+            pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
+                bgMgdl            = pb2LastBgMgdl,
+                deltaMgdl         = pb2LastDeltaMgdl,
+                shortAvgDeltaMgdl = pb2LastShortAvgDeltaMgdl,
+                iobU              = pb2LastIobU,
+                maxIobU           = pb2LastMaxIobU,
+                profileTargetMgdl = pb2ProfileTargetMgdl,
+                isMmol            = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
+            ) else null
         )
     }
 
@@ -672,11 +700,19 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
+        val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
             iobArray      = iobArray,
-            maxIobU       = constraintsChecker.getMaxIOBAllowed().value()
+            maxIobU       = pb2MaxIob
         )
+        // Cache live gate values so fragmentData() can show PB2 status without re-querying
+        pb2LastBgMgdl            = glucoseStatus.glucose
+        pb2LastDeltaMgdl         = glucoseStatus.delta
+        pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
+        pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
+        pb2LastMaxIobU           = pb2MaxIob
+        pb2ProfileTargetMgdl     = profile.getTargetMgdl()
 
         // ── STFT: short-term target reduction for stuck-high fasting BG ──────
         // Only runs in fasting, never overrides a deliberate temp target.
