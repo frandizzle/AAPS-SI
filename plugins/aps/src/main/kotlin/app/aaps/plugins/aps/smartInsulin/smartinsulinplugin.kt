@@ -433,7 +433,7 @@ open class SmartInsulinPlugin @Inject constructor(
             secondLowOccurred  = secondLowOccurred,
             minBgDuringLow     = minBgDuringLow,
             iobAtLowTime       = iobAtLowTime,
-            pb2Status          = mealOverrideManager.preBolus2StatusText,
+            pb2Status          = cachedOverviewState.pb2Line ?: "",
             isMmol             = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL,
             learningState      = cachedOverviewState.learningState,
             activityLevel      = activityMonitor.level.label,
