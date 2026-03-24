@@ -149,7 +149,7 @@
                     android:text="Circadian 24h" android:textSize="20sp" android:textStyle="bold"
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Hourly adjustments learned from your patterns. Conf = confidence from data collected."
+                    android:text="Hourly multipliers learned from your BG patterns.\nISF× and Bas× = how much to adjust sensitivity and basal for that hour.\nCeil = aggressiveness cap — if the loop is being too aggressive for this hour, this number clamps it down. Lower = more conservative.\nConf = confidence — how much real data has been collected. Green ≥60%, amber ≥30%, red &lt;30%."
                     android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="12dp" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginBottom="4dp">

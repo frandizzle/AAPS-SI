@@ -224,7 +224,22 @@ class SmartInsulinFragment : DaggerFragment() {
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.")
 
-        if (d.pb2Status.isNotEmpty()) addRow(c, "Pre-bolus 2: ${d.pb2Status}")
+        if (d.pb2Status.isNotEmpty()) {
+            val pb2Primary = when {
+                d.pb2Status.contains("active: due") -> "Pre-bolus 2 due now — ready to deliver"
+                d.pb2Status.contains("active:")     -> {
+                    val mins = Regex("""active:\s*(\d+)m""").find(d.pb2Status)?.groupValues?.get(1)
+                    "Pre-bolus 2 active — delivers in ${mins ?: "?"}min"
+                }
+                d.pb2Status.contains("waiting")     -> "Pre-bolus 2 waiting — conditions not yet met"
+                else                                -> "Pre-bolus 2: ${d.pb2Status}"
+            }
+            val pb2Detail = if (d.pb2Status.contains("waiting")) {
+                // Extract readable conditions from "PB2 waiting: BG x < y min, BG x not above target y, IOB x high (max y)"
+                d.pb2Status.removePrefix("PB2 waiting:").trim()
+            } else null
+            addRow(c, pb2Primary, pb2Detail, Color.parseColor("#FF64B5F6"))
+        }
     }
 
     // ── TIR bars ──────────────────────────────────────────────────────────────
@@ -269,7 +284,7 @@ class SmartInsulinFragment : DaggerFragment() {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
                 Pair("Learning paused — ${d.learningState.removePrefix("off: ").trim().ifEmpty{"unknown"}}", Color.parseColor("#FFFB8C00"))
             d.learningState == "limited" || d.learningState.startsWith("Limited") ->
-                Pair("Learning limited — meal active (insulin timing only)", Color.parseColor("#FFFB8C00"))
+                Pair("State: Limited — meal mode active, only learning Peak/DIA", Color.parseColor("#FFFB8C00"))
             else -> Pair("Learning active", Color.parseColor("#FF43A047"))
         }
         addRow(c, primary,
@@ -289,16 +304,69 @@ class SmartInsulinFragment : DaggerFragment() {
     private fun updateUamCard(d: SmartInsulinPlugin.FragmentData) {
         val c = _binding?.uamRows ?: return; c.removeAllViews()
         val line = d.uamStatusLine ?: ""
+
+        // ── UAM detection status ──────────────────────────────────────────
+        // Extract just the UAM line (before " | P/F:" if present)
+        val uamPart = line.substringBefore(" | P/F:").trim()
+        val pfPart  = if (line.contains("P/F:")) line.substringAfter("P/F:").trim() else null
+
         val (primary, color) = when {
-            line.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
-            line.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
-            line.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
-            line.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
-            else                      -> Pair("UAM status", Color.WHITE)
+            uamPart.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
+            uamPart.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
+            uamPart.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
+            uamPart.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
+            else                         -> Pair("UAM status", Color.WHITE)
         }
-        addRow(c, primary, line.ifEmpty { null }, color)
-        addRow(c, "Detection settings",
-               d.uamDebug.trim() + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.")
+        addRow(c, primary, uamPart.ifEmpty { null }, color)
+
+        // UAM thresholds — strip leading spaces for clean alignment
+        val debugClean = d.uamDebug.lines()
+            .filter { !it.trimStart().startsWith("P/F") }  // P/F goes in its own section
+            .joinToString("\n") { it.trimStart() }
+            .trim()
+        addRow(c, "Detection thresholds",
+               debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.")
+
+        // ── P/F subheading ────────────────────────────────────────────────
+        addDivider(c)
+        addSectionHeader(c, "Protein / Fat Detection (P/F)")
+
+        val (pfPrimary, pfColor) = when {
+            pfPart == null                       -> Pair("P/F detection disabled", Color.parseColor("#FF888888"))
+            pfPart.contains("off")               -> Pair("P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}", Color.parseColor("#FF888888"))
+            pfPart.contains("armed")             -> Pair("Armed — will activate after meal expires", Color.parseColor("#FF43A047"))
+            pfPart.contains("/") && pfPart.contains("stuck") -> {
+                val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
+                Pair("BG stuck high — counting readings ($count)", Color.parseColor("#FFFB8C00"))
+            }
+            else                                 -> Pair("P/F: $pfPart", Color.WHITE)
+        }
+        val pfDebug = d.uamDebug.lines()
+            .filter { it.trimStart().startsWith("P/F") }
+            .joinToString("\n") { it.trimStart() }
+            .trim()
+        addRow(c, pfPrimary, pfDebug.ifEmpty { null }, pfColor)
+    }
+
+    private fun addDivider(container: LinearLayout) {
+        val ctx = context ?: return
+        val v = android.view.View(ctx).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt())
+                .also { it.topMargin = (8 * dp).toInt(); it.bottomMargin = (8 * dp).toInt() }
+            setBackgroundColor(Color.parseColor("#FF444444"))
+        }
+        container.addView(v)
+    }
+
+    private fun addSectionHeader(container: LinearLayout, title: String) {
+        val ctx = context ?: return
+        container.addView(TextView(ctx).apply {
+            text = title; textSize = 13f
+            setTextColor(Color.parseColor("#FFAAAAAA"))
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = (8 * dp).toInt() }
+        })
     }
 
     // ── STFT card ─────────────────────────────────────────────────────────────
