@@ -235,15 +235,10 @@ class SmartInsulinFragment : DaggerFragment() {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
             val pb2Primary = when {
-                d.pb2Status.contains("active: due") -> "Pre-bolus 2 — ready to deliver now"
-                d.pb2Status.contains("active:")     -> {
-                    val mins = Regex("""(\d+)min?""").find(d.pb2Status)?.groupValues?.get(1)
-                    val secs = Regex("""(\d+)s\b""").find(d.pb2Status)?.groupValues?.get(1)
-                    when {
-                        mins != null -> "Pre-bolus 2 — delivers in ${mins}min"
-                        secs != null -> "Pre-bolus 2 — delivers in ${secs}s"
-                        else         -> "Pre-bolus 2 — delivering soon"
-                    }
+                d.pb2Status.contains("due") -> "Pre-bolus 2 — ready to deliver now"
+                Regex("""\d+""").containsMatchIn(d.pb2Status) -> {
+                    val mins = Regex("""(\d+)""").find(d.pb2Status)?.value
+                    "Pre-bolus 2 — delivers in ${mins}m"
                 }
                 gate != null -> "Pre-bolus 2 — waiting for safety gates"
                 else         -> "Pre-bolus 2"
