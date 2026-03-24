@@ -27,7 +27,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Smartinsulin Status"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
                     android:layout_marginBottom="20dp" />
 
                 <HorizontalScrollView
@@ -63,7 +64,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Reset Learners"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
                     android:layout_marginBottom="16dp" />
 
                 <!-- Aggression -->
@@ -79,7 +81,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Aggressiveness score"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
+                        android:textSize="16sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_reset_aggression"
@@ -105,7 +107,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Basal multiplier"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
+                        android:textSize="16sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_reset_basal"
@@ -131,7 +133,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Circadian hourly learning"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
+                        android:textSize="16sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_reset_circadian"
@@ -157,7 +159,7 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
                         android:text="Insulin profiles (peak/DIA)"
-                        android:textAppearance="?attr/textAppearanceBodyLarge" />
+                        android:textSize="16sp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btn_reset_profiles"
