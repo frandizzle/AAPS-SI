@@ -225,6 +225,12 @@ class SmartInsulinFragment : DaggerFragment() {
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.")
 
+        // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
+        if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
+            addRow(c, "Pre-bolus — delivered ${"%.2f".format(d.activeDoseU)}U",
+                   primaryColor = Color.parseColor("#FF43A047"))
+        }
+
         if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
@@ -246,9 +252,14 @@ class SmartInsulinFragment : DaggerFragment() {
                 fun fmtIob(u: Double)      = "%.2fU".format(u)
 
                 val minBgMgdl   = MealOverrideManager.MIN_BG_FOR_PB2_MGDL
-                val bgOk        = gate.bgMgdl >= minBgMgdl
-                val bgDiff      = if (bgOk) "(+${fmtBg(gate.bgMgdl - minBgMgdl)} above min)" else "(${fmtBg(minBgMgdl - gate.bgMgdl)} below min — waiting)"
-                addGateRow(c, "BG: ${fmtBg(gate.bgMgdl)}  $bgDiff", "Minimum: ${fmtBg(minBgMgdl)}", bgOk)
+                val targetMgdl  = gate.profileTargetMgdl
+                // BG must be above profile target AND above the hard floor
+                val effectiveMin = maxOf(minBgMgdl, targetMgdl)
+                val bgOk        = gate.bgMgdl > effectiveMin
+                val bgDiff      = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
+                else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
+                addGateRow(c, "BG: ${fmtBg(gate.bgMgdl)}  $bgDiff",
+                           "Must be above profile target ${fmtBg(targetMgdl)}", bgOk)
 
                 val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
                 val iobOk         = gate.iobU < maxAllowedIob

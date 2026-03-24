@@ -387,7 +387,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val profilesRawStatus:  String,
         // TIR
         val tirRawLine:         String,
-        val pb2GateData:        Pb2GateData?        // null if PB2 not pending
+        val pb2GateData:        Pb2GateData?,       // null if PB2 not pending
+        val activeDoseU:        Double?             // PB1 dose — null if none or UAM-triggered
     )
 
     fun fragmentData(): FragmentData {
@@ -476,7 +477,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 maxIobU           = pb2LastMaxIobU,
                 profileTargetMgdl = pb2ProfileTargetMgdl,
                 isMmol            = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
-            ) else null
+            ) else null,
+            activeDoseU        = mealOverrideManager.activeDoseU
         )
     }
 

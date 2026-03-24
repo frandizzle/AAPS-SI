@@ -13,6 +13,9 @@ interface MealOverrideManager {
     /** Active meal mode — returns override if not expired, else null */
     val activeMealMode: MealMode?
 
+    /** Pre-bolus 1 dose delivered when this meal mode was activated — null if none or not via SmartMeal */
+    val activeDoseU: Double?
+
     /** ISF multiplier for current loop cycle — 1.0 if no override active */
     val activeIsfMultiplier: Double
 

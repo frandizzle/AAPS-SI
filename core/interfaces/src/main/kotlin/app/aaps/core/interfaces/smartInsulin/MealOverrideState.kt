@@ -11,6 +11,7 @@ data class MealOverrideState(
     val mode:             MealMode,
     val triggerTimeMs:    Long,
     val modeExpiryMs:     Long,
+    val doseU:            Double? = null,  // pre-bolus 1 dose — null if not delivered via SmartMeal
     val preBolus2U:       Double = 0.0,
     val preBolus2DelayMs: Long   = 0L,
     val preBolus2FiredMs: Long?  = null   // null = not yet fired

@@ -47,6 +47,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("mode",             s.mode.name)
             put("triggerTimeMs",    s.triggerTimeMs)
             put("modeExpiryMs",     s.modeExpiryMs)
+            if (s.doseU != null) put("doseU", s.doseU)
             put("preBolus2U",       s.preBolus2U)
             put("preBolus2DelayMs", s.preBolus2DelayMs)
             if (s.preBolus2FiredMs != null) put("preBolus2FiredMs", s.preBolus2FiredMs)
@@ -72,6 +73,7 @@ class MealOverrideManagerImpl @Inject constructor(
                 mode             = mode,
                 triggerTimeMs    = json.getLong("triggerTimeMs"),
                 modeExpiryMs     = modeExpiryMs,
+                doseU            = if (json.has("doseU")) json.getDouble("doseU") else null,
                 preBolus2U       = json.optDouble("preBolus2U", 0.0),
                 preBolus2DelayMs = json.optLong("preBolus2DelayMs", 0L),
                 preBolus2FiredMs = if (json.has("preBolus2FiredMs")) json.getLong("preBolus2FiredMs") else null
@@ -101,6 +103,8 @@ class MealOverrideManagerImpl @Inject constructor(
     }
 
     override val activeIsfMultiplier: Double get() = 1.0
+
+    override val activeDoseU: Double? get() = if (activeMealMode != null) _state?.doseU else null
 
     override val modeTimeRemainingMs: Long get() {
         val s = _state ?: return 0L
@@ -189,6 +193,7 @@ class MealOverrideManagerImpl @Inject constructor(
             mode             = mode,
             triggerTimeMs    = now,
             modeExpiryMs     = now + modeWindowMs,
+            doseU            = doseU,
             preBolus2U       = preBolus2U,
             preBolus2DelayMs = preBolus2DelayMs,
             preBolus2FiredMs = null
