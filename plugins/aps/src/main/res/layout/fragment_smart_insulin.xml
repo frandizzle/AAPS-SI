@@ -26,6 +26,27 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Rebound / recovery card — visibility controlled programmatically -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/rebound_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Low Recovery" android:textSize="20sp" android:textStyle="bold"
+                    android:textColor="#FFFB8C00"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Active protection window after a low BG event."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/rebound_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- TIR card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"

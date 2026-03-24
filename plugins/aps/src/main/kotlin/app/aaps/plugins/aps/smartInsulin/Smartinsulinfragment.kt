@@ -65,6 +65,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val d = smartInsulinPlugin.fragmentData()
         binding.tvStatus.text = smartInsulinPlugin.statusSummary()
         updateGeneralCard(d)
+        updateReboundCard(d)
         updateTirBars(d.tirRawLine)
         updateLearningCard(d)
         updateUamCard(d)
@@ -106,6 +107,81 @@ class SmartInsulinFragment : DaggerFragment() {
         else     -> "Normal aggressiveness"
     }
 
+    // ── Rebound / recovery card ───────────────────────────────────────────────
+
+    private fun updateReboundCard(d: SmartInsulinPlugin.FragmentData) {
+        val b = _binding ?: return
+        val c = b.reboundRows
+        c.removeAllViews()
+
+        if (!d.inReboundWindow && !d.bgWentLow) {
+            // No rebound — hide card
+            b.reboundCard.visibility = View.GONE
+            return
+        }
+        b.reboundCard.visibility = View.VISIBLE
+
+        if (d.inReboundWindow) {
+            val elapsedMins  = d.reboundMins.toDouble()
+            val taperFrac    = (0.3 + (0.7 * (elapsedMins / 60.0))).coerceIn(0.3, 1.0)
+            val tbrPct       = (taperFrac * 100).roundToInt()
+            val smbGateMins  = 45.0  // matches REBOUND_SMB_GATE = 0.825 at t=45min
+            val smbUnlockIn  = (smbGateMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
+            val totalMins    = 60
+            val minsLeft     = (totalMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
+
+            // Status headline
+            val headline = if (smbUnlockIn > 0)
+                "⚠ Recovery in progress — ${d.reboundMins}min elapsed, ${minsLeft}min remaining"
+            else
+                "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
+            addRow(c, headline, primaryColor = Color.parseColor("#FFFB8C00"))
+
+            // TBR taper
+            addRow(c, "TBR capped at ${tbrPct}% of normal",
+                   "Starts at 30% and ramps back to 100% over 60 minutes.\n" +
+                       "Prevents insulin stacking after a low.")
+
+            // SMB countdown
+            if (smbUnlockIn > 0) {
+                addRow(c, "SMBs blocked — unlocks in ~${smbUnlockIn}min",
+                       "SMBs are held back for the first 45 minutes of recovery\n" +
+                           "to avoid over-correcting while the low is still resolving.",
+                       Color.parseColor("#FFE53935"))
+            } else {
+                addRow(c, "SMBs restored ✓",
+                       "Corrections are running normally again. TBR taper still active for ${minsLeft}min.",
+                       Color.parseColor("#FF43A047"))
+            }
+
+            // Bypass status
+            if (d.softLandingBypass) {
+                addRow(c, "Soft landing — meal detection still active",
+                       "The low was borderline (not a crash). UAM is allowed to fire\n" +
+                           "during recovery in case you eat.",
+                       Color.parseColor("#FF64B5F6"))
+            }
+
+            // How low it went
+            if (d.minBgDuringLow < Double.MAX_VALUE) {
+                addRow(c, "Lowest BG: ${"%.1f".format(d.minBgDuringLow / 18.0)} mmol",
+                       "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U\n" +
+                           if (d.secondLowOccurred) "⚠ Second low occurred — full lockout, UAM blocked." else "")
+            }
+
+        } else if (d.bgWentLow) {
+            // Was low but not yet in rebound window (BG still below guard, or just crossed back)
+            addRow(c, "⚠ BG went low — waiting for recovery",
+                   "Once BG rises back above the low guard, the 60-minute\n" +
+                       "recovery window will start automatically.",
+                   Color.parseColor("#FFE53935"))
+            if (d.minBgDuringLow < Double.MAX_VALUE) {
+                addRow(c, "Lowest BG: ${"%.1f".format(d.minBgDuringLow / 18.0)} mmol",
+                       "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U")
+            }
+        }
+    }
+
     // ── General card ──────────────────────────────────────────────────────────
 
     private fun updateGeneralCard(d: SmartInsulinPlugin.FragmentData) {
@@ -120,9 +196,22 @@ class SmartInsulinFragment : DaggerFragment() {
                modeColor)
 
         val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
-        addRow(c, aggrDesc(d.aggressiveness),
-               "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                   "Based on your BG history over the last 24h.", aggrColor)
+        val aggrDetail = when {
+            d.aggressiveness < 0.95 -> {
+                val reductionPct = ((1.0 - d.aggressiveness) * 100).roundToInt()
+                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                    "Insulin delivery reduced by ~${reductionPct}% on corrections and TBRs."
+            }
+            d.aggressiveness > 1.05 -> {
+                val boostPct = ((d.aggressiveness - 1.0) * 100).roundToInt()
+                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                    "Insulin delivery increased by ~${boostPct}% on corrections and TBRs."
+            }
+            else ->
+                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                    "Based on your BG history over the last 24h."
+        }
+        addRow(c, aggrDesc(d.aggressiveness), aggrDetail, aggrColor)
 
         val pfIsf = d.profileIsfMgdl / 18.0; val fIsf = d.finalIsfMgdl / 18.0
         addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} mmol/U",
@@ -132,19 +221,6 @@ class SmartInsulinFragment : DaggerFragment() {
         addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.")
-
-        if (d.inReboundWindow) {
-            val note = if (d.softLandingBypass) " — meal detection still active" else " — meal detection paused"
-            addRow(c, "⚠ Recovery after low — ${d.reboundMins}min elapsed$note",
-                   (if (d.minBgDuringLow < Double.MAX_VALUE) "Lowest BG: ${"%.1f".format(d.minBgDuringLow/18.0)} mmol  IOB: ${"%.2f".format(d.iobAtLowTime)}U\n" else "") +
-                       "SMBs are reduced for 60min after a low to prevent overcorrection.",
-                   Color.parseColor("#FFE53935"))
-        } else if (d.bgWentLow) {
-            addRow(c, "⚠ Recent low — watching recovery",
-                   if (d.secondLowOccurred) "Second low — full lockout active"
-                   else "BG crossed below low guard. Rebound protection will arm when BG recovers.",
-                   Color.parseColor("#FFFB8C00"))
-        }
 
         if (d.pb2Status.isNotEmpty()) addRow(c, "Pre-bolus 2: ${d.pb2Status}")
     }
