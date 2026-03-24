@@ -996,10 +996,23 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
-            val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
+            val msRem = mealOverrideManager.preBolus2SecondsRemaining
             when {
-                msRem == null || msRem <= 0 -> "PB2 active: due"
-                else                        -> "PB2 active: ${msRem / 60_000}m"
+                msRem != null && msRem > 0 -> "PB2 active: ${msRem / 60_000}m"
+                else -> {
+                    // Timer elapsed — show why it's blocked
+                    val bgOk    = pb2LastBgMgdl > pb2ProfileTargetMgdl
+                    val iobOk   = pb2LastIobU < pb2LastMaxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                    val deltaOk = pb2LastDeltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+                    val shortOk = pb2LastShortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+                    when {
+                        !bgOk    -> "PB2: Below target"
+                        !iobOk   -> "PB2: IOB too high"
+                        !deltaOk -> "PB2: BG falling"
+                        !shortOk -> "PB2: Trend falling"
+                        else     -> "PB2: Waiting"
+                    }
+                }
             }
         } else null
         cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(

@@ -339,7 +339,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
                     // Activate meal mode — PB2 params passed to manager for scheduled delivery
                     mealOverrideManager.activateOverride(
                         mode             = selectedMode,
-                        doseU            = null,
+                        doseU            = if (pb1Clamped > 0.0) pb1Clamped else null,
                         carbsG           = 0,
                         modeWindowMs     = durationMs,
                         preBolus2U       = pb2Clamped,
