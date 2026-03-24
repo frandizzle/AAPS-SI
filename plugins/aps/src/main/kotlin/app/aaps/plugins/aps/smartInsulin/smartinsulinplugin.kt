@@ -324,7 +324,129 @@ open class SmartInsulinPlugin @Inject constructor(
         }.trimEnd()
     }
 
-    // ── Public state accessors for Overview display ─────────────────────────
+    // ── Structured data for fragment cards ───────────────────────────────────
+
+    data class FragmentData(
+        // General
+        val hour:               Int,
+        val dayLabel:           String,
+        val mealMode:           String,
+        val modeRemMins:        Int?,       // null if no active mode
+        val aggressiveness:     Double,
+        val circCeil:           Double,
+        val isfMultiplier:      Double,
+        val profileIsfMgdl:     Double,
+        val finalIsfMgdl:       Double,
+        val basalMultiplier:    Double,
+        val profileBasalU:      Double,
+        val finalBasalU:        Double,
+        val inReboundWindow:    Boolean,
+        val reboundMins:        Long,
+        val softLandingBypass:  Boolean,
+        val bgWentLow:          Boolean,
+        val secondLowOccurred:  Boolean,
+        val minBgDuringLow:     Double,
+        val iobAtLowTime:       Double,
+        val pb2Status:          String,
+        val isMmol:             Boolean,
+        // Learning
+        val learningState:      String,
+        val activityLevel:      String,
+        val avgHrBpm:           Int,
+        val steps5min:          Int,
+        val postMealLockoutMins: Long,      // 0 if none
+        val cgmWarmup:          Boolean,
+        val cgmWarmupHours:     Double,
+        // STFT
+        val stftStatus:         String?,
+        val stftActive:         Boolean,
+        // UAM
+        val uamStatusLine:      String?,
+        val uamDebug:           String,
+        // Circadian rows — provided as raw string for visual table
+        val circadianRawStatus: String,
+        // Insulin profiles — raw string
+        val profilesRawStatus:  String,
+        // TIR
+        val tirRawLine:         String
+    )
+
+    fun fragmentData(): FragmentData {
+        val cal     = java.util.Calendar.getInstance()
+        val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
+        val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val profile = profileFunction.getProfile()
+        val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
+        val profileBasal = profile?.getBasal() ?: 0.0
+        val isfMult      = circadianLearner.isfMultiplier(hour)
+        val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
+        val activeMode   = mealOverrideManager.activeMealMode
+        val nowMs        = System.currentTimeMillis()
+
+        // Build circadian raw for visual table
+        val circRaw = buildString {
+            for (h in 0..23) {
+                val marker = if (h == hour) "▶" else " "
+                appendLine("$marker ${h.toString().padStart(2)}  " +
+                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
+                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
+                               "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
+                               "${"%.0f".format(circadianLearner.confidencePct(h))}%")
+            }
+        }
+
+        // Build profiles raw
+        val profRaw = buildString {
+            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
+                val p = profileLearner.getProfile(mode)
+                appendLine("${mode.label.padEnd(16)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
+            }
+        }
+
+        val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
+            (learningDirtyUntilMs - nowMs) / 60_000L else 0L
+
+        return FragmentData(
+            hour               = hour,
+            dayLabel           = day,
+            mealMode           = activeMode?.label ?: "Fasting",
+            modeRemMins        = if (activeMode != null) (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt() else null,
+            aggressiveness     = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)),
+            circCeil           = circadianLearner.aggrCeiling(hour),
+            isfMultiplier      = isfMult,
+            profileIsfMgdl     = profileIsf,
+            finalIsfMgdl       = profileIsf / isfMult,
+            basalMultiplier    = basalMult,
+            profileBasalU      = profileBasal,
+            finalBasalU        = profileBasal * basalMult,
+            inReboundWindow    = inReboundWindow,
+            reboundMins        = msSinceLastSuspend / 60_000,
+            softLandingBypass  = softLandingBypass,
+            bgWentLow          = bgWentLow,
+            secondLowOccurred  = secondLowOccurred,
+            minBgDuringLow     = minBgDuringLow,
+            iobAtLowTime       = iobAtLowTime,
+            pb2Status          = mealOverrideManager.preBolus2StatusText,
+            isMmol             = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL,
+            learningState      = cachedOverviewState.learningState,
+            activityLevel      = activityMonitor.level.label,
+            avgHrBpm           = activityMonitor.avgHrBpm.toInt(),
+            steps5min          = activityMonitor.lastSteps5min,
+            postMealLockoutMins = postMealLeft,
+            cgmWarmup          = cachedOverviewState.learningState.contains("CGM"),
+            cgmWarmupHours     = 0.0,
+            stftStatus         = stftController.statusString(profile?.getTargetMgdl() ?: (5.5 * 18.0)),
+            stftActive         = stftController.isActive,
+            uamStatusLine      = uamController.statusString(),
+            uamDebug           = uamController.debugSummary(),
+            circadianRawStatus = circRaw,
+            profilesRawStatus  = profRaw,
+            tirRawLine         = aggressionLearner.tirSummary
+        )
+    }
+
+
 
     /**
      * Returns a one-line suppression reason for the Overview "State" cell,

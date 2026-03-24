@@ -11,205 +11,174 @@
         android:orientation="vertical"
         android:padding="12dp">
 
-        <!-- Status card -->
+        <!-- Overview card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="12dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Smartinsulin Status"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="20dp" />
-
-                <HorizontalScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content">
-
-                    <TextView
-                        android:id="@+id/tv_status"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:fontFamily="monospace"
-                        android:textSize="12sp"
-                        android:lineSpacingMultiplier="1.25"
-                        tools:text="Loading..." />
-
-                </HorizontalScrollView>
-
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Overview" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/general_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- TIR chart card -->
+        <!-- TIR card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Time in Range"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="12dp" />
-
-                <!-- Fasting TIR label -->
-                <TextView
-                    android:id="@+id/tv_tir_fasting_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Fasting"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Time in Range" android:textSize="20sp" android:textStyle="bold"
                     android:layout_marginBottom="4dp" />
-
-                <!-- Fasting TIR bar -->
-                <LinearLayout
-                    android:id="@+id/tir_bar_fasting"
-                    android:layout_width="match_parent"
-                    android:layout_height="20dp"
-                    android:orientation="horizontal"
-                    android:clipToOutline="true"
-                    android:background="@android:color/transparent"
-                    android:layout_marginBottom="4dp">
-
-                    <View android:id="@+id/tir_fasting_low"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FFE53935" />
-                    <View android:id="@+id/tir_fasting_in"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FF43A047" />
-                    <View android:id="@+id/tir_fasting_high"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FFFB8C00" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="How much time BG has spent in the healthy range over the last 24h."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Fasting" android:textSize="13sp" android:textStyle="bold" android:layout_marginBottom="6dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="20dp"
+                    android:orientation="horizontal" android:layout_marginBottom="4dp">
+                    <View android:id="@+id/tir_fasting_low"  android:layout_width="0dp" android:layout_height="match_parent" android:background="#FFE53935" />
+                    <View android:id="@+id/tir_fasting_in"   android:layout_width="0dp" android:layout_height="match_parent" android:background="#FF43A047" />
+                    <View android:id="@+id/tir_fasting_high" android:layout_width="0dp" android:layout_height="match_parent" android:background="#FFFB8C00" />
                 </LinearLayout>
-
-                <!-- Fasting TIR pct text -->
-                <TextView
-                    android:id="@+id/tv_tir_fasting_pct"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textSize="12sp"
-                    android:layout_marginBottom="12dp"
-                    tools:text="99% in / 0% high / 0% low" />
-
-                <!-- Meal TIR label -->
-                <TextView
-                    android:id="@+id/tv_tir_meal_label"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Meal"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="4dp" />
-
-                <!-- Meal TIR bar -->
-                <LinearLayout
-                    android:id="@+id/tir_bar_meal"
-                    android:layout_width="match_parent"
-                    android:layout_height="20dp"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="4dp">
-
-                    <View android:id="@+id/tir_meal_low"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FFE53935" />
-                    <View android:id="@+id/tir_meal_in"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FF43A047" />
-                    <View android:id="@+id/tir_meal_high"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:background="#FFFB8C00" />
+                <TextView android:id="@+id/tv_tir_fasting_pct" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:textSize="12sp" android:layout_marginBottom="16dp"
+                    tools:text="99% in range" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Meal" android:textSize="13sp" android:textStyle="bold" android:layout_marginBottom="6dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="20dp"
+                    android:orientation="horizontal" android:layout_marginBottom="4dp">
+                    <View android:id="@+id/tir_meal_low"  android:layout_width="0dp" android:layout_height="match_parent" android:background="#FFE53935" />
+                    <View android:id="@+id/tir_meal_in"   android:layout_width="0dp" android:layout_height="match_parent" android:background="#FF43A047" />
+                    <View android:id="@+id/tir_meal_high" android:layout_width="0dp" android:layout_height="match_parent" android:background="#FFFB8C00" />
                 </LinearLayout>
-
-                <!-- Meal TIR pct text -->
-                <TextView
-                    android:id="@+id/tv_tir_meal_pct"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textSize="12sp"
-                    tools:text="93% in / 6% high / 0% low" />
-
+                <TextView android:id="@+id/tv_tir_meal_pct" android:layout_width="wrap_content"
+                    android:layout_height="wrap_content" android:textSize="12sp" tools:text="93% in range" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Circadian visual card -->
+        <!-- Learning card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Learning" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="SmartInsulin adapts to your body over time using real BG data."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/learning_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
+        <!-- UAM card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Meal Auto-Detection (UAM)" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Detects unannounced meals from unexpected BG rises."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/uam_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Circadian 24h"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:layout_marginBottom="8dp" />
+        <!-- STFT card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Soft Target (STFT)" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Nudges the loop to correct stubborn high BG without changing your profile."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/stft_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-                <!-- Header row -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginBottom="4dp">
-                    <TextView android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content"
-                        android:text="Hr" android:textSize="12sp" android:textStyle="bold" />
-                    <TextView android:layout_width="0dp" android:layout_weight="2"
-                        android:layout_height="wrap_content"
-                        android:text="ISF×" android:textSize="12sp" android:textStyle="bold" />
-                    <TextView android:layout_width="0dp" android:layout_weight="2"
-                        android:layout_height="wrap_content"
-                        android:text="Bas×" android:textSize="12sp" android:textStyle="bold" />
-                    <TextView android:layout_width="0dp" android:layout_weight="2"
-                        android:layout_height="wrap_content"
-                        android:text="Ceil" android:textSize="12sp" android:textStyle="bold" />
-                    <TextView android:layout_width="0dp" android:layout_weight="3"
-                        android:layout_height="wrap_content"
-                        android:text="Conf" android:textSize="12sp" android:textStyle="bold" />
+        <!-- Circadian card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Circadian 24h" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Hourly adjustments learned from your patterns. Conf = confidence from data collected."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="12dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginBottom="4dp">
+                    <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Hr"   android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2" android:layout_height="wrap_content" android:text="ISF×" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2" android:layout_height="wrap_content" android:text="Bas×" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2" android:layout_height="wrap_content" android:text="Ceil" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="3" android:layout_height="wrap_content" android:text="Conf" android:textSize="12sp" android:textStyle="bold" />
                 </LinearLayout>
-
                 <com.google.android.material.divider.MaterialDivider
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginBottom="4dp" />
+                <LinearLayout android:id="@+id/circadian_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
-                <!-- Circadian rows injected programmatically -->
-                <LinearLayout
-                    android:id="@+id/circadian_rows"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
+        <!-- Insulin profiles card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Insulin Profiles" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Learned peak and duration per meal type. Green = learned, amber = learning, grey = defaults."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                <LinearLayout android:id="@+id/profile_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
 
+        <!-- Raw status log -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Raw Status Log" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
+                <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content">
+                    <TextView android:id="@+id/tv_status" android:layout_width="wrap_content"
+                        android:layout_height="wrap_content" android:fontFamily="monospace"
+                        android:textSize="12sp" android:lineSpacingMultiplier="1.25" tools:text="Loading..." />
+                </HorizontalScrollView>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -217,139 +186,53 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Reset Learners"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Reset Learners" android:textSize="20sp" android:textStyle="bold"
                     android:layout_marginBottom="16dp" />
-
-                <!-- Aggression -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="12dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Aggressiveness score"
-                        android:textSize="16sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_reset_aggression"
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="12dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Aggressiveness score" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_aggression"
                         style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="Reset" />
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
-
-                <!-- Basal -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="12dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Basal multiplier"
-                        android:textSize="16sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_reset_basal"
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="12dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Basal multiplier" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_basal"
                         style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="Reset" />
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
-
-                <!-- Circadian -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="12dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Circadian hourly learning"
-                        android:textSize="16sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_reset_circadian"
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="12dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Circadian hourly learning" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_circadian"
                         style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="Reset" />
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
-
-                <!-- Profiles -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="20dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Insulin profiles (peak/DIA)"
-                        android:textSize="16sp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_reset_profiles"
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="20dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Insulin profiles (peak/DIA)" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_profiles"
                         style="@style/Widget.Material3.Button.OutlinedButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:textSize="16sp"
-                        android:paddingStart="24dp"
-                        android:paddingEnd="24dp"
-                        android:text="Reset" />
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
-
-                <com.google.android.material.divider.MaterialDivider
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="16dp" />
-
-                <!-- Reset All -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_reset_all"
+                <com.google.android.material.divider.MaterialDivider android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginBottom="16dp" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_all"
                     style="@style/Widget.Material3.Button"
-                    android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:textSize="18sp"
-                    android:text="Reset ALL Learners" />
-
+                    android:layout_width="match_parent" android:layout_height="56dp"
+                    android:textSize="18sp" android:text="Reset ALL Learners" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
