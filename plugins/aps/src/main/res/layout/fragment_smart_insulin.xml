@@ -178,7 +178,7 @@
                     android:text="Insulin Profiles" android:textSize="20sp" android:textStyle="bold"
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="Learned peak and duration per meal type. Green = learned, amber = learning, grey = defaults."
+                    android:text="Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values."
                     android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/profile_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />

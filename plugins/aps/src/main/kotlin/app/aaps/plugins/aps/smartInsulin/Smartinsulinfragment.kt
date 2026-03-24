@@ -155,6 +155,14 @@ class SmartInsulinFragment : DaggerFragment() {
                        Color.parseColor("#FF43A047"))
             }
 
+            // Meal mode active during recovery
+            if (d.mealMode != "Fasting") {
+                addRow(c, "Meal mode active — low recovery bypassed until window finishes",
+                       "Recovery protection (TBR taper, SMB gate) continues running in the background.\n" +
+                           "Meal mode ISF and dosing are applied on top. Recovery ends at ${minsLeft}min.",
+                       Color.parseColor("#FF64B5F6"))
+            }
+
             // Bypass status
             if (d.softLandingBypass) {
                 addRow(c, "Soft landing — meal detection still active",
@@ -197,11 +205,7 @@ class SmartInsulinFragment : DaggerFragment() {
                modeColor)
 
         val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
-        val isFasting = d.mealMode == "Fasting"
-        val aggrDetail = if (!isFasting) {
-            "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                "Locked at 1.0 during meal modes — not applied. Fasting value shown for reference."
-        } else when {
+        val aggrDetail = when {
             d.aggressiveness < 0.95 -> {
                 val reductionPct = ((1.0 - d.aggressiveness) * 100).roundToInt()
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
@@ -216,8 +220,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
                     "Based on your BG history over the last 24h."
         }
-        val aggrPrimary = if (!isFasting) "Aggressiveness locked — meal mode active" else aggrDesc(d.aggressiveness)
-        addRow(c, aggrPrimary, aggrDetail, if (!isFasting) Color.parseColor("#FF888888") else aggrColor)
+        addRow(c, aggrDesc(d.aggressiveness), aggrDetail, aggrColor)
 
         val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
@@ -366,7 +369,9 @@ class SmartInsulinFragment : DaggerFragment() {
             .joinToString("\n") { it.trimStart() }
             .trim()
         addRow(c, "Detection thresholds",
-               debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.")
+               debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.\n\n" +
+                   "Clean window = fasting, normal thresholds apply.\n" +
+                   "Dirty window = post-meal lockout active — thresholds are raised (~1.5×) to avoid\ndetecting fat/protein tail rises as a new meal.")
 
         // ── P/F subheading ────────────────────────────────────────────────
         addDivider(c)
@@ -425,7 +430,17 @@ class SmartInsulinFragment : DaggerFragment() {
                    d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
                    Color.parseColor("#FFFB8C00"))
         } else {
-            addRow(c, "Inactive — BG is responding normally",
+            val inactiveReason = when {
+                d.mealMode.startsWith("Protein") || d.mealMode.startsWith("UAM_PROTEIN") ->
+                    "Inactive — P/F running"
+                d.mealMode.startsWith("UAM") || d.mealMode.contains("(UAM)") ->
+                    "Inactive — UAM running"
+                d.mealMode != "Fasting" ->
+                    "Inactive — meal mode running (${d.mealMode})"
+                else ->
+                    "Inactive — BG is responding normally"
+            }
+            addRow(c, inactiveReason,
                    "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.",
                    Color.parseColor("#FF888888"))
         }
@@ -490,7 +505,7 @@ class SmartInsulinFragment : DaggerFragment() {
             val isActive = name.trim().equals(activeMealMode.trim(), ignoreCase = true)
             // Colour from learning status regardless of active state
             val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
-            val note = when { n == 0 -> "  (using defaults)"; n < 5 -> "  (still learning)"; else -> "" }
+            val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
             val prefix = if (isActive) "► " else "  "
             c.addView(TextView(ctx).apply {
                 text = "$prefix$name"; textSize = 13f; setTextColor(col)
