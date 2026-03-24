@@ -71,7 +71,7 @@ class SmartInsulinFragment : DaggerFragment() {
         updateUamCard(d)
         updateStftCard(d)
         updateCircadianTable(d.circadianRawStatus)
-        updateProfilesCard(d.profilesRawStatus)
+        updateProfilesCard(d.profilesRawStatus, d.mealMode)
     }
 
     // ── Layout helpers ────────────────────────────────────────────────────────
@@ -236,14 +236,14 @@ class SmartInsulinFragment : DaggerFragment() {
                          m.groupValues[3].toFloatOrNull() ?: return null)
     }
 
-    private fun applyTirBar(lv: View, iv: View, hv: View, pt: TextView, tir: TirValues?) {
+    private fun applyTirBar(lv: View, iv: View, hv: View, pt: TextView, tir: TirValues?, label: String) {
         if (tir == null) {
             (lv.layoutParams as LinearLayout.LayoutParams).weight = 0f
             (iv.layoutParams as LinearLayout.LayoutParams).weight = 1f
             (hv.layoutParams as LinearLayout.LayoutParams).weight = 0f
             iv.setBackgroundColor(Color.parseColor("#FF9E9E9E"))
             lv.requestLayout(); iv.requestLayout(); hv.requestLayout()
-            pt.text = "Not enough data yet — needs ~2 hours of fasting readings"; return
+            pt.text = "Not enough data yet — needs ~2 hours of $label readings"; return
         }
         iv.setBackgroundColor(Color.parseColor("#FF43A047"))
         (lv.layoutParams as LinearLayout.LayoutParams).weight = tir.lowPct
@@ -255,8 +255,8 @@ class SmartInsulinFragment : DaggerFragment() {
 
     private fun updateTirBars(tirLine: String) {
         val b = _binding ?: return
-        applyTirBar(b.tirFastingLow, b.tirFastingIn, b.tirFastingHigh, b.tvTirFastingPct, parseTir(tirLine, "Fasting"))
-        applyTirBar(b.tirMealLow,    b.tirMealIn,    b.tirMealHigh,    b.tvTirMealPct,    parseTir(tirLine, "Meal"))
+        applyTirBar(b.tirFastingLow, b.tirFastingIn, b.tirFastingHigh, b.tvTirFastingPct, parseTir(tirLine, "Fasting"), "fasting")
+        applyTirBar(b.tirMealLow,    b.tirMealIn,    b.tirMealHigh,    b.tvTirMealPct,    parseTir(tirLine, "Meal"),    "meal")
     }
 
     // ── Learning card ─────────────────────────────────────────────────────────
@@ -364,18 +364,37 @@ class SmartInsulinFragment : DaggerFragment() {
 
     // ── Profiles card ─────────────────────────────────────────────────────────
 
-    private fun updateProfilesCard(raw: String) {
+    private fun updateProfilesCard(raw: String, activeMealMode: String) {
         val b = _binding ?: return; val c = b.profileRows; c.removeAllViews(); val ctx = context ?: return
         raw.lines().filter { it.isNotBlank() }.forEach { line ->
             val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
             val name = parts[0].trim(); val info = parts[1].trim()
-            val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val col = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
+            val n    = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val isActive = name.trim().equals(activeMealMode.trim(), ignoreCase = true)
+            val col  = when {
+                isActive -> Color.WHITE
+                n >= 5   -> Color.parseColor("#FF43A047")
+                n >= 1   -> Color.parseColor("#FFFB8C00")
+                else     -> Color.parseColor("#FF888888")
+            }
             val note = when { n == 0 -> "  (using defaults)"; n < 5 -> "  (still learning)"; else -> "" }
-            c.addView(TextView(ctx).apply { text = name; textSize = 13f; setTextColor(col); setTypeface(null, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.topMargin = (4*dp).toInt() } })
-            c.addView(TextView(ctx).apply { text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FF888888")); typeface = android.graphics.Typeface.MONOSPACE
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (2*dp).toInt() } })
+            val prefix = if (isActive) "► " else "  "
+            val nameRow = TextView(ctx).apply {
+                text = "$prefix$name"; textSize = 13f; setTextColor(col)
+                setTypeface(null, if (isActive) Typeface.BOLD else Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.topMargin = (4*dp).toInt() }
+            }
+            if (isActive) nameRow.setBackgroundColor(Color.parseColor("#22FFFFFF"))
+            c.addView(nameRow)
+            c.addView(TextView(ctx).apply {
+                text = info + note; textSize = 11f
+                setTextColor(if (isActive) Color.parseColor("#FFCCCCCC") else Color.parseColor("#FF888888"))
+                typeface = android.graphics.Typeface.MONOSPACE
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.bottomMargin = (2*dp).toInt() }
+                if (isActive) setBackgroundColor(Color.parseColor("#22FFFFFF"))
+            })
         }
     }
 
