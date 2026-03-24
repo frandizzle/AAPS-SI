@@ -384,6 +384,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeMode   = mealOverrideManager.activeMealMode
         val nowMs        = System.currentTimeMillis()
 
+        // Round displayed basal to pump's TBR step so it matches what actually gets delivered
+        val tbrStep      = activePlugin.activePump.pumpDescription.tempAbsoluteStep
+            .takeIf { it > 0.0 } ?: 0.05
+        val rawFinalBasal = profileBasal * basalMult
+        val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
+
         // Build circadian raw for visual table
         val circRaw = buildString {
             for (h in 0..23) {
@@ -419,7 +425,7 @@ open class SmartInsulinPlugin @Inject constructor(
             finalIsfMgdl       = profileIsf / isfMult,
             basalMultiplier    = basalMult,
             profileBasalU      = profileBasal,
-            finalBasalU        = profileBasal * basalMult,
+            finalBasalU        = roundedFinalBasal,
             inReboundWindow    = inReboundWindow,
             reboundMins        = msSinceLastSuspend / 60_000,
             softLandingBypass  = softLandingBypass,
