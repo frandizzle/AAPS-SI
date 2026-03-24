@@ -49,6 +49,170 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- TIR chart card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Time in Range"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
+
+                <!-- Fasting TIR label -->
+                <TextView
+                    android:id="@+id/tv_tir_fasting_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Fasting"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Fasting TIR bar -->
+                <LinearLayout
+                    android:id="@+id/tir_bar_fasting"
+                    android:layout_width="match_parent"
+                    android:layout_height="20dp"
+                    android:orientation="horizontal"
+                    android:clipToOutline="true"
+                    android:background="@android:color/transparent"
+                    android:layout_marginBottom="4dp">
+
+                    <View android:id="@+id/tir_fasting_low"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FFE53935" />
+                    <View android:id="@+id/tir_fasting_in"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FF43A047" />
+                    <View android:id="@+id/tir_fasting_high"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FFFB8C00" />
+                </LinearLayout>
+
+                <!-- Fasting TIR pct text -->
+                <TextView
+                    android:id="@+id/tv_tir_fasting_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    android:layout_marginBottom="12dp"
+                    tools:text="99% in / 0% high / 0% low" />
+
+                <!-- Meal TIR label -->
+                <TextView
+                    android:id="@+id/tv_tir_meal_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Meal"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Meal TIR bar -->
+                <LinearLayout
+                    android:id="@+id/tir_bar_meal"
+                    android:layout_width="match_parent"
+                    android:layout_height="20dp"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="4dp">
+
+                    <View android:id="@+id/tir_meal_low"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FFE53935" />
+                    <View android:id="@+id/tir_meal_in"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FF43A047" />
+                    <View android:id="@+id/tir_meal_high"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:background="#FFFB8C00" />
+                </LinearLayout>
+
+                <!-- Meal TIR pct text -->
+                <TextView
+                    android:id="@+id/tv_tir_meal_pct"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    tools:text="93% in / 6% high / 0% low" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Circadian visual card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Circadian 24h"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="8dp" />
+
+                <!-- Header row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="4dp">
+                    <TextView android:layout_width="0dp" android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="Hr" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2"
+                        android:layout_height="wrap_content"
+                        android:text="ISF×" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2"
+                        android:layout_height="wrap_content"
+                        android:text="Bas×" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="2"
+                        android:layout_height="wrap_content"
+                        android:text="Ceil" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="0dp" android:layout_weight="3"
+                        android:layout_height="wrap_content"
+                        android:text="Conf" android:textSize="12sp" android:textStyle="bold" />
+                </LinearLayout>
+
+                <com.google.android.material.divider.MaterialDivider
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp" />
+
+                <!-- Circadian rows injected programmatically -->
+                <LinearLayout
+                    android:id="@+id/circadian_rows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Reset card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
