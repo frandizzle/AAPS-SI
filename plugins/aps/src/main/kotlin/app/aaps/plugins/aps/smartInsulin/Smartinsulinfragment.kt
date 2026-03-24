@@ -89,7 +89,7 @@ class SmartInsulinFragment : DaggerFragment() {
         if (detail != null) {
             container.addView(TextView(ctx).apply {
                 text = detail; textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
-                fontFamily = "monospace"
+                typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.bottomMargin = (10 * dp).toInt() }
             })
@@ -298,7 +298,7 @@ class SmartInsulinFragment : DaggerFragment() {
             val note = when { n == 0 -> "  (using defaults)"; n < 5 -> "  (still learning)"; else -> "" }
             c.addView(TextView(ctx).apply { text = name; textSize = 13f; setTextColor(col); setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.topMargin = (4*dp).toInt() } })
-            c.addView(TextView(ctx).apply { text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FF888888")); fontFamily = "monospace"
+            c.addView(TextView(ctx).apply { text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FF888888")); typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (2*dp).toInt() } })
         }
     }
