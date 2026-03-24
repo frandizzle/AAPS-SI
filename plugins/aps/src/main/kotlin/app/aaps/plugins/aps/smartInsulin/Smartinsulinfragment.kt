@@ -213,9 +213,11 @@ class SmartInsulinFragment : DaggerFragment() {
         }
         addRow(c, aggrDesc(d.aggressiveness), aggrDetail, aggrColor)
 
-        val pfIsf = d.profileIsfMgdl / 18.0; val fIsf = d.finalIsfMgdl / 18.0
-        addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} mmol/U",
-               "Profile ${"%.1f".format(pfIsf)} × multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} mmol/U\n" +
+        val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
+        val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
+        val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
+        addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
+               "Profile ${"%.1f".format(pfIsf)} × multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
                    "How much 1U of insulin lowers your BG.")
 
         addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
@@ -368,32 +370,24 @@ class SmartInsulinFragment : DaggerFragment() {
         val b = _binding ?: return; val c = b.profileRows; c.removeAllViews(); val ctx = context ?: return
         raw.lines().filter { it.isNotBlank() }.forEach { line ->
             val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
-            val name = parts[0].trim(); val info = parts[1].trim()
-            val n    = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val name     = parts[0].trim(); val info = parts[1].trim()
+            val n        = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             val isActive = name.trim().equals(activeMealMode.trim(), ignoreCase = true)
-            val col  = when {
-                isActive -> Color.WHITE
-                n >= 5   -> Color.parseColor("#FF43A047")
-                n >= 1   -> Color.parseColor("#FFFB8C00")
-                else     -> Color.parseColor("#FF888888")
-            }
+            // Colour from learning status regardless of active state
+            val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
             val note = when { n == 0 -> "  (using defaults)"; n < 5 -> "  (still learning)"; else -> "" }
             val prefix = if (isActive) "► " else "  "
-            val nameRow = TextView(ctx).apply {
+            c.addView(TextView(ctx).apply {
                 text = "$prefix$name"; textSize = 13f; setTextColor(col)
-                setTypeface(null, if (isActive) Typeface.BOLD else Typeface.BOLD)
+                setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.topMargin = (4*dp).toInt() }
-            }
-            if (isActive) nameRow.setBackgroundColor(Color.parseColor("#22FFFFFF"))
-            c.addView(nameRow)
+            })
             c.addView(TextView(ctx).apply {
-                text = info + note; textSize = 11f
-                setTextColor(if (isActive) Color.parseColor("#FFCCCCCC") else Color.parseColor("#FF888888"))
+                text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
                 typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.bottomMargin = (2*dp).toInt() }
-                if (isActive) setBackgroundColor(Color.parseColor("#22FFFFFF"))
             })
         }
     }
