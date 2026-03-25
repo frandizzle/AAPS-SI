@@ -186,6 +186,11 @@ class SmartInsulinFragment : DaggerFragment() {
                    "Once BG rises back above the low guard, the 60-minute\n" +
                        "recovery window will start automatically.",
                    Color.parseColor("#FFE53935"))
+            if (d.mealMode != "Fasting") {
+                addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
+                       "Meal mode ISF and dosing are running normally.\nRecovery window will activate automatically when BG crosses back above the low guard.",
+                       Color.parseColor("#FF43A047"))
+            }
             if (d.minBgDuringLow < Double.MAX_VALUE) {
                 val lowBgStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
                 else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
