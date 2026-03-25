@@ -24,6 +24,10 @@ Think of it as a loop that watches how your body responds and gradually figures 
 - What your basal rate should look like overnight vs during the day
 - Whether it's been too aggressive (causing lows) or too conservative (leaving you high)
 - When you've eaten something even if you haven't announced a meal
+<img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
+<br>
+<img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
+
 
 ---
 
@@ -256,6 +260,14 @@ The SmartInsulin tab in AAPS provides a full status view organised into cards:
 | **Reset Learners** | Individual reset buttons for aggressiveness, basal, circadian, and profiles |
 
 **Aggressiveness note:** During meal modes, aggressiveness is locked at 1.0 — the fasting value shown is for reference only and is not being applied.
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/2f3e04b9-dc41-4371-b083-cfd760e35b2d" width="200">
+  <img src="https://github.com/user-attachments/assets/e018530b-134d-4bbe-8313-eb4320076ed4" width="200">
+  <img src="https://github.com/user-attachments/assets/c89e37ab-f520-47e2-8263-73b6f0d8f3fb" width="200">
+  <img src="https://github.com/user-attachments/assets/a5bc2936-4785-4a37-8a9e-54ce6a3bd2a4" width="200">
+</p>
+
+
 
 ---
 
