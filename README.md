@@ -135,6 +135,24 @@ After any meal mode (manual or UAM) ends, a configurable dirty window (default 9
 
 ---
 
+## CGM Smoothing (UKF)
+
+Fresh CGM sensors often produce jumpy, noisy data during their first 24 hours as the filament settles. To counteract "phantom spikes" that could trigger false meal detections or unwarranted STFT adjustments, SmartInsulin integrates specifically with AAPS's **Unscented Kalman Filter (UKF)** smoothing plugin.
+
+How you configure this depends entirely on which CGM you use:
+
+### Dexcom G6 Users
+The G6 transmitter applies its own heavy smoothing natively, but often struggles on day one.
+* **How to enable:** Go to the AAPS Config Builder and select **Unscented Kalman Filter** under the Smoothing section. Then, go to SmartInsulin Settings -> First Day CGM and **enable** *First Day CGM Smoothing*.
+* **What it does:** SmartInsulin will apply UKF smoothing for exactly 24 hours after a sensor insertion. Once 24 hours have passed, it automatically expires and passes the raw G6 data through (behaving like the "No Smoothing" plugin). This gives you a clean first day without double-smoothing the rest of the session.
+
+### Dexcom G7 Users
+The G7 provides much noisier, "rawer" data continuously throughout the entire session.
+* **How to enable:** Go to the AAPS Config Builder and select **Unscented Kalman Filter** under the Smoothing section. In SmartInsulin Settings, **leave the *First Day CGM Smoothing* toggle OFF**.
+* **What it does:** UKF smoothing will run permanently. This is highly recommended for G7 users to prevent the loop from aggressively chasing micro-fluctuations and sensor wobble.
+
+---
+
 ## UAM Auto-Detection
 
 SmartInsulin watches CGM rise patterns in the background and automatically activates the appropriate meal mode when a genuine unannounced meal is detected — without you having to do anything.
