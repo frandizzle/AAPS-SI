@@ -36,7 +36,7 @@ Think of it as a loop that watches how your body responds and gradually figures 
 
 ---
 
-## How it Works
+## How it Works — Plain English
 
 ### Every 5 minutes, SmartInsulin:
 
@@ -126,8 +126,8 @@ When activating a meal mode via Smart Meal, you can schedule:
 **Pre-bolus 2 safety gates:**
 - BG must be above your profile target
 - IOB must be below 75% of your max IOB
-- Instant delta must not be falling faster than −0.11 mmol / −2.0 mg/dL / 5min
-- 15-minute average delta must not be falling faster than −0.17 mmol / −3.0 mg/dL / 5min
+- Instant delta must not be falling faster than −0.11 mmol/5min
+- 15-minute average delta must not be falling faster than −0.17 mmol/5min
 
 ### Post-Meal Lockout
 
@@ -145,10 +145,10 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 | Condition | Default | What it means |
 |-----------|---------|---------------|
-| BG above trigger threshold | 5.5 mmol / 99 mg/dL | Prevents triggering near target |
-| Delta ≥ riseMinDelta | 0.15 mmol / 2.7 mg/dL | Each reading must be rising |
-| ShortAvgDelta ≥ threshold | 0.11 mmol / 2.0 mg/dL | Trend must confirm the rise |
-| UnexpectedDelta ≥ threshold | 0.11 mmol / 2.0 mg/dL | Rise must exceed what insulin activity alone explains |
+| BG above trigger threshold | 5.5 mmol | Prevents triggering near target |
+| Delta ≥ riseMinDelta | 0.15 mmol | Each reading must be rising |
+| ShortAvgDelta ≥ threshold | 0.11 mmol | Trend must confirm the rise |
+| UnexpectedDelta ≥ threshold | 0.11 mmol | Rise must exceed what insulin activity alone explains |
 
 **Clean vs Dirty window:**
 - **Clean** — fasting mode, normal thresholds apply
@@ -156,7 +156,7 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 **Wobble tolerance:** If the 15-minute average confirms the trend, a single noisy CGM reading only needs to reach 50% of the delta threshold. This prevents a brief sensor compression artifact from resetting a genuine rise streak.
 
-**Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol / 18 mg/dL), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
+**Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
 
 ### UAM Windows
 
@@ -174,8 +174,8 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 A passive watchdog for slow fat/protein-driven rises. Activates when BG is elevated and flat — not spiking like a carb meal, just stuck high. Triggers after N consecutive readings where:
 
-- BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL)
-- ShortAvgDelta is flat (−0.15 to +0.25 mmol / −2.7 to +4.5 mg/dL range)
+- BG ≥ P/F threshold (default 6.5 mmol)
+- ShortAvgDelta is flat (−0.15 to +0.25 mmol range)
 
 P/F has its own ISF, duration, and **separate day/night ISF windows** — fat/protein hits differently at midnight vs mid-afternoon. P/F does not trigger the post-meal dirty window.
 
@@ -187,7 +187,7 @@ For the first N SMBs after a UAM mode fires (default: 3 SMBs at 80%), the delive
 
 ## STFT (Soft Target Fine-Tune)
 
-When fasting BG sits above a configurable threshold (default 6.0 mmol / 108 mg/dL) for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode.
+When fasting BG sits above a configurable threshold (default 6.0 mmol) for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode.
 
 - Activates after N consecutive readings above threshold
 - Lowers target by a small configurable step per reading
@@ -244,3 +244,63 @@ The SmartInsulin tab in AAPS provides a full status view organised into cards:
 ## Loop Output Format
 
 The loop reason string uses pipe-separated format:
+
+```
+SI mode=Fasting | BG=6.3 | d=0.17 | IOB=0.81/14 | pred_min=6.0 | lo=5.0 warn=5.0
+| target=5.5 | ISF=2.0 | basal=0.905(x1.00) | Peak=55m DIA=540m | aggr=0.96
+| tir=Fasting:100%in/0%hi/0%lo Meal:94%in/5%hi/0%lo | NORMAL | targetBG=5.5
+| microBolus=true | trigger=predMinGap(6.0->5.5) | smb=0.150 | tbr=1.130
+| circ(ISF×1.02 bas×1.00 ceil=0.96) | hr=82 steps=37/5m | 59min left
+```
+
+Values are displayed in your configured units (mmol/L or mg/dL).
+
+---
+
+## Settings Reference
+
+### Max Basal Rate vs SmartInsulin Max TBR — What's the Difference?
+
+There are two separate TBR limits and it's worth understanding both:
+
+**Max Basal Rate** (General & Safety) — the hard outer ceiling enforced by AAPS constraints. No TBR can ever exceed this regardless of what SmartInsulin requests. Set this to a safe absolute maximum for your body (e.g. 3× your highest profile basal rate is a common starting point).
+
+**SmartInsulin Max TBR** (General & Safety) — SmartInsulin's own inner cap, applied before the AAPS constraint. This is what SmartInsulin will actually aim for during aggressive correction. Should be equal to or lower than Max Basal Rate.
+
+**Recommendation: set both to the same value.** Having them different just creates a confusing gap where AAPS might allow a rate that SmartInsulin would never request anyway. If you're unsure, start conservative and raise it as you gain confidence.
+
+### Settings Screens
+
+| Category | Key Settings |
+|----------|-------------|
+| **General & Safety** | SMB toggles, max IOB, max basal rate, SmartInsulin max TBR, max SMB, aggression cap, low/warn guard, LGS threshold |
+| **Learning** | Enable learning, learning rate, basal learning, post-meal lockout duration |
+| **Dawn Phenomenon** | Window start/end hours, SMB reduction fraction |
+| **Activity** | Enable activity targets, resting HR, target offset per activity level |
+| **Meal Modes** | ISF per manual meal mode, mode window, pre-bolus 1 & 2 defaults |
+| **STFT** | CGM warmup block |
+| **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard (skip every 3rd SMB), UAM disable during warmup |
+| **UAM Auto-Detection** | Enable, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
+| **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Dinner/Snack/Afternoon |
+| **UAM Protein/Fat** | Enable, stuck readings, duration, fallback ISF, day ISF + hours, night ISF + hours |
+
+---
+
+## Reporting a Bug
+
+Please include:
+- Loop output reason string from the AAPS Loop screen
+- SmartInsulin tab screenshot
+- AAPS version (build hash shown in top-right of the Loop screen)
+
+---
+
+## Acknowledgements
+
+Built on top of [AndroidAPS](https://github.com/nightscout/AndroidAPS) and the OpenAPS algorithm. Inspired by the broader open-source diabetes community — iAPS, Loop, OpenAPS, and everyone who has contributed to making closed-loop insulin delivery accessible.
+
+---
+
+<img src="https://cdn.iconscout.com/icon/free/png-256/bitcoin-384-920569.png" width="60">
+
+`3KawK8aQe48478s6fxJ8Ms6VTWkwjgr9f2`
