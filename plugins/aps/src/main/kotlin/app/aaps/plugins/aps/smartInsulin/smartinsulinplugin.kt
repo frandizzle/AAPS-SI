@@ -141,14 +141,6 @@ open class SmartInsulinPlugin @Inject constructor(
         bgWentLow &&
         msSinceLastSuspend < REBOUND_GUARD_MS
 
-    // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
-    @Volatile var pb2LastBgMgdl:          Double = 0.0
-    @Volatile var pb2LastDeltaMgdl:       Double = 0.0
-    @Volatile var pb2LastShortAvgDeltaMgdl: Double = 0.0
-    @Volatile var pb2LastIobU:            Double = 0.0
-    @Volatile var pb2LastMaxIobU:         Double = 0.0
-    @Volatile var pb2ProfileTargetMgdl:   Double = 0.0
-
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
         const val SMB_DELIVERY_FRACTION = 0.5
@@ -332,157 +324,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }.trimEnd()
     }
 
-    // ── Structured data for fragment cards ───────────────────────────────────
-
-    data class Pb2GateData(
-        val bgMgdl:            Double,
-        val deltaMgdl:         Double,
-        val shortAvgDeltaMgdl: Double,
-        val iobU:              Double,
-        val maxIobU:           Double,
-        val profileTargetMgdl: Double,
-        val isMmol:            Boolean
-    )
-
-    data class FragmentData(
-        // General
-        val hour:               Int,
-        val dayLabel:           String,
-        val mealMode:           String,
-        val modeRemMins:        Int?,       // null if no active mode
-        val aggressiveness:     Double,
-        val circCeil:           Double,
-        val isfMultiplier:      Double,
-        val profileIsfMgdl:     Double,
-        val finalIsfMgdl:       Double,
-        val basalMultiplier:    Double,
-        val profileBasalU:      Double,
-        val finalBasalU:        Double,
-        val inReboundWindow:    Boolean,
-        val reboundMins:        Long,
-        val softLandingBypass:  Boolean,
-        val bgWentLow:          Boolean,
-        val secondLowOccurred:  Boolean,
-        val minBgDuringLow:     Double,
-        val iobAtLowTime:       Double,
-        val pb2Status:          String,
-        val isMmol:             Boolean,
-        // Learning
-        val learningState:      String,
-        val activityLevel:      String,
-        val avgHrBpm:           Int,
-        val steps5min:          Int,
-        val postMealLockoutMins: Long,      // 0 if none
-        val cgmWarmup:          Boolean,
-        val cgmWarmupHours:     Double,
-        // STFT
-        val stftStatus:         String?,
-        val stftActive:         Boolean,
-        // UAM
-        val uamStatusLine:      String?,
-        val uamDebug:           String,
-        // Circadian rows — provided as raw string for visual table
-        val circadianRawStatus: String,
-        // Insulin profiles — raw string
-        val profilesRawStatus:  String,
-        // TIR
-        val tirRawLine:         String,
-        val pb2GateData:        Pb2GateData?,       // null if PB2 not pending
-        val activeDoseU:        Double?             // PB1 dose — null if none or UAM-triggered
-    )
-
-    fun fragmentData(): FragmentData {
-        val cal     = java.util.Calendar.getInstance()
-        val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
-        val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        val profile = profileFunction.getProfile()
-        val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
-        val profileBasal = profile?.getBasal() ?: 0.0
-        val isfMult      = circadianLearner.isfMultiplier(hour)
-        val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
-        val activeMode   = mealOverrideManager.activeMealMode
-        val nowMs        = System.currentTimeMillis()
-
-        // Round displayed basal to pump's TBR step so it matches what actually gets delivered
-        val tbrStep      = activePlugin.activePump.pumpDescription.tempAbsoluteStep
-            .takeIf { it > 0.0 } ?: 0.05
-        val rawFinalBasal = profileBasal * basalMult
-        val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
-
-        // Build circadian raw for visual table
-        val circRaw = buildString {
-            for (h in 0..23) {
-                val marker = if (h == hour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
-                               "${"%.0f".format(circadianLearner.confidencePct(h))}%")
-            }
-        }
-
-        // Build profiles raw
-        val profRaw = buildString {
-            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
-                appendLine("${mode.label.padEnd(16)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
-            }
-        }
-
-        val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
-            (learningDirtyUntilMs - nowMs) / 60_000L else 0L
-
-        return FragmentData(
-            hour               = hour,
-            dayLabel           = day,
-            mealMode           = activeMode?.label ?: "Fasting",
-            modeRemMins        = if (activeMode != null) (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt() else null,
-            aggressiveness     = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)),
-            circCeil           = circadianLearner.aggrCeiling(hour),
-            isfMultiplier      = isfMult,
-            profileIsfMgdl     = profileIsf,
-            finalIsfMgdl       = profileIsf / isfMult,
-            basalMultiplier    = basalMult,
-            profileBasalU      = profileBasal,
-            finalBasalU        = roundedFinalBasal,
-            inReboundWindow    = inReboundWindow,
-            reboundMins        = msSinceLastSuspend / 60_000,
-            softLandingBypass  = softLandingBypass,
-            bgWentLow          = bgWentLow,
-            secondLowOccurred  = secondLowOccurred,
-            minBgDuringLow     = minBgDuringLow,
-            iobAtLowTime       = iobAtLowTime,
-            pb2Status          = cachedOverviewState.pb2Line ?: "",
-            isMmol             = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL,
-            learningState      = cachedOverviewState.learningState,
-            activityLevel      = activityMonitor.level.label,
-            avgHrBpm           = activityMonitor.avgHrBpm.toInt(),
-            steps5min          = activityMonitor.lastSteps5min,
-            postMealLockoutMins = postMealLeft,
-            cgmWarmup          = cachedOverviewState.learningState.contains("CGM"),
-            cgmWarmupHours     = 0.0,
-            stftStatus         = stftController.statusString(profile?.getTargetMgdl() ?: (5.5 * 18.0)),
-            stftActive         = stftController.isActive,
-            uamStatusLine      = uamController.statusString(),
-            uamDebug           = uamController.debugSummary(),
-            circadianRawStatus = circRaw,
-            profilesRawStatus  = profRaw,
-            tirRawLine         = aggressionLearner.tirSummary,
-            pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
-                bgMgdl            = pb2LastBgMgdl,
-                deltaMgdl         = pb2LastDeltaMgdl,
-                shortAvgDeltaMgdl = pb2LastShortAvgDeltaMgdl,
-                iobU              = pb2LastIobU,
-                maxIobU           = pb2LastMaxIobU,
-                profileTargetMgdl = pb2ProfileTargetMgdl,
-                isMmol            = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
-            ) else null,
-            activeDoseU        = mealOverrideManager.activeDoseU
-        )
-    }
-
-
+    // ── Public state accessors for Overview display ─────────────────────────
 
     /**
      * Returns a one-line suppression reason for the Overview "State" cell,
@@ -702,19 +544,11 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
-        val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
             iobArray      = iobArray,
-            maxIobU       = pb2MaxIob
+            maxIobU       = constraintsChecker.getMaxIOBAllowed().value()
         )
-        // Cache live gate values so fragmentData() can show PB2 status without re-querying
-        pb2LastBgMgdl            = glucoseStatus.glucose
-        pb2LastDeltaMgdl         = glucoseStatus.delta
-        pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
-        pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
-        pb2LastMaxIobU           = pb2MaxIob
-        pb2ProfileTargetMgdl     = profile.getTargetMgdl()
 
         // ── STFT: short-term target reduction for stuck-high fasting BG ──────
         // Only runs in fasting, never overrides a deliberate temp target.
@@ -996,23 +830,10 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
-            val msRem = mealOverrideManager.preBolus2SecondsRemaining
+            val msRem = mealOverrideManager.preBolus2SecondsRemaining  // name says "Seconds" but returns ms
             when {
-                msRem != null && msRem > 0 -> "PB2 active: ${msRem / 60_000}m"
-                else -> {
-                    // Timer elapsed — show why it's blocked
-                    val bgOk    = pb2LastBgMgdl > pb2ProfileTargetMgdl
-                    val iobOk   = pb2LastIobU < pb2LastMaxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
-                    val deltaOk = pb2LastDeltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
-                    val shortOk = pb2LastShortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-                    when {
-                        !bgOk    -> "PB2: Below target"
-                        !iobOk   -> "PB2: IOB too high"
-                        !deltaOk -> "PB2: BG falling"
-                        !shortOk -> "PB2: Trend falling"
-                        else     -> "PB2: Waiting"
-                    }
-                }
+                msRem == null || msRem <= 0 -> "PB2 active: due"
+                else                        -> "PB2 active: ${msRem / 60_000}m"
             }
         } else null
         cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
@@ -1181,8 +1002,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
-            targetRespectEnabled     = preferences.get(BooleanKey.ApsSmartInsulinTargetRespectEnabled),
-            isMmol                   = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
+            targetRespectEnabled     = true
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
@@ -1332,7 +1152,6 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun configuration(): JSONObject =
         JSONObject()
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .put(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
             .put(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinLowGuard, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
@@ -1340,7 +1159,6 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun applyConfiguration(configuration: JSONObject) {
         configuration
             .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .store(IntKey.ApsSmartInsulinPredictionHorizonMins, preferences)
             .store(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .store(UnitDoubleKey.ApsSmartInsulinLowGuard, preferences)
             .store(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
@@ -1388,7 +1206,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 "smart_insulin_settings", "si_screen_advanced",
                 "si_screen_general", "si_screen_learning", "si_screen_dawn",
                 "si_screen_activity", "si_screen_meal", "si_screen_stft",
-                "si_screen_uam", "si_screen_uam_windows"
+                "si_screen_first_day_cgm", "si_screen_uam", "si_screen_uam_windows"
             )) return
         val category = PreferenceCategory(context)
         parent.addPreference(category)
@@ -1409,16 +1227,16 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbWithCob,                 title = R.string.enable_smb_with_cob))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsUseSmbAfterCarbs,              title = R.string.enable_smb_after_carbs))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmbMaxIob,                      title = R.string.openapssmb_max_iob_title))
+                // Max basal rate (AAPS-wide hard ceiling, enforced by constraints)
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsMaxBasal,                       title = R.string.openapsma_max_basal_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsMaxSmbFrequency,                   title = R.string.smb_interval_summary))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxSmb,             title = R.string.si_max_smb_title))
+                // SmartInsulin inner TBR cap (sits inside max basal — set equal to max basal if unsure)
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinMaxTbr,             title = R.string.si_max_tbr_title))
                 addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinAggressionMax,      title = R.string.si_aggression_max_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowGuard,       title = R.string.smart_insulin_low_guard))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinWarnGuard,      title = R.string.smart_insulin_warn_guard))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,  title = R.string.si_cgm_warmup_enabled_title))
-                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPredictionHorizonMins, title = R.string.smart_insulin_prediction_horizon))
             })
 
             // ── Learning ──────────────────────────────────────────────────
@@ -1444,8 +1262,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_activity"
                 title = "Activity"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,            title = R.string.si_activity_target_enabled_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinTargetRespectEnabled,             title = R.string.si_target_respect_enabled_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,       title = R.string.si_activity_target_enabled_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))
@@ -1473,8 +1290,16 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key   = "si_screen_stft"
                 title = "STFT (Soft Target)"
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,   title = R.string.si_stft_cgm_warmup_block_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, title = R.string.si_stft_cgm_warmup_block_title))
+            })
+
+            // ── First Day CGM ─────────────────────────────────────────────
+            addPreference(preferenceManager.createPreferenceScreen(context).apply {
+                key   = "si_screen_first_day_cgm"
+                title = "First Day CGM"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing, title = R.string.si_first_day_cgm_smoothing_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinCgmWarmupEnabled,     title = R.string.si_cgm_warmup_enabled_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,    title = R.string.si_uam_cgm_warmup_block_title))
             })
 
             // ── UAM Auto-Detection ────────────────────────────────────────
@@ -1482,7 +1307,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_uam"
                 title = "UAM Auto-Detection"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,       title = R.string.si_uam_cgm_warmup_block_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))

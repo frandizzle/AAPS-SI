@@ -198,12 +198,12 @@ When fasting BG sits above a configurable threshold (default 6.0 mmol) for 3+ co
 
 SmartInsulin reads heart rate and step count to determine your activity level. Higher activity raises the effective BG target (reducing hypo risk during exercise) and suppresses learning.
 
-| Level | Colour in SI tab | Loop behaviour                                   |
-|-------|-----------------|--------------------------------------------------|
-| Sedentary | Grey | No adjustment                                    |
-| Light | Green | Minor target raise and learning suprressed       |
-| Moderate | Amber | Loop adjusting target and learning suprressed    |
-| Heavy | Orange-red | Significant target raise and learning suppressed |
+| Level | Colour in SI tab | Loop behaviour |
+|-------|-----------------|----------------|
+| Sedentary | Grey | No adjustment |
+| Light | Green | Minor target raise |
+| Moderate | Amber | Loop adjusting target and learning |
+| Heavy | Orange-red | Significant target raise, learning suppressed |
 
 ---
 
@@ -257,17 +257,30 @@ Values are displayed in your configured units (mmol/L or mg/dL).
 
 ## Settings Reference
 
+### Max Basal Rate vs SmartInsulin Max TBR — What's the Difference?
+
+There are two separate TBR limits and it's worth understanding both:
+
+**Max Basal Rate** (General & Safety) — the hard outer ceiling enforced by AAPS constraints. No TBR can ever exceed this regardless of what SmartInsulin requests. Set this to a safe absolute maximum for your body (e.g. 3× your highest profile basal rate is a common starting point).
+
+**SmartInsulin Max TBR** (General & Safety) — SmartInsulin's own inner cap, applied before the AAPS constraint. This is what SmartInsulin will actually aim for during aggressive correction. Should be equal to or lower than Max Basal Rate.
+
+**Recommendation: set both to the same value.** Having them different just creates a confusing gap where AAPS might allow a rate that SmartInsulin would never request anyway. If you're unsure, start conservative and raise it as you gain confidence.
+
+### Settings Screens
+
 | Category | Key Settings |
 |----------|-------------|
-| **General & Safety** | SMB toggles, max SMB/TBR, aggression cap, low/warn guard, CGM warmup fraction |
-| **Learning** | Enable learning, basal learning, post-meal lockout duration |
+| **General & Safety** | SMB toggles, max IOB, max basal rate, SmartInsulin max TBR, max SMB, aggression cap, low/warn guard, LGS threshold |
+| **Learning** | Enable learning, learning rate, basal learning, post-meal lockout duration |
 | **Dawn Phenomenon** | Window start/end hours, SMB reduction fraction |
-| **Activity** | Resting HR, target offset per activity level |
-| **Meal Modes** | ISF per manual meal mode, mode window, pre-bolus 1 & 2 settings |
-| **STFT** | Enable, trigger threshold, step size, CGM warmup block, first-day UKF smoothing |
-| **UAM Auto-Detection** | Enable, rise delta, burst threshold, entry SMB fraction/count, day/night window |
+| **Activity** | Enable activity targets, resting HR, target offset per activity level |
+| **Meal Modes** | ISF per manual meal mode, mode window, pre-bolus 1 & 2 defaults |
+| **STFT** | CGM warmup block |
+| **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard (skip every 3rd SMB), UAM disable during warmup |
+| **UAM Auto-Detection** | Enable, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
 | **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Afternoon/Dinner/Snack |
-| **UAM Protein/Fat** | Enable, stuck readings threshold, duration, fallback ISF, day ISF + hours, night ISF + hours |
+| **UAM Protein/Fat** | Enable, stuck readings, duration, fallback ISF, day ISF + hours, night ISF + hours |
 
 ---
 
