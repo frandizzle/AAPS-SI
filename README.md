@@ -318,6 +318,13 @@ Built on top of [AndroidAPS](https://github.com/nightscout/AndroidAPS) and the O
 
 ---
 
+**Feedback & Discussion**
+I built this primarily for my own use, but I'm always open to feedback or algorithmic discussions from other tinkerers.
+* For **bug reports**, please open a GitHub Issue with your loop output string and a screenshot of the SmartInsulin tab.
+* For **general discussion**, you can usually find me in the Nightscout/AndroidAPS Discord server (ping `@yourusername`). Please avoid sending direct messages for general tech support!
+
+---
+
 <img src="https://cdn.iconscout.com/icon/free/png-256/bitcoin-384-920569.png" width="60">
 
 `3KawK8aQe48478s6fxJ8Ms6VTWkwjgr9f2`
