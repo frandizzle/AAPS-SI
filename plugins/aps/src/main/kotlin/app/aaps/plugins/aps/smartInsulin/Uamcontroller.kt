@@ -41,7 +41,7 @@ import javax.inject.Singleton
  *   - The rebound window is active
  *
  * ## Window priority
- * Breakfast → Lunch → Dinner → Snack → Low Carb (first match wins).
+ * Breakfast → Lunch → Afternoon → Dinner → Snack (first match wins).
  * If windows overlap, the earlier meal slot takes priority.
  */
 @Singleton
@@ -686,15 +686,15 @@ class UamController @Inject constructor(
             Triple(MealMode.UAM_LUNCH,
                    preferences.get(IntKey.ApsSmartInsulinUamLunchStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamLunchEndHour)),
+            Triple(MealMode.UAM_AFTERNOON,
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
             Triple(MealMode.UAM_DINNER,
                    preferences.get(IntKey.ApsSmartInsulinUamDinnerStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamDinnerEndHour)),
             Triple(MealMode.UAM_SNACK,
                    preferences.get(IntKey.ApsSmartInsulinUamSnackStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamSnackEndHour)),
-            Triple(MealMode.UAM_AFTERNOON,
-                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
-                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
             // UAM_PROTEIN_FAT has no time window — handled separately by checkStuckHigh()
         )
         return candidates.firstOrNull { (mode, start, end) ->
