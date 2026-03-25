@@ -346,14 +346,31 @@ class SmartInsulinFragment : DaggerFragment() {
         if (d.postMealLockoutMins > 0) addRow(c, "Post-meal pause: ${d.postMealLockoutMins}min remaining",
                                               "BG data after meals is excluded from basal/ISF learning to avoid\nfood-related changes corrupting fasting models.", Color.parseColor("#FFFB8C00"))
         val actColor = when (d.activityLevel) {
-            "Sedentary"        -> Color.parseColor("#FF888888")  // grey — no impact
-            "Light"            -> Color.parseColor("#FF43A047")  // green — minor adjustments
-            "Moderate"         -> Color.parseColor("#FFFB8C00")  // amber — loop adjusting
-            "Heavy"            -> Color.parseColor("#FFEF6C00")  // orange-red — significant impact
-            else               -> Color.parseColor("#FF888888")
+            "Sedentary" -> Color.parseColor("#FF888888")
+            "Light"     -> Color.parseColor("#FF43A047")
+            "Moderate"  -> Color.parseColor("#FFFB8C00")
+            "Heavy"     -> Color.parseColor("#FFEF6C00")
+            else        -> Color.parseColor("#FF888888")
         }
+
+        // Build threshold description — relative if resting HR is set, absolute otherwise
+        val hrThresholdLine = if (d.restingHrBpm > 0.0) {
+            val lightBpm    = (d.restingHrBpm + 20).toInt()
+            val moderateBpm = (d.restingHrBpm + 35).toInt()
+            val heavyBpm    = (d.restingHrBpm + 60).toInt()
+            "HR thresholds (resting ${d.restingHrBpm.toInt()} bpm):\n" +
+                "  Light ≥ ${lightBpm} bpm  •  Moderate ≥ ${moderateBpm} bpm  •  Heavy ≥ ${heavyBpm} bpm"
+        } else {
+            "HR thresholds (no resting HR set — using absolute):\n" +
+                "  Light ≥ 90 bpm  •  Moderate ≥ 110 bpm  •  Heavy ≥ 140 bpm\n" +
+                "  Set your resting HR in Activity settings for personalised thresholds."
+        }
+        val stepsLine = "Steps thresholds:  Light ≥ 200  •  Moderate ≥ 500  •  Heavy ≥ 900 per 5min"
+
         addRow(c, "Activity: ${d.activityLevel}",
-               "HR: ${d.avgHrBpm} bpm avg  •  Steps: ${d.steps5min}/5min\nHigh activity raises your target and pauses learning.", actColor)
+               "HR: ${d.avgHrBpm} bpm avg  •  Steps: ${d.steps5min}/5min\n" +
+                   "$hrThresholdLine\n$stepsLine\n" +
+                   "High activity raises your target and pauses learning.", actColor)
         if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h",
                                 "Day-1 readings can be noisy. Learning resumes automatically after 24h.", Color.parseColor("#FFFB8C00"))
     }

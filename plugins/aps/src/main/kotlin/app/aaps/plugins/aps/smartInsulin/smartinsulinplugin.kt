@@ -370,6 +370,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val activityLevel:      String,
         val avgHrBpm:           Int,
         val steps5min:          Int,
+        val restingHrBpm:       Double,     // 0.0 = not configured, uses absolute thresholds
         val postMealLockoutMins: Long,
         val cgmWarmup:          Boolean,
         val stftStatus:         String?,
@@ -447,6 +448,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activityLevel      = activityMonitor.level.label,
             avgHrBpm           = activityMonitor.avgHrBpm.toInt(),
             steps5min          = activityMonitor.lastSteps5min,
+            restingHrBpm       = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm),
             postMealLockoutMins = postMealLeft,
             cgmWarmup          = cachedOverviewState.learningState.contains("CGM"),
             stftStatus         = stftController.statusString(profile?.getTargetMgdl() ?: (5.5 * 18.0)),
