@@ -108,14 +108,15 @@ After a low BG event, SmartInsulin enters a 60-minute recovery window:
 
 **Soft Landing Bypass:** If the low was borderline (not a crash) and IOB was low at the time, UAM meal detection is allowed to continue during recovery — so if you eat immediately after a near-low, the system can still respond. If BG drops low a second time after a bypass was active, full lockout applies for the rest of that session.
 
+**Manual Override:** If you are currently in a rebound lockout and treat the low with a full meal, manually activating any meal mode via the **Smart Meal** button will instantly clear the rebound window and restore normal loop operation.
+
 ---
 
 ## Meal Modes
 
-Meal modes are activated via the **Smart Meal** button and apply a tighter ISF for faster correction during and after eating.
+Meal modes are activated via the **Smart Meal** button and apply a tighter ISF for faster correction during and after eating. *(Activating a manual meal mode will also instantly clear any active post-low rebound window).*
 
 ### Manual Meal Modes
-
 | Mode | Description |
 |------|-------------|
 | Breakfast | Morning meal |
