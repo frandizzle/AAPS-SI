@@ -1236,6 +1236,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cobG                     = mealData.mealCOB,
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = oapsProfile.target_bg.toDouble(),
+                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 suppressAdaptiveLearning = suppressAdaptiveLearning
             )
         } else {

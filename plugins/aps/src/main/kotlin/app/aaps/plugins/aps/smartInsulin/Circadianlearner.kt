@@ -76,7 +76,8 @@ class CircadianLearner @Inject constructor(
         cobG:                   Double,
         profileIsfMgdl:         Double,
         targetMgdl:             Double,
-        suppressAdaptiveLearning: Boolean = false   // true = skip ISF/basal updates, keep rollercoaster protection
+        suppressAdaptiveLearning: Boolean = false,  // true = skip ISF/basal updates, keep rollercoaster protection
+        lowGuardMgdl:           Double = 90.0        // user's low guard — used for soft low approach detection
     ) {
         val hour = currentHour()
         val dow  = currentDow()
@@ -122,7 +123,7 @@ class CircadianLearner @Inject constructor(
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
-        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray)
+        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl)
 
         persist()
     }
@@ -264,12 +265,13 @@ class CircadianLearner @Inject constructor(
     // ── Aggressiveness ceiling learner ────────────────────────────────────────
 
     private fun updateAggrLearner(
-        hour:      Int,
-        dow:       Int,
-        bg:        Double,
-        delta:     Double,
-        targetMgdl:Double,
-        iobArray:  Array<IobTotal>
+        hour:         Int,
+        dow:          Int,
+        bg:           Double,
+        delta:        Double,
+        targetMgdl:   Double,
+        iobArray:     Array<IobTotal>,
+        lowGuardMgdl: Double
     ) {
         val currentCeil = aggrState.get(dow, hour)
 
@@ -285,9 +287,9 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Penalty signal 2: Soft low approach ──────────────────────────────
-        // BG heading toward warn guard with meaningful negative delta and IOB still on board
+        // BG heading toward user's configured low guard with negative delta and IOB on board
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
-        val approachingLow = bg < SOFT_LOW_BG_MGDL && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
+        val approachingLow = bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -445,8 +447,7 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_CEIL_MAX         = 1.20
         private const val STABLE_BAND_MGDL      = 18.0   // ±1 mmol = stable
         private const val STABLE_DELTA_MGDL     = 1.5    // mg/dL per 5min = flat
-        private const val SOFT_LOW_BG_MGDL      = 90.0   // ~5.0 mmol
-        private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast
+        private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast (mg/dL per 5min)
         private const val SOFT_LOW_MIN_IOB      = 0.3    // must have meaningful IOB
 
         // Rollercoaster detection
