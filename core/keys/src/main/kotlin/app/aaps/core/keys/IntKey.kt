@@ -40,6 +40,7 @@ enum class IntKey(
     ApsSmartInsulinModeWindowMins ("si_mode_window_mins",   180, 30, 480, defaultedBySM = true),
     ApsSmartInsulinPreBolus2DefaultDelayMins("si_prebolus2_default_delay_mins", 25, 5, 120, defaultedBySM = true),
     ApsSmartInsulinPostModeLockoutMins("si_post_mode_lockout_mins", 90, 0, 180, defaultedBySM = true),
+    ApsSmartInsulinReboundWindowMins  ("si_rebound_window_mins",   60, 20, 90, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
@@ -112,9 +113,4 @@ enum class IntKey(
     // Protein/Fat UAM — no time window, stuck-high detection runs until night cutoff
     ApsSmartInsulinUamProteinFatDurationMins("si_uam_proteinfat_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinUamProteinFatStuckReadings("si_uam_proteinfat_stuck_readings", 6, 2, 12, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    // P/F time-of-day ISF window hours
-    ApsSmartInsulinUamProteinFatDayStartHour(  "si_uam_proteinfat_day_start",   6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatDayEndHour(    "si_uam_proteinfat_day_end",     22, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatNightStartHour("si_uam_proteinfat_night_start", 22, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatNightEndHour(  "si_uam_proteinfat_night_end",    6, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
 }

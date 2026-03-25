@@ -124,12 +124,12 @@ class SmartInsulinFragment : DaggerFragment() {
 
         if (d.inReboundWindow) {
             val elapsedMins  = d.reboundMins.toDouble()
-            val taperFrac    = (0.3 + (0.7 * (elapsedMins / 60.0))).coerceIn(0.3, 1.0)
+            val windowMins   = d.reboundWindowMins.toDouble()
+            val minsLeft     = (windowMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
+            val taperFrac    = (0.3 + (0.7 * (elapsedMins / windowMins))).coerceIn(0.3, 1.0)
             val tbrPct       = (taperFrac * 100).roundToInt()
-            val smbGateMins  = 45.0  // matches REBOUND_SMB_GATE = 0.825 at t=45min
+            val smbGateMins  = windowMins * 0.75  // SMBs unlock at 75% of window (matches REBOUND_SMB_GATE=0.825)
             val smbUnlockIn  = (smbGateMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
-            val totalMins    = 60
-            val minsLeft     = (totalMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
 
             // Status headline
             val headline = if (smbUnlockIn > 0)
@@ -140,13 +140,13 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // TBR taper
             addRow(c, "TBR capped at ${tbrPct}% of normal",
-                   "Starts at 30% and ramps back to 100% over 60 minutes.\n" +
+                   "Starts at 30% and ramps back to 100% over ${windowMins.toInt()} minutes.\n" +
                        "Prevents insulin stacking after a low.")
 
             // SMB countdown
             if (smbUnlockIn > 0) {
                 addRow(c, "SMBs blocked — unlocks in ~${smbUnlockIn}min",
-                       "SMBs are held back for the first 45 minutes of recovery\n" +
+                       "SMBs are held back for the first ${smbGateMins.toInt()} minutes of recovery (75% of ${windowMins.toInt()}min window)\n" +
                            "to avoid over-correcting while the low is still resolving.",
                        Color.parseColor("#FFE53935"))
             } else {
@@ -183,7 +183,7 @@ class SmartInsulinFragment : DaggerFragment() {
         } else if (d.bgWentLow) {
             // Was low but not yet in rebound window (BG still below guard, or just crossed back)
             addRow(c, "⚠ BG went low — waiting for recovery",
-                   "Once BG rises back above the low guard, the 60-minute\n" +
+                   "Once BG rises back above the low guard, the ${d.reboundWindowMins}-minute\n" +
                        "recovery window will start automatically.",
                    Color.parseColor("#FFE53935"))
             if (d.mealMode != "Fasting") {

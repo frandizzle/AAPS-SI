@@ -309,6 +309,8 @@
     <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
 
     <string name="si_post_mode_lockout_mins_title">Post-meal learning lockout (min, 0=off)</string>
+    <string name="si_rebound_window_mins_title">Low recovery window (min, default 60)</string>
+    <string name="si_rebound_window_mins_summary">How long after a low BG event the loop runs in recovery mode — tapering basal from 30% back to 100% and blocking SMBs for the first 75% of the window. Shorter = faster return to normal dosing. Range: 20–90 min.</string>
 
     <!-- SmartInsulin STFT/UAM CGM warmup blocks -->
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>

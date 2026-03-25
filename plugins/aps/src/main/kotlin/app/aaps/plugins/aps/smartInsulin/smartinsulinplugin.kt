@@ -136,10 +136,11 @@ open class SmartInsulinPlugin @Inject constructor(
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
+    @Volatile var reboundGuardMs: Long = REBOUND_GUARD_MS  // updated each invoke() from preferences
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L &&
         bgWentLow &&
-        msSinceLastSuspend < REBOUND_GUARD_MS
+        msSinceLastSuspend < reboundGuardMs
 
     // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
     @Volatile var pb2LastBgMgdl:            Double = 0.0
@@ -359,6 +360,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val finalBasalU:        Double,
         val inReboundWindow:    Boolean,
         val reboundMins:        Long,
+        val reboundWindowMins:  Int,
         val softLandingBypass:  Boolean,
         val bgWentLow:          Boolean,
         val secondLowOccurred:  Boolean,
@@ -437,6 +439,7 @@ open class SmartInsulinPlugin @Inject constructor(
             finalBasalU        = roundedFinalBasal,
             inReboundWindow    = inReboundWindow,
             reboundMins        = msSinceLastSuspend / 60_000,
+            reboundWindowMins  = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins),
             softLandingBypass  = softLandingBypass,
             bgWentLow          = bgWentLow,
             secondLowOccurred  = secondLowOccurred,
@@ -902,6 +905,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
         activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
+        // Update configurable rebound window — inReboundWindow uses this
+        reboundGuardMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins) * 60_000L
+
         // ── CGM warmup guard ─────────────────────────────────────────────────
 
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
@@ -1171,6 +1177,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
             targetRespectEnabled     = true,
+            reboundWindowMins        = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toDouble(),
             isMmol                   = isMmol
         )
 
@@ -1229,6 +1236,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cobG                     = mealData.mealCOB,
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = oapsProfile.target_bg.toDouble(),
+                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 suppressAdaptiveLearning = suppressAdaptiveLearning
             )
         } else {
@@ -1403,6 +1411,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinLowGuard,       title = R.string.smart_insulin_low_guard))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinWarnGuard,      title = R.string.smart_insulin_warn_guard))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
+                addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinReboundWindowMins,     title = R.string.si_rebound_window_mins_title))
             })
 
             // ── Learning ──────────────────────────────────────────────────

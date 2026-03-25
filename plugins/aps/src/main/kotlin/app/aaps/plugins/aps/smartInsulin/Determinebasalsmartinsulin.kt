@@ -42,6 +42,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private val apsResultProvider: Provider<APSResult>
 ) {
 
+    private fun fmt(mgdl: Double): String =
+        String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
+
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
@@ -87,8 +90,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmSmbFraction:           Double,
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
-        uamSmbFraction:           Double = SMB_DELIVERY_FRACTION,
+        uamSmbFraction:           Double = 1.0,
         targetRespectEnabled:     Boolean = false,
+        reboundWindowMins:        Double = 60.0,
         isMmol:                   Boolean = true
     ): APSResult {
 
@@ -101,10 +105,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             consoleError = mutableListOf()
         )
 
-        fun fmt(mgdl: Double) = if (isMmol)
-            String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
-        else
-            String.format(Locale.US, "%.0f", mgdl)
+        val units          = "mmol"
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -132,9 +133,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // Rebound taper — only applies during the active rebound window (BG crossed back above
         // lowGuard after a real low). Starts at 30% and tapers linearly back to 100% over
-        // REBOUND_TAPER_MINS (60 min). Outside the window taper is always 1.0.
+        // reboundWindowMins (configurable, default 60). Outside the window taper is always 1.0.
         val reboundMins = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
-        val rawTaper = (reboundMins / REBOUND_TAPER_MINS).coerceIn(0.0, 1.0)
+        val rawTaper = (reboundMins / reboundWindowMins).coerceIn(0.0, 1.0)
         val reboundTaperFraction = if (inReboundWindow) 0.3 + (0.7 * rawTaper) else 1.0
 
         // Guard thresholds in mg/dL
@@ -215,7 +216,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (inDawnWindow) sb.append(" | dawn(-${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
         if (highTempTargetActive) sb.append(" | highTT=smbOff")
         if (inReboundWindow) {
-            val reboundMinsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
+            val reboundMinsLeft = (reboundWindowMins - reboundMins).coerceAtLeast(0.0)
             sb.append(" | rebound(${reboundMins.toInt()}min left=${reboundMinsLeft.toInt()}min taper=${"%.2f".format(Locale.US, reboundTaperFraction)})")
         } else if (bgWentLow) {
             sb.append(" | rebound=watching")
@@ -259,7 +260,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
-                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${fmt(delta)} dur=${suspendMins}m"
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
                     else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
@@ -287,8 +288,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
-                    // uamSmbFraction replaces SMB_DELIVERY_FRACTION during UAM entry
-                    insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
+                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction * uamSmbFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -334,7 +334,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
                 val reboundStr = when {
                     inReboundWindow -> {
-                        val minsLeft = (REBOUND_TAPER_MINS - reboundMins).coerceAtLeast(0.0)
+                        val minsLeft = (reboundWindowMins - reboundMins).coerceAtLeast(0.0)
                         val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
                         " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f->%.3f)".format(
                             Locale.US, reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate)
@@ -408,8 +408,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MMOL_TO_MGDL           = 18.0
         private const val SMB_DELIVERY_FRACTION  = 0.5
         private const val TBR_WINDOW_HOURS       = 0.5
-        private const val REBOUND_TAPER_MINS     = 60.0
-        private const val REBOUND_SMB_GATE       = 0.825 // SMBs blocked for first 45 min: taper=0.3+(0.7×0.75)=0.825 at t=45min
+        private const val REBOUND_WINDOW_MINS_DEFAULT = 60.0   // default, overridden by user setting
+        private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
     }
