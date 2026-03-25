@@ -41,6 +41,8 @@ Think of it as a loop that watches how your body responds and gradually figures 
 
 ## How it Works
 
+> 💡 **A Note on Carbs:** SmartInsulin does **not** use or utilise carb entries for its dosing calculations. The algorithm is driven entirely by your Insulin Sensitivity Factor (ISF), blood glucose momentum, and learned insulin profiles.
+
 ### Every 5 minutes, SmartInsulin:
 
 1. Reads your current BG, how fast it's moving, and how much insulin is already on board
