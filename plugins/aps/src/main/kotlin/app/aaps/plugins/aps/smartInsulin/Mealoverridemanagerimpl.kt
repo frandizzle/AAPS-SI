@@ -286,22 +286,30 @@ class MealOverrideManagerImpl @Inject constructor(
             timestamp = dateUtil.now()
         }
 
-        // Mark as fired *before* delivery to prevent double-fire if loop cycles quickly
-        _state = s.copy(preBolus2FiredMs = now)
+        // Mark as fired *before* delivery to prevent double-fire if loop cycles quickly.
+        // Capture the exact state we're acting on — if _state changes before callback
+        // (e.g. user cancels), we don't overwrite the new state.
+        val firedState = s.copy(preBolus2FiredMs = now)
+        _state = firedState
         persistState()
 
         commandQueue.bolus(bolusInfo, object : Callback() {
             override fun run() {
                 if (!result.success) {
                     aapsLogger.error(LTag.APS, "SmartInsulin PB2 delivery FAILED: ${result.comment}")
+                    // Mark as discarded — do NOT retry automatically.
+                    // A failed delivery may have partially or fully delivered on some pumps.
+                    // Automatic retry risks double-dosing. User must manually deliver if still needed.
+                    // Only update state if it hasn't been changed by a cancel or new activation.
+                    if (_state == firedState) {
+                        _state = firedState.copy(preBolus2FiredMs = -1L)
+                        persistState()
+                    }
                     uiInteraction.runAlarm(
-                        result.comment,
+                        "Pre-bolus 2 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
                         "SmartMeal pre-bolus 2 failed",
                         app.aaps.core.ui.R.raw.boluserror
                     )
-                    // Revert fired state so it can retry next cycle if failure was transient
-                    _state = _state?.copy(preBolus2FiredMs = null)
-                    persistState()
                 } else {
                     aapsLogger.debug(LTag.APS, "SmartInsulin PB2 delivered OK: ${s.preBolus2U}U")
                 }
