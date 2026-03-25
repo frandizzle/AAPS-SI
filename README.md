@@ -134,6 +134,12 @@ When activating a meal mode via Smart Meal, you can schedule:
 - Instant delta must not be falling faster than −0.11 mmol / −2.0 mg/dL / 5min
 - 15-minute average delta must not be falling faster than −0.17 mmol / −3.0 mg/dL / 5min
 
+### Cancelling Modes & Pre-Boluses
+
+If you need to bail out of an active mode or scheduled bolus, you can do so directly from the **Smart Meal** button on the AAPS home screen:
+- **Cancel a Meal Mode:** This clears any active manual or UAM meal mode entirely and returns the loop to Fasting.
+- **Cancel Pre-Bolus 2:** This permanently discards a pending PB2 without cancelling the underlying meal mode. This is useful if you decide you don't need the extra insulin but still want the tighter meal ISF for the remainder of the mode window.
+
 ### Post-Meal Lockout
 
 After any meal mode (manual or UAM) ends, a configurable dirty window (default 90 min) raises UAM detection thresholds to prevent fat/protein tail rises being mistaken for a new meal.
