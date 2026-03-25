@@ -93,6 +93,11 @@ Setting them equal means: "suspend immediately if BG is at X *or* if BG is predi
 
 The **warn guard** sits above both (e.g. 4.9 mmol / 88 mg/dL) and acts as an earlier warning — the loop starts tapering basal down proportionally as BG approaches the low guard, reducing the chance of hitting it in the first place.
 
+SmartInsulin includes pattern-recognition safety gates inside its learning system to prevent the loop from overcorrecting and causing a yo-yo effect:
+
+* **Rollercoaster Detection:** The algorithm monitors your blood glucose over a rolling 90-minute window. If your BG crosses your target line 2 or more times within that 90 minutes, it flags a "rollercoaster" oscillation. To stop feeding the cycle, it immediately caps the loop's aggressiveness ceiling for that hour by 15%, forcing it to use gentler correction doses until you stabilise.
+* **Soft Low Approach:** If your BG is dropping toward your configured **low guard**, falling quickly, and you still have active insulin on board (IOB), the system detects a "soft low approach". It instantly cuts the aggressiveness ceiling by 10% to soften the landing and avoid a crash.
+
 ### Low Recovery Window
 
 After a low BG event, SmartInsulin enters a 60-minute recovery window:
