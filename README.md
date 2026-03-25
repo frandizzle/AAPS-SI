@@ -275,6 +275,7 @@ The SmartInsulin tab in AAPS provides a full status view organised into cards:
   <img src="https://github.com/user-attachments/assets/e018530b-134d-4bbe-8313-eb4320076ed4" width="200">
   <img src="https://github.com/user-attachments/assets/c89e37ab-f520-47e2-8263-73b6f0d8f3fb" width="200">
   <img src="https://github.com/user-attachments/assets/a5bc2936-4785-4a37-8a9e-54ce6a3bd2a4" width="200">
+  <img src="https://github.com/user-attachments/assets/04ac513b-c25c-4acd-ba09-88afd63ea980" width="200">
 </p>
 
 
