@@ -381,23 +381,31 @@ class SmartInsulinFragment : DaggerFragment() {
         val c = _binding?.uamRows ?: return; c.removeAllViews()
         val line = d.uamStatusLine ?: ""
 
-        // ── UAM detection status ──────────────────────────────────────────
-        // Extract just the UAM line (before " | P/F:" if present)
-        val uamPart = line.substringBefore(" | P/F:").trim()
-        val pfPart  = if (line.contains("P/F:")) line.substringAfter("P/F:").trim() else null
+        // ── Active UAM meal mode — shown when a UAM mode is running ──────────
+        val isUamModeActive = d.mealMode.contains("UAM") || d.mealMode.contains("(UAM)")
+        if (isUamModeActive) {
+            val minsLeft = d.modeRemMins ?: 0
+            addRow(c, "${d.mealMode} active — ${minsLeft}min remaining",
+                   "Meal auto-detected. ISF and dosing adjusted for ${d.mealMode}.\nUAM detection resumes when this mode expires.",
+                   Color.parseColor("#FF64B5F6"))
+        } else {
+            // ── UAM detection status ──────────────────────────────────────────
+            val uamPart = line.substringBefore(" | P/F:").trim()
 
-        val (primary, color) = when {
-            uamPart.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
-            uamPart.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
-            uamPart.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
-            uamPart.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
-            else                         -> Pair("UAM status", Color.WHITE)
+            val (primary, color) = when {
+                uamPart.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
+                uamPart.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
+                uamPart.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
+                uamPart.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
+                else                         -> Pair("UAM status", Color.WHITE)
+            }
+            addRow(c, primary, uamPart.ifEmpty { null }, color)
         }
-        addRow(c, primary, uamPart.ifEmpty { null }, color)
 
         // UAM thresholds — strip leading spaces for clean alignment
+        val pfPart  = if (line.contains("P/F:")) line.substringAfter("P/F:").trim() else null
         val debugClean = d.uamDebug.lines()
-            .filter { !it.trimStart().startsWith("P/F") }  // P/F goes in its own section
+            .filter { !it.trimStart().startsWith("P/F") }
             .joinToString("\n") { it.trimStart() }
             .trim()
         addRow(c, "Detection thresholds",
