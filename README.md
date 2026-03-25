@@ -36,7 +36,7 @@ Think of it as a loop that watches how your body responds and gradually figures 
 
 ---
 
-## How it Works — Plain English
+## How it Works
 
 ### Every 5 minutes, SmartInsulin:
 
