@@ -235,8 +235,8 @@ SmartInsulin reads heart rate and step count to determine your activity level. H
 | Level | Colour in SI tab | Loop behaviour |
 |-------|-----------------|----------------|
 | Sedentary | Grey | No adjustment |
-| Light | Green | Minor target raise |
-| Moderate | Amber | Loop adjusting target and learning |
+| Light | Green | Minor target raise and learning suppressed |
+| Moderate | Amber | Loop adjusting target and learning suppressed |
 | Heavy | Orange-red | Significant target raise, learning suppressed |
 
 ---
