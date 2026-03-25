@@ -164,9 +164,11 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 |--------|-------|
 | UAM Breakfast | Configurable hours |
 | UAM Lunch | Configurable hours |
-| UAM Afternoon | Fills the gap between lunch and dinner |
 | UAM Dinner | Configurable hours |
 | UAM Snack | Late evening |
+| UAM Afternoon | Fills the gap between lunch and dinner |
+
+**Window priority:** Breakfast → Lunch → Afternoon → Dinner → Snack. If windows overlap, the earlier window in this list wins. In practice the default hours don't overlap, but if you customise windows be aware that Afternoon takes priority over Dinner at any shared hour.
 
 ### Protein/Fat (P/F) Mode
 
@@ -279,7 +281,7 @@ There are two separate TBR limits and it's worth understanding both:
 | **STFT** | CGM warmup block |
 | **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard (skip every 3rd SMB), UAM disable during warmup |
 | **UAM Auto-Detection** | Enable, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
-| **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Afternoon/Dinner/Snack |
+| **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Dinner/Snack/Afternoon |
 | **UAM Protein/Fat** | Enable, stuck readings, duration, fallback ISF, day ISF + hours, night ISF + hours |
 
 ---
