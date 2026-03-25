@@ -159,7 +159,7 @@ open class SmartInsulinPlugin @Inject constructor(
     // shortAvgDeltaAtLow is stored in mmol (converted at capture site).
     // Use these for all user-visible strings.
     private val isMmol: Boolean get() =
-        profileFunction.getUnits() == GlucoseUnit.MMOL
+        profileUtil.units == GlucoseUnit.MMOL
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     /** Format a BG value in mg/dL to user units */
     private fun fmtBg(mgdl: Double): String =
@@ -443,7 +443,7 @@ open class SmartInsulinPlugin @Inject constructor(
             minBgDuringLow     = minBgDuringLow,
             iobAtLowTime       = iobAtLowTime,
             pb2Status          = cachedOverviewState.pb2Line ?: "",
-            isMmol             = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL,
+            isMmol             = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL,
             learningState      = cachedOverviewState.learningState,
             activityLevel      = activityMonitor.level.label,
             avgHrBpm           = activityMonitor.avgHrBpm.toInt(),
@@ -465,7 +465,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 iobU              = pb2LastIobU,
                 maxIobU           = pb2LastMaxIobU,
                 profileTargetMgdl = pb2ProfileTargetMgdl,
-                isMmol            = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
+                isMmol            = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
             ) else null,
             activeDoseU        = mealOverrideManager.activeDoseU
         )
@@ -872,7 +872,7 @@ open class SmartInsulinPlugin @Inject constructor(
             current_basal                   = pump.baseBasalRate,
             temptargetSet                   = isTempTarget,
             autosens_max                    = preferences.get(DoubleKey.AutosensMax),
-            out_units                       = if (profileFunction.getUnits() == GlucoseUnit.MMOL) "mmol/L" else "mg/dl",
+            out_units                       = if (profileUtil.units == GlucoseUnit.MMOL) "mmol/L" else "mg/dl",
             lgsThreshold                    = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt(),
             variable_sens                   = 0.0,
             insulinDivisor                  = 0,
@@ -1168,7 +1168,8 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
-            targetRespectEnabled     = true
+            targetRespectEnabled     = true,
+            isMmol                   = isMmol
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
