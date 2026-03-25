@@ -743,21 +743,6 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val cgmInWarmup = cgmState.inWarmup
 
-        val stftAdjusted = stftController.onLoopCycle(
-            profileTargetMgdl = profileTargetMgdl,
-            currentBgMgdl     = glucoseStatus.glucose,
-            delta             = glucoseStatus.delta,
-            mealMode          = mealMode,
-            isTempTarget      = isTempTarget,
-            bgWentLow         = bgWentLow,
-            inReboundWindow   = inReboundWindow,
-            cgmInWarmup       = cgmInWarmup,
-            bgTimestampMs     = glucoseStatus.date
-        )
-        // STFT now handles TT/low internally and returns profileTargetMgdl when blocked.
-        // The plugin-side TT guard is kept as a safety backstop.
-        val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
-
         // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
         // Only fires in FASTING mode within configured time windows.
         // Expiry detection is handled internally by UamController via previousMealMode tracking.
@@ -828,6 +813,23 @@ open class SmartInsulinPlugin @Inject constructor(
                              "SmartInsulin: UAM fired this cycle — using ${mealMode.label} ISF " +
                                  "${fmtIsf(dosingIsfMgdl)}$unitLabel immediately")
         }
+
+        // ── STFT: run after UAM so it sees the correct mealMode this cycle ────
+        // If UAM just fired, mealMode is now non-FASTING and STFT will reset cleanly
+        // rather than sneaking through one cycle with a lowered target.
+        val stftAdjusted = stftController.onLoopCycle(
+            profileTargetMgdl = profileTargetMgdl,
+            currentBgMgdl     = glucoseStatus.glucose,
+            delta             = glucoseStatus.delta,
+            mealMode          = mealMode,
+            isTempTarget      = isTempTarget,
+            bgWentLow         = bgWentLow,
+            inReboundWindow   = inReboundWindow,
+            cgmInWarmup       = cgmInWarmup,
+            bgTimestampMs     = glucoseStatus.date
+        )
+        // STFT handles TT/low/meal internally and returns profileTargetMgdl when blocked.
+        val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
