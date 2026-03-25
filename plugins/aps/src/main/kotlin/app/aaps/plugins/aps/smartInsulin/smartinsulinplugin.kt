@@ -1424,6 +1424,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_activity"
                 title = "Activity"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinActivityTargetEnabled,       title = R.string.si_activity_target_enabled_title))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinRestingHrBpm,                title = R.string.si_resting_hr_bpm_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityLightTarget,      title = R.string.si_activity_light_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,   title = R.string.si_activity_moderate_target_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,      title = R.string.si_activity_heavy_target_title))

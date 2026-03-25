@@ -173,7 +173,9 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // How low it went
             if (d.minBgDuringLow < Double.MAX_VALUE) {
-                addRow(c, "Lowest BG: ${"%.1f".format(d.minBgDuringLow / 18.0)} mmol",
+                val lowBgStr = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
+                else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
+                addRow(c, "Lowest BG: $lowBgStr",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U\n" +
                            if (d.secondLowOccurred) "⚠ Second low occurred — full lockout, UAM blocked." else "")
             }
@@ -185,7 +187,9 @@ class SmartInsulinFragment : DaggerFragment() {
                        "recovery window will start automatically.",
                    Color.parseColor("#FFE53935"))
             if (d.minBgDuringLow < Double.MAX_VALUE) {
-                addRow(c, "Lowest BG: ${"%.1f".format(d.minBgDuringLow / 18.0)} mmol",
+                val lowBgStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
+                else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
+                addRow(c, "Lowest BG: $lowBgStr2",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U")
             }
         }
