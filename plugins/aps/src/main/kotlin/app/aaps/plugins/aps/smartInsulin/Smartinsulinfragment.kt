@@ -205,7 +205,11 @@ class SmartInsulinFragment : DaggerFragment() {
                modeColor)
 
         val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
-        val aggrDetail = when {
+        val isFasting = d.mealMode == "Fasting"
+        val aggrDetail = if (!isFasting) {
+            "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                "Locked at 1.0 during meal modes — not applied. Fasting value shown for reference."
+        } else when {
             d.aggressiveness < 0.95 -> {
                 val reductionPct = ((1.0 - d.aggressiveness) * 100).roundToInt()
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
@@ -220,7 +224,8 @@ class SmartInsulinFragment : DaggerFragment() {
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
                     "Based on your BG history over the last 24h."
         }
-        addRow(c, aggrDesc(d.aggressiveness), aggrDetail, aggrColor)
+        val aggrPrimary = if (!isFasting) "Aggressiveness locked — meal mode active" else aggrDesc(d.aggressiveness)
+        addRow(c, aggrPrimary, aggrDetail, if (!isFasting) Color.parseColor("#FF888888") else aggrColor)
 
         val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
@@ -336,7 +341,13 @@ class SmartInsulinFragment : DaggerFragment() {
                color)
         if (d.postMealLockoutMins > 0) addRow(c, "Post-meal pause: ${d.postMealLockoutMins}min remaining",
                                               "BG data after meals is excluded from basal/ISF learning to avoid\nfood-related changes corrupting fasting models.", Color.parseColor("#FFFB8C00"))
-        val actColor = if (d.activityLevel == "Sedentary") Color.parseColor("#FF888888") else Color.parseColor("#FF64B5F6")
+        val actColor = when (d.activityLevel) {
+            "Sedentary"        -> Color.parseColor("#FF888888")  // grey — no impact
+            "Light"            -> Color.parseColor("#FF43A047")  // green — minor adjustments
+            "Moderate"         -> Color.parseColor("#FFFB8C00")  // amber — loop adjusting
+            "Heavy"            -> Color.parseColor("#FFEF6C00")  // orange-red — significant impact
+            else               -> Color.parseColor("#FF888888")
+        }
         addRow(c, "Activity: ${d.activityLevel}",
                "HR: ${d.avgHrBpm} bpm avg  •  Steps: ${d.steps5min}/5min\nHigh activity raises your target and pauses learning.", actColor)
         if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h",
@@ -431,7 +442,7 @@ class SmartInsulinFragment : DaggerFragment() {
                    Color.parseColor("#FFFB8C00"))
         } else {
             val inactiveReason = when {
-                d.mealMode.startsWith("Protein") || d.mealMode.startsWith("UAM_PROTEIN") ->
+                d.mealMode.contains("Protein") || d.mealMode.contains("P/F") ->
                     "Inactive — P/F running"
                 d.mealMode.startsWith("UAM") || d.mealMode.contains("(UAM)") ->
                     "Inactive — UAM running"
