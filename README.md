@@ -198,12 +198,12 @@ When fasting BG sits above a configurable threshold (default 6.0 mmol) for 3+ co
 
 SmartInsulin reads heart rate and step count to determine your activity level. Higher activity raises the effective BG target (reducing hypo risk during exercise) and suppresses learning.
 
-| Level | Colour in SI tab | Loop behaviour |
-|-------|-----------------|----------------|
-| Sedentary | Grey | No adjustment |
-| Light | Green | Minor target raise |
-| Moderate | Amber | Loop adjusting target and learning |
-| Heavy | Orange-red | Significant target raise, learning suppressed |
+| Level | Colour in SI tab | Loop behaviour                                   |
+|-------|-----------------|--------------------------------------------------|
+| Sedentary | Grey | No adjustment                                    |
+| Light | Green | Minor target raise and learning suprressed       |
+| Moderate | Amber | Loop adjusting target and learning suprressed    |
+| Heavy | Orange-red | Significant target raise and learning suppressed |
 
 ---
 
