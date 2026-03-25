@@ -1,5 +1,6 @@
 # AAPS — SmartInsulin APS Plugin
 
+> 💬 **SmartInsulin Discord:** [Join the server here](https://discord.gg/Jezqptxp) — if there's any questions, come in and ask away!
 [![Support Server](https://img.shields.io/discord/629952586895851530.svg?label=Discord&logo=Discord&colorB=7289da&style=for-the-badge)](https://discord.gg/4fQUWHZ4Mw)
 [![CircleCI](https://circleci.com/gh/nightscout/AndroidAPS/tree/master.svg?style=svg)](https://circleci.com/gh/nightscout/AndroidAPS/tree/master)
 
