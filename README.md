@@ -126,8 +126,8 @@ When activating a meal mode via Smart Meal, you can schedule:
 **Pre-bolus 2 safety gates:**
 - BG must be above your profile target
 - IOB must be below 75% of your max IOB
-- Instant delta must not be falling faster than −0.11 mmol/5min
-- 15-minute average delta must not be falling faster than −0.17 mmol/5min
+- Instant delta must not be falling faster than −0.11 mmol / −2.0 mg/dL / 5min
+- 15-minute average delta must not be falling faster than −0.17 mmol / −3.0 mg/dL / 5min
 
 ### Post-Meal Lockout
 
@@ -145,10 +145,10 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 | Condition | Default | What it means |
 |-----------|---------|---------------|
-| BG above trigger threshold | 5.5 mmol | Prevents triggering near target |
-| Delta ≥ riseMinDelta | 0.15 mmol | Each reading must be rising |
-| ShortAvgDelta ≥ threshold | 0.11 mmol | Trend must confirm the rise |
-| UnexpectedDelta ≥ threshold | 0.11 mmol | Rise must exceed what insulin activity alone explains |
+| BG above trigger threshold | 5.5 mmol / 99 mg/dL | Prevents triggering near target |
+| Delta ≥ riseMinDelta | 0.15 mmol / 2.7 mg/dL | Each reading must be rising |
+| ShortAvgDelta ≥ threshold | 0.11 mmol / 2.0 mg/dL | Trend must confirm the rise |
+| UnexpectedDelta ≥ threshold | 0.11 mmol / 2.0 mg/dL | Rise must exceed what insulin activity alone explains |
 
 **Clean vs Dirty window:**
 - **Clean** — fasting mode, normal thresholds apply
@@ -156,7 +156,7 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 **Wobble tolerance:** If the 15-minute average confirms the trend, a single noisy CGM reading only needs to reach 50% of the delta threshold. This prevents a brief sensor compression artifact from resetting a genuine rise streak.
 
-**Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
+**Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol / 18 mg/dL), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
 
 ### UAM Windows
 
@@ -174,8 +174,8 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 A passive watchdog for slow fat/protein-driven rises. Activates when BG is elevated and flat — not spiking like a carb meal, just stuck high. Triggers after N consecutive readings where:
 
-- BG ≥ P/F threshold (default 6.5 mmol)
-- ShortAvgDelta is flat (−0.15 to +0.25 mmol range)
+- BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL)
+- ShortAvgDelta is flat (−0.15 to +0.25 mmol / −2.7 to +4.5 mg/dL range)
 
 P/F has its own ISF, duration, and **separate day/night ISF windows** — fat/protein hits differently at midnight vs mid-afternoon. P/F does not trigger the post-meal dirty window.
 
@@ -187,7 +187,7 @@ For the first N SMBs after a UAM mode fires (default: 3 SMBs at 80%), the delive
 
 ## STFT (Soft Target Fine-Tune)
 
-When fasting BG sits above a configurable threshold (default 6.0 mmol) for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode.
+When fasting BG sits above a configurable threshold (default 6.0 mmol / 108 mg/dL) for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode.
 
 - Activates after N consecutive readings above threshold
 - Lowers target by a small configurable step per reading
@@ -245,13 +245,12 @@ The SmartInsulin tab in AAPS provides a full status view organised into cards:
 
 The loop reason string uses pipe-separated format:
 
-```
 SI mode=Fasting | BG=6.3 | d=0.17 | IOB=0.81/14 | pred_min=6.0 | lo=5.0 warn=5.0
 | target=5.5 | ISF=2.0 | basal=0.905(x1.00) | Peak=55m DIA=540m | aggr=0.96
 | tir=Fasting:100%in/0%hi/0%lo Meal:94%in/5%hi/0%lo | NORMAL | targetBG=5.5
 | microBolus=true | trigger=predMinGap(6.0->5.5) | smb=0.150 | tbr=1.130
 | circ(ISF×1.02 bas×1.00 ceil=0.96) | hr=82 steps=37/5m | 59min left
-```
+
 
 Values are displayed in your configured units (mmol/L or mg/dL).
 
