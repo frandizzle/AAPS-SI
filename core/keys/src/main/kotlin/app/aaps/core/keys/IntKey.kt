@@ -111,6 +111,10 @@ enum class IntKey(
     ApsSmartInsulinUamAfternoonEndHour("si_uam_afternoon_end", 17, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     ApsSmartInsulinUamAfternoonDurationMins("si_uam_afternoon_duration", 60, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     // Protein/Fat UAM — no time window, stuck-high detection runs until night cutoff
-    ApsSmartInsulinUamProteinFatDurationMins("si_uam_proteinfat_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatStuckReadings("si_uam_proteinfat_stuck_readings", 6, 2, 12, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatDurationMins  ("si_uam_proteinfat_duration",       30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatStuckReadings ("si_uam_proteinfat_stuck_readings",  6,  2,  12, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatDayStartHour  ("si_uam_proteinfat_day_start",      10,  0,  23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatDayEndHour    ("si_uam_proteinfat_day_end",        16,  0,  23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatNightStartHour("si_uam_proteinfat_night_start",    22,  0,  23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatNightEndHour  ("si_uam_proteinfat_night_end",       6,  0,  23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
 }

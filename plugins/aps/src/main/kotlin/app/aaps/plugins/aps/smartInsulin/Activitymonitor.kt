@@ -110,7 +110,7 @@ class ActivityMonitor @Inject constructor(
             else                                -> ActivityLevel.SEDENTARY
         }
 
-        val newLevel = maxOf(hrLevel, stepsLevel, compareBy { it.ordinal })
+        val newLevel = if (hrLevel.ordinal >= stepsLevel.ordinal) hrLevel else stepsLevel
         if (newLevel != level) {
             aapsLogger.debug(LTag.APS,
                              "ActivityMonitor: $level → $newLevel  hr=${avgHrBpm.toInt()}bpm steps=$lastSteps5min/5m")

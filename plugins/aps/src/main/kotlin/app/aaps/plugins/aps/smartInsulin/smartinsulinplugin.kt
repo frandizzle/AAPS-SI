@@ -906,7 +906,7 @@ open class SmartInsulinPlugin @Inject constructor(
         activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // Update configurable rebound window — inReboundWindow uses this
-        reboundGuardMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins) * 60_000L
+        reboundGuardMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toLong() * 60_000L
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
 
@@ -1236,7 +1236,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 cobG                     = mealData.mealCOB,
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = oapsProfile.target_bg.toDouble(),
-                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 suppressAdaptiveLearning = suppressAdaptiveLearning
             )
         } else {
