@@ -150,22 +150,9 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb2LastMaxIobU:           Double = 0.0
     @Volatile var pb2ProfileTargetMgdl:     Double = 0.0
 
-    // ── Rolling 24h average BG for HbA1c estimation ──────────────────────────
-    // Stores (timestampMs, bgMgdl) pairs, pruned to last 24h each cycle.
-    // ADAG formula: HbA1c% = (avgBG_mgdl + 46.7) / 28.7
-    private val bgRolling24h = ArrayDeque<Pair<Long, Double>>()
-    private val BG_ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000L
-    private val BG_MIN_READINGS = 24  // ~2 hours minimum before showing estimate
-
-    val avgBgMgdl24h: Double get() = if (bgRolling24h.size < BG_MIN_READINGS) 0.0
-    else bgRolling24h.sumOf { it.second } / bgRolling24h.size
-
-    val estimatedHba1c: Double get() = if (avgBgMgdl24h > 0.0)
-        (avgBgMgdl24h + 46.7) / 28.7 else 0.0
-
-    /** How many hours of data are in the rolling window (for display) */
-    val bgWindowHours: Int get() = if (bgRolling24h.size < 2) 0
-    else ((bgRolling24h.last().first - bgRolling24h.first().first) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+    // ── HbA1c estimation — computed fresh each fragmentData() call from DB ───
+    // Formula: (mean_mgdl + 46.7) / 28.7
+    // Queries today's readings (midnight to now) via persistenceLayer.
 
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
@@ -444,6 +431,22 @@ open class SmartInsulinPlugin @Inject constructor(
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
             (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
+        // ── Today's HbA1c estimate (AIMI/GMI formula: (mean_mgdl + 46.7) / 28.7) ──
+        // Query from midnight to now
+        // Requires minimum 24 readings (~2h) for a meaningful estimate.
+        val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
+            val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
+            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
+            if (bgs.size >= 24) {
+                val mean  = bgs.map { it.value }.average()
+                val a1c   = (mean + 46.7) / 28.7
+                val hours = if (bgs.size >= 2) {
+                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+                } else 0
+                Triple(mean, a1c, hours)
+            } else Triple(0.0, 0.0, 0)
+        } catch (e: Exception) { Triple(0.0, 0.0, 0) }
+
         return FragmentData(
             hour               = hour,
             dayLabel           = day,
@@ -481,9 +484,9 @@ open class SmartInsulinPlugin @Inject constructor(
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
             tirRawLine         = aggressionLearner.tirSummary,
-            avgBgMgdl24h       = avgBgMgdl24h,
-            estimatedHba1c     = estimatedHba1c,
-            bgWindowHours      = bgWindowHours,
+            avgBgMgdl24h       = hba1cAvgMgdl,
+            estimatedHba1c     = hba1cEstimate,
+            bgWindowHours      = hba1cWindowHours,
             pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
                 bgMgdl            = pb2LastBgMgdl,
                 deltaMgdl         = pb2LastDeltaMgdl,
@@ -724,11 +727,6 @@ open class SmartInsulinPlugin @Inject constructor(
             maxIobU       = pb2MaxIob
         )
         pb2LastBgMgdl            = glucoseStatus.glucose
-
-        // ── Update rolling 24h BG for HbA1c estimation ───────────────────────
-        bgRolling24h.addLast(now to glucoseStatus.glucose)
-        while (bgRolling24h.isNotEmpty() && now - bgRolling24h.first().first > BG_ROLLING_WINDOW_MS)
-            bgRolling24h.removeFirst()
         pb2LastDeltaMgdl         = glucoseStatus.delta
         pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
         pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
