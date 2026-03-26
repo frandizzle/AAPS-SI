@@ -222,7 +222,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(" | rebound=watching")
         }
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
-            sb.append(" | activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)")
+            sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
         sb.append(" | $tirSummary")
 
@@ -345,7 +345,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // Activity/CGM suffix
                 val activityStr = when (activityLevel) {
                     ActivityMonitor.ActivityLevel.SEDENTARY -> ""
-                    else -> " activity=${activityLevel.label}(+${"%.1f".format(activityTargetOffsetMmol)}mmol)"
+                    else -> " activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})"
                 }
                 val cgmBlockStr = when {
                     !cgmDeltaPlausible    -> " cgm=smbBlocked(artefactDelta)"
