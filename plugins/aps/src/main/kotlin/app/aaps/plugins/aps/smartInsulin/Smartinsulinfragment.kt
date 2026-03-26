@@ -126,6 +126,8 @@ class SmartInsulinFragment : DaggerFragment() {
             val elapsedMins  = d.reboundMins.toDouble()
             val windowMins   = d.reboundWindowMins.toDouble()
             val minsLeft     = (windowMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
+            val elapsedInt   = elapsedMins.toInt().coerceAtMost(windowMins.toInt())
+            val windowInt    = windowMins.toInt()
             val taperFrac    = (0.3 + (0.7 * (elapsedMins / windowMins))).coerceIn(0.3, 1.0)
             val tbrPct       = (taperFrac * 100).roundToInt()
             val smbGateMins  = windowMins * 0.75  // SMBs unlock at 75% of window (matches REBOUND_SMB_GATE=0.825)
@@ -133,7 +135,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // Status headline
             val headline = if (smbUnlockIn > 0)
-                "⚠ Recovery in progress — ${d.reboundMins}min elapsed, ${minsLeft}min remaining"
+                "⚠ Recovery in progress — ${elapsedInt}min of ${windowInt}min"
             else
                 "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
             addRow(c, headline, primaryColor = Color.parseColor("#FFFB8C00"))
