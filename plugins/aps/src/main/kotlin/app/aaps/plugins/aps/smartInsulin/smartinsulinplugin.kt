@@ -150,6 +150,18 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb2LastMaxIobU:           Double = 0.0
     @Volatile var pb2ProfileTargetMgdl:     Double = 0.0
 
+    // ── Rolling 24h average BG for HbA1c estimation ──────────────────────────
+    // Stores (timestampMs, bgMgdl) pairs, pruned to last 24h each cycle.
+    // ADAG formula: HbA1c% = (avgBG_mgdl + 46.7) / 28.7
+    private val bgRolling24h = ArrayDeque<Pair<Long, Double>>()
+    private val BG_ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000L
+
+    val avgBgMgdl24h: Double get() = if (bgRolling24h.isEmpty()) 0.0
+    else bgRolling24h.sumOf { it.second } / bgRolling24h.size
+
+    val estimatedHba1c: Double get() = if (avgBgMgdl24h > 0.0)
+        (avgBgMgdl24h + 46.7) / 28.7 else 0.0
+
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
         const val SMB_DELIVERY_FRACTION = 0.5
@@ -382,6 +394,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val circadianRawStatus: String,
         val profilesRawStatus:  String,
         val tirRawLine:         String,
+        val avgBgMgdl24h:       Double,
+        val estimatedHba1c:     Double,
         val pb2GateData:        Pb2GateData?,
         val activeDoseU:        Double?
     )
@@ -461,6 +475,8 @@ open class SmartInsulinPlugin @Inject constructor(
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
             tirRawLine         = aggressionLearner.tirSummary,
+            avgBgMgdl24h       = avgBgMgdl24h,
+            estimatedHba1c     = estimatedHba1c,
             pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
                 bgMgdl            = pb2LastBgMgdl,
                 deltaMgdl         = pb2LastDeltaMgdl,
@@ -701,6 +717,11 @@ open class SmartInsulinPlugin @Inject constructor(
             maxIobU       = pb2MaxIob
         )
         pb2LastBgMgdl            = glucoseStatus.glucose
+
+        // ── Update rolling 24h BG for HbA1c estimation ───────────────────────
+        bgRolling24h.addLast(now to glucoseStatus.glucose)
+        while (bgRolling24h.isNotEmpty() && now - bgRolling24h.first().first > BG_ROLLING_WINDOW_MS)
+            bgRolling24h.removeFirst()
         pb2LastDeltaMgdl         = glucoseStatus.delta
         pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
         pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0

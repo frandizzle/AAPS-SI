@@ -67,7 +67,7 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.tvStatus.text = smartInsulinPlugin.statusSummary()
         updateGeneralCard(d)
         updateReboundCard(d)
-        updateTirBars(d.tirRawLine)
+        updateTirBars(d)
         updateLearningCard(d)
         updateUamCard(d)
         updateStftCard(d)
@@ -328,10 +328,45 @@ class SmartInsulinFragment : DaggerFragment() {
         pt.text = "${tir.inPct.roundToInt()}% in range  •  ${tir.highPct.roundToInt()}% high  •  ${tir.lowPct.roundToInt()}% low"
     }
 
-    private fun updateTirBars(tirLine: String) {
+    private fun updateTirBars(d: SmartInsulinPlugin.FragmentData) {
         val b = _binding ?: return
-        applyTirBar(b.tirFastingLow, b.tirFastingIn, b.tirFastingHigh, b.tvTirFastingPct, parseTir(tirLine, "Fasting"), "fasting")
-        applyTirBar(b.tirMealLow,    b.tirMealIn,    b.tirMealHigh,    b.tvTirMealPct,    parseTir(tirLine, "Meal"),    "meal")
+        applyTirBar(b.tirFastingLow, b.tirFastingIn, b.tirFastingHigh, b.tvTirFastingPct, parseTir(d.tirRawLine, "Fasting"), "fasting")
+        applyTirBar(b.tirMealLow,    b.tirMealIn,    b.tirMealHigh,    b.tvTirMealPct,    parseTir(d.tirRawLine, "Meal"),    "meal")
+
+        // ── Estimated HbA1c (ADAG formula) — added once, updated each cycle ──
+        // Uses the TIR card's root LinearLayout (parent of tvTirMealPct) as anchor.
+        val tirRoot = generateSequence(b.tvTirMealPct.parent as? android.view.ViewGroup) {
+            it.parent as? android.view.ViewGroup
+        }.firstOrNull { it is LinearLayout && it.tag == null } ?: (b.tvTirMealPct.parent as? LinearLayout) ?: return
+
+        var hba1cView = tirRoot.findViewWithTag<TextView>("si_hba1c")
+        if (hba1cView == null) {
+            hba1cView = TextView(requireContext()).apply {
+                tag = "si_hba1c"
+                textSize = 13f
+                setPadding(0, (10 * dp).toInt(), 0, 0)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            tirRoot.addView(hba1cView)
+        }
+
+        if (d.estimatedHba1c > 0.0) {
+            val avgStr = if (d.isMmol) "${"%.1f".format(d.avgBgMgdl24h / 18.0)} mmol/L"
+            else         "${"%.0f".format(d.avgBgMgdl24h)} mg/dL"
+            val color = when {
+                d.estimatedHba1c < 6.5 -> "#FF43A047"
+                d.estimatedHba1c < 7.5 -> "#FFFB8C00"
+                else                   -> "#FFE53935"
+            }
+            hba1cView.text = "Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  24h avg: $avgStr"
+            hba1cView.setTextColor(Color.parseColor(color))
+        } else {
+            hba1cView.text = "Est. HbA1c: not enough data yet (~24h needed)"
+            hba1cView.setTextColor(Color.parseColor("#FF888888"))
+        }
     }
 
     // ── Learning card ─────────────────────────────────────────────────────────
