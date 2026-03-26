@@ -81,6 +81,12 @@
                 </LinearLayout>
                 <TextView android:id="@+id/tv_tir_meal_pct" android:layout_width="wrap_content"
                     android:layout_height="wrap_content" android:textSize="12sp" tools:text="93% in range" />
+                <TextView android:id="@+id/tv_tir_hba1c"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="13sp"
+                    android:layout_marginTop="10dp"
+                    tools:text="Est. HbA1c: 6.2%  •  24h avg: 6.8 mmol/L" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

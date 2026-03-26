@@ -509,6 +509,21 @@ open class SmartInsulinPlugin @Inject constructor(
         learningDirtyUntilMs = preferences.get(StringKey.ApsSmartInsulinLearningDirtyUntil).toLongOrNull() ?: 0L
         if (learningDirtyUntilMs > 0L)
             aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: restored learningDirtyUntilMs=$learningDirtyUntilMs")
+
+        // Backfill rolling 24h BG from database so HbA1c estimate is available immediately
+        // rather than needing to wait 24h after each app launch.
+        try {
+            val since = System.currentTimeMillis() - BG_ROLLING_WINDOW_MS
+            val historical = persistenceLayer.getGlucoseValueDataFromTime(since, false)
+            bgRolling24h.clear()
+            historical.forEach { gv ->
+                if (gv.value > 0.0) bgRolling24h.addLast(gv.timestamp to gv.value)
+            }
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: backfilled ${bgRolling24h.size} BG readings for HbA1c estimate")
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: BG backfill failed: ${e.message}")
+        }
+
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
