@@ -431,7 +431,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
             (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
-        // ── Today's HbA1c estimate (AIMI/GMI formula: (mean_mgdl + 46.7) / 28.7) ──
+        // ── Today's HbA1c estimate (GMI formula: (mean_mgdl + 46.7) / 28.7) ──
         // Query from midnight to now
         // Requires minimum 24 readings (~2h) for a meaningful estimate.
         val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
