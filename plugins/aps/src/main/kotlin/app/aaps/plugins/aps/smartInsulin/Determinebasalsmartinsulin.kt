@@ -42,8 +42,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private val apsResultProvider: Provider<APSResult>
 ) {
 
-    private fun fmt(mgdl: Double): String =
-        String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
+    private fun fmt(mgdl: Double, isMmol: Boolean): String =
+        if (isMmol) String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
+        else        String.format(Locale.US, "%.0f", mgdl)
 
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
@@ -105,7 +106,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
             consoleError = mutableListOf()
         )
 
-        val units          = "mmol"
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -203,12 +203,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val sb = StringBuilder()
         // Pipe-separated compact format — each key piece separated by " | "
         sb.append("SI mode=${mealMode.label}")
-        sb.append(" | BG=${fmt(currentBg)}")
-        sb.append(" | d=${fmt(delta)}")
+        sb.append(" | BG=${fmt(currentBg, isMmol)}")
+        sb.append(" | d=${fmt(delta, isMmol)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
-        sb.append(" | pred_min=${fmt(predictedMinSafety)} lo=${fmt(lowGuardMgdl)} warn=${fmt(warnGuardMgdl)}")
-        sb.append(" | target=${fmt(targetBg)}${if (isTempTarget) "(tmp)" else ""}")
-        sb.append(" | ISF=${fmt(dosingIsfMgdl)}")
+        sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
+        sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
         sb.append(" | ${pkLabel}=${learnedProfile.peakMinutes.toInt()}m DIA=${learnedProfile.diaMinutes.toInt()}m")
@@ -251,7 +251,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         when {
             // ── LGS hard suspend ─────────────────────────────────────────────
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
-                sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg)} < lgs=${fmt(lgsThresholdMgdl)}")
+                sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg, isMmol)} < lgs=${fmt(lgsThresholdMgdl, isMmol)}")
                 setTempBasal(0.0, suspendDurationMins(currentBg), oapsProfile, rT, currentTemp)
             }
 
@@ -260,8 +260,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
-                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety)} < lowGuard=${fmt(lowGuardMgdl)} dur=${suspendMins}m"
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < lowGuard=${fmt(lowGuardMgdl, isMmol)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
@@ -272,7 +272,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val guardGap   = warnGuardMgdl - predictedMinSafety
                 val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety)} | warnGuard=${fmt(warnGuardMgdl)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(warnGuardMgdl, isMmol)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -329,7 +329,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val trigger = when {
                     !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
                     !smbAllowed -> "blocked"
-                    else        -> "predMinGap(${fmt(predictedMin)}->${fmt(targetBg)})"
+                    else        -> "predMinGap(${fmt(predictedMin, isMmol)}->${fmt(targetBg, isMmol)})"
                 }
 
                 val reboundStr = when {
@@ -354,7 +354,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     else                  -> ""
                 }
 
-                sb.append(" | NORMAL | targetBG=${fmt(targetBg)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=${"%.3f".format(Locale.US, finalSmb)} | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
+                sb.append(" | NORMAL | targetBG=${fmt(targetBg, isMmol)} | microBolus=$microBolusAllowed | trigger=$trigger | smb=${"%.3f".format(Locale.US, finalSmb)} | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
