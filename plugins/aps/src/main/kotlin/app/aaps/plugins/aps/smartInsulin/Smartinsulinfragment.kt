@@ -337,15 +337,16 @@ class SmartInsulinFragment : DaggerFragment() {
         if (d.estimatedHba1c > 0.0) {
             val avgStr = if (d.isMmol) "${"%.1f".format(d.avgBgMgdl24h / 18.0)} mmol/L"
             else         "${"%.0f".format(d.avgBgMgdl24h)} mg/dL"
+            val windowNote = if (d.bgWindowHours < 24) "  (${d.bgWindowHours}h data)" else ""
             val color = when {
                 d.estimatedHba1c < 6.5 -> "#FF43A047"  // green
                 d.estimatedHba1c < 7.5 -> "#FFFB8C00"  // amber
                 else                   -> "#FFE53935"  // red
             }
-            b.tvTirHba1c.text = "Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  24h avg: $avgStr"
+            b.tvTirHba1c.text = "Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  avg: $avgStr$windowNote"
             b.tvTirHba1c.setTextColor(Color.parseColor(color))
         } else {
-            b.tvTirHba1c.text = "Est. HbA1c: not enough data yet (~24h needed)"
+            b.tvTirHba1c.text = "Est. HbA1c: building… (~2h needed)"
             b.tvTirHba1c.setTextColor(Color.parseColor("#FF888888"))
         }
     }

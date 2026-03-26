@@ -155,12 +155,17 @@ open class SmartInsulinPlugin @Inject constructor(
     // ADAG formula: HbA1c% = (avgBG_mgdl + 46.7) / 28.7
     private val bgRolling24h = ArrayDeque<Pair<Long, Double>>()
     private val BG_ROLLING_WINDOW_MS = 24 * 60 * 60 * 1000L
+    private val BG_MIN_READINGS = 24  // ~2 hours minimum before showing estimate
 
-    val avgBgMgdl24h: Double get() = if (bgRolling24h.isEmpty()) 0.0
+    val avgBgMgdl24h: Double get() = if (bgRolling24h.size < BG_MIN_READINGS) 0.0
     else bgRolling24h.sumOf { it.second } / bgRolling24h.size
 
     val estimatedHba1c: Double get() = if (avgBgMgdl24h > 0.0)
         (avgBgMgdl24h + 46.7) / 28.7 else 0.0
+
+    /** How many hours of data are in the rolling window (for display) */
+    val bgWindowHours: Int get() = if (bgRolling24h.size < 2) 0
+    else ((bgRolling24h.last().first - bgRolling24h.first().first) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
 
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
@@ -396,6 +401,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val tirRawLine:         String,
         val avgBgMgdl24h:       Double,
         val estimatedHba1c:     Double,
+        val bgWindowHours:      Int,
         val pb2GateData:        Pb2GateData?,
         val activeDoseU:        Double?
     )
@@ -477,6 +483,7 @@ open class SmartInsulinPlugin @Inject constructor(
             tirRawLine         = aggressionLearner.tirSummary,
             avgBgMgdl24h       = avgBgMgdl24h,
             estimatedHba1c     = estimatedHba1c,
+            bgWindowHours      = bgWindowHours,
             pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
                 bgMgdl            = pb2LastBgMgdl,
                 deltaMgdl         = pb2LastDeltaMgdl,
@@ -509,21 +516,6 @@ open class SmartInsulinPlugin @Inject constructor(
         learningDirtyUntilMs = preferences.get(StringKey.ApsSmartInsulinLearningDirtyUntil).toLongOrNull() ?: 0L
         if (learningDirtyUntilMs > 0L)
             aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: restored learningDirtyUntilMs=$learningDirtyUntilMs")
-
-        // Backfill rolling 24h BG from database so HbA1c estimate is available immediately
-        // rather than needing to wait 24h after each app launch.
-        try {
-            val since = System.currentTimeMillis() - BG_ROLLING_WINDOW_MS
-            val historical = persistenceLayer.getGlucoseValueDataFromTime(since, false)
-            bgRolling24h.clear()
-            historical.forEach { gv ->
-                if (gv.value > 0.0) bgRolling24h.addLast(gv.timestamp to gv.value)
-            }
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: backfilled ${bgRolling24h.size} BG readings for HbA1c estimate")
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: BG backfill failed: ${e.message}")
-        }
-
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
