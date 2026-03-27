@@ -51,6 +51,7 @@ enum class BooleanKey(
     ApsSmartInsulinUamEnabled("si_uam_enabled", false, defaultedBySM = true),
     ApsSmartInsulinUamCgmWarmupBlock("si_uam_cgm_warmup_block", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinStftCgmWarmupBlock("si_stft_cgm_warmup_block", true, defaultedBySM = true),
+    ApsSmartInsulinFirstDayCgmSmoothing("si_first_day_cgm_smoothing", true, defaultedBySM = true),
     ApsSmartInsulinUamBreakfastEnabled("si_uam_breakfast_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamLunchEnabled("si_uam_lunch_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamDinnerEnabled("si_uam_dinner_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
