@@ -23,6 +23,8 @@ Think of it as a loop that watches how your body responds and gradually figures 
 - What your basal rate should look like overnight vs during the day
 - Whether it's been too aggressive (causing lows) or too conservative (leaving you high)
 - When you've eaten something even if you haven't announced a meal
+
+  
   <img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
   <br>
   <img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
