@@ -536,16 +536,18 @@ class SmartInsulinFragment : DaggerFragment() {
         val b = _binding ?: return; val ctx = context ?: return
         val cont = b.circadianRows; cont.removeAllViews()
         val todayDow   = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val dayLabels  = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
         val currentHr  = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
 
-        // ── Day selector row ─────────────────────────────────────────────────
+        // ── Day selector row — Mon first, Sun last ───────────────────────────
         val selectorRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .also { it.bottomMargin = (8*dp).toInt() }
         }
-        for (d in 0..6) {
+        // Display order Mon(2)..Sat(7)->Sun(1), mapped to Java DAY_OF_WEEK-1 indices (0=Sun..6=Sat)
+        val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0) // Mon, Tue, Wed, Thu, Fri, Sat, Sun
+        val dayLabels    = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        for (d in displayOrder) {
             val label = if (d == todayDow) "Today" else dayLabels[d]
             val isSelected = d == selectedCircadianDow
             val btn = TextView(ctx).apply {
