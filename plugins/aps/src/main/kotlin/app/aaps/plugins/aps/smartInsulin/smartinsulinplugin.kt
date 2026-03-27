@@ -1509,6 +1509,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_uam"
                 title = "UAM Auto-Detection"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamWobbleTolerance,       title = R.string.si_uam_wobble_tolerance_title, dialogMessage = R.string.si_uam_wobble_tolerance_summary))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))

@@ -47,7 +47,6 @@ enum class BooleanKey(
     ApsSmartInsulinLowCarbMode("si_low_carb_mode", false, defaultedBySM = true),
     ApsSmartInsulinActivityTargetEnabled("si_activity_target_enabled", true, defaultedBySM = true),
     ApsSmartInsulinTargetRespectEnabled("si_target_respect_enabled", false, defaultedBySM = true),
-    ApsSmartInsulinFirstDayCgmSmoothing("si_first_day_cgm_smoothing", false, defaultedBySM = true),
     // UAM auto-detection
     ApsSmartInsulinUamEnabled("si_uam_enabled", false, defaultedBySM = true),
     ApsSmartInsulinUamCgmWarmupBlock("si_uam_cgm_warmup_block", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
@@ -58,6 +57,7 @@ enum class BooleanKey(
     ApsSmartInsulinUamSnackEnabled("si_uam_snack_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamAfternoonEnabled("si_uam_afternoon_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamProteinFatEnabled("si_uam_proteinfat_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamWobbleTolerance("si_uam_wobble_tolerance", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
 
     BgSourceUploadToNs("dexcomg5_nsupload", true, defaultedBySM = true, hideParentScreenIfHidden = true),
     BgSourceCreateSensorChange("dexcom_lognssensorchange", true, defaultedBySM = true),

@@ -41,7 +41,7 @@ import javax.inject.Singleton
  *   - The rebound window is active
  *
  * ## Window priority
- * Breakfast → Lunch → Afternoon → Dinner → Snack (first match wins).
+ * Breakfast → Lunch → Dinner → Snack → Low Carb (first match wins).
  * If windows overlap, the earlier meal slot takes priority.
  */
 @Singleton
@@ -353,7 +353,9 @@ class UamController @Inject constructor(
         // to be a CGM noise reading without resetting the streak.
         // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
         // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
-        val trendConfirmedByAvg = shortAvgDeltaMmol >= riseMinDelta
+        // Can be disabled in settings — when OFF every reading must meet the full threshold.
+        val wobbleEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamWobbleTolerance)
+        val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
         val risingNow = deltaMmol >= deltaMin &&
             shortAvgDeltaMmol >= shortAvgThreshold &&
@@ -686,15 +688,15 @@ class UamController @Inject constructor(
             Triple(MealMode.UAM_LUNCH,
                    preferences.get(IntKey.ApsSmartInsulinUamLunchStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamLunchEndHour)),
-            Triple(MealMode.UAM_AFTERNOON,
-                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
-                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
             Triple(MealMode.UAM_DINNER,
                    preferences.get(IntKey.ApsSmartInsulinUamDinnerStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamDinnerEndHour)),
             Triple(MealMode.UAM_SNACK,
                    preferences.get(IntKey.ApsSmartInsulinUamSnackStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamSnackEndHour)),
+            Triple(MealMode.UAM_AFTERNOON,
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
+                   preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
             // UAM_PROTEIN_FAT has no time window — handled separately by checkStuckHigh()
         )
         return candidates.firstOrNull { (mode, start, end) ->
