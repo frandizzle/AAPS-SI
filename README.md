@@ -23,9 +23,9 @@ Think of it as a loop that watches how your body responds and gradually figures 
 - What your basal rate should look like overnight vs during the day
 - Whether it's been too aggressive (causing lows) or too conservative (leaving you high)
 - When you've eaten something even if you haven't announced a meal
-<img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
-<br>
-<img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
+  <img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
+  <br>
+  <img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
 
 
 ---
@@ -100,11 +100,13 @@ SmartInsulin includes pattern-recognition safety gates inside its learning syste
 
 ### Low Recovery Window
 
-After a low BG event, SmartInsulin enters a 60-minute recovery window:
+After a low BG event, SmartInsulin enters a recovery window (default 60 minutes, configurable in General & Safety settings — range 20–90 min):
 
-- TBR starts at 30% of normal and ramps back to 100% over 60 minutes
-- SMBs are blocked for the first 45 minutes
-- After 45 minutes, SMBs are restored but the TBR taper continues
+- TBR starts at 30% of normal and ramps back to 100% over the configured window duration
+- SMBs are blocked for the first 75% of the window (default: first 45 min of a 60-min window)
+- After 75% of the window, SMBs are restored but the TBR taper continues
+
+**Shortening the window** (e.g. to 45 min) means the loop resumes full dosing sooner — useful if you tend to rebound quickly. Lengthening it provides more conservative protection after a bad low.
 
 **Soft Landing Bypass:** If the low was borderline (not a crash) and IOB was low at the time, UAM meal detection is allowed to continue during recovery — so if you eat immediately after a near-low, the system can still respond. If BG drops low a second time after a bypass was active, full lockout applies for the rest of that session.
 
@@ -189,7 +191,7 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 - **Clean** — fasting mode, normal thresholds apply
 - **Dirty** — post-meal lockout is active, thresholds are raised ~1.5× to avoid detecting fat/protein tail rises as a new meal
 
-**Wobble tolerance:** If the 15-minute average confirms the trend, a single noisy CGM reading only needs to reach 50% of the delta threshold. This prevents a brief sensor compression artifact from resetting a genuine rise streak.
+**Wobble tolerance (configurable on/off switch):** When enabled, if the 15-minute average confirms the trend (≥ your Rise Min Delta), a single weaker reading only needs to reach 50% of the threshold to keep the streak alive. This prevents a brief sensor compression artifact from resetting a genuine rise streak. When disabled, every reading must independently meet the full Rise Min Delta — simpler and more predictable. If you want e.g. +0.2 mmol (3.6 mg/dL) to always count and +0.1 mmol (1.8 mg/dL) to never count, turn wobble tolerance **off**.
 
 **Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol / 18 mg/dL), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
 
@@ -316,16 +318,30 @@ There are two separate TBR limits and it's worth understanding both:
 
 | Category | Key Settings |
 |----------|-------------|
-| **General & Safety** | SMB toggles, max IOB, max basal rate, SmartInsulin max TBR, max SMB, aggression cap, low/warn guard, LGS threshold |
+| **General & Safety** | SMB toggles, max IOB, max basal rate, SmartInsulin max TBR, max SMB, aggression cap, low/warn guard, LGS threshold, low recovery window (20–90 min) |
 | **Learning** | Enable learning, learning rate, basal learning, post-meal lockout duration |
 | **Dawn Phenomenon** | Window start/end hours, SMB reduction fraction |
 | **Activity** | Enable activity targets, resting HR, target offset per activity level |
 | **Meal Modes** | ISF per manual meal mode, mode window, pre-bolus 1 & 2 defaults |
 | **STFT** | CGM warmup block |
 | **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard (skip every 3rd SMB), UAM disable during warmup |
-| **UAM Auto-Detection** | Enable, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
+| **UAM Auto-Detection** | Enable, wobble tolerance on/off, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
 | **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Dinner/Snack/Afternoon |
 | **UAM Protein/Fat** | Enable, stuck readings, duration, fallback ISF, day ISF + hours, night ISF + hours |
+
+---
+
+## Omnipod Basal Drift Fix
+
+This build includes a fix for a known Omnipod basal drift issue where the pump's delivered basal rate can drift from the programmed rate over time due to rounding at the 0.05 U/h step boundary.
+
+**To enable the fix:**
+
+1. Navigate to your AAPS `extra` folder on your phone's storage
+2. Create an empty file named exactly: `omnipod_basal_drift` (no extension)
+3. Restart AAPS
+
+The fix is opt-in via the file flag so it does not affect users on other pumps or those who prefer the standard behaviour. If the file is not present, the loop behaves identically to standard AAPS.
 
 ---
 
