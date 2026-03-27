@@ -150,12 +150,9 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb2LastMaxIobU:           Double = 0.0
     @Volatile var pb2ProfileTargetMgdl:     Double = 0.0
 
-    // ── HbA1c estimation — cached from invoke() (loop thread), read by fragmentData() (UI thread) ──
-    // Formula: (mean_mgdl + 46.7) / 28.7  — queries today's readings (midnight to now).
-    // Computed in invoke() to avoid synchronous DB reads on the main thread.
-    @Volatile var cachedAvgBgMgdl24h:   Double = 0.0
-    @Volatile var cachedEstimatedHba1c: Double = 0.0
-    @Volatile var cachedBgWindowHours:  Int    = 0
+    // ── HbA1c estimation — computed fresh each fragmentData() call from DB ───
+    // Formula: (mean_mgdl + 46.7) / 28.7
+    // Queries today's readings (midnight to now) via persistenceLayer.
 
     companion object {
         const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
@@ -434,6 +431,22 @@ open class SmartInsulinPlugin @Inject constructor(
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
             (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
+        // ── Today's HbA1c estimate (AIMI/GMI formula: (mean_mgdl + 46.7) / 28.7) ──
+        // Query from midnight to now
+        // Requires minimum 24 readings (~2h) for a meaningful estimate.
+        val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
+            val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
+            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
+            if (bgs.size >= 24) {
+                val mean  = bgs.map { it.value }.average()
+                val a1c   = (mean + 46.7) / 28.7
+                val hours = if (bgs.size >= 2) {
+                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+                } else 0
+                Triple(mean, a1c, hours)
+            } else Triple(0.0, 0.0, 0)
+        } catch (e: Exception) { Triple(0.0, 0.0, 0) }
+
         return FragmentData(
             hour               = hour,
             dayLabel           = day,
@@ -471,9 +484,9 @@ open class SmartInsulinPlugin @Inject constructor(
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
             tirRawLine         = aggressionLearner.tirSummary,
-            avgBgMgdl24h       = cachedAvgBgMgdl24h,
-            estimatedHba1c     = cachedEstimatedHba1c,
-            bgWindowHours      = cachedBgWindowHours,
+            avgBgMgdl24h       = hba1cAvgMgdl,
+            estimatedHba1c     = hba1cEstimate,
+            bgWindowHours      = hba1cWindowHours,
             pb2GateData        = if (mealOverrideManager.preBolus2Pending) Pb2GateData(
                 bgMgdl            = pb2LastBgMgdl,
                 deltaMgdl         = pb2LastDeltaMgdl,
@@ -655,7 +668,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // UAM meal modes should still fire normally after P/F expires.
         val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
-        if (previousWasRealMeal && mealMode == MealMode.FASTING) {
+        if ((previousWasRealMeal || previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT) && mealMode == MealMode.FASTING) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
@@ -1322,27 +1335,6 @@ open class SmartInsulinPlugin @Inject constructor(
             reboundActive     = inReboundWindow,
             reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
         ))
-
-        // ── HbA1c estimation — update cached values for fragmentData() (UI thread) ──
-        // Query runs here on the loop thread (~5min interval) instead of in fragmentData()
-        // which runs on the main/UI thread every 10s. Avoids potential ANR on slow devices.
-        try {
-            val todayStart = dateUtil.beginOfDay(now)
-            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, now, true)
-            if (bgs.size >= 24) {
-                cachedAvgBgMgdl24h   = bgs.map { it.value }.average()
-                cachedEstimatedHba1c = (cachedAvgBgMgdl24h + 46.7) / 28.7
-                cachedBgWindowHours  = if (bgs.size >= 2)
-                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
-                else 0
-            } else {
-                cachedAvgBgMgdl24h   = 0.0
-                cachedEstimatedHba1c = 0.0
-                cachedBgWindowHours  = 0
-            }
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulin: HbA1c query failed: ${e.message}")
-        }
 
         // Append mode time remaining if an override is active
         val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
