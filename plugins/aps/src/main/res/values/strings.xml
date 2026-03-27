@@ -321,7 +321,7 @@
     <!-- SmartInsulin UAM auto-detection -->
     <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
     <string name="si_uam_wobble_tolerance_title">Wobble tolerance</string>
-    <string name="si_uam_wobble_tolerance_summary">When ON: if the 15-minute average delta confirms a genuine rise (≥ your Rise Min Delta), a single weaker reading only needs to meet 50% of the threshold to keep the streak alive. Example: Rise Min Delta = 0.2 mmol — with wobble ON, a +0.1 reading mid-streak still counts if the 15-min average is ≥ 0.2. When OFF: every reading must independently meet the full Rise Min Delta. Simpler and more predictable — if you want +0.2 to always count and +0.1 to never count, turn this OFF.</string>
+    <string name="si_uam_wobble_tolerance_summary">When ON: if the 15-minute average delta confirms a genuine rise (≥ your Rise Min Delta), a single weaker reading only needs to meet 50% of the threshold to keep the streak alive. Example: Rise Min Delta = 0.2 mmol (3.6 mg/dL) — with wobble ON, a +0.1 mmol (+1.8 mg/dL) reading mid-streak still counts if the 15-min average is ≥ 0.2 mmol (3.6 mg/dL). When OFF: every reading must independently meet the full Rise Min Delta. Simpler and more predictable — if you want +0.2 mmol (3.6 mg/dL) to always count and +0.1 mmol (1.8 mg/dL) to never count, turn this OFF.</string>
     <string name="si_uam_trigger_threshold_title">UAM trigger threshold</string>
     <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading</string>
     <string name="si_uam_burst_threshold_title">UAM burst trigger threshold (total rise, 0=off)</string>
