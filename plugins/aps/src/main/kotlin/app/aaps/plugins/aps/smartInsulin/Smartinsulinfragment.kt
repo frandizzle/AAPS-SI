@@ -28,6 +28,9 @@ class SmartInsulinFragment : DaggerFragment() {
     private var _binding: FragmentSmartInsulinBinding? = null
     private val binding get() = _binding!!
 
+    // Circadian day selector — defaults to today, resets when fragment resumes
+    private var selectedCircadianDow: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+
     private val handler = Handler(Looper.getMainLooper())
     private val updater = object : Runnable {
         override fun run() { refreshStatus(); handler.postDelayed(this, REFRESH_MS) }
@@ -57,7 +60,11 @@ class SmartInsulinFragment : DaggerFragment() {
         }
     }
 
-    override fun onResume()      { super.onResume();  handler.post(updater) }
+    override fun onResume() {
+        super.onResume()
+        selectedCircadianDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+        handler.post(updater)
+    }
     override fun onPause()       { super.onPause();   handler.removeCallbacks(updater) }
     override fun onDestroyView() { super.onDestroyView(); _binding = null }
 
@@ -71,7 +78,7 @@ class SmartInsulinFragment : DaggerFragment() {
         updateLearningCard(d)
         updateUamCard(d)
         updateStftCard(d)
-        updateCircadianTable(d.circadianRawStatus)
+        updateCircadianTable("")
         updateProfilesCard(d.profilesRawStatus, d.mealMode)
     }
 
@@ -525,13 +532,44 @@ class SmartInsulinFragment : DaggerFragment() {
     private fun confColor(p: Int)   = when { p >= 60 -> Color.parseColor("#FF43A047"); p >= 30 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFE53935") }
     private fun multColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
 
-    private fun updateCircadianTable(raw: String) {
+    private fun updateCircadianTable(ignored: String) {
         val b = _binding ?: return; val ctx = context ?: return
-        val rows = parseCircRows(raw); if (rows.isEmpty()) return
-        val cur = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val cont = b.circadianRows; cont.removeAllViews()
+        val todayDow   = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+        val dayLabels  = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        val currentHr  = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+
+        // ── Day selector row ─────────────────────────────────────────────────
+        val selectorRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = (8*dp).toInt() }
+        }
+        for (d in 0..6) {
+            val label = if (d == todayDow) "Today" else dayLabels[d]
+            val isSelected = d == selectedCircadianDow
+            val btn = TextView(ctx).apply {
+                text = label; textSize = 11f; gravity = Gravity.CENTER
+                setPadding((6*dp).toInt(), (4*dp).toInt(), (6*dp).toInt(), (4*dp).toInt())
+                setTextColor(if (isSelected) Color.BLACK else Color.parseColor("#FFAAAAAA"))
+                setBackgroundColor(if (isSelected) Color.parseColor("#FF43A047") else Color.parseColor("#FF333333"))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .also { it.marginEnd = (2*dp).toInt() }
+                setOnClickListener {
+                    selectedCircadianDow = d
+                    refreshStatus()
+                }
+            }
+            selectorRow.addView(btn)
+        }
+        cont.addView(selectorRow)
+
+        // ── Table for selected day ────────────────────────────────────────────
+        val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
+        val rows  = parseCircRows(raw); if (rows.isEmpty()) return
+
         rows.forEach { row ->
-            val isCur = row.hour == cur
+            val isCur = selectedCircadianDow == todayDow && row.hour == currentHr
             val rowL = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (2*dp).toInt() }
