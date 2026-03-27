@@ -106,9 +106,12 @@ class AggressionLearner @Inject constructor(
 
     /**
      * Record current BG zone.
-     * @param mealMode  Current meal mode — non-fasting samples excluded from score.
+     * @param mealMode         Current meal mode — non-fasting samples excluded from score.
+     * @param suppressScoring  If true, sample is recorded for TIR display but does not
+     *                         update the aggressiveness score. Use during activity or other
+     *                         events where lows/highs are not caused by insulin dosing.
      */
-    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double, mealMode: MealMode) {
+    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double, mealMode: MealMode, suppressScoring: Boolean = false) {
         val zone = when {
             bgMgdl < lowThreshMgdl  -> Zone.LOW
             bgMgdl > highThreshMgdl -> Zone.HIGH
@@ -124,7 +127,7 @@ class AggressionLearner @Inject constructor(
 
         pruneOldSamples(nowMs)
 
-        if (nowMs - lastUpdateMs >= UPDATE_INTERVAL_MS) {
+        if (!suppressScoring && nowMs - lastUpdateMs >= UPDATE_INTERVAL_MS) {
             updateScore()
             lastUpdateMs = nowMs
             saveState()

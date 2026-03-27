@@ -961,14 +961,15 @@ open class SmartInsulinPlugin @Inject constructor(
                 "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
         }
 
-        // Record current BG zone for aggression learning
-        // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
-        // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
+        // Always record BG zone for TIR display — skipping would give false metrics in the SI tab.
+        // suppressScoring prevents activity-induced lows from penalising aggressiveness, since
+        // those lows are caused by exercise sensitivity, not over-aggressive insulin delivery.
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
-            mealMode        = mealMode
+            mealMode        = mealMode,
+            suppressScoring = suppressAdaptiveLearning
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
