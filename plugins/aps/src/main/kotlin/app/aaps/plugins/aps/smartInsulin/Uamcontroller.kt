@@ -355,7 +355,14 @@ class UamController @Inject constructor(
         // to be a CGM noise reading without resetting the streak.
         // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
         // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
-        val trendConfirmedByAvg = shortAvgDeltaMmol >= riseMinDelta
+        // shortAvgDelta is the primary trend confirmation — it smooths over single noisy
+        // readings. If shortAvgDelta confirms a genuine rise, allow instantaneous delta
+        // to be a CGM noise reading without resetting the streak.
+        // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
+        // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
+        // Can be disabled in settings — when OFF every reading must meet the full threshold.
+        val wobbleEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamWobbleTolerance)
+        val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
         val risingNow = deltaMmol >= deltaMin &&
             shortAvgDeltaMmol >= shortAvgThreshold &&

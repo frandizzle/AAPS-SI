@@ -1360,7 +1360,7 @@ open class SmartInsulinPlugin @Inject constructor(
             circBasalMult     = circBasalMult,
             circAggrCeil      = circAggrCeil,
             smbU              = apsResult.smb,
-            tbrRate           = apsResult.rate ?: profile.getBasal(),
+            tbrRate           = apsResult.rate,
             zone              = zone,
             reboundActive     = inReboundWindow,
             reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
