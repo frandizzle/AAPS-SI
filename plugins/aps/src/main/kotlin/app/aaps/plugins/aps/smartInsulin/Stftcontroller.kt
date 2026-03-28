@@ -41,6 +41,7 @@ class StftController @Inject constructor(
     private var consecutiveAbove  = 0      // readings above trigger threshold
     private var stftActive        = false  // true once trigger fired
     private var stepsApplied      = 0      // how many 5-min steps of reduction applied
+    private var currentlyHighTempTarget = false  // surfaced in statusString()
     private var negDeltaStreak         = 0      // consecutive negative delta readings
     private var lastCountedTimestampMs = 0L     // CGM timestamp of last reading that incremented counters
 
@@ -108,6 +109,7 @@ class StftController @Inject constructor(
 
         // Temp target active — reset and suspend. The user has deliberately set a target;
         // don't manipulate it. Reset fully so streak doesn't survive TT expiry.
+        currentlyHighTempTarget = isTempTarget
         if (isTempTarget) {
             if (stftActive || consecutiveAbove > 0) {
                 aapsLogger.debug(LTag.APS, "STFT: reset — temp target active")
@@ -211,6 +213,7 @@ class StftController @Inject constructor(
                 "${"%.0f".format(actualReductionMgdl)}mg/dL"
             return "STFT: -$reductionStr target (${stepsApplied * 5}min above target)"
         }
+        if (currentlyHighTempTarget) return "STFT: inactive (high temp target set)"
         if (consecutiveAbove > 0) {
             return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel)"
         }

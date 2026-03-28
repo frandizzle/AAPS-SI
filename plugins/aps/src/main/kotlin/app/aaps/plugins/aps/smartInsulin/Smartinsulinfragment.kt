@@ -502,6 +502,8 @@ class SmartInsulinFragment : DaggerFragment() {
                    Color.parseColor("#FFFB8C00"))
         } else {
             val inactiveReason = when {
+                d.stftStatus?.contains("high temp target") == true ->
+                    "Inactive — high temp target set"
                 d.mealMode.contains("Protein") || d.mealMode.contains("P/F") ->
                     "Inactive — P/F running"
                 d.mealMode.startsWith("UAM") || d.mealMode.contains("(UAM)") ->

@@ -73,6 +73,7 @@ class UamController @Inject constructor(
     private var currentlyPastNightCutoff   = false
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
     private var currentlyCgmWarmup         = false  // true when CGM is in warmup — UAM/P/F blocked
+    private var currentlyHighTempTarget    = false  // true when high temp target active — UAM/P/F blocked
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
@@ -187,6 +188,7 @@ class UamController @Inject constructor(
         previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
         currentlyCgmWarmup         = cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock)
+        currentlyHighTempTarget    = highTempTarget
         justFiredThisCycle         = null  // reset each cycle
 
         // Reset lastMealEndedMs if it's from a previous calendar day
@@ -353,9 +355,7 @@ class UamController @Inject constructor(
         // to be a CGM noise reading without resetting the streak.
         // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
         // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
-        // Can be disabled in settings — when OFF every reading must meet the full threshold.
-        val wobbleEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamWobbleTolerance)
-        val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
+        val trendConfirmedByAvg = shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
         val risingNow = deltaMmol >= deltaMin &&
             shortAvgDeltaMmol >= shortAvgThreshold &&
@@ -597,6 +597,7 @@ class UamController @Inject constructor(
         // ── UAM meal detection status ─────────────────────────────────────────
         val uamLine = when {
             currentlyInMealMode        -> null  // meal mode active — UAM not needed
+            currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
             consecutiveRiseReadings > 0 -> {
@@ -624,6 +625,7 @@ class UamController @Inject constructor(
         // ── P/F stuck-high status ─────────────────────────────────────────────
         val pfLine = when {
             !preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled) -> null
+            currentlyHighTempTarget  -> "P/F: off (high temp target set)"
             currentlyCgmWarmup       -> "P/F: off (new sensor <24h)"
             currentlyPastNightCutoff -> "P/F: off (outside hours)"
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
