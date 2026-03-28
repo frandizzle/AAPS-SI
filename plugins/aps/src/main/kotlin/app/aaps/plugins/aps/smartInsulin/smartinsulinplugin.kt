@@ -684,6 +684,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // UAM meal modes should still fire normally after P/F expires.
         val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
+        val previousWasPf = previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT
         if (previousWasRealMeal && mealMode == MealMode.FASTING) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
@@ -693,6 +694,17 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "SmartInsulin: ${previousMealModeForLockout.label} ended — " +
                                      "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
             }
+        } else if (previousWasPf && mealMode == MealMode.FASTING) {
+            // P/F gets half the normal lockout (minimum 30 min) — enough to avoid learning
+            // from IOB-driven crashes after P/F stacking, but short enough that UAM can
+            // still fire normally if a real meal rise follows.
+            val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
+            val pfLockoutMins = (lockoutMins / 2).coerceAtLeast(30)
+            learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + pfLockoutMins * 60_000L)
+            preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
+                                 "(half of ${lockoutMins}min meal lockout)")
         }
         previousMealModeForLockout = mealMode
         val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
@@ -977,14 +989,15 @@ open class SmartInsulinPlugin @Inject constructor(
                 "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
         }
 
-        // Record current BG zone for aggression learning
-        // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
-        // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
+        // Always record BG zone for TIR display — skipping would give false metrics in the SI tab.
+        // suppressScoring prevents activity-induced lows from penalising aggressiveness, since
+        // those lows are caused by exercise sensitivity, not over-aggressive insulin delivery.
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
-            mealMode        = mealMode
+            mealMode        = mealMode,
+            suppressScoring = suppressAdaptiveLearning
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
@@ -1526,6 +1539,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_uam"
                 title = "UAM Auto-Detection"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
+                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamWobbleTolerance,       title = R.string.si_uam_wobble_tolerance_title, summary = R.string.si_uam_wobble_tolerance_summary))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))
