@@ -500,6 +500,22 @@ open class SmartInsulinPlugin @Inject constructor(
         )
     }
 
+    /** Build circadian table string for a specific day-of-week (0=Sun..6=Sat) */
+    fun circadianDataForDay(dow: Int): String {
+        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val currentDow  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+        return buildString {
+            for (h in 0..23) {
+                val marker = if (dow == currentDow && h == currentHour) "▶" else " "
+                appendLine("$marker ${h.toString().padStart(2)}  " +
+                               "${"%.3f".format(circadianLearner.isfMultiplier(h, dow))}  " +
+                               "${"%.3f".format(circadianLearner.basalMultiplier(h, dow))}  " +
+                               "${"%.3f".format(circadianLearner.aggrCeiling(h, dow))}  " +
+                               "${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
+            }
+        }
+    }
+
     // ── Public state accessors for Overview display ─────────────────────────
 
     /**
