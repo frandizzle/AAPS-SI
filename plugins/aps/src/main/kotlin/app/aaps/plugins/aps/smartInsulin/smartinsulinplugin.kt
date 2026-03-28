@@ -500,22 +500,6 @@ open class SmartInsulinPlugin @Inject constructor(
         )
     }
 
-    /** Build circadian table string for a specific day-of-week (0=Sun..6=Sat) */
-    fun circadianDataForDay(dow: Int): String {
-        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        val currentDow  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        return buildString {
-            for (h in 0..23) {
-                val marker = if (dow == currentDow && h == currentHour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h, dow))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h, dow))}  " +
-                               "${"%.3f".format(circadianLearner.aggrCeiling(h, dow))}  " +
-                               "${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
-            }
-        }
-    }
-
     // ── Public state accessors for Overview display ─────────────────────────
 
     /**
@@ -684,7 +668,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // UAM meal modes should still fire normally after P/F expires.
         val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
-        if ((previousWasRealMeal || previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT) && mealMode == MealMode.FASTING) {
+        if (previousWasRealMeal && mealMode == MealMode.FASTING) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
@@ -977,15 +961,14 @@ open class SmartInsulinPlugin @Inject constructor(
                 "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
         }
 
-        // Always record BG zone for TIR display — skipping would give false metrics in the SI tab.
-        // suppressScoring prevents activity-induced lows from penalising aggressiveness, since
-        // those lows are caused by exercise sensitivity, not over-aggressive insulin delivery.
+        // Record current BG zone for aggression learning
+        // TIR thresholds use clinical standard: low < 3.9 mmol (70 mg/dL), high > 10.0 mmol (180 mg/dL)
+        // Deliberately NOT using lowGuard — the loop's safety threshold is stricter than clinical TIR low
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
-            mealMode        = mealMode,
-            suppressScoring = suppressAdaptiveLearning
+            mealMode        = mealMode
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
@@ -1226,14 +1209,15 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
         val fractionUsed = uamSmbFraction  // capture before increment
-        if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount) {
+        val wasEntrySmb = currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount
+        if (wasEntrySmb) {
             uamEntrySmbsDelivered++
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: UAM entry SMB ${uamEntrySmbsDelivered}/$entrySmbCount " +
                                  "at ${(fractionUsed * 100).toInt()}% fraction")
         }
-        // Only show UAMEntry when an SMB was actually delivered this cycle
-        if (currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered <= entrySmbCount && uamEntrySmbsDelivered > 0) {
+        // Only show UAMEntry when this cycle actually delivered an entry-fraction SMB
+        if (wasEntrySmb) {
             apsResult.reason += " | UAMEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
         }
 
@@ -1347,7 +1331,7 @@ open class SmartInsulinPlugin @Inject constructor(
             circBasalMult     = circBasalMult,
             circAggrCeil      = circAggrCeil,
             smbU              = apsResult.smb,
-            tbrRate           = apsResult.rate,
+            tbrRate           = apsResult.rate ?: profile.getBasal(),
             zone              = zone,
             reboundActive     = inReboundWindow,
             reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
@@ -1526,7 +1510,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_uam"
                 title = "UAM Auto-Detection"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamEnabled,              title = R.string.si_uam_enabled_title))
-                addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinUamWobbleTolerance,       title = R.string.si_uam_wobble_tolerance_title, summary = R.string.si_uam_wobble_tolerance_summary))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,  title = R.string.si_uam_trigger_threshold_title))
                 addPreference(AdaptiveUnitPreference(  ctx = context, unitKey    = UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,      title = R.string.si_uam_rise_min_delta_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,  title = R.string.si_uam_rise_readings_title))
