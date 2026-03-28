@@ -426,11 +426,12 @@ class SmartInsulinFragment : DaggerFragment() {
             val (primary, color) = when {
                 uamPart.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
                 uamPart.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
+                uamPart.contains("high temp target") -> Pair("Auto-detection off — high temp target set", Color.parseColor("#FF888888"))
                 uamPart.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
                 uamPart.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
                 else                         -> Pair("UAM status", Color.WHITE)
             }
-            addRow(c, primary, uamPart.ifEmpty { null }, color)
+            addRow(c, primary, if (uamPart.contains("high temp target")) "UAM: Off" else uamPart.ifEmpty { null }, color)
         }
 
         // UAM thresholds — strip leading spaces for clean alignment
