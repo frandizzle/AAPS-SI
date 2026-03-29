@@ -67,6 +67,10 @@ class CircadianLearner @Inject constructor(
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
         private set
 
+    // Consecutive fasting cycles where aggression has been below nudge threshold
+    // Both ISF and basal nudge require sustained signal before firing
+    private var aggrNudgeConsecutiveCycles: Int = 0
+
     // ── Core update — called every loop cycle ─────────────────────────────────
 
     /**
@@ -126,6 +130,14 @@ class CircadianLearner @Inject constructor(
         while (bgHistory.isNotEmpty() && now - bgHistory.first().first > ROLLER_WINDOW_MS)
             bgHistory.removeFirst()
 
+        // ── Track consecutive fasting cycles with aggression below nudge threshold ──
+        // Reset counter if above threshold or not in a clean fasting state.
+        // Both ISF and basal nudge read this counter to require sustained signal.
+        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD)
+            aggrNudgeConsecutiveCycles++
+        else
+            aggrNudgeConsecutiveCycles = 0
+
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
         if (!suppressAdaptiveLearning) updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, aggressiveness)
         else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
@@ -182,24 +194,30 @@ class CircadianLearner @Inject constructor(
                              .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(dow, hour)))
 
         // ── ISF aggression nudge ──────────────────────────────────────────────
-        // Aggression sustained below threshold → ISF multiplier nudged UP (higher ISF mult
-        // = dosingISF = profileISF/mult goes DOWN = less insulin). Symmetric with basal nudge.
+        // Aggression sustained below threshold for AGGR_NUDGE_MIN_CYCLES consecutive
+        // fasting cycles → ISF multiplier nudged UP (higher ISF mult = less insulin).
         // Not active during post-meal lockout — IOB pattern unreliable.
-        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
+        if (!inPostMealLockout &&
+            aggressiveness < AGGR_NUDGE_THRESHOLD &&
+            aggrNudgeConsecutiveCycles >= AGGR_NUDGE_MIN_CYCLES) {
             val deficit  = 1.0 - aggressiveness
             val nudge    = deficit * AGGR_NUDGE_SCALE
             val nudgedMult = (isfState.get(dow, hour) * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
             isfState = isfState.updated(dow, hour, nudgedMult, ISF_ALPHA * 0.3)
             lastAggrNudgeStatus = "Active — aggr=${"%.3f".format(aggressiveness)} " +
-                "(deficit=${"%.0f".format(deficit * 100)}%) → " +
+                "(deficit=${"%.0f".format(deficit * 100)}%, ${aggrNudgeConsecutiveCycles} cycles) → " +
                 "ISF×↑${"%.3f".format(isfState.get(dow, hour))} " +
                 "bas×↓${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge] h=$hour aggressiveness=${"%.3f".format(aggressiveness)} " +
-                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.get(dow, hour))}")
-        } else {
+                                 "cycles=$aggrNudgeConsecutiveCycles deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.get(dow, hour))}")
+        } else if (aggressiveness >= AGGR_NUDGE_THRESHOLD) {
             lastAggrNudgeStatus = "Inactive — aggr=${"%.3f".format(aggressiveness)} " +
                 "(threshold ${"%.2f".format(AGGR_NUDGE_THRESHOLD)})"
+        } else {
+            // Below threshold but not enough cycles yet
+            lastAggrNudgeStatus = "Waiting — aggr=${"%.3f".format(aggressiveness)} " +
+                "($aggrNudgeConsecutiveCycles/${AGGR_NUDGE_MIN_CYCLES} cycles)"
         }
     }
 
@@ -290,22 +308,20 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Signal 3: Aggression nudge signal ─────────────────────────────────
-        // If aggression has been sustained below threshold for multiple consecutive
-        // fasting cycles at this hour, it's a strong repeated signal that profile ISF/basal
-        // is wrong for this period. Nudge the basal multiplier proportionally.
-        // This is the "short-term fast signal" complementing the slow EWMA physics signals.
-        // - Only fires when aggression is meaningfully below 1.0 (not just minor variation)
-        // - Small nudge per firing — the loop checks every 5 min so it accumulates
-        // - Not active during post-meal lockout (IOB pattern unreliable)
-        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
-            val deficit    = 1.0 - aggressiveness  // e.g. 0.2 if aggression=0.8
-            val nudge      = deficit * AGGR_NUDGE_SCALE  // small proportional step
+        // Requires AGGR_NUDGE_MIN_CYCLES consecutive fasting cycles below threshold
+        // to confirm a sustained pattern rather than a single bad night.
+        if (!inPostMealLockout &&
+            aggressiveness < AGGR_NUDGE_THRESHOLD &&
+            aggrNudgeConsecutiveCycles >= AGGR_NUDGE_MIN_CYCLES) {
+            val deficit    = 1.0 - aggressiveness
+            val nudge      = deficit * AGGR_NUDGE_SCALE
             val newMult    = (basalState.get(dow, hour) * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.3) // very soft alpha — accumulates slowly
-            lastBasalSignal = "AggrNudge: aggr=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.3)
+            lastBasalSignal = "AggrNudge: aggr=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} " +
+                "(${aggrNudgeConsecutiveCycles} cycles) → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[aggrNudge] h=$hour aggressiveness=${"%.3f".format(aggressiveness)} " +
-                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                                 "cycles=$aggrNudgeConsecutiveCycles deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
         }
     }
 
@@ -517,9 +533,13 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_NEG_IOB_SENSITIVITY = 36.0           // 2 mmol below target → max adjustment
         private const val BASAL_NEG_IOB_MAX_ADJUST  = 0.10           // cap at 10% reduction per firing
 
-        // Aggression nudge signal — fast-path basal correction when aggression is sustained low
-        private const val AGGR_NUDGE_THRESHOLD      = 0.85           // aggression below this triggers nudge
-        private const val AGGR_NUDGE_SCALE          = 0.02           // 20% deficit → 0.4% nudge per cycle
+        // Aggression nudge signal — fast-path basal/ISF correction when aggression is sustained low
+        // Threshold at 0.80 = 20%+ reduction sustained for multiple cycles before nudging.
+        // Single bad nights don't trigger — requires AGGR_NUDGE_MIN_CYCLES consecutive fasting
+        // cycles below threshold (~30 min at 5min loop interval) to confirm pattern.
+        private const val AGGR_NUDGE_THRESHOLD    = 0.80           // aggression below this triggers nudge
+        private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deficit → 0.4% nudge per cycle
+        private const val AGGR_NUDGE_MIN_CYCLES   = 6              // ~30 min of sustained below-threshold before nudging
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly

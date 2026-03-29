@@ -407,13 +407,24 @@ class SmartInsulinFragment : DaggerFragment() {
                                 "Day-1 readings can be noisy. Learning resumes automatically after 24h.", Color.parseColor("#FFFB8C00"))
 
         // Aggression nudge status
-        val nudgeActive = d.lastAggrNudgeStatus.startsWith("Active")
-        val nudgeColor  = if (nudgeActive) Color.parseColor("#FFFB8C00") else Color.parseColor("#FF888888")
-        addRow(c, if (nudgeActive) "⚡ Aggr nudge: ${d.lastAggrNudgeStatus}" else "Aggr nudge: ${d.lastAggrNudgeStatus}",
-               if (nudgeActive)
-                   "Aggression is sustained below threshold — nudging ISF× up (less insulin) and basal× down.\nWill ease off as aggression recovers toward 1.0."
-               else
-                   "Aggression is at or above threshold — no nudge applied.\nISF and basal learning running on physics signals only.",
+        val nudgeActive  = d.lastAggrNudgeStatus.startsWith("Active")
+        val nudgeWaiting = d.lastAggrNudgeStatus.startsWith("Waiting")
+        val nudgeColor   = when {
+            nudgeActive  -> Color.parseColor("#FFFB8C00")
+            nudgeWaiting -> Color.parseColor("#FF64B5F6")
+            else         -> Color.parseColor("#FF888888")
+        }
+        val nudgePrefix = when {
+            nudgeActive  -> "⚡ Aggr nudge: "
+            nudgeWaiting -> "⏳ Aggr nudge: "
+            else         -> "Aggr nudge: "
+        }
+        addRow(c, "$nudgePrefix${d.lastAggrNudgeStatus}",
+               when {
+                   nudgeActive  -> "Aggression sustained below threshold — nudging ISF× up and basal× down.\nWill ease off as aggression recovers toward 1.0."
+                   nudgeWaiting -> "Aggression is below threshold but hasn't sustained long enough yet.\nNeeds 6 consecutive fasting cycles (~30 min) to confirm pattern."
+                   else         -> "Aggression is at or above threshold — no nudge applied.\nISF and basal learning running on physics signals only."
+               },
                nudgeColor)
     }
 
