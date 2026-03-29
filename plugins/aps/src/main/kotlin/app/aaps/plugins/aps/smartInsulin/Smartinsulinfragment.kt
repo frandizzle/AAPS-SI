@@ -28,9 +28,6 @@ class SmartInsulinFragment : DaggerFragment() {
     private var _binding: FragmentSmartInsulinBinding? = null
     private val binding get() = _binding!!
 
-    // Circadian day selector — defaults to today, resets when fragment resumes
-    private var selectedCircadianDow: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-
     private val handler = Handler(Looper.getMainLooper())
     private val updater = object : Runnable {
         override fun run() { refreshStatus(); handler.postDelayed(this, REFRESH_MS) }
@@ -60,11 +57,7 @@ class SmartInsulinFragment : DaggerFragment() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        selectedCircadianDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        handler.post(updater)
-    }
+    override fun onResume()      { super.onResume();  handler.post(updater) }
     override fun onPause()       { super.onPause();   handler.removeCallbacks(updater) }
     override fun onDestroyView() { super.onDestroyView(); _binding = null }
 
@@ -538,43 +531,14 @@ class SmartInsulinFragment : DaggerFragment() {
     private fun updateCircadianTable(ignored: String) {
         val b = _binding ?: return; val ctx = context ?: return
         val cont = b.circadianRows; cont.removeAllViews()
-        val todayDow   = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
         val currentHr  = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
 
-        // ── Day selector row — Mon first, Sun last ───────────────────────────
-        val selectorRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8*dp).toInt() }
-        }
-        // Display order Mon(2)..Sat(7)->Sun(1), mapped to Java DAY_OF_WEEK-1 indices (0=Sun..6=Sat)
-        val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0) // Mon, Tue, Wed, Thu, Fri, Sat, Sun
-        val dayLabels    = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-        for (d in displayOrder) {
-            val label = if (d == todayDow) "Today" else dayLabels[d]
-            val isSelected = d == selectedCircadianDow
-            val btn = TextView(ctx).apply {
-                text = label; textSize = 11f; gravity = Gravity.CENTER
-                setPadding((6*dp).toInt(), (4*dp).toInt(), (6*dp).toInt(), (4*dp).toInt())
-                setTextColor(if (isSelected) Color.BLACK else Color.parseColor("#FFAAAAAA"))
-                setBackgroundColor(if (isSelected) Color.parseColor("#FF43A047") else Color.parseColor("#FF333333"))
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    .also { it.marginEnd = (2*dp).toInt() }
-                setOnClickListener {
-                    selectedCircadianDow = d
-                    refreshStatus()
-                }
-            }
-            selectorRow.addView(btn)
-        }
-        cont.addView(selectorRow)
-
-        // ── Table for selected day ────────────────────────────────────────────
-        val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
+        // Flat 24h baseline — all days share the same learned values
+        val raw   = smartInsulinPlugin.circadianDataForDay(0)
         val rows  = parseCircRows(raw); if (rows.isEmpty()) return
 
         rows.forEach { row ->
-            val isCur = selectedCircadianDow == todayDow && row.hour == currentHr
+            val isCur = row.hour == currentHr
             val rowL = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (2*dp).toInt() }
