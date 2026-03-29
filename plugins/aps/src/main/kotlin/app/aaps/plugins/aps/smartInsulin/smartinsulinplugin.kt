@@ -237,7 +237,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val cal  = java.util.Calendar.getInstance()
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day  = FlatCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return buildString {
             appendLine()
 
@@ -398,7 +398,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val cal     = java.util.Calendar.getInstance()
         val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day     = FlatCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         val profile = profileFunction.getProfile()
         val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
         val profileBasal = profile?.getBasal() ?: 0.0
