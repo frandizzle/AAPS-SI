@@ -1305,6 +1305,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 targetMgdl               = oapsProfile.target_bg.toDouble(),
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
+                aggressiveness           = aggressiveness,
                 suppressAdaptiveLearning = suppressCircadianLearning
             )
         } else {

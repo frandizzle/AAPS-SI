@@ -21,12 +21,8 @@ import kotlin.math.sign
  *  2. Basal multiplier  — learns fasting BG drift per hour  → replaces flat BasalLearner
  *  3. Aggression ceiling — detects rollercoasters + soft-low-approach per hour → caps aggressiveness
  *
- * All three use a flat 24-bucket EWMA (one cell per hour, shared across all days).
- * Previously used a 7×24 day-of-week structure, but data starvation (12 samples/cell/week
- * with ISF_ALPHA=0.08) caused a temporal mismatch with AggressionLearner's 24h recovery.
- * Flat 24h gives 7× more data per cell, converging in days rather than weeks.
- * Day-specific exceptions are handled by real-time modules (ActivityMonitor, UAM, temp targets).
- * Only update during FASTING mode with zero COB. Persisted as JSON in SharedPreferences.
+ * All three use 24-bucket EWMA. Only update during FASTING mode with zero COB.
+ * Persisted as JSON in SharedPreferences.
  */
 @Singleton
 class CircadianLearner @Inject constructor(
@@ -36,16 +32,12 @@ class CircadianLearner @Inject constructor(
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    private var isfState:   FlatCircadianState = FlatCircadianState()
-    private var basalState: FlatCircadianState = FlatCircadianState()
-    private var aggrState:  FlatCircadianState = FlatCircadianState()
+    private var isfState:   DayOfWeekCircadianState = DayOfWeekCircadianState()
+    private var basalState: DayOfWeekCircadianState = DayOfWeekCircadianState()
+    private var aggrState:  DayOfWeekCircadianState = DayOfWeekCircadianState()
 
     // Rollercoaster detection — ring buffer of recent (timestamp, bg) pairs
     private val bgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(MAX_HISTORY)
-
-    // Last basal learning signal for SI tab display
-    var lastBasalSignal: String = "No signal yet"
-        private set
 
     init { restore() }
 
@@ -67,6 +59,10 @@ class CircadianLearner @Inject constructor(
         blend(aggrState.get(dow, hour), 1.0, aggrState.getConfidence(dow, hour))
             .coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
 
+    // Last basal learning signal for SI tab display
+    var lastBasalSignal: String = "No signal yet"
+        private set
+
     // ── Core update — called every loop cycle ─────────────────────────────────
 
     /**
@@ -76,6 +72,10 @@ class CircadianLearner @Inject constructor(
      * @param cobG           Current COB — skip learning if > 0
      * @param profileIsfMgdl Profile ISF in mg/dL (used for deviation calc)
      * @param targetMgdl     Current target BG
+     * @param lowGuardMgdl   User's low guard in mg/dL — used for soft-low penalty
+     * @param inPostMealLockout True if post-meal/P/F lockout active — gates negIOB signal only
+     * @param aggressiveness Current global aggressiveness score — used for aggression nudge signal
+     * @param suppressAdaptiveLearning True = skip ISF/basal updates, keep rollercoaster protection
      */
     fun update(
         glucoseStatus:            GlucoseStatus,
@@ -84,9 +84,10 @@ class CircadianLearner @Inject constructor(
         cobG:                     Double,
         profileIsfMgdl:           Double,
         targetMgdl:               Double,
-        lowGuardMgdl:             Double = 90.0,
-        inPostMealLockout:        Boolean = false,       // true = P/F or meal recently ended, skip negative IOB signal
-        suppressAdaptiveLearning: Boolean = false
+        suppressAdaptiveLearning: Boolean = false,
+        lowGuardMgdl:             Double  = 90.0,
+        inPostMealLockout:        Boolean = false,
+        aggressiveness:           Double  = 1.0
     ) {
         val hour = currentHour()
         val dow  = currentDow()
@@ -126,7 +127,7 @@ class CircadianLearner @Inject constructor(
         else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
-        if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout)
+        if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness)
         else aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)")
 
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
@@ -226,16 +227,15 @@ class CircadianLearner @Inject constructor(
         now:               Long,
         basalIob:          Double,
         targetMgdl:        Double,
-        inPostMealLockout: Boolean
+        inPostMealLockout: Boolean,
+        aggressiveness:    Double
     ) {
-        // ── Signal 1: Drift-based learning ───────────────────────────────────
-        // Measures real BG movement over 60–90 min. Fires during post-meal lockout
-        // because drift is physics — BG actually moved, regardless of IOB source.
         var driftFired = false
 
-        // Collect sample into drift window
+        // ── Signal 1: Drift-based learning ───────────────────────────────────
+        // Measures sustained BG drift during quiet fasting — if BG is drifting up
+        // or down over 60+ min despite the loop, profile basal is wrong.
         basalDriftWindow.addLast(now to bg)
-        // Prune samples older than the window
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
@@ -245,20 +245,23 @@ class CircadianLearner @Inject constructor(
             val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
             if (elapsedHrs >= BASAL_MIN_ELAPSED_HRS) {
                 val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
-                if (abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR) {
-                    aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
-                } else if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) {
-                    aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
-                    basalDriftWindow.clear()
-                } else {
-                    val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
-                    val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                    basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
-                    basalDriftWindow.clear()
-                    driftFired = true
-                    lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mg/dL/hr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                    aapsLogger.debug(LTag.APS,
-                                     "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                when {
+                    abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR ->
+                        aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
+                    abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR -> {
+                        aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
+                        basalDriftWindow.clear()
+                    }
+                    else -> {
+                        val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
+                        val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
+                        basalDriftWindow.clear()
+                        driftFired = true
+                        lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mg/dL/hr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                        aapsLogger.debug(LTag.APS,
+                                         "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                    }
                 }
             } else {
                 aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: elapsed=${"%.2f".format(elapsedHrs)}h < $BASAL_MIN_ELAPSED_HRS")
@@ -269,21 +272,10 @@ class CircadianLearner @Inject constructor(
 
         // ── Signal 2: Negative IOB compensation signal ────────────────────────
         // When the loop has been consistently zero-temping (negative basalIob) to hold BG
-        // below target during fasting, the drift window shows near-zero movement because
-        // the loop is compensating — but profile basal is genuinely too high.
-        // This signal catches that blind spot: sustained below-target + negative basalIob
-        // = profile basal too high for this hour, reduce multiplier.
-        //
+        // below target during fasting, drift shows near-zero because the loop is compensating —
+        // but profile basal is genuinely too high. This signal catches that blind spot.
         // Mutually exclusive with drift — if drift fired this cycle, skip negIOB.
-        // Drift is the stronger, more direct signal; running both would compound adjustments.
-        //
-        // Gates:
-        // - Drift did not fire this cycle (mutually exclusive)
-        // - Not in post-meal lockout (meal/P/F recently ended — negative basalIob
-        //   could be from meal bolus tail, not genuine basal mismatch)
-        // - BG below target (loop is fighting to prevent further drop)
-        // - basalIob meaningfully negative (loop is actively suppressing basal delivery)
-        // - Sustained window: enough samples in drift buffer as time proxy (~30 min)
+        // Not active during post-meal lockout — negative IOB could be meal bolus tail.
         if (!driftFired &&
             !inPostMealLockout &&
             bg < targetMgdl &&
@@ -291,7 +283,6 @@ class CircadianLearner @Inject constructor(
             basalDriftWindow.size >= BASAL_NEG_IOB_MIN_SAMPLES) {
 
             val belowTargetMgdl = targetMgdl - bg
-            // Adjustment proportional to how far below target, scaled conservatively
             val adjustment = 1.0 - (belowTargetMgdl / BASAL_NEG_IOB_SENSITIVITY).coerceIn(0.0, BASAL_NEG_IOB_MAX_ADJUST)
             val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
             basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
@@ -299,6 +290,25 @@ class CircadianLearner @Inject constructor(
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[negIOB] h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
                                  "basalIob=${"%.2f".format(basalIob)} belowTarget=${"%.1f".format(belowTargetMgdl)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+        }
+
+        // ── Signal 3: Aggression nudge signal ─────────────────────────────────
+        // If aggression has been sustained below threshold for multiple consecutive
+        // fasting cycles at this hour, it's a strong repeated signal that profile ISF/basal
+        // is wrong for this period. Nudge the basal multiplier proportionally.
+        // This is the "short-term fast signal" complementing the slow EWMA physics signals.
+        // - Only fires when aggression is meaningfully below 1.0 (not just minor variation)
+        // - Small nudge per firing — the loop checks every 5 min so it accumulates
+        // - Not active during post-meal lockout (IOB pattern unreliable)
+        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
+            val deficit    = 1.0 - aggressiveness  // e.g. 0.2 if aggression=0.8
+            val nudge      = deficit * AGGR_NUDGE_SCALE  // small proportional step
+            val newMult    = (basalState.get(dow, hour) * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.3) // very soft alpha — accumulates slowly
+            lastBasalSignal = "AggrNudge: aggr=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner Basal[aggrNudge] h=$hour aggressiveness=${"%.3f".format(aggressiveness)} " +
+                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
         }
     }
 
@@ -311,7 +321,7 @@ class CircadianLearner @Inject constructor(
         delta:        Double,
         targetMgdl:   Double,
         iobArray:     Array<IobTotal>,
-        lowGuardMgdl: Double = 90.0
+        lowGuardMgdl: Double
     ) {
         val currentCeil = aggrState.get(dow, hour)
 
@@ -327,7 +337,7 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Penalty signal 2: Soft low approach ──────────────────────────────
-        // BG heading toward user's configured low guard with meaningful negative delta and IOB on board
+        // BG heading toward user's configured low guard with negative delta and IOB on board
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
         val approachingLow = bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
@@ -389,26 +399,15 @@ class CircadianLearner @Inject constructor(
             val raw = preferences.get(StringKey.ApsSmartInsulinCircadianState)
             if (raw.isBlank()) return
             val json = JSONObject(raw)
-
-            // ── Migration: old 7-day format → flat 24h ────────────────────────
-            // Detected by presence of "global" + "days" keys inside each sub-object.
-            // Confidence-weighted average across all 8 buckets preserves history.
-            val isfJson = json.getJSONObject("isf")
-            if (isfJson.has("global")) {
-                aapsLogger.debug(LTag.APS, "CircadianLearner: migrating 7-day → flat 24h structure")
-                isfState   = FlatCircadianState.migrateFromDayOfWeek(isfJson)   ?: FlatCircadianState()
-                basalState = FlatCircadianState.migrateFromDayOfWeek(json.getJSONObject("basal")) ?: FlatCircadianState()
-                aggrState  = FlatCircadianState.migrateFromDayOfWeek(json.getJSONObject("aggr"))  ?: FlatCircadianState()
-                persist()  // save immediately in new format
-                aapsLogger.debug(LTag.APS, "CircadianLearner: migration complete, saved flat format")
-                return
+            // Legacy migration: old format had flat "values"/"confidence" arrays, not day-of-week structure
+            if (json.getJSONObject("isf").has("values")) {
+                aapsLogger.debug(LTag.APS, "CircadianLearner: legacy format detected, resetting to day-of-week structure")
+                return  // fresh start — old data incompatible with 7-day structure
             }
-
-            // ── New flat format ───────────────────────────────────────────────
-            isfState   = FlatCircadianState.fromJson(isfJson)
-            basalState = FlatCircadianState.fromJson(json.getJSONObject("basal"))
-            aggrState  = FlatCircadianState.fromJson(json.getJSONObject("aggr"))
-            aapsLogger.debug(LTag.APS, "CircadianLearner restored (flat 24h)")
+            isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
+            basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
+            aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
+            aapsLogger.debug(LTag.APS, "CircadianLearner restored (day-of-week)")
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner restore failed: ${e.message}")
         }
@@ -417,22 +416,22 @@ class CircadianLearner @Inject constructor(
     // ── Reset ─────────────────────────────────────────────────────────────────
 
     fun reset() {
-        isfState   = FlatCircadianState()
-        basalState = FlatCircadianState()
-        aggrState  = FlatCircadianState()
+        isfState   = DayOfWeekCircadianState()
+        basalState = DayOfWeekCircadianState()
+        aggrState  = DayOfWeekCircadianState()
         bgHistory.clear()
         preferences.put(StringKey.ApsSmartInsulinCircadianState, "")
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
 
     fun resetBasal() {
-        basalState = FlatCircadianState()
+        basalState = DayOfWeekCircadianState()
         persist()
         aapsLogger.debug(LTag.APS, "CircadianLearner basal state reset")
     }
 
     fun resetAggr() {
-        aggrState = FlatCircadianState()
+        aggrState = DayOfWeekCircadianState()
         bgHistory.clear()
         persist()
         aapsLogger.debug(LTag.APS, "CircadianLearner aggr state reset")
@@ -447,7 +446,7 @@ class CircadianLearner @Inject constructor(
     }
 
     fun statusSummary(hour: Int = currentHour(), dow: Int = currentDow()): String {
-        val dayLabel = FlatCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val dayLabel = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return "h=$hour($dayLabel) ISF×%.2f basal×%.2f aggrCeil=%.2f (conf isf=%.0f%% basal=%.0f%% aggr=%.0f%%)"
             .format(
                 isfMultiplier(hour, dow), basalMultiplier(hour, dow), aggrCeiling(hour, dow),
@@ -460,7 +459,7 @@ class CircadianLearner @Inject constructor(
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-    private fun currentDow(): Int  = FlatCircadianState.currentDayOfWeek()
+    private fun currentDow(): Int  = DayOfWeekCircadianState.currentDayOfWeek()
 
     /** Blend learned value toward default (1.0) based on confidence */
     private fun blend(learned: Double, default: Double, confidence: Double) =
@@ -488,11 +487,15 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift → 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
 
-        // Negative IOB compensation signal constants
+        // Negative IOB compensation signal
         private const val BASAL_NEG_IOB_THRESHOLD   = -0.15          // basalIob must be at least this negative (U)
         private const val BASAL_NEG_IOB_MIN_SAMPLES = 6              // ~30 min of consistent signal before acting
         private const val BASAL_NEG_IOB_SENSITIVITY = 36.0           // 2 mmol below target → max adjustment
         private const val BASAL_NEG_IOB_MAX_ADJUST  = 0.10           // cap at 10% reduction per firing
+
+        // Aggression nudge signal — fast-path basal correction when aggression is sustained low
+        private const val AGGR_NUDGE_THRESHOLD      = 0.85           // aggression below this triggers nudge
+        private const val AGGR_NUDGE_SCALE          = 0.02           // 20% deficit → 0.4% nudge per cycle
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
@@ -504,7 +507,7 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_CEIL_MAX         = 1.20
         private const val STABLE_BAND_MGDL      = 18.0   // ±1 mmol = stable
         private const val STABLE_DELTA_MGDL     = 1.5    // mg/dL per 5min = flat
-        private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast
+        private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast (mg/dL per 5min)
         private const val SOFT_LOW_MIN_IOB      = 0.3    // must have meaningful IOB
 
         // Rollercoaster detection
