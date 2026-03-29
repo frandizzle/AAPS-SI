@@ -63,6 +63,10 @@ class CircadianLearner @Inject constructor(
     var lastBasalSignal: String = "No signal yet"
         private set
 
+    // Last aggression nudge status for SI tab display
+    var lastAggrNudgeStatus: String = "Inactive — no data yet"
+        private set
+
     // ── Core update — called every loop cycle ─────────────────────────────────
 
     /**
@@ -123,7 +127,7 @@ class CircadianLearner @Inject constructor(
             bgHistory.removeFirst()
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
-        if (!suppressAdaptiveLearning) updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl)
+        if (!suppressAdaptiveLearning) updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, aggressiveness)
         else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
@@ -141,11 +145,13 @@ class CircadianLearner @Inject constructor(
     // ── ISF learner ───────────────────────────────────────────────────────────
 
     private fun updateIsfLearner(
-        hour:           Int,
-        dow:            Int,
-        glucoseStatus:  GlucoseStatus,
-        iobArray:       Array<IobTotal>,
-        profileIsfMgdl: Double
+        hour:              Int,
+        dow:               Int,
+        glucoseStatus:     GlucoseStatus,
+        iobArray:          Array<IobTotal>,
+        profileIsfMgdl:    Double,
+        inPostMealLockout: Boolean,
+        aggressiveness:    Double
     ) {
         val activity = iobArray.firstOrNull()?.activity ?: run {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return
@@ -164,38 +170,8 @@ class CircadianLearner @Inject constructor(
             return
         }
 
-        // ISF convention: higher ISF number = less aggressive (each unit moves BG further per unit).
-        //
-        // We learn a deviation: how much did BG actually move vs how much did IOB predict?
-        // Work in absolute magnitudes to avoid sign confusion — then determine direction separately.
-        //
-        // expectedDelta = -(activity × profileISF × 5)  [negative when insulin active]
-        // If BG moved LESS than expected → insulin weaker than profile predicts → real ISF is HIGHER
-        //   → mult should go UP so dosingISF = profileISF / mult goes DOWN... WAIT.
-        //
-        // APPLICATION convention (fixed below in plugin):
-        //   dosingIsfMgdl = profileISF / circIsfMult
-        //   circIsfMult > 1.0 → dosingISF goes DOWN → less insulin (insulin weaker than expected)
-        //   circIsfMult < 1.0 → dosingISF goes UP   → more insulin (insulin stronger than expected)
-        //
-        // So here: if insulin was WEAKER than expected → mult should go UP (> 1.0)
-        //          if insulin was STRONGER than expected → mult should go DOWN (< 1.0)
-        //
-        // deviation = actualDelta - expectedDelta (signed)
-        // Both negative when BG falling. expectedDelta=-3.6, actualDelta=-1.5:
-        //   deviation = -1.5 - (-3.6) = +2.1  → BG fell less than expected → insulin weaker → mult UP
-        // expectedDelta=-3.6, actualDelta=-5.0:
-        //   deviation = -5.0 - (-3.6) = -1.4  → BG fell more than expected → insulin stronger → mult DOWN
-        // expectedDelta=-1.8, actualDelta=+2.3 (BG rising against IOB):
-        //   deviation = +2.3 - (-1.8) = +4.1  → massive under-response → mult UP (large step)
-        //
-        // Normalise deviation by expectedDelta magnitude to get a fractional adjustment:
-        //   normDeviation = deviation / abs(expectedDelta)
-        //   +1.0 means actual was 100% weaker than expected → mult target = current * 2.0
-        //   -0.5 means actual was 50% stronger → mult target = current * 0.5
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
-        // Target multiplier: positive deviation → mult > 1 → dosingISF/mult goes lower → less insulin
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         val newMult       = (isfState.get(dow, hour) * (1.0 - ISF_ALPHA) + multTarget * ISF_ALPHA)
             .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
@@ -204,6 +180,27 @@ class CircadianLearner @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
                              .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(dow, hour)))
+
+        // ── ISF aggression nudge ──────────────────────────────────────────────
+        // Aggression sustained below threshold → ISF multiplier nudged UP (higher ISF mult
+        // = dosingISF = profileISF/mult goes DOWN = less insulin). Symmetric with basal nudge.
+        // Not active during post-meal lockout — IOB pattern unreliable.
+        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
+            val deficit  = 1.0 - aggressiveness
+            val nudge    = deficit * AGGR_NUDGE_SCALE
+            val nudgedMult = (isfState.get(dow, hour) * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+            isfState = isfState.updated(dow, hour, nudgedMult, ISF_ALPHA * 0.3)
+            lastAggrNudgeStatus = "Active — aggr=${"%.3f".format(aggressiveness)} " +
+                "(deficit=${"%.0f".format(deficit * 100)}%) → " +
+                "ISF×↑${"%.3f".format(isfState.get(dow, hour))} " +
+                "bas×↓${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner ISF[aggrNudge] h=$hour aggressiveness=${"%.3f".format(aggressiveness)} " +
+                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.get(dow, hour))}")
+        } else {
+            lastAggrNudgeStatus = "Inactive — aggr=${"%.3f".format(aggressiveness)} " +
+                "(threshold ${"%.2f".format(AGGR_NUDGE_THRESHOLD)})"
+        }
     }
 
     // ── Basal learner ─────────────────────────────────────────────────────────
@@ -399,11 +396,22 @@ class CircadianLearner @Inject constructor(
             val raw = preferences.get(StringKey.ApsSmartInsulinCircadianState)
             if (raw.isBlank()) return
             val json = JSONObject(raw)
-            // Legacy migration: old format had flat "values"/"confidence" arrays, not day-of-week structure
+
+            // ── Migration: flat 24h format → 7-day format ─────────────────────
+            // Flat format has "values"/"confidence" arrays directly inside each sub-object.
+            // Migrate by copying flat values into all 7 day buckets AND global —
+            // preserving all learned data rather than discarding it.
             if (json.getJSONObject("isf").has("values")) {
-                aapsLogger.debug(LTag.APS, "CircadianLearner: legacy format detected, resetting to day-of-week structure")
-                return  // fresh start — old data incompatible with 7-day structure
+                aapsLogger.debug(LTag.APS, "CircadianLearner: flat format detected, migrating to 7-day structure")
+                isfState   = migrateFlatTo7Day(json.getJSONObject("isf"))
+                basalState = migrateFlatTo7Day(json.getJSONObject("basal"))
+                aggrState  = migrateFlatTo7Day(json.getJSONObject("aggr"))
+                persist()  // save immediately in 7-day format
+                aapsLogger.debug(LTag.APS, "CircadianLearner: flat→7day migration complete")
+                return
             }
+
+            // ── Normal 7-day format ───────────────────────────────────────────
             isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
             basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
             aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
@@ -411,6 +419,22 @@ class CircadianLearner @Inject constructor(
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner restore failed: ${e.message}")
         }
+    }
+
+    /**
+     * Migrate a flat 24h JSON object to a [DayOfWeekCircadianState].
+     * Copies the flat values into all 7 day buckets and global so no data is lost.
+     * Confidence is preserved as-is — the data is real, just not day-segmented yet.
+     */
+    private fun migrateFlatTo7Day(flatJson: JSONObject): DayOfWeekCircadianState {
+        val vArr   = flatJson.getJSONArray("values")
+        val cArr   = flatJson.getJSONArray("confidence")
+        val values = DoubleArray(24) { vArr.getDouble(it) }
+        val conf   = DoubleArray(24) { cArr.getDouble(it) }
+        val flatState = CircadianState(values, conf)
+        // Copy flat state into all 7 day buckets and global
+        val days = Array(7) { flatState }
+        return DayOfWeekCircadianState(days, flatState)
     }
 
     // ── Reset ─────────────────────────────────────────────────────────────────

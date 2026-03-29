@@ -405,6 +405,16 @@ class SmartInsulinFragment : DaggerFragment() {
                    "High activity raises your target and pauses learning.", actColor)
         if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h",
                                 "Day-1 readings can be noisy. Learning resumes automatically after 24h.", Color.parseColor("#FFFB8C00"))
+
+        // Aggression nudge status
+        val nudgeActive = d.lastAggrNudgeStatus.startsWith("Active")
+        val nudgeColor  = if (nudgeActive) Color.parseColor("#FFFB8C00") else Color.parseColor("#FF888888")
+        addRow(c, if (nudgeActive) "⚡ Aggr nudge: ${d.lastAggrNudgeStatus}" else "Aggr nudge: ${d.lastAggrNudgeStatus}",
+               if (nudgeActive)
+                   "Aggression is sustained below threshold — nudging ISF× up (less insulin) and basal× down.\nWill ease off as aggression recovers toward 1.0."
+               else
+                   "Aggression is at or above threshold — no nudge applied.\nISF and basal learning running on physics signals only.",
+               nudgeColor)
     }
 
     // ── UAM card ──────────────────────────────────────────────────────────────
