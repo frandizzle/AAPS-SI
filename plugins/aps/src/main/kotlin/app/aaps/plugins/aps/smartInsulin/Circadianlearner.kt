@@ -43,6 +43,10 @@ class CircadianLearner @Inject constructor(
     // Rollercoaster detection — ring buffer of recent (timestamp, bg) pairs
     private val bgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(MAX_HISTORY)
 
+    // Last basal learning signal for SI tab display
+    var lastBasalSignal: String = "No signal yet"
+        private set
+
     init { restore() }
 
     // ── Public outputs ────────────────────────────────────────────────────────
@@ -74,14 +78,15 @@ class CircadianLearner @Inject constructor(
      * @param targetMgdl     Current target BG
      */
     fun update(
-        glucoseStatus:          GlucoseStatus,
-        iobArray:               Array<IobTotal>,
-        mealMode:               MealMode,
-        cobG:                   Double,
-        profileIsfMgdl:         Double,
-        targetMgdl:             Double,
-        lowGuardMgdl:           Double = 90.0,          // user's low guard — used for soft-low penalty threshold
-        suppressAdaptiveLearning: Boolean = false       // true = skip ISF/basal updates, keep rollercoaster protection
+        glucoseStatus:            GlucoseStatus,
+        iobArray:                 Array<IobTotal>,
+        mealMode:                 MealMode,
+        cobG:                     Double,
+        profileIsfMgdl:           Double,
+        targetMgdl:               Double,
+        lowGuardMgdl:             Double = 90.0,
+        inPostMealLockout:        Boolean = false,       // true = P/F or meal recently ended, skip negative IOB signal
+        suppressAdaptiveLearning: Boolean = false
     ) {
         val hour = currentHour()
         val dow  = currentDow()
@@ -121,7 +126,7 @@ class CircadianLearner @Inject constructor(
         else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
-        if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now)
+        if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout)
         else aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)")
 
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
@@ -215,55 +220,86 @@ class CircadianLearner @Inject constructor(
     private val basalDriftWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque(BASAL_WINDOW_MAX)
 
     private fun updateBasalLearner(
-        hour:  Int,
-        dow:   Int,
-        bg:    Double,
-        now:   Long
+        hour:              Int,
+        dow:               Int,
+        bg:                Double,
+        now:               Long,
+        basalIob:          Double,
+        targetMgdl:        Double,
+        inPostMealLockout: Boolean
     ) {
+        // ── Signal 1: Drift-based learning ───────────────────────────────────
+        // Measures real BG movement over 60–90 min. Fires during post-meal lockout
+        // because drift is physics — BG actually moved, regardless of IOB source.
+        var driftFired = false
+
         // Collect sample into drift window
         basalDriftWindow.addLast(now to bg)
         // Prune samples older than the window
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
-        if (basalDriftWindow.size < BASAL_MIN_SAMPLES) {
+        if (basalDriftWindow.size >= BASAL_MIN_SAMPLES) {
+            val oldest     = basalDriftWindow.first()
+            val newest     = basalDriftWindow.last()
+            val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
+            if (elapsedHrs >= BASAL_MIN_ELAPSED_HRS) {
+                val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
+                if (abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR) {
+                    aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
+                } else if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) {
+                    aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
+                    basalDriftWindow.clear()
+                } else {
+                    val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
+                    val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                    basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
+                    basalDriftWindow.clear()
+                    driftFired = true
+                    lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mg/dL/hr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                    aapsLogger.debug(LTag.APS,
+                                     "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                }
+            } else {
+                aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: elapsed=${"%.2f".format(elapsedHrs)}h < $BASAL_MIN_ELAPSED_HRS")
+            }
+        } else {
             aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: only ${basalDriftWindow.size}/${BASAL_MIN_SAMPLES} samples")
-            return
         }
 
-        val oldest     = basalDriftWindow.first()
-        val newest     = basalDriftWindow.last()
-        val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
-        if (elapsedHrs < BASAL_MIN_ELAPSED_HRS) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: elapsed=${"%.2f".format(elapsedHrs)}h < $BASAL_MIN_ELAPSED_HRS")
-            return
+        // ── Signal 2: Negative IOB compensation signal ────────────────────────
+        // When the loop has been consistently zero-temping (negative basalIob) to hold BG
+        // below target during fasting, the drift window shows near-zero movement because
+        // the loop is compensating — but profile basal is genuinely too high.
+        // This signal catches that blind spot: sustained below-target + negative basalIob
+        // = profile basal too high for this hour, reduce multiplier.
+        //
+        // Mutually exclusive with drift — if drift fired this cycle, skip negIOB.
+        // Drift is the stronger, more direct signal; running both would compound adjustments.
+        //
+        // Gates:
+        // - Drift did not fire this cycle (mutually exclusive)
+        // - Not in post-meal lockout (meal/P/F recently ended — negative basalIob
+        //   could be from meal bolus tail, not genuine basal mismatch)
+        // - BG below target (loop is fighting to prevent further drop)
+        // - basalIob meaningfully negative (loop is actively suppressing basal delivery)
+        // - Sustained window: enough samples in drift buffer as time proxy (~30 min)
+        if (!driftFired &&
+            !inPostMealLockout &&
+            bg < targetMgdl &&
+            basalIob < BASAL_NEG_IOB_THRESHOLD &&
+            basalDriftWindow.size >= BASAL_NEG_IOB_MIN_SAMPLES) {
+
+            val belowTargetMgdl = targetMgdl - bg
+            // Adjustment proportional to how far below target, scaled conservatively
+            val adjustment = 1.0 - (belowTargetMgdl / BASAL_NEG_IOB_SENSITIVITY).coerceIn(0.0, BASAL_NEG_IOB_MAX_ADJUST)
+            val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
+            lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner Basal[negIOB] h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
+                                 "basalIob=${"%.2f".format(basalIob)} belowTarget=${"%.1f".format(belowTargetMgdl)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
         }
-
-        val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
-
-        // Noise gate — ignore tiny drift, could be CGM noise
-        if (abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
-            return
-        }
-        // Sanity gate — ignore huge drift, something else is going on
-        if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
-            basalDriftWindow.clear()  // stale window, start fresh
-            return
-        }
-
-        // Positive drift → BG rising despite loop → profile basal too low → mult > 1
-        // Negative drift → BG falling → profile basal too high → mult < 1
-        val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
-        val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
-
-        // Clear window after a learning event so next update is from fresh data
-        basalDriftWindow.clear()
-
-        aapsLogger.debug(LTag.APS,
-                         "CircadianLearner Basal h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
     }
 
     // ── Aggressiveness ceiling learner ────────────────────────────────────────
@@ -451,6 +487,12 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift → 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
+
+        // Negative IOB compensation signal constants
+        private const val BASAL_NEG_IOB_THRESHOLD   = -0.15          // basalIob must be at least this negative (U)
+        private const val BASAL_NEG_IOB_MIN_SAMPLES = 6              // ~30 min of consistent signal before acting
+        private const val BASAL_NEG_IOB_SENSITIVITY = 36.0           // 2 mmol below target → max adjustment
+        private const val BASAL_NEG_IOB_MAX_ADJUST  = 0.10           // cap at 10% reduction per firing
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly

@@ -247,7 +247,8 @@ class SmartInsulinFragment : DaggerFragment() {
 
         addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
-                   "Background insulin rate keeping BG stable between meals.")
+                   "Background insulin rate keeping BG stable between meals.\n" +
+                   "Last basal learning: ${d.lastBasalSignal}")
 
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {

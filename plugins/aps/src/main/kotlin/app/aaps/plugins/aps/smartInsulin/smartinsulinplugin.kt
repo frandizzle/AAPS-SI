@@ -362,6 +362,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalMultiplier:    Double,
         val profileBasalU:      Double,
         val finalBasalU:        Double,
+        val lastBasalSignal:    String,
         val inReboundWindow:    Boolean,
         val reboundMins:        Long,
         val reboundWindowMins:  Int,
@@ -460,6 +461,7 @@ open class SmartInsulinPlugin @Inject constructor(
             basalMultiplier    = basalMult,
             profileBasalU      = profileBasal,
             finalBasalU        = roundedFinalBasal,
+            lastBasalSignal    = circadianLearner.lastBasalSignal,
             inReboundWindow    = inReboundWindow,
             reboundMins        = msSinceLastSuspend / 60_000,
             reboundWindowMins  = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins),
@@ -1287,6 +1289,12 @@ open class SmartInsulinPlugin @Inject constructor(
         //   - Always call during normal conditions
         //   - During CGM warmup: call with suppressAdaptiveLearning=true so rollercoaster still fires
         //   - During activity or high TT: skip entirely (BG movement isn't insulin-driven)
+        // CircadianLearner gets its own suppress flag WITHOUT inPostMealLockout.
+        // Drift-based basal learning should fire during lockout — it's measuring real BG physics.
+        // Only the negIOB signal needs lockout gating (IOB shape could be meal bolus tail).
+        // ISF learning also runs during lockout — activity-based deviation is independent of meals.
+        // The negIOB gate is handled inside CircadianLearner via inPostMealLockout parameter.
+        val suppressCircadianLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
         if (!highTempTarget && !suppressRollercoaster) {
             circadianLearner.update(
                 glucoseStatus            = glucoseStatus,
@@ -1296,7 +1304,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = oapsProfile.target_bg.toDouble(),
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
-                suppressAdaptiveLearning = suppressAdaptiveLearning
+                inPostMealLockout        = inPostMealLockout,
+                suppressAdaptiveLearning = suppressCircadianLearning
             )
         } else {
             aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
