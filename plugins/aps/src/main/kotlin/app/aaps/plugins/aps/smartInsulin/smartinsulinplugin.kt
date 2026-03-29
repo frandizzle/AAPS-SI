@@ -237,7 +237,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val cal  = java.util.Calendar.getInstance()
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val day  = FlatCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         return buildString {
             appendLine()
 
@@ -397,7 +397,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val cal     = java.util.Calendar.getInstance()
         val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val day     = FlatCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         val profile = profileFunction.getProfile()
         val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
         val profileBasal = profile?.getBasal() ?: 0.0
@@ -698,13 +698,16 @@ open class SmartInsulinPlugin @Inject constructor(
             // P/F gets half the normal lockout (minimum 30 min) — enough to avoid learning
             // from IOB-driven crashes after P/F stacking, but short enough that UAM can
             // still fire normally if a real meal rise follows.
+            // Guard: if user disabled post-meal lockout (lockoutMins=0), respect that for P/F too.
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
-            val pfLockoutMins = (lockoutMins / 2).coerceAtLeast(30)
-            learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + pfLockoutMins * 60_000L)
-            preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
-                                 "(half of ${lockoutMins}min meal lockout)")
+            if (lockoutMins > 0) {
+                val pfLockoutMins = (lockoutMins / 2).coerceAtLeast(30)
+                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + pfLockoutMins * 60_000L)
+                preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
+                                     "(half of ${lockoutMins}min meal lockout)")
+            }
         }
         previousMealModeForLockout = mealMode
         val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
