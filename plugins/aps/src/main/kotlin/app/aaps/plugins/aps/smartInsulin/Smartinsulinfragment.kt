@@ -411,12 +411,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val nudgeParts   = d.lastAggrNudgeStatus.split("|")
         val nudgeState   = nudgeParts.getOrNull(0) ?: "INACTIVE"
         val nudgeActive  = nudgeState == "ACTIVE"
-        val nudgeWaiting = nudgeState == "WAITING"
-        val nudgeColor   = when {
-            nudgeActive  -> Color.parseColor("#FFFB8C00")
-            nudgeWaiting -> Color.parseColor("#FF64B5F6")
-            else         -> Color.parseColor("#FF888888")
-        }
+        val nudgeColor   = if (nudgeActive) Color.parseColor("#FFFB8C00") else Color.parseColor("#FF888888")
 
         val nudgeHeadline: String
         val nudgeDetail: String
@@ -426,25 +421,13 @@ class SmartInsulinFragment : DaggerFragment() {
                 val deficit  = nudgeParts.getOrNull(1) ?: "?"
                 val day      = nudgeParts.getOrNull(2) ?: "?"
                 val hour     = nudgeParts.getOrNull(3) ?: "?"
-                val cycles   = nudgeParts.getOrNull(4) ?: "?"
-                val isfMult  = nudgeParts.getOrNull(5) ?: "?"
-                val basMult  = nudgeParts.getOrNull(6) ?: "?"
+                val isfMult  = nudgeParts.getOrNull(4) ?: "?"
+                val basMult  = nudgeParts.getOrNull(5) ?: "?"
                 nudgeHeadline = "⚡ Too much insulin — adjusting"
-                nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s " +
-                    "(confirmed $cycles times)\n" +
+                nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s\n" +
                     "→ Reducing insulin: ISF multiplier now ×$isfMult, Basal multiplier now ×$basMult\n" +
-                    "Circadian 24h table will update to reflect this. " +
+                    "Circadian 24h table will update to reflect this.\n" +
                     "If BG settles near target, this hour is dialling in."
-            }
-            nudgeWaiting -> {
-                val deficit  = nudgeParts.getOrNull(1) ?: "?"
-                val day      = nudgeParts.getOrNull(2) ?: "?"
-                val hour     = nudgeParts.getOrNull(3) ?: "?"
-                val cycles   = nudgeParts.getOrNull(4) ?: "?"
-                nudgeHeadline = "⏳ Watching — possible excess insulin"
-                nudgeDetail   = "$deficit too much insulin at ${hour}:00 on ${day}s " +
-                    "— seen $cycles/6 times so far.\n" +
-                    "Will adjust ISF and basal if this pattern continues."
             }
             else -> {
                 nudgeHeadline = "Insulin levels look right for this hour"
