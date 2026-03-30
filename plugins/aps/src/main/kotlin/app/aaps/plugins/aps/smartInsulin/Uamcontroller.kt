@@ -391,6 +391,26 @@ class UamController @Inject constructor(
                                  "uAvg=${fmtDelta(unexpectedShort)} " +
                                  "total=${fmtDelta(totalRise)} mode=${uamMode.label}")
         } else {
+            // ── Burst check on streak break ───────────────────────────────────
+            // A weak reading (Δ below threshold) breaks the consecutive streak, but if
+            // total rise from streak start already exceeds burst threshold, fire immediately.
+            // This catches the case: +5, +5, +3 (weak) — totalRise=13mg/dL exceeds 18mg/dL? No.
+            // But: +6, +7, +3 (weak) — totalRise=16mg/dL. Without this fix, streak resets and
+            // burst never fires even though BG clearly spiked significantly.
+            val burstThresholdEarly = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+            val totalRiseAtBreak = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
+            if (burstThresholdEarly > 0.0 &&
+                totalRiseAtBreak >= burstThresholdEarly &&
+                consecutiveRiseReadings >= 1) {
+                aapsLogger.debug(LTag.APS,
+                                 "UAM: BURST trigger on streak break — totalRise=${fmtDelta(totalRiseAtBreak)}$unitLabel " +
+                                     ">= threshold=${fmtBg(burstThresholdEarly)}$unitLabel " +
+                                     "after $consecutiveRiseReadings readings (weak reading broke streak) — firing ${uamMode.label}")
+                triggerUam(uamMode, currentBgMmol, deltaMmol, totalRiseAtBreak)
+                resetStreak()
+                return
+            }
+
             if (consecutiveRiseReadings > 0) {
                 val dirtyNote = if (inPostMealLockout) " [dirty-window stricter thresholds]" else ""
                 aapsLogger.debug(LTag.APS,
