@@ -64,6 +64,12 @@ class UamController @Inject constructor(
     private var previousMealMode: MealMode?  = null  // for expiry transition detection
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
+    // Burst tracking — independent of delta streak, tracks from local BG minimum.
+    // bgBurstTrackStart resets to current BG whenever BG drops, so it always reflects
+    // the lowest recent BG. This means burst can fire on +3+8+9 (total=+20) even though
+    // the +3 failed the delta threshold and never started a streak.
+    private var bgBurstTrackStart: Double = 0.0
+
     // Stuck-high state for UAM_PROTEIN_FAT detection
     private var stuckHighReadings = 0
     // Last BG seen during a rise streak — for statusString display only
@@ -324,6 +330,25 @@ class UamController @Inject constructor(
             resetStreak(); return
         }
 
+        // ── Burst tracking — update local BG minimum ─────────────────────────
+        // Track from the lowest recent BG regardless of delta streak status.
+        // This ensures burst fires on sequences like +3(fail)+8+9 = total +20 mg/dL
+        // where the first weak reading would normally reset bgAtStreakStart to a higher value.
+        if (bgBurstTrackStart <= 0.0 || currentBgMmol < bgBurstTrackStart) {
+            bgBurstTrackStart = currentBgMmol  // reset to new local minimum when BG drops
+        }
+        val burstThresholdCheck = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+        val absoluteRise = currentBgMmol - bgBurstTrackStart
+        if (burstThresholdCheck > 0.0 && absoluteRise >= burstThresholdCheck) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM: BURST trigger (absolute) — absoluteRise=${fmtDelta(absoluteRise)}$unitLabel " +
+                                 ">= threshold=${fmtBg(burstThresholdCheck)}$unitLabel — firing ${uamMode.label}")
+            triggerUam(uamMode, currentBgMmol, deltaMmol, absoluteRise)
+            bgBurstTrackStart = 0.0
+            resetStreak()
+            return
+        }
+
         // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
         // unexpectedDelta = how much BG is rising beyond what insulin predicts.
         // BGI is typically negative (insulin pulling BG down), so unexpectedDelta
@@ -391,26 +416,6 @@ class UamController @Inject constructor(
                                  "uAvg=${fmtDelta(unexpectedShort)} " +
                                  "total=${fmtDelta(totalRise)} mode=${uamMode.label}")
         } else {
-            // ── Burst check on streak break ───────────────────────────────────
-            // A weak reading (Δ below threshold) breaks the consecutive streak, but if
-            // total rise from streak start already exceeds burst threshold, fire immediately.
-            // This catches the case: +5, +5, +3 (weak) — totalRise=13mg/dL exceeds 18mg/dL? No.
-            // But: +6, +7, +3 (weak) — totalRise=16mg/dL. Without this fix, streak resets and
-            // burst never fires even though BG clearly spiked significantly.
-            val burstThresholdEarly = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-            val totalRiseAtBreak = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
-            if (burstThresholdEarly > 0.0 &&
-                totalRiseAtBreak >= burstThresholdEarly &&
-                consecutiveRiseReadings >= 1) {
-                aapsLogger.debug(LTag.APS,
-                                 "UAM: BURST trigger on streak break — totalRise=${fmtDelta(totalRiseAtBreak)}$unitLabel " +
-                                     ">= threshold=${fmtBg(burstThresholdEarly)}$unitLabel " +
-                                     "after $consecutiveRiseReadings readings (weak reading broke streak) — firing ${uamMode.label}")
-                triggerUam(uamMode, currentBgMmol, deltaMmol, totalRiseAtBreak)
-                resetStreak()
-                return
-            }
-
             if (consecutiveRiseReadings > 0) {
                 val dirtyNote = if (inPostMealLockout) " [dirty-window stricter thresholds]" else ""
                 aapsLogger.debug(LTag.APS,
@@ -631,8 +636,9 @@ class UamController @Inject constructor(
                 val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
                 val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
                 val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-                val totalRise = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
-                val burstNote = if (burstThreshold > 0.0) " rise=${fmtDelta(totalRise)}/${fmtBg(burstThreshold)}$unitLabel" else ""
+                val totalRise    = if (bgAtStreakStart > 0.0) lastRiseBgMmol - bgAtStreakStart else 0.0
+                val absoluteRise = if (bgBurstTrackStart > 0.0) lastRiseBgMmol - bgBurstTrackStart else 0.0
+                val burstNote = if (burstThreshold > 0.0) " | Burst: ${fmtDelta(absoluteRise)}/${fmtDelta(burstThreshold)}$unitLabel" else ""
                 "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
             }
             lastUamMode != null && lastUamTimeMs > 0L -> {
