@@ -407,25 +407,52 @@ class SmartInsulinFragment : DaggerFragment() {
                                 "Day-1 readings can be noisy. Learning resumes automatically after 24h.", Color.parseColor("#FFFB8C00"))
 
         // Aggression nudge status
-        val nudgeActive  = d.lastAggrNudgeStatus.startsWith("Active")
-        val nudgeWaiting = d.lastAggrNudgeStatus.startsWith("Waiting")
+        // Parse structured nudge status
+        val nudgeParts   = d.lastAggrNudgeStatus.split("|")
+        val nudgeState   = nudgeParts.getOrNull(0) ?: "INACTIVE"
+        val nudgeActive  = nudgeState == "ACTIVE"
+        val nudgeWaiting = nudgeState == "WAITING"
         val nudgeColor   = when {
             nudgeActive  -> Color.parseColor("#FFFB8C00")
             nudgeWaiting -> Color.parseColor("#FF64B5F6")
             else         -> Color.parseColor("#FF888888")
         }
-        val nudgePrefix = when {
-            nudgeActive  -> "⚡ Aggr nudge: "
-            nudgeWaiting -> "⏳ Aggr nudge: "
-            else         -> "Aggr nudge: "
+
+        val nudgeHeadline: String
+        val nudgeDetail: String
+
+        when {
+            nudgeActive -> {
+                val deficit  = nudgeParts.getOrNull(1) ?: "?"
+                val day      = nudgeParts.getOrNull(2) ?: "?"
+                val hour     = nudgeParts.getOrNull(3) ?: "?"
+                val cycles   = nudgeParts.getOrNull(4) ?: "?"
+                val isfMult  = nudgeParts.getOrNull(5) ?: "?"
+                val basMult  = nudgeParts.getOrNull(6) ?: "?"
+                nudgeHeadline = "⚡ Too much insulin — adjusting"
+                nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s " +
+                    "(confirmed $cycles times)\n" +
+                    "→ Reducing insulin: ISF multiplier now ×$isfMult, Basal multiplier now ×$basMult\n" +
+                    "Circadian 24h table will update to reflect this. " +
+                    "If BG settles near target, this hour is dialling in."
+            }
+            nudgeWaiting -> {
+                val deficit  = nudgeParts.getOrNull(1) ?: "?"
+                val day      = nudgeParts.getOrNull(2) ?: "?"
+                val hour     = nudgeParts.getOrNull(3) ?: "?"
+                val cycles   = nudgeParts.getOrNull(4) ?: "?"
+                nudgeHeadline = "⏳ Watching — possible excess insulin"
+                nudgeDetail   = "$deficit too much insulin at ${hour}:00 on ${day}s " +
+                    "— seen $cycles/6 times so far.\n" +
+                    "Will adjust ISF and basal if this pattern continues."
+            }
+            else -> {
+                nudgeHeadline = "Insulin levels look right for this hour"
+                nudgeDetail   = "No consistent over- or under-delivery detected.\n" +
+                    "ISF and basal learning running on observed BG patterns."
+            }
         }
-        addRow(c, "$nudgePrefix${d.lastAggrNudgeStatus}",
-               when {
-                   nudgeActive  -> "Aggression sustained below threshold — nudging ISF× up and basal× down.\nWill ease off as aggression recovers toward 1.0."
-                   nudgeWaiting -> "Aggression is below threshold but hasn't sustained long enough yet.\nNeeds 6 consecutive fasting cycles (~30 min) to confirm pattern."
-                   else         -> "Aggression is at or above threshold — no nudge applied.\nISF and basal learning running on physics signals only."
-               },
-               nudgeColor)
+        addRow(c, nudgeHeadline, nudgeDetail, nudgeColor)
     }
 
     // ── UAM card ──────────────────────────────────────────────────────────────
