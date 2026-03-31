@@ -197,6 +197,9 @@ class CircadianLearner @Inject constructor(
     // ── Aggression nudge — independent of activity gate ──────────────────────
     // Applies ISF and basal nudge based on aggrCeiling alone. Called directly from
     // update() so it fires even when ISF/basal physics learning is gated by low activity.
+    // Handles both directions:
+    //   ceiling < AGGR_NUDGE_THRESHOLD → too much insulin → ISF up, basal down
+    //   ceiling > AGGR_NUDGE_SURPLUS   → not enough insulin → ISF down, basal up
 
     private fun applyAggrNudge(
         hour:              Int,
@@ -205,46 +208,57 @@ class CircadianLearner @Inject constructor(
         aggressiveness:    Double,
         isfPhysicsFired:   Boolean = false
     ) {
-        if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
-            val deficit    = 1.0 - aggressiveness
-            val nudge      = deficit * AGGR_NUDGE_SCALE
-            val dayName    = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-            val deficitPct = "${"%.0f".format(deficit * 100)}%"
+        val tooMuch      = !inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD
+        val notEnough    = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
 
-            // Capture previous raw day-bucket multipliers before updating
-            // Use raw day bucket (not blended) so the change is visible in the display
-            val d          = dow.coerceIn(0, 6)
-            val prevIsfMult = isfState.days[d].get(hour)
-            val prevBasMult = basalState.days[d].get(hour)
-
-            // Only nudge ISF if physics learner didn't fire this cycle.
-            // If physics fired, it has real IOB data and takes priority.
-            if (!isfPhysicsFired) {
-                val nudgedIsf = (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
-                aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner ISF[aggrNudge] h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
-                                     "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.get(dow, hour))}")
-            } else {
-                aapsLogger.debug(LTag.APS, "CircadianLearner ISF[aggrNudge] h=$hour — skipped, ISF physics fired this cycle")
-            }
-
-            // Basal nudge always applies — basal physics is drift-based and rarely fires same cycle
-            val nudgedBas  = (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-            basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
-
-            // Store: ACTIVE|deficit%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult
-            // Using raw day-bucket values so the per-cycle change is visible (not blended)
-            lastAggrNudgeStatus = "ACTIVE|$deficitPct|$dayName|$hour|" +
-                "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
-                "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}"
-            lastBasalSignal = "AggrNudge: ceil=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-            aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Basal[aggrNudge] h=$hour ceil=${"%.3f".format(aggressiveness)} " +
-                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
-        } else {
+        if (!tooMuch && !notEnough) {
             lastAggrNudgeStatus = "INACTIVE"
+            return
         }
+
+        val deviation  = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
+        val nudge      = deviation * AGGR_NUDGE_SCALE
+        val dayName    = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val deviationPct = "${"%.0f".format(deviation * 100)}%"
+        val d          = dow.coerceIn(0, 6)
+        val prevIsfMult = isfState.days[d].get(hour)
+        val prevBasMult = basalState.days[d].get(hour)
+
+        // Only nudge ISF if physics learner didn't fire this cycle
+        if (!isfPhysicsFired) {
+            // Too much insulin → ISF mult UP (÷ smaller ISF = less insulin)
+            // Not enough insulin → ISF mult DOWN (÷ larger ISF = more insulin)
+            val nudgedIsf = if (tooMuch)
+                (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+            else
+                (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+            isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}] " +
+                                 "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
+                                 "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.days[d].get(hour))}")
+        } else {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF[aggrNudge] h=$hour — skipped, ISF physics fired this cycle")
+        }
+
+        // Too much insulin → basal mult DOWN (less background insulin)
+        // Not enough insulin → basal mult UP (more background insulin)
+        val nudgedBas = if (tooMuch)
+            (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        else
+            (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
+
+        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult
+        val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
+        lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
+            "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
+            "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}"
+        lastBasalSignal = "AggrNudge[${if (tooMuch) "↓" else "↑"}]: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+        aapsLogger.debug(LTag.APS,
+                         "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}] " +
+                             "h=$hour ceil=${"%.3f".format(aggressiveness)} deviation=${"%.3f".format(deviation)} " +
+                             "nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
     }
 
     // ── Basal learner ─────────────────────────────────────────────────────────
@@ -544,8 +558,9 @@ class CircadianLearner @Inject constructor(
         // aggrCeiling is a slow per-hour per-day EWMA — it won't drop below threshold
         // from a single bad cycle. It represents weeks of consistent pattern at that hour.
         // No additional cycle counting needed — the ceiling IS the confirmation filter.
-        private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this triggers nudge
-        private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deficit → 0.4% nudge per cycle
+        private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this → too much insulin, nudge to reduce
+        private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this → not enough insulin, nudge to increase
+        private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deviation → 0.4% nudge per cycle
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly

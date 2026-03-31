@@ -24,7 +24,7 @@ Think of it as a loop that watches how your body responds and gradually figures 
 - Whether it's been too aggressive (causing lows) or too conservative (leaving you high)
 - When you've eaten something even if you haven't announced a meal
 
-  
+
   <img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
   <br>
   <img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
@@ -55,16 +55,47 @@ Think of it as a loop that watches how your body responds and gradually figures 
 
 ### The Learning System
 
-SmartInsulin runs three learners in the background during fasting:
+SmartInsulin runs several learners in the background during fasting:
 
 | Learner | What it learns |
 |---------|---------------|
 | **Aggressiveness** | Whether the loop has been too aggressive or too conservative based on your Time in Range over the last 24h |
-| **Circadian** | How your insulin sensitivity and basal needs vary by hour of the day — each hour has its own multiplier that converges independently |
+| **Circadian** | How your insulin sensitivity and basal needs vary by hour of the day *and* day of the week — each hour/day slot converges independently |
 | **Basal** | Whether your fasting BG consistently trends up or down, and adjusts the basal rate to compensate |
+| **Aggression Nudge** | A fast-acting trim that nudges ISF and basal when a sustained pattern of over- or under-delivery is detected at a specific hour and day |
 | **Profile (DIA/Peak)** | The shape of your insulin curve — how quickly it peaks and how long it lasts — learned separately for each meal type |
 
-Learning is **paused** during meal modes, high temp targets, activity, CGM warmup, and for a configurable window after meals end.
+Learning is **paused** during meal modes, high temp targets, activity, CGM warmup, and for a configurable window after meals end. The Learning card always shows the current state and reason.
+
+#### How the Aggression Nudge Works
+
+Think of it like a car's fuel trim system — the goal is to get your profile dialled in so the loop is hovering near **aggression = 1.0**, meaning it doesn't need to constantly add or remove insulin to stay on target. Just like a car at lambda 1.0 (stoichiometric): if it's consistently running 15% rich, trim the fuel out until it settles at 1.0. If it's running 15% lean, add fuel back in.
+
+- **Short-term trim (Aggression Nudge)** — fires every fasting cycle when the circadian ceiling for a specific hour and day deviates from 1.0 beyond a threshold. Nudges ISF and basal proportionally to the deficit or surplus. A 5% deviation produces a tiny nudge; a 20% deviation produces a stronger one.
+- **Long-term trim (Circadian physics learners)** — slow EWMA signals (ISF deviation, basal drift, negative IOB) that learn the true underlying correction over weeks and absorb the nudge's adjustments permanently.
+
+The **circadian ceiling** per hour/day is a slow-moving average — it won't shift from a single bad cycle. It reflects a genuine recurring pattern. Once it deviates past the threshold in either direction, nudging begins. As the profile corrects and the ceiling recovers toward 1.0, the nudge automatically backs off.
+
+**Too much insulin** (ceiling consistently below threshold — loop pulling insulin out to stay on target):
+- ISF multiplier nudged **up** → effective ISF value rises → less aggressive dosing per unit
+- Basal multiplier nudged **down** → less background insulin delivered
+
+**Not enough insulin** (ceiling consistently above 1.05 — loop consistently adding extra insulin to stay on target):
+- ISF multiplier nudged **down** → effective ISF value falls → more aggressive dosing per unit
+- Basal multiplier nudged **up** → more background insulin delivered
+
+The Learning card shows real before/after values in your units (e.g. `ISF now 2.03 mmol/U from 2.01 mmol/U`, `Basal now 1.1253 U/h from 1.1280 U/h`) so the direction and magnitude of each change is always visible.
+
+The nudge only fires when in a clean fasting state. When anything blocks it, the Learning card shows **⏸ Paused — [specific reason]**.
+
+#### Day-of-Week Circadian Learning
+
+The circadian learner stores a separate ISF multiplier, basal multiplier, and ceiling for each hour **and** each day of the week (Mon–Sun):
+
+- Tuesday 9am can have a different learned profile than Wednesday 9am
+- Each day/hour slot builds confidence independently
+- The Circadian 24h table in the SmartInsulin tab has a day selector (Mon–Sun) to inspect each day's learned values
+- On first install, all 7 days start from the same global values and diverge as real data accumulates
 
 ---
 
@@ -77,48 +108,42 @@ Before any insulin is delivered, the following checks happen in order:
 | **LGS threshold** | Hard suspend — zero basal, no SMBs |
 | **Low guard** (`pred_min < lowGuard`) | Predictive suspend — zero basal, no SMBs |
 | **Warn guard** | Caution zone — basal tapered down proportionally |
-| **Rebound window** | 60-minute post-low recovery — SMBs restricted, TBR tapered from 30% back to 100% |
+| **Rebound window** | Configurable post-low recovery — SMBs restricted, TBR tapered from 30% back to 100% |
 | **High temp target** | SMBs blocked — elevated TBR only |
 | **CGM warmup** | SMB fraction reduced proportionally in first 24h after sensor insertion |
 
 ### Low Guard vs LGS — What's the Difference?
 
-These two settings both protect against lows but they work at different points in the decision:
-
 **LGS threshold** — reacts to your *current* BG right now. If BG drops below this value, the loop immediately suspends — zero basal, no SMBs, full stop. This is a hard reactive floor.
 
 **Low guard** — reacts to your *predicted* BG over the next 30–60 minutes. If the prediction shows BG will drop below this value, the loop suspends *before it happens*. This is a forward-looking protective floor.
 
-**Recommendation: set both to the same value** (e.g. 4.5 mmol / 80 mg/dL). If LGS is lower than low guard, there's a gap where BG could actually reach a dangerous level before the hard suspend kicks in. If LGS is higher than low guard, you'll get hard suspends before the predictive system even has a chance to act.
+**Recommendation: set both to the same value** (e.g. 4.5 mmol / 80 mg/dL).
 
-Setting them equal means: "suspend immediately if BG is at X *or* if BG is predicted to reach X."
+The **warn guard** sits above both (e.g. 4.9 mmol / 88 mg/dL) and acts as an earlier warning — the loop starts tapering basal down proportionally as BG approaches the low guard.
 
-The **warn guard** sits above both (e.g. 4.9 mmol / 88 mg/dL) and acts as an earlier warning — the loop starts tapering basal down proportionally as BG approaches the low guard, reducing the chance of hitting it in the first place.
+SmartInsulin includes pattern-recognition safety gates inside its learning system:
 
-SmartInsulin includes pattern-recognition safety gates inside its learning system to prevent the loop from overcorrecting and causing a yo-yo effect:
-
-* **Rollercoaster Detection:** The algorithm monitors your blood glucose over a rolling 90-minute window. If your BG crosses your target line 2 or more times within that 90 minutes, it flags a "rollercoaster" oscillation. To stop feeding the cycle, it immediately caps the loop's aggressiveness ceiling for that hour by 15%, forcing it to use gentler correction doses until you stabilise.
-* **Soft Low Approach:** If your BG is dropping toward your configured **low guard**, falling quickly, and you still have active insulin on board (IOB), the system detects a "soft low approach". It instantly cuts the aggressiveness ceiling by 10% to soften the landing and avoid a crash.
+* **Rollercoaster Detection:** If BG crosses your target line 2+ times within a rolling 90-minute window, aggressiveness ceiling is capped by 15% for that hour — forcing gentler corrections until you stabilise.
+* **Soft Low Approach:** If BG is dropping toward the low guard with active IOB, aggressiveness ceiling is cut by 10% to soften the landing.
 
 ### Low Recovery Window
 
-After a low BG event, SmartInsulin enters a recovery window (default 60 minutes, configurable in General & Safety settings — range 20–90 min):
+After a low BG event, SmartInsulin enters a recovery window (configurable 20–90 min):
 
-- TBR starts at 30% of normal and ramps back to 100% over the configured window duration
-- SMBs are blocked for the first 75% of the window (default: first 45 min of a 60-min window)
-- After 75% of the window, SMBs are restored but the TBR taper continues
+- TBR starts at 30% of normal and ramps back to 100% over the configured duration
+- SMBs are blocked for the first 75% of the window
+- Progress is shown in the SI tab: e.g. "20min of 45min"
 
-**Shortening the window** (e.g. to 45 min) means the loop resumes full dosing sooner — useful if you tend to rebound quickly. Lengthening it provides more conservative protection after a bad low.
+**Soft Landing Bypass:** If the low was borderline and IOB was low at the time, UAM detection is allowed to continue during recovery so if you eat immediately, the system can still respond.
 
-**Soft Landing Bypass:** If the low was borderline (not a crash) and IOB was low at the time, UAM meal detection is allowed to continue during recovery — so if you eat immediately after a near-low, the system can still respond. If BG drops low a second time after a bypass was active, full lockout applies for the rest of that session.
-
-**Manual Override:** If you are currently in a rebound lockout and treat the low with a full meal, manually activating any meal mode via the **Smart Meal** button will instantly clear the rebound window and restore normal loop operation.
+**Manual Override:** Activating any meal mode via **Smart Meal** instantly clears the rebound window.
 
 ---
 
 ## Meal Modes
 
-Meal modes are activated via the **Smart Meal** button and apply a tighter ISF for faster correction during and after eating. *(Activating a manual meal mode will also instantly clear any active post-low rebound window).*
+Meal modes are activated via the **Smart Meal** button and apply a tighter ISF for faster correction during and after eating.
 
 ### Manual Meal Modes
 | Mode | Description |
@@ -129,54 +154,36 @@ Meal modes are activated via the **Smart Meal** button and apply a tighter ISF f
 | Low Carb | Reduced-carb meal — gentler ISF |
 | Extended | Long-duration meals (e.g. grazing, restaurant) |
 
-Each mode has its own configurable ISF, window duration, and pre-bolus settings.
-
 ### Pre-Bolus 1 & 2
 
-When activating a meal mode via Smart Meal, you can schedule:
-
 - **Pre-bolus 1** — delivered immediately when you confirm the meal
-- **Pre-bolus 2** — scheduled automatically at a configurable delay after the first bolus, with safety gates that prevent delivery if BG is below target, IOB is too high, or BG is falling
-
-**Pre-bolus 2 safety gates:**
-- BG must be above your profile target
-- IOB must be below 75% of your max IOB
-- Instant delta must not be falling faster than −0.11 mmol / −2.0 mg/dL / 5min
-- 15-minute average delta must not be falling faster than −0.17 mmol / −3.0 mg/dL / 5min
+- **Pre-bolus 2** — scheduled automatically at a configurable delay, with safety gates (BG above target, IOB below 75% max, delta not falling)
 
 ### Cancelling Modes & Pre-Boluses
 
-If you need to bail out of an active mode or scheduled bolus, you can do so directly from the **Smart Meal** button on the AAPS home screen:
-- **Cancel a Meal Mode:** This clears any active manual or UAM meal mode entirely and returns the loop to Fasting.
-- **Cancel Pre-Bolus 2:** This permanently discards a pending PB2 without cancelling the underlying meal mode. This is useful if you decide you don't need the extra insulin but still want the tighter meal ISF for the remainder of the mode window.
+From the **Smart Meal** button:
+- **Cancel a Meal Mode** — clears the active mode and returns to Fasting
+- **Cancel Pre-Bolus 2** — discards pending PB2 without cancelling the meal mode
 
 ### Post-Meal Lockout
 
-After any meal mode (manual or UAM) ends, a configurable dirty window (default 90 min) raises UAM detection thresholds to prevent fat/protein tail rises being mistaken for a new meal.
+After any meal mode ends, a configurable dirty window (default 90 min) raises UAM detection thresholds (~1.5×) to prevent fat/protein tail rises being mistaken for a new meal.
 
 ---
 
 ## CGM Smoothing (UKF)
 
-Fresh CGM sensors often produce jumpy, noisy data during their first 24 hours as the filament settles. To counteract "phantom spikes" that could trigger false meal detections or unwarranted STFT adjustments, SmartInsulin integrates specifically with AAPS's **Unscented Kalman Filter (UKF)** smoothing plugin.
-
-How you configure this depends entirely on which CGM you use:
-
 ### Dexcom G6 Users
-The G6 transmitter applies its own heavy smoothing natively, but often struggles on day one.
-* **How to enable:** Go to the AAPS Config Builder and select **Unscented Kalman Filter** under the Smoothing section. Then, go to SmartInsulin Settings -> First Day CGM and **enable** *First Day CGM Smoothing*.
-* **What it does:** SmartInsulin will apply UKF smoothing for exactly 24 hours after a sensor insertion. Once 24 hours have passed, it automatically expires and passes the raw G6 data through (behaving like the "No Smoothing" plugin). This gives you a clean first day without double-smoothing the rest of the session.
+Enable **Unscented Kalman Filter** in Config Builder and enable *First Day CGM Smoothing* in SmartInsulin settings. Smoothing applies for 24 hours after insertion then expires automatically.
 
 ### Dexcom G7 Users
-The G7 provides much noisier, "rawer" data continuously throughout the entire session.
-* **How to enable:** Go to the AAPS Config Builder and select **Unscented Kalman Filter** under the Smoothing section. In SmartInsulin Settings, **leave the *First Day CGM Smoothing* toggle OFF**.
-* **What it does:** UKF smoothing will run permanently. This is highly recommended for G7 users to prevent the loop from aggressively chasing micro-fluctuations and sensor wobble.
+Enable **Unscented Kalman Filter** in Config Builder. Leave *First Day CGM Smoothing* **OFF** — UKF runs permanently for the full session.
 
 ---
 
 ## UAM Auto-Detection
 
-SmartInsulin watches CGM rise patterns in the background and automatically activates the appropriate meal mode when a genuine unannounced meal is detected — without you having to do anything.
+SmartInsulin watches CGM rise patterns and automatically activates the appropriate meal mode when a genuine unannounced meal is detected.
 
 ### Detection Logic
 
@@ -190,12 +197,12 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 | UnexpectedDelta ≥ threshold | 0.11 mmol / 2.0 mg/dL | Rise must exceed what insulin activity alone explains |
 
 **Clean vs Dirty window:**
-- **Clean** — fasting mode, normal thresholds apply
-- **Dirty** — post-meal lockout is active, thresholds are raised ~1.5× to avoid detecting fat/protein tail rises as a new meal
+- **Clean** — fasting, normal thresholds
+- **Dirty** — post-meal lockout active, thresholds raised ~1.5×
 
-**Wobble tolerance (configurable on/off switch):** When enabled, if the 15-minute average confirms the trend (≥ your Rise Min Delta), a single weaker reading only needs to reach 50% of the threshold to keep the streak alive. This prevents a brief sensor compression artifact from resetting a genuine rise streak. When disabled, every reading must independently meet the full Rise Min Delta — simpler and more predictable. If you want e.g. +0.2 mmol (3.6 mg/dL) to always count and +0.1 mmol (1.8 mg/dL) to never count, turn wobble tolerance **off**.
+**Wobble tolerance (on/off):** When on, a single weak reading mid-streak only needs to reach 50% of the threshold if the 15-min average still confirms the trend. Prevents sensor noise from killing a genuine rise streak. Turn off for stricter, more predictable behaviour.
 
-**Burst trigger:** If total BG rise from streak start exceeds a configurable threshold (default 1.0 mmol / 18 mg/dL), UAM fires immediately without waiting for the full consecutive count. Catches sudden meal spikes.
+**Burst trigger:** If total BG rise from the local minimum exceeds the burst threshold (default 1.0 mmol / 18 mg/dL), UAM fires immediately without waiting for the full consecutive count. The burst tracker measures rise from the lowest recent BG — even across interrupted streaks — so a sequence like +3 (fail) +8 +9 = 20 mg/dL total will trigger correctly. The SI tab shows burst progress: `Burst: +0.72/+1.00mmol`.
 
 ### UAM Windows
 
@@ -207,76 +214,72 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 | UAM Snack | Late evening |
 | UAM Afternoon | Fills the gap between lunch and dinner |
 
-**Window priority:** Breakfast → Lunch → Afternoon → Dinner → Snack. If windows overlap, the earlier window in this list wins. In practice the default hours don't overlap, but if you customise windows be aware that Afternoon takes priority over Dinner at any shared hour.
+**Window priority:** Breakfast → Lunch → Afternoon → Dinner → Snack.
 
 ### Protein/Fat (P/F) Mode
 
-A passive watchdog for slow fat/protein-driven rises. Activates when BG is elevated and flat — not spiking like a carb meal, just stuck high. Triggers after N consecutive readings where:
+Activates when BG is elevated and flat (not spiking) after a meal. Triggers after N consecutive readings where BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL) and ShortAvgDelta is flat (−0.15 to +0.25 mmol range).
 
-- BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL)
-- ShortAvgDelta is flat (−0.15 to +0.25 mmol / −2.7 to +4.5 mg/dL range)
-
-P/F has its own ISF, duration, and **separate day/night ISF windows** — fat/protein hits differently at midnight vs mid-afternoon. P/F does not trigger the post-meal dirty window.
+P/F has its own ISF, duration, and separate day/night ISF windows. It applies half the normal post-meal lockout (minimum 30 min) to protect learning without over-blocking. Does not trigger the dirty window.
 
 ### UAM Entry SMB Fraction
 
-For the first N SMBs after a UAM mode fires (default: 3 SMBs at 80%), the delivery fraction is reduced. This softens the front-end of the response, giving the initial IOB time to register before full aggression kicks in.
+For the first N SMBs after UAM fires (default: 3 SMBs at 80%), delivery is reduced. Softens the front-end of the response while IOB registers before full aggression kicks in.
 
 ---
 
 ## STFT (Soft Target Fine-Tune)
 
-When fasting BG sits above a configurable threshold (default 6.0 mmol / 108 mg/dL) for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode.
-
-- Activates after N consecutive readings above threshold
-- Lowers target by a small configurable step per reading
-- Resets immediately when BG falls or delta goes negative
-- Blocked during meal modes, UAM modes, high temp targets, and the post-low rebound window
+When fasting BG sits above a configurable threshold for 3+ consecutive readings, STFT progressively lowers the effective dosing target — encouraging more correction without triggering a full meal mode. Resets immediately when BG falls. Blocked during meal modes, UAM, high temp targets, and post-low rebound window.
 
 ---
 
 ## Activity Integration
 
-SmartInsulin reads heart rate and step count to determine your activity level. Higher activity raises the effective BG target (reducing hypo risk during exercise) and suppresses learning.
+SmartInsulin reads heart rate and step count to determine activity level. Higher activity raises the effective BG target and suppresses learning.
 
 | Level | Colour in SI tab | Loop behaviour |
 |-------|-----------------|----------------|
 | Sedentary | Grey | No adjustment |
-| Light | Green | Minor target raise and learning suppressed |
-| Moderate | Amber | Loop adjusting target and learning suppressed |
+| Light | Green | Minor target raise, learning suppressed |
+| Moderate | Amber | Moderate target raise, learning suppressed |
 | Heavy | Orange-red | Significant target raise, learning suppressed |
 
 ---
 
 ## P/F Day/Night ISF
 
-Protein and fat digestion behaves differently at different times of day. The P/F mode supports separate ISF values for a configurable day window and night window:
+- **Day ISF** — applies during configured day hours
+- **Night ISF** — applies during configured night hours
+- **Fallback ISF** — applies outside both windows (0 = use profile ISF)
 
-- **Day ISF** — applies during your configured day hours (e.g. 10:00–16:00)
-- **Night ISF** — applies during your configured night hours (e.g. 22:00–06:00)
-- **Fallback ISF** — applies if the current hour falls outside both windows (0 = use profile ISF)
-
-**Hour boundary rule:** End hours are inclusive — setting end=16 covers 16:00–16:59. For a clean handover with no gap, set day end=16 and night start=17.
+**Hour boundary rule:** End hours are inclusive. For clean handover: set day end=16 and night start=17.
 
 ---
 
 ## SmartInsulin Tab
 
-The SmartInsulin tab in AAPS provides a full status view organised into cards:
-
 | Card | What it shows |
 |------|--------------|
-| **Overview** | Day/time, active mode, aggressiveness (with % impact), ISF calculation, basal calculation, low recovery status, pre-bolus status |
-| **Time in Range** | Colour bars for fasting and meal TIR — green = in range, amber = high, red = low |
-| **Learning** | Learning state and reason, post-meal pause countdown, activity level |
-| **Meal Auto-Detection** | UAM status, detection streak, thresholds, P/F status — clean/dirty window explained |
-| **Soft Target** | STFT active/inactive with reason (meal mode, UAM, P/F, or responding normally) |
-| **Circadian 24h** | 24-row table: ISF×, Bas×, Ceiling, Confidence per hour — current hour highlighted, confidence colour-coded |
-| **Insulin Profiles** | Learned peak and DIA per meal type — green = learned (5+ samples), amber = still learning, grey = using profile values |
+| **Overview** | Day/time, active mode, aggressiveness (with % impact), ISF and basal calculations with multipliers, last basal learning signal |
+| **Time in Range** | Colour bars for fasting and meal TIR. Est. HbA1c (GMI formula, min 24 readings) and average BG with data window |
+| **Learning** | Learning state, activity level, aggression nudge status with plain-English explanation and before/after values |
+| **Meal Auto-Detection** | UAM status, detection streak, burst progress (`Burst: +0.72/+1.00mmol`), thresholds, P/F status |
+| **Soft Target** | STFT active/inactive with reason |
+| **Circadian 24h** | 24-row table: ISF×, Bas×, Ceiling, Confidence per hour. **Day selector (Mon–Sun)** to view each day's learned values. Current hour highlighted. Resets to today on tab resume. |
+| **Insulin Profiles** | Learned peak and DIA per meal type |
 | **Raw Status Log** | Full technical detail for debugging |
-| **Reset Learners** | Individual reset buttons for aggressiveness, basal, circadian, and profiles |
+| **Reset Learners** | Individual reset buttons for each learner |
 
-**Aggressiveness note:** During meal modes, aggressiveness is locked at 1.0 — the fasting value shown is for reference only and is not being applied.
+### Learning Card — Aggression Nudge Status
+
+| State | Colour | Meaning |
+|-------|--------|---------|
+| ⚡ Too much insulin — adjusting | Amber | Ceiling below threshold. Shows deviation %, hour, day, and actual ISF/basal before and after |
+| ⚡ Not enough insulin — adjusting | Green | Ceiling above surplus threshold. ISF nudged down, basal nudged up |
+| ⏸ Paused — [reason] | Blue | Blocked by meal mode, post-meal lockout, activity, temp target, or CGM warmup |
+| Insulin levels look right for this hour | Grey | Ceiling between 0.95–1.05 — no nudge needed |
+
 <p align="center">
   <img src="https://github.com/user-attachments/assets/2f3e04b9-dc41-4371-b083-cfd760e35b2d" width="200">
   <img src="https://github.com/user-attachments/assets/e018530b-134d-4bbe-8313-eb4320076ed4" width="200">
@@ -285,20 +288,17 @@ The SmartInsulin tab in AAPS provides a full status view organised into cards:
   <img src="https://github.com/user-attachments/assets/04ac513b-c25c-4acd-ba09-88afd63ea980" width="200">
 </p>
 
-
-
 ---
 
 ## Loop Output Format
 
-The loop reason string uses pipe-separated format:
-
+```
 SI mode=Fasting | BG=6.3 | d=0.17 | IOB=0.81/14 | pred_min=6.0 | lo=5.0 warn=5.0
 | target=5.5 | ISF=2.0 | basal=0.905(x1.00) | Peak=55m DIA=540m | aggr=0.96
 | tir=Fasting:100%in/0%hi/0%lo Meal:94%in/5%hi/0%lo | NORMAL | targetBG=5.5
 | microBolus=true | trigger=predMinGap(6.0->5.5) | smb=0.150 | tbr=1.130
 | circ(ISF×1.02 bas×1.00 ceil=0.96) | hr=82 steps=37/5m | 59min left
-
+```
 
 Values are displayed in your configured units (mmol/L or mg/dL).
 
@@ -306,15 +306,13 @@ Values are displayed in your configured units (mmol/L or mg/dL).
 
 ## Settings Reference
 
-### Max Basal Rate vs SmartInsulin Max TBR — What's the Difference?
+### Max Basal Rate vs SmartInsulin Max TBR
 
-There are two separate TBR limits and it's worth understanding both:
+**Max Basal Rate** (General & Safety) — hard outer ceiling enforced by AAPS. No TBR can exceed this.
 
-**Max Basal Rate** (General & Safety) — the hard outer ceiling enforced by AAPS constraints. No TBR can ever exceed this regardless of what SmartInsulin requests. Set this to a safe absolute maximum for your body (e.g. 3× your highest profile basal rate is a common starting point).
+**SmartInsulin Max TBR** (General & Safety) — SmartInsulin's own inner cap. Should be equal to or lower than Max Basal Rate.
 
-**SmartInsulin Max TBR** (General & Safety) — SmartInsulin's own inner cap, applied before the AAPS constraint. This is what SmartInsulin will actually aim for during aggressive correction. Should be equal to or lower than Max Basal Rate.
-
-**Recommendation: set both to the same value.** Having them different just creates a confusing gap where AAPS might allow a rate that SmartInsulin would never request anyway. If you're unsure, start conservative and raise it as you gain confidence.
+**Recommendation: set both to the same value.**
 
 ### Settings Screens
 
@@ -326,8 +324,8 @@ There are two separate TBR limits and it's worth understanding both:
 | **Activity** | Enable activity targets, resting HR, target offset per activity level |
 | **Meal Modes** | ISF per manual meal mode, mode window, pre-bolus 1 & 2 defaults |
 | **STFT** | CGM warmup block |
-| **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard (skip every 3rd SMB), UAM disable during warmup |
-| **UAM Auto-Detection** | Enable, wobble tolerance on/off, rise delta, burst threshold, entry SMB fraction/count, day/night window hours |
+| **First Day CGM** | First-day UKF smoothing, CGM warmup SMB guard, UAM disable during warmup |
+| **UAM Auto-Detection** | Enable, wobble tolerance on/off, rise delta, burst threshold (0 = off), entry SMB fraction/count, day/night window hours |
 | **UAM Windows** | Per-window enable, hours, duration, ISF for Breakfast/Lunch/Dinner/Snack/Afternoon |
 | **UAM Protein/Fat** | Enable, stuck readings, duration, fallback ISF, day ISF + hours, night ISF + hours |
 
@@ -335,15 +333,14 @@ There are two separate TBR limits and it's worth understanding both:
 
 ## Omnipod Basal Drift Fix
 
-This build includes a fix for a known Omnipod basal drift issue where the pump's delivered basal rate can drift from the programmed rate over time due to rounding at the 0.05 U/h step boundary.
+This build includes a fix for a known Omnipod basal drift issue at the 0.05 U/h step boundary.
 
-**To enable the fix:**
-
-1. Navigate to your AAPS `extra` folder on your phone's storage
+**To enable:**
+1. Navigate to your AAPS `extra` folder
 2. Create an empty file named exactly: `omnipod_basal_drift` (no extension)
 3. Restart AAPS
 
-The fix is opt-in via the file flag so it does not affect users on other pumps or those who prefer the standard behaviour. If the file is not present, the loop behaves identically to standard AAPS.
+Opt-in via file flag — no effect on other pumps if the file is absent.
 
 ---
 
@@ -363,9 +360,10 @@ Built on top of [AndroidAPS](https://github.com/nightscout/AndroidAPS) and the O
 ---
 
 **Feedback & Discussion**
+
 I built this primarily for my own use, but I'm always open to feedback or algorithmic discussions from other tinkerers.
 * For **bug reports**, please open a GitHub Issue with your loop output string and a screenshot of the SmartInsulin tab.
-* For **general discussion**, you can usually find me in the Nightscout/AndroidAPS Discord server (ping `@yourusername`). Please avoid sending direct messages for general tech support!
+* For **general discussion**, join the Discord linked at the top of this page.
 
 ---
 

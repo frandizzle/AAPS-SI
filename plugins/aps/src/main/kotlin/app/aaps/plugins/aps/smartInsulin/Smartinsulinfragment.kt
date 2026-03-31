@@ -408,14 +408,17 @@ class SmartInsulinFragment : DaggerFragment() {
 
         // Aggression nudge status
         // Parse structured nudge status
-        val nudgeParts   = d.lastAggrNudgeStatus.split("|")
-        val nudgeState   = nudgeParts.getOrNull(0) ?: "INACTIVE"
-        val nudgeActive  = nudgeState == "ACTIVE"
-        val nudgePaused  = nudgeState == "PAUSED"
-        val nudgeColor   = when {
-            nudgeActive -> Color.parseColor("#FFFB8C00")
-            nudgePaused -> Color.parseColor("#FF64B5F6")
-            else        -> Color.parseColor("#FF888888")
+        val nudgeParts      = d.lastAggrNudgeStatus.split("|")
+        val nudgeState      = nudgeParts.getOrNull(0) ?: "INACTIVE"
+        val nudgeActiveHigh = nudgeState == "ACTIVE_HIGH"   // too much insulin
+        val nudgeActiveLow  = nudgeState == "ACTIVE_LOW"    // not enough insulin
+        val nudgeActive     = nudgeActiveHigh || nudgeActiveLow
+        val nudgePaused     = nudgeState == "PAUSED"
+        val nudgeColor      = when {
+            nudgeActiveHigh -> Color.parseColor("#FFFB8C00")  // amber — reducing insulin
+            nudgeActiveLow  -> Color.parseColor("#FF4CAF50")  // green — adding insulin
+            nudgePaused     -> Color.parseColor("#FF64B5F6")  // blue — paused
+            else            -> Color.parseColor("#FF888888")  // grey — inactive
         }
 
         val nudgeHeadline: String
@@ -423,7 +426,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
         when {
             nudgeActive -> {
-                val deficit      = nudgeParts.getOrNull(1) ?: "?"
+                val deviation    = nudgeParts.getOrNull(1) ?: "?"
                 val day          = nudgeParts.getOrNull(2) ?: "?"
                 val hour         = nudgeParts.getOrNull(3) ?: "?"
                 val prevIsfMult  = nudgeParts.getOrNull(4)?.toDoubleOrNull()
@@ -441,12 +444,21 @@ class SmartInsulinFragment : DaggerFragment() {
                     return "${"%.4f".format(d.profileBasalU * mult)} U/h"
                 }
 
-                nudgeHeadline = "⚡ Too much insulin — adjusting"
-                nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s\n" +
-                    "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
-                    "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
-                    "Circadian 24h table will update to reflect this.\n" +
-                    "If BG settles near target, this hour is dialling in."
+                if (nudgeActiveHigh) {
+                    nudgeHeadline = "⚡ Too much insulin — adjusting"
+                    nudgeDetail   = "$deviation too much insulin detected at ${hour}:00 on ${day}s\n" +
+                        "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
+                        "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
+                        "Circadian 24h table will update to reflect this.\n" +
+                        "If BG settles near target, this hour is dialling in."
+                } else {
+                    nudgeHeadline = "⚡ Not enough insulin — adjusting"
+                    nudgeDetail   = "$deviation too little insulin detected at ${hour}:00 on ${day}s\n" +
+                        "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
+                        "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
+                        "Circadian 24h table will update to reflect this.\n" +
+                        "If BG settles near target, this hour is dialling in."
+                }
             }
             nudgePaused -> {
                 val reason = nudgeParts.getOrNull(1) ?: "Learning suppressed"
