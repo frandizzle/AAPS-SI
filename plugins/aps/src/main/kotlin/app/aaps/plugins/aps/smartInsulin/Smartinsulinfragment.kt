@@ -418,25 +418,28 @@ class SmartInsulinFragment : DaggerFragment() {
 
         when {
             nudgeActive -> {
-                val deficit  = nudgeParts.getOrNull(1) ?: "?"
-                val day      = nudgeParts.getOrNull(2) ?: "?"
-                val hour     = nudgeParts.getOrNull(3) ?: "?"
-                val isfMult  = nudgeParts.getOrNull(4)?.toDoubleOrNull()
-                val basMult  = nudgeParts.getOrNull(5)?.toDoubleOrNull()
-                // Convert multipliers to real values the user understands
-                // ISF: dosingISF = profileISF / isfMult — higher mult = less insulin
-                // Basal: delivered = profileBasal × basMult — lower mult = less insulin
-                val effectiveIsf = if (isfMult != null && d.profileIsfMgdl > 0)
-                    if (d.isMmol) "${"%.1f".format((d.profileIsfMgdl / isfMult) / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl / isfMult)} mg/dL/U"
-                else "?"
-                val effectiveBas = if (basMult != null && d.profileBasalU > 0)
-                    "${"%.3f".format(d.profileBasalU * basMult)} U/h"
-                else "?"
+                val deficit      = nudgeParts.getOrNull(1) ?: "?"
+                val day          = nudgeParts.getOrNull(2) ?: "?"
+                val hour         = nudgeParts.getOrNull(3) ?: "?"
+                val prevIsfMult  = nudgeParts.getOrNull(4)?.toDoubleOrNull()
+                val newIsfMult   = nudgeParts.getOrNull(5)?.toDoubleOrNull()
+                val prevBasMult  = nudgeParts.getOrNull(6)?.toDoubleOrNull()
+                val newBasMult   = nudgeParts.getOrNull(7)?.toDoubleOrNull()
+
+                fun fmtIsf(mult: Double?): String {
+                    if (mult == null || d.profileIsfMgdl <= 0) return "?"
+                    return if (d.isMmol) "${"%.1f".format((d.profileIsfMgdl / mult) / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl / mult)} mg/dL/U"
+                }
+                fun fmtBas(mult: Double?): String {
+                    if (mult == null || d.profileBasalU <= 0) return "?"
+                    return "${"%.3f".format(d.profileBasalU * mult)} U/h"
+                }
+
                 nudgeHeadline = "⚡ Too much insulin — adjusting"
                 nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s\n" +
-                    "→ ISF now $effectiveIsf (higher = less aggressive)\n" +
-                    "→ Basal now $effectiveBas (lower = less insulin)\n" +
+                    "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
+                    "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
                     "Circadian 24h table will update to reflect this.\n" +
                     "If BG settles near target, this hour is dialling in."
             }

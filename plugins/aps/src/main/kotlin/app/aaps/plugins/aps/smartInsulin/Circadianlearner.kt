@@ -206,10 +206,14 @@ class CircadianLearner @Inject constructor(
             val dayName    = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
             val deficitPct = "${"%.0f".format(deficit * 100)}%"
 
+            // Capture previous multipliers before updating
+            val prevIsfMult = isfState.get(dow, hour)
+            val prevBasMult = basalState.get(dow, hour)
+
             // Only nudge ISF if physics learner didn't fire this cycle.
             // If physics fired, it has real IOB data and takes priority.
             if (!isfPhysicsFired) {
-                val nudgedIsf = (isfState.get(dow, hour) * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                val nudgedIsf = (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
                 isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner ISF[aggrNudge] h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
@@ -219,11 +223,13 @@ class CircadianLearner @Inject constructor(
             }
 
             // Basal nudge always applies — basal physics is drift-based and rarely fires same cycle
-            val nudgedBas  = (basalState.get(dow, hour) * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+            val nudgedBas  = (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
             basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
 
+            // Store: ACTIVE|deficit%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult
             lastAggrNudgeStatus = "ACTIVE|$deficitPct|$dayName|$hour|" +
-                "${"%.3f".format(isfState.get(dow, hour))}|${"%.3f".format(basalState.get(dow, hour))}"
+                "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.get(dow, hour))}|" +
+                "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.get(dow, hour))}"
             lastBasalSignal = "AggrNudge: ceil=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[aggrNudge] h=$hour ceil=${"%.3f".format(aggressiveness)} " +
