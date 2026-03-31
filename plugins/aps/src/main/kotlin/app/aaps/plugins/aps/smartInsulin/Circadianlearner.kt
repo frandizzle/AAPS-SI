@@ -67,6 +67,11 @@ class CircadianLearner @Inject constructor(
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
         private set
 
+    /** Called from plugin when learning is blocked — keeps status current */
+    fun pauseNudgeStatus(reason: String) {
+        lastAggrNudgeStatus = "PAUSED|$reason"
+    }
+
     // ── Core update — called every loop cycle ─────────────────────────────────
 
     /**
@@ -145,7 +150,6 @@ class CircadianLearner @Inject constructor(
         // only needs the ceiling value. Runs even when physics learning is skipped.
         // If ISF physics fired this cycle, skip ISF nudge — physics has real data.
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness, isfPhysicsFired)
-        else lastAggrNudgeStatus = "PAUSED"
 
         persist()
     }

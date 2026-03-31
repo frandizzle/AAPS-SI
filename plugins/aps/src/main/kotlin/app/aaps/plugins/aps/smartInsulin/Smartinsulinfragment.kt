@@ -449,8 +449,9 @@ class SmartInsulinFragment : DaggerFragment() {
                     "If BG settles near target, this hour is dialling in."
             }
             nudgePaused -> {
-                nudgeHeadline = "⏸ Paused — waiting for fasting to continue"
-                nudgeDetail   = "Meal or post-meal lockout active — adjustments paused.\n" +
+                val reason = nudgeParts.getOrNull(1) ?: "Learning suppressed"
+                nudgeHeadline = "⏸ Paused — $reason"
+                nudgeDetail   = "Adjustments paused while not in clean fasting state.\n" +
                     "Will resume nudging ISF and basal once fasting resumes."
             }
             else -> {

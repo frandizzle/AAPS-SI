@@ -1310,8 +1310,33 @@ open class SmartInsulinPlugin @Inject constructor(
                 aggressiveness           = circAggrCeil,
                 suppressAdaptiveLearning = suppressCircadianLearning
             )
+            // If nudge is suppressed within update() (activity/CGM warmup), mark paused
+            if (suppressCircadianLearning) {
+                val pauseReason = when {
+                    activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
+                    cgmState.suppressLearning        -> "New sensor — CGM warmup"
+                    else                             -> "Learning suppressed"
+                }
+                circadianLearner.pauseNudgeStatus(pauseReason)
+            }
         } else {
+            val pauseReason = when {
+                highTempTarget           -> "Temp target active"
+                activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
+                else                     -> "Learning suppressed"
+            }
+            circadianLearner.pauseNudgeStatus(pauseReason)
             aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
+        }
+        // Also pause nudge during meal modes and post-meal lockout
+        if (mealMode != MealMode.FASTING) {
+            val mealReason = when (mealMode) {
+                MealMode.UAM_PROTEIN_FAT -> "P/F mode active"
+                else                     -> "Meal mode active (${mealMode.label})"
+            }
+            circadianLearner.pauseNudgeStatus(mealReason)
+        } else if (inPostMealLockout) {
+            circadianLearner.pauseNudgeStatus("Post-meal lockout active")
         }
 
         // Append per-cycle learner summary to reason — visible in Loop tab
