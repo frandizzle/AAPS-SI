@@ -69,7 +69,7 @@ Learning is **paused** during meal modes, high temp targets, activity, CGM warmu
 
 #### How the Aggression Nudge Works
 
-Think of it like a car's fuel trim system — the goal is to get your profile dialled in so the loop is hovering near **aggression = 1.0**, meaning it doesn't need to constantly add or remove insulin to stay on target. Just like a car at lambda 1.0 (stoichiometric): if it's consistently running 15% rich, trim the fuel out until it settles at 1.0. If it's running 15% lean, add fuel back in.
+Think of it like a car's fuel trim system — the goal is to get your profile dialled in so the loop is hovering near **aggression = 1.0**, meaning it doesn't need to constantly add or remove insulin to stay on target. Just like a car at lambda 1.0 (stoichiometric): if it's consistently running 15% rich (to much insulin), trim the fuel(insulin) out until it settles at 1.0. If it's running 15% lean (not enough insulin), add fuel(insulin) back in.
 
 - **Short-term trim (Aggression Nudge)** — fires every fasting cycle when the circadian ceiling for a specific hour and day deviates from 1.0 beyond a threshold. Nudges ISF and basal proportionally to the deficit or surplus. A 5% deviation produces a tiny nudge; a 20% deviation produces a stronger one.
 - **Long-term trim (Circadian physics learners)** — slow EWMA signals (ISF deviation, basal drift, negative IOB) that learn the true underlying correction over weeks and absorb the nudge's adjustments permanently.
@@ -218,7 +218,7 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 ### Protein/Fat (P/F) Mode
 
-Activates when BG is elevated and flat (not spiking) after a meal. Triggers after N consecutive readings where BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL) and ShortAvgDelta is flat (−0.15 to +0.25 mmol range).
+Activates when BG is elevated and flat (not spiking) after a meal. Triggers after N consecutive readings where BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL) and ShortAvgDelta is flat (−0.15mmol/-2.7mgdl to +0.25mmol/4.5mgdl range).
 
 P/F has its own ISF, duration, and separate day/night ISF windows. It applies half the normal post-meal lockout (minimum 30 min) to protect learning without over-blocking. Does not trigger the dirty window.
 
