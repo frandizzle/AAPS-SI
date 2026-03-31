@@ -515,7 +515,7 @@ class CircadianLearner @Inject constructor(
         // aggrCeiling is a slow per-hour per-day EWMA — it won't drop below threshold
         // from a single bad cycle. It represents weeks of consistent pattern at that hour.
         // No additional cycle counting needed — the ceiling IS the confirmation filter.
-        private const val AGGR_NUDGE_THRESHOLD    = 0.80           // ceiling below this triggers nudge
+        private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this triggers nudge
         private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deficit → 0.4% nudge per cycle
 
         // Aggressiveness ceiling
