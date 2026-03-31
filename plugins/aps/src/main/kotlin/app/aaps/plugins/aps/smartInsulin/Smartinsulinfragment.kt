@@ -411,7 +411,12 @@ class SmartInsulinFragment : DaggerFragment() {
         val nudgeParts   = d.lastAggrNudgeStatus.split("|")
         val nudgeState   = nudgeParts.getOrNull(0) ?: "INACTIVE"
         val nudgeActive  = nudgeState == "ACTIVE"
-        val nudgeColor   = if (nudgeActive) Color.parseColor("#FFFB8C00") else Color.parseColor("#FF888888")
+        val nudgePaused  = nudgeState == "PAUSED"
+        val nudgeColor   = when {
+            nudgeActive -> Color.parseColor("#FFFB8C00")
+            nudgePaused -> Color.parseColor("#FF64B5F6")
+            else        -> Color.parseColor("#FF888888")
+        }
 
         val nudgeHeadline: String
         val nudgeDetail: String
@@ -442,6 +447,11 @@ class SmartInsulinFragment : DaggerFragment() {
                     "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
                     "Circadian 24h table will update to reflect this.\n" +
                     "If BG settles near target, this hour is dialling in."
+            }
+            nudgePaused -> {
+                nudgeHeadline = "⏸ Paused — waiting for fasting to continue"
+                nudgeDetail   = "Meal or post-meal lockout active — adjustments paused.\n" +
+                    "Will resume nudging ISF and basal once fasting resumes."
             }
             else -> {
                 nudgeHeadline = "Insulin levels look right for this hour"
