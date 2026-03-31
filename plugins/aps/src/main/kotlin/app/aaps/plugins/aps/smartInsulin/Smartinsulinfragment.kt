@@ -421,11 +421,22 @@ class SmartInsulinFragment : DaggerFragment() {
                 val deficit  = nudgeParts.getOrNull(1) ?: "?"
                 val day      = nudgeParts.getOrNull(2) ?: "?"
                 val hour     = nudgeParts.getOrNull(3) ?: "?"
-                val isfMult  = nudgeParts.getOrNull(4) ?: "?"
-                val basMult  = nudgeParts.getOrNull(5) ?: "?"
+                val isfMult  = nudgeParts.getOrNull(4)?.toDoubleOrNull()
+                val basMult  = nudgeParts.getOrNull(5)?.toDoubleOrNull()
+                // Convert multipliers to real values the user understands
+                // ISF: dosingISF = profileISF / isfMult — higher mult = less insulin
+                // Basal: delivered = profileBasal × basMult — lower mult = less insulin
+                val effectiveIsf = if (isfMult != null && d.profileIsfMgdl > 0)
+                    if (d.isMmol) "${"%.1f".format((d.profileIsfMgdl / isfMult) / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl / isfMult)} mg/dL/U"
+                else "?"
+                val effectiveBas = if (basMult != null && d.profileBasalU > 0)
+                    "${"%.3f".format(d.profileBasalU * basMult)} U/h"
+                else "?"
                 nudgeHeadline = "⚡ Too much insulin — adjusting"
                 nudgeDetail   = "$deficit too much insulin detected at ${hour}:00 on ${day}s\n" +
-                    "→ Reducing insulin: ISF multiplier now ×$isfMult, Basal multiplier now ×$basMult\n" +
+                    "→ ISF now $effectiveIsf (higher = less aggressive)\n" +
+                    "→ Basal now $effectiveBas (lower = less insulin)\n" +
                     "Circadian 24h table will update to reflect this.\n" +
                     "If BG settles near target, this hour is dialling in."
             }
