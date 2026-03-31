@@ -127,8 +127,9 @@ class CircadianLearner @Inject constructor(
             bgHistory.removeFirst()
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
-        if (!suppressAdaptiveLearning) updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, aggressiveness)
-        else aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)")
+        val isfPhysicsFired = if (!suppressAdaptiveLearning)
+            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, aggressiveness)
+        else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
         if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness)
@@ -142,7 +143,8 @@ class CircadianLearner @Inject constructor(
         // ── 4. Aggression nudge — independent of activity gate ───────────────
         // ISF/basal physics learning requires active IOB to fire, but the nudge
         // only needs the ceiling value. Runs even when physics learning is skipped.
-        if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness)
+        // If ISF physics fired this cycle, skip ISF nudge — physics has real data.
+        if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness, isfPhysicsFired)
 
         persist()
     }
@@ -157,22 +159,21 @@ class CircadianLearner @Inject constructor(
         profileIsfMgdl:    Double,
         inPostMealLockout: Boolean,
         aggressiveness:    Double
-    ) {
+    ): Boolean {
         val activity = iobArray.firstOrNull()?.activity ?: run {
-            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return false
         }
         if (abs(activity) < MIN_ACTIVITY) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity=${"%.5f".format(activity)} < $MIN_ACTIVITY")
-            return
+            return false
         }
 
-        // Expected delta from IOB activity: bgi = -(activity × ISF × 5min)
         val expectedDelta = -(activity * profileIsfMgdl * 5.0)
         val actualDelta   = glucoseStatus.shortAvgDelta
 
         if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: expectedΔ=${"%.2f".format(expectedDelta)} < $MIN_EXPECTED_DELTA_MGDL")
-            return
+            return false
         }
 
         val deviation     = actualDelta - expectedDelta
@@ -185,6 +186,7 @@ class CircadianLearner @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
                              .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(dow, hour)))
+        return true
     }
 
     // ── Aggression nudge — independent of activity gate ──────────────────────
@@ -195,7 +197,8 @@ class CircadianLearner @Inject constructor(
         hour:              Int,
         dow:               Int,
         inPostMealLockout: Boolean,
-        aggressiveness:    Double
+        aggressiveness:    Double,
+        isfPhysicsFired:   Boolean = false
     ) {
         if (!inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD) {
             val deficit    = 1.0 - aggressiveness
@@ -203,11 +206,19 @@ class CircadianLearner @Inject constructor(
             val dayName    = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
             val deficitPct = "${"%.0f".format(deficit * 100)}%"
 
-            // Nudge ISF up (less insulin)
-            val nudgedIsf  = (isfState.get(dow, hour) * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-            isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
+            // Only nudge ISF if physics learner didn't fire this cycle.
+            // If physics fired, it has real IOB data and takes priority.
+            if (!isfPhysicsFired) {
+                val nudgedIsf = (isfState.get(dow, hour) * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner ISF[aggrNudge] h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
+                                     "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.get(dow, hour))}")
+            } else {
+                aapsLogger.debug(LTag.APS, "CircadianLearner ISF[aggrNudge] h=$hour — skipped, ISF physics fired this cycle")
+            }
 
-            // Nudge basal down (less insulin)
+            // Basal nudge always applies — basal physics is drift-based and rarely fires same cycle
             val nudgedBas  = (basalState.get(dow, hour) * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
             basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
 
@@ -215,9 +226,8 @@ class CircadianLearner @Inject constructor(
                 "${"%.3f".format(isfState.get(dow, hour))}|${"%.3f".format(basalState.get(dow, hour))}"
             lastBasalSignal = "AggrNudge: ceil=${"%.3f".format(aggressiveness)} deficit=${"%.2f".format(deficit)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner[aggrNudge] h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
-                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} " +
-                                 "→ ISF×${"%.3f".format(isfState.get(dow, hour))} bas×${"%.3f".format(basalState.get(dow, hour))}")
+                             "CircadianLearner Basal[aggrNudge] h=$hour ceil=${"%.3f".format(aggressiveness)} " +
+                                 "deficit=${"%.3f".format(deficit)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
         } else {
             lastAggrNudgeStatus = "INACTIVE"
         }
