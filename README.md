@@ -69,7 +69,7 @@ Learning is **paused** during meal modes, high temp targets, activity, CGM warmu
 
 #### How the Aggression Nudge Works
 
-Think of it like a car's fuel trim system — the goal is to get your profile dialled in so the loop is hovering near **aggression = 1.0**, meaning it doesn't need to constantly add or remove insulin to stay on target. Just like a car at lambda 1.0 (stoichiometric): if it's consistently running 15% rich (to much insulin), trim the fuel(insulin) out until it settles at 1.0. If it's running 15% lean (not enough insulin), add fuel(insulin) back in.
+Think of it like a car's fuel trim system — the goal is to get your profile dialled in so the loop is hovering near **aggression = 1.0**, meaning it doesn't need to constantly add or remove insulin to stay on target. Just like a car at lambda 1.0 (stoichiometric): if it's consistently running 15% rich(to much insulin), trim the fuel out until it settles at 1.0. If it's running 15% lean(not enough insulin), add fuel(insulin) back in.
 
 - **Short-term trim (Aggression Nudge)** — fires every fasting cycle when the circadian ceiling for a specific hour and day deviates from 1.0 beyond a threshold. Nudges ISF and basal proportionally to the deficit or surplus. A 5% deviation produces a tiny nudge; a 20% deviation produces a stronger one.
 - **Long-term trim (Circadian physics learners)** — slow EWMA signals (ISF deviation, basal drift, negative IOB) that learn the true underlying correction over weeks and absorb the nudge's adjustments permanently.
@@ -124,8 +124,24 @@ The **warn guard** sits above both (e.g. 4.9 mmol / 88 mg/dL) and acts as an ear
 
 SmartInsulin includes pattern-recognition safety gates inside its learning system:
 
-* **Rollercoaster Detection:** If BG crosses your target line 2+ times within a rolling 90-minute window, aggressiveness ceiling is capped by 15% for that hour — forcing gentler corrections until you stabilise.
-* **Soft Low Approach:** If BG is dropping toward the low guard with active IOB, aggressiveness ceiling is cut by 10% to soften the landing.
+* **Rollercoaster Detection:** If BG crosses your target line 2+ times within a rolling 90-minute window, aggressiveness ceiling is capped by 15% for that hour — forcing gentler corrections until you stabilise. The nudge system responds to this but with **attenuated strength** during a 120-minute cooldown after the penalty fires — see below.
+* **Soft Low Approach:** If BG is dropping toward the low guard with active IOB, aggressiveness ceiling is cut by 10% to soften the landing. Same 120-minute cooldown applies to the nudge.
+
+#### Rollercoaster + Nudge Integration
+
+A rollercoaster often means the profile is too strong at that hour — but it can also be caused by a meal, sensor glitch, or one-off sensitivity change. The system handles this with a tiered response:
+
+| Situation | Nudge strength |
+|-----------|---------------|
+| No recent penalty — clean fasting | **100%** — full nudge, profile is clearly wrong |
+| Penalty fired during **fasting** | **35%** — likely a profile issue, nudge cautiously |
+| Penalty fired during **meal/post-meal** | **15%** — likely food-driven, barely nudge |
+| Cooldown expired (120 min, no new penalty) | **100%** — confidence restored |
+
+This means:
+- A **one-off rollercoaster** from a bad meal produces a tiny nudge that barely moves the profile before the ceiling naturally recovers.
+- **Repeated fasting rollercoasters at the same hour** accumulate cautious nudges over time, gradually correcting a genuinely wrong profile.
+- The day-of-week structure provides the discrimination — Tuesday 9am consistently rollercoastering will slowly correct; a random Wednesday event will not.
 
 ### Low Recovery Window
 
@@ -218,7 +234,7 @@ To trigger UAM, all of the following must be met for N consecutive readings (def
 
 ### Protein/Fat (P/F) Mode
 
-Activates when BG is elevated and flat (not spiking) after a meal. Triggers after N consecutive readings where BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL) and ShortAvgDelta is flat (−0.15mmol/-2.7mgdl to +0.25mmol/4.5mgdl range).
+Activates when BG is elevated and flat (not spiking) after a meal. Triggers after N consecutive readings where BG ≥ P/F threshold (default 6.5 mmol / 117 mg/dL) and ShortAvgDelta is flat (−0.15 to +0.25 mmol range).
 
 P/F has its own ISF, duration, and separate day/night ISF windows. It applies half the normal post-meal lockout (minimum 30 min) to protect learning without over-blocking. Does not trigger the dirty window.
 
@@ -275,8 +291,10 @@ SmartInsulin reads heart rate and step count to determine activity level. Higher
 
 | State | Colour | Meaning |
 |-------|--------|---------|
-| ⚡ Too much insulin — adjusting | Amber | Ceiling below threshold. Shows deviation %, hour, day, and actual ISF/basal before and after |
-| ⚡ Not enough insulin — adjusting | Green | Ceiling above surplus threshold. ISF nudged down, basal nudged up |
+| ⚡ Too much insulin — adjusting | Amber | Full-strength nudge. Shows deviation %, hour, day, ISF/basal before and after |
+| ⚡ Too much insulin — adjusting (attenuated) | Amber | Attenuated nudge — recent rollercoaster/soft-low penalty. Adjusting cautiously |
+| ⚡ Not enough insulin — adjusting | Green | Full-strength nudge in the opposite direction |
+| ⚡ Not enough insulin — adjusting (attenuated) | Green | Attenuated nudge — recent penalty |
 | ⏸ Paused — [reason] | Blue | Blocked by meal mode, post-meal lockout, activity, temp target, or CGM warmup |
 | Insulin levels look right for this hour | Grey | Ceiling between 0.95–1.05 — no nudge needed |
 

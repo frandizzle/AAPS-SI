@@ -63,6 +63,11 @@ class CircadianLearner @Inject constructor(
     var lastBasalSignal: String = "No signal yet"
         private set
 
+    // Tracks when the last aggressiveness penalty fired (rollercoaster or soft-low).
+    // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
+    private var lastPenaltyMs: Long = 0L
+    private var lastPenaltyWasFasting: Boolean = false
+
     // Last aggression nudge status for SI tab display
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
         private set
@@ -143,7 +148,7 @@ class CircadianLearner @Inject constructor(
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
-        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl)
+        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING)
 
         // ── 4. Aggression nudge — independent of activity gate ───────────────
         // ISF/basal physics learning requires active IOB to fire, but the nudge
@@ -216,10 +221,23 @@ class CircadianLearner @Inject constructor(
             return
         }
 
-        val deviation  = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
-        val nudge      = deviation * AGGR_NUDGE_SCALE
-        val dayName    = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        val deviationPct = "${"%.0f".format(deviation * 100)}%"
+        // ── Attenuation during penalty cooldown ───────────────────────────────
+        // If a rollercoaster or soft-low penalty fired recently, attenuate nudge strength.
+        // Fasting penalties are more likely a real profile issue → 35% strength.
+        // Meal/post-meal penalties are more likely a food/event issue → 15% strength.
+        // After 120 min cooldown with no new penalty, full strength resumes.
+        val msSincePenalty = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
+        val effectiveScale = when {
+            msSincePenalty > AGGR_NUDGE_COOLDOWN_MS -> AGGR_NUDGE_SCALE                  // no recent penalty — full strength
+            lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_FASTING  // fasting penalty — 35%
+            else                                    -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_MEAL     // meal penalty — 15%
+        }
+        val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
+        val cooldownNote   = if (cooldownActive) " [cooldown ${msSincePenalty / 60_000}min/${AGGR_NUDGE_COOLDOWN_MS / 60_000}min fasting=$lastPenaltyWasFasting]" else ""
+        val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
+        val nudge          = deviation * effectiveScale
+        val dayName        = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val deviationPct   = "${"%.0f".format(deviation * 100)}%"
         val d          = dow.coerceIn(0, 6)
         val prevIsfMult = isfState.days[d].get(hour)
         val prevBasMult = basalState.days[d].get(hour)
@@ -234,7 +252,7 @@ class CircadianLearner @Inject constructor(
                 (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
             isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}] " +
+                             "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                                  "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
                                  "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.days[d].get(hour))}")
         } else {
@@ -249,14 +267,15 @@ class CircadianLearner @Inject constructor(
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
 
-        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult
+        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown
         val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
-            "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}"
-        lastBasalSignal = "AggrNudge[${if (tooMuch) "↓" else "↑"}]: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
+            if (cooldownActive) "COOLDOWN" else "FULL"
+        lastBasalSignal = "AggrNudge[${if (tooMuch) "↓" else "↑"}]${if (cooldownActive) "[attenuated]" else ""}: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}] " +
+                         "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                              "h=$hour ceil=${"%.3f".format(aggressiveness)} deviation=${"%.3f".format(deviation)} " +
                              "nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
     }
@@ -355,7 +374,8 @@ class CircadianLearner @Inject constructor(
         delta:        Double,
         targetMgdl:   Double,
         iobArray:     Array<IobTotal>,
-        lowGuardMgdl: Double
+        lowGuardMgdl: Double,
+        isFasting:    Boolean = true
     ) {
         val currentCeil = aggrState.get(dow, hour)
 
@@ -364,27 +384,29 @@ class CircadianLearner @Inject constructor(
         if (rollercoaster) {
             val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+            lastPenaltyMs = System.currentTimeMillis()
+            lastPenaltyWasFasting = isFasting
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour ROLLERCOASTER detected → ceil=%.3f"
+                             "CircadianLearner Aggr h=$hour ROLLERCOASTER detected fasting=$isFasting → ceil=%.3f"
                                  .format(aggrState.get(dow, hour)))
             return
         }
 
         // ── Penalty signal 2: Soft low approach ──────────────────────────────
-        // BG heading toward user's configured low guard with negative delta and IOB on board
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
         val approachingLow = bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+            lastPenaltyMs = System.currentTimeMillis()
+            lastPenaltyWasFasting = isFasting
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta → ceil=%.3f"
+                             "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta fasting=$isFasting → ceil=%.3f"
                                  .format(aggrState.get(dow, hour)))
             return
         }
 
         // ── Recovery signal: good outcome ────────────────────────────────────
-        // BG stable near target → gently recover ceiling toward 1.0
         val stableNearTarget = abs(bg - targetMgdl) < STABLE_BAND_MGDL && abs(delta) < STABLE_DELTA_MGDL
         if (stableNearTarget && currentCeil < 1.0) {
             val recovered = (currentCeil + AGGR_RECOVERY_STEP).coerceAtMost(AGGR_CEIL_MAX)
@@ -561,6 +583,9 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this → too much insulin, nudge to reduce
         private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this → not enough insulin, nudge to increase
         private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deviation → 0.4% nudge per cycle
+        private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
+        private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
+        private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly

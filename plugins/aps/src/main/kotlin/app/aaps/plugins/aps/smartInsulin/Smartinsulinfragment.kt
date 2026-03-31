@@ -433,6 +433,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 val newIsfMult   = nudgeParts.getOrNull(5)?.toDoubleOrNull()
                 val prevBasMult  = nudgeParts.getOrNull(6)?.toDoubleOrNull()
                 val newBasMult   = nudgeParts.getOrNull(7)?.toDoubleOrNull()
+                val cooldown     = nudgeParts.getOrNull(8) == "COOLDOWN"
 
                 fun fmtIsf(mult: Double?): String {
                     if (mult == null || d.profileIsfMgdl <= 0) return "?"
@@ -444,20 +445,30 @@ class SmartInsulinFragment : DaggerFragment() {
                     return "${"%.4f".format(d.profileBasalU * mult)} U/h"
                 }
 
+                val cooldownNote = if (cooldown) " (attenuated — recent rollercoaster)" else ""
+
                 if (nudgeActiveHigh) {
-                    nudgeHeadline = "⚡ Too much insulin — adjusting"
+                    nudgeHeadline = "⚡ Too much insulin — adjusting$cooldownNote"
                     nudgeDetail   = "$deviation too much insulin detected at ${hour}:00 on ${day}s\n" +
                         "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
                         "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
-                        "Circadian 24h table will update to reflect this.\n" +
-                        "If BG settles near target, this hour is dialling in."
+                        if (cooldown)
+                            "Adjusting cautiously — a recent rollercoaster may have caused this, not a profile error.\n" +
+                                "Full adjustment resumes after 2 hours of stable fasting."
+                        else
+                            "Circadian 24h table will update to reflect this.\n" +
+                                "If BG settles near target, this hour is dialling in."
                 } else {
-                    nudgeHeadline = "⚡ Not enough insulin — adjusting"
+                    nudgeHeadline = "⚡ Not enough insulin — adjusting$cooldownNote"
                     nudgeDetail   = "$deviation too little insulin detected at ${hour}:00 on ${day}s\n" +
                         "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
                         "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
-                        "Circadian 24h table will update to reflect this.\n" +
-                        "If BG settles near target, this hour is dialling in."
+                        if (cooldown)
+                            "Adjusting cautiously — a recent rollercoaster may have caused this, not a profile error.\n" +
+                                "Full adjustment resumes after 2 hours of stable fasting."
+                        else
+                            "Circadian 24h table will update to reflect this.\n" +
+                                "If BG settles near target, this hour is dialling in."
                 }
             }
             nudgePaused -> {
