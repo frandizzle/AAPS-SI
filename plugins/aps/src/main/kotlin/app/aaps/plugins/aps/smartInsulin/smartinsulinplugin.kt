@@ -1337,6 +1337,10 @@ open class SmartInsulinPlugin @Inject constructor(
             circadianLearner.pauseNudgeStatus(mealReason)
         } else if (inPostMealLockout) {
             circadianLearner.pauseNudgeStatus("Post-meal lockout active")
+        } else if (inReboundWindow) {
+            // Paused during rebound window — BG is recovering from a low.
+            // Once the window expires, nudge resumes regardless of bgWentLow.
+            circadianLearner.pauseNudgeStatus("Post-low recovery — waiting for BG to stabilise")
         }
 
         // Append per-cycle learner summary to reason — visible in Loop tab
