@@ -428,12 +428,12 @@ class SmartInsulinFragment : DaggerFragment() {
 
                 fun fmtIsf(mult: Double?): String {
                     if (mult == null || d.profileIsfMgdl <= 0) return "?"
-                    return if (d.isMmol) "${"%.1f".format((d.profileIsfMgdl / mult) / 18.0)} mmol/U"
+                    return if (d.isMmol) "${"%.2f".format((d.profileIsfMgdl / mult) / 18.0)} mmol/U"
                     else "${"%.1f".format(d.profileIsfMgdl / mult)} mg/dL/U"
                 }
                 fun fmtBas(mult: Double?): String {
                     if (mult == null || d.profileBasalU <= 0) return "?"
-                    return "${"%.3f".format(d.profileBasalU * mult)} U/h"
+                    return "${"%.4f".format(d.profileBasalU * mult)} U/h"
                 }
 
                 nudgeHeadline = "⚡ Too much insulin — adjusting"
