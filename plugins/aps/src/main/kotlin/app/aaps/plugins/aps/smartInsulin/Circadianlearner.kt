@@ -582,7 +582,7 @@ class CircadianLearner @Inject constructor(
         // No additional cycle counting needed — the ceiling IS the confirmation filter.
         private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this → too much insulin, nudge to reduce
         private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this → not enough insulin, nudge to increase
-        private const val AGGR_NUDGE_SCALE        = 0.02           // 20% deviation → 0.4% nudge per cycle
+        private const val AGGR_NUDGE_SCALE        = 0.04           // 20% deviation → 0.8% nudge per cycle
         private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
         private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
         private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
