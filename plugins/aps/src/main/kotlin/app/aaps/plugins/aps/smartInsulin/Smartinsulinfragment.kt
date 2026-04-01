@@ -222,7 +222,11 @@ class SmartInsulinFragment : DaggerFragment() {
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
 
-        val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
+        val aggrColor = when {
+            d.aggressiveness < 0.95 -> Color.parseColor("#FFFB8C00")  // amber — too much insulin, reducing
+            d.aggressiveness > 1.05 -> Color.parseColor("#FF4CAF50")  // green — not enough insulin, adding
+            else                    -> Color.WHITE                      // balanced
+        }
         val isFasting = d.mealMode == "Fasting"
 
         // ── Plain-English short-term / long-term insulin summary ─────────────
