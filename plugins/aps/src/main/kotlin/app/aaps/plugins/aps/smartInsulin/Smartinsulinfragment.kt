@@ -466,48 +466,66 @@ class SmartInsulinFragment : DaggerFragment() {
             nudgeActive -> {
                 val deviation    = nudgeParts.getOrNull(1) ?: "?"
                 val day          = nudgeParts.getOrNull(2) ?: "?"
-                val hour         = nudgeParts.getOrNull(3) ?: "?"
-                val prevIsfMult  = nudgeParts.getOrNull(4)?.toDoubleOrNull()
-                val newIsfMult   = nudgeParts.getOrNull(5)?.toDoubleOrNull()
-                val prevBasMult  = nudgeParts.getOrNull(6)?.toDoubleOrNull()
-                val newBasMult   = nudgeParts.getOrNull(7)?.toDoubleOrNull()
+                val hour         = nudgeParts.getOrNull(3)?.toIntOrNull()
                 val cooldown     = nudgeParts.getOrNull(8) == "COOLDOWN"
-
-                fun fmtIsf(mult: Double?): String {
-                    if (mult == null || d.profileIsfMgdl <= 0) return "?"
-                    return if (d.isMmol) "${"%.2f".format((d.profileIsfMgdl / mult) / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl / mult)} mg/dL/U"
-                }
-                fun fmtBas(mult: Double?): String {
-                    if (mult == null || d.profileBasalU <= 0) return "?"
-                    return "${"%.4f".format(d.profileBasalU * mult)} U/h"
-                }
-
                 val cooldownNote = if (cooldown) " (attenuated — recent rollercoaster)" else ""
+
+                // Format hour as "5:00 AM" / "14:00"
+                val hourStr = if (hour != null) {
+                    if (d.isMmol) {
+                        val ampm = if (hour < 12) "AM" else "PM"
+                        val h12  = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
+                        "$h12:00 $ampm"
+                    } else "%02d:00".format(hour)
+                } else "?"
+
+                // Profile values — what the user originally set (never changes)
+                val profileIsf = if (d.profileIsfMgdl > 0)
+                    if (d.isMmol) "${"%.1f".format(d.profileIsfMgdl / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl)} mg/dL/U"
+                else "?"
+                val profileBas = if (d.profileBasalU > 0) "${"%.3f".format(d.profileBasalU)} U/h" else "?"
+
+                // Effective values — what the loop is actually using right now
+                val effectiveIsf = if (d.finalIsfMgdl > 0)
+                    if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U"
+                else "?"
+                val effectiveBas = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
+
+                // Short term % from ceiling, long term % from basal multiplier
+                val shortPct  = ((1.0 - d.circCeil) * 100).roundToInt()
+                val longPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
+                val shortAbs  = Math.abs(shortPct)
+                val longAbs   = Math.abs(longPct)
+
+                val shortLine = if (nudgeActiveHigh)
+                    "Short term: pulling out ~${shortAbs}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                else
+                    "Short term: adding ~${shortAbs}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+
+                val longLine = when {
+                    longAbs < 2  -> "Long term: still building — less than 2% change so far"
+                    nudgeActiveHigh -> "Long term: permanently reduced by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
+                    else            -> "Long term: permanently increased by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
+                }
+
+                val statusLine = if (cooldown)
+                    "Adjusting cautiously — recent rollercoaster may have contributed. Full strength resumes after 2h."
+                else
+                    "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
 
                 if (nudgeActiveHigh) {
                     nudgeHeadline = "⚡ Too much insulin — adjusting$cooldownNote"
-                    nudgeDetail   = "$deviation too much insulin detected at ${hour}:00 on ${day}s\n" +
-                        "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
-                        "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
-                        if (cooldown)
-                            "Adjusting cautiously — a recent rollercoaster may have caused this, not a profile error.\n" +
-                                "Full adjustment resumes after 2 hours of stable fasting."
-                        else
-                            "Circadian 24h table will update to reflect this.\n" +
-                                "If BG settles near target, this hour is dialling in."
                 } else {
                     nudgeHeadline = "⚡ Not enough insulin — adjusting$cooldownNote"
-                    nudgeDetail   = "$deviation too little insulin detected at ${hour}:00 on ${day}s\n" +
-                        "→ ISF now ${fmtIsf(newIsfMult)} from ${fmtIsf(prevIsfMult)}\n" +
-                        "→ Basal now ${fmtBas(newBasMult)} from ${fmtBas(prevBasMult)}\n" +
-                        if (cooldown)
-                            "Adjusting cautiously — a recent rollercoaster may have caused this, not a profile error.\n" +
-                                "Full adjustment resumes after 2 hours of stable fasting."
-                        else
-                            "Circadian 24h table will update to reflect this.\n" +
-                                "If BG settles near target, this hour is dialling in."
                 }
+                nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
+                    "ISF was $profileIsf → now $effectiveIsf\n" +
+                    "Basal was $profileBas → now $effectiveBas\n" +
+                    "$shortLine\n" +
+                    "$longLine\n" +
+                    statusLine
             }
             nudgePaused -> {
                 val reason = nudgeParts.getOrNull(1) ?: "Learning suppressed"
