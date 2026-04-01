@@ -222,11 +222,7 @@ class SmartInsulinFragment : DaggerFragment() {
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
 
-        val aggrColor = when {
-            d.aggressiveness < 0.95 -> Color.parseColor("#FFFB8C00")  // amber — too much insulin, reducing
-            d.aggressiveness > 1.05 -> Color.parseColor("#FF4CAF50")  // green — not enough insulin, adding
-            else                    -> Color.WHITE                      // balanced
-        }
+        val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
         val isFasting = d.mealMode == "Fasting"
 
         // ── Plain-English short-term / long-term insulin summary ─────────────
@@ -250,7 +246,7 @@ class SmartInsulinFragment : DaggerFragment() {
         } else {
             val shortLine = when {
                 shortTermAbs < 5  -> "Short term: balanced (within 5%)"
-                shortTermPct > 0  -> "Short term: pulling out ~${shortTermAbs}% insulin right now (ceiling=${"%  .0f".format(d.circCeil * 100).trim()}%)"
+                shortTermPct > 0  -> "Short term: pulling out ~${shortTermAbs}% insulin right now (ceiling=${"%.0f".format(d.circCeil * 100)}%)"
                 else              -> "Short term: adding ~${shortTermAbs}% extra insulin right now"
             }
             val longLine = when {
