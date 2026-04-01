@@ -332,7 +332,7 @@ class CircadianLearner @Inject constructor(
                         basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
                         basalDriftWindow.clear()
                         driftFired = true
-                        lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mg/dL/hr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                        lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mgdlhr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                         aapsLogger.debug(LTag.APS,
                                          "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
                     }

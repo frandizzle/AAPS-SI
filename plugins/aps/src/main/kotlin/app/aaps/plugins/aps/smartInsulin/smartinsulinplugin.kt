@@ -392,7 +392,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val estimatedHba1c:     Double,
         val bgWindowHours:      Int,
         val pb2GateData:        Pb2GateData?,
-        val activeDoseU:        Double?
+        val activeDoseU:        Double?,
+        val activePb2DoseU:     Double?
     )
 
     fun fragmentData(): FragmentData {
@@ -500,7 +501,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 profileTargetMgdl = pb2ProfileTargetMgdl,
                 isMmol            = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
             ) else null,
-            activeDoseU        = mealOverrideManager.activeDoseU
+            activeDoseU        = mealOverrideManager.activeDoseU,
+            activePb2DoseU     = mealOverrideManager.activePb2DoseU
         )
     }
 

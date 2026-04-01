@@ -274,15 +274,31 @@ class SmartInsulinFragment : DaggerFragment() {
                "Profile ${"%.1f".format(pfIsf)} × multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
                    "How much 1U of insulin lowers your BG.")
 
+        // Convert drift signal units if user is in mmol
+        val basalSignalDisplay = if (d.isMmol && d.lastBasalSignal.contains("mgdlhr")) {
+            d.lastBasalSignal.replace(Regex("([\\-\\d.]+) mgdlhr")) { mr ->
+                val mgdl = mr.groupValues[1].toDoubleOrNull() ?: 0.0
+                "${"%.2f".format(mgdl / 18.0)} mmol/L/hr"
+            }
+        } else {
+            d.lastBasalSignal.replace("mgdlhr", "mg/dL/hr")
+        }
         addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.\n" +
-                   "Last basal learning: ${d.lastBasalSignal}")
+                   "Last basal learning: $basalSignalDisplay")
 
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
-            addRow(c, "Pre-bolus — delivered ${"%.2f".format(d.activeDoseU)}U",
+            addRow(c, "Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
                    primaryColor = Color.parseColor("#FF43A047"))
+        }
+
+        // Pre-bolus 2 — show delivered amount once fired
+        if (d.mealMode != "Fasting" && d.activePb2DoseU != null && d.activePb2DoseU > 0.0) {
+            addRow(c, "Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
+                   "Second bolus delivered as scheduled.",
+                   Color.parseColor("#FF43A047"))
         }
 
         if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {

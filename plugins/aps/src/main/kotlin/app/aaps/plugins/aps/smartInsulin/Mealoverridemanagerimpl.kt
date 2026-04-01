@@ -105,6 +105,13 @@ class MealOverrideManagerImpl @Inject constructor(
     override val activeIsfMultiplier: Double get() = 1.0
 
     override val activeDoseU: Double? get() = if (activeMealMode != null) _state?.doseU else null
+    override val activePb2DoseU: Double? get() {
+        val s = _state ?: return null
+        if (activeMealMode == null) return null
+        // preBolus2FiredMs > 0 means PB2 was delivered; -1L means cancelled
+        return if (s.preBolus2FiredMs != null && s.preBolus2FiredMs!! > 0L && s.preBolus2U > 0.0)
+            s.preBolus2U else null
+    }
 
     override val modeTimeRemainingMs: Long get() {
         val s = _state ?: return 0L
