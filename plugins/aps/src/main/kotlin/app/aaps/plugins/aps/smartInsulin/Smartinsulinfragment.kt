@@ -224,23 +224,45 @@ class SmartInsulinFragment : DaggerFragment() {
 
         val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
         val isFasting = d.mealMode == "Fasting"
+
+        // ── Plain-English short-term / long-term insulin summary ─────────────
+        // Short term = circadian ceiling (what the loop is doing RIGHT NOW this hour)
+        // Long term  = basal multiplier (what the profile has permanently learned)
+        val shortTermPct  = ((1.0 - d.circCeil) * 100).roundToInt()      // +ve = reducing, -ve = adding
+        val longTermPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
+        val shortTermAbs  = Math.abs(shortTermPct)
+        val longTermAbs   = Math.abs(longTermPct)
+        val shortTermDir  = if (shortTermPct > 0) "too much" else if (shortTermPct < 0) "not enough" else "balanced"
+        val longTermDir   = if (longTermPct  > 0) "reduced"  else if (longTermPct  < 0) "increased"  else "unchanged"
+
         val aggrDetail = if (!isFasting) {
             "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
                 "Locked at 1.0 during meal modes — not applied. Fasting value shown for reference."
-        } else when {
-            d.aggressiveness < 0.95 -> {
-                val reductionPct = ((1.0 - d.aggressiveness) * 100).roundToInt()
-                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                    "Insulin delivery reduced by ~${reductionPct}% on corrections and TBRs."
+        } else if (shortTermAbs < 5 && longTermAbs < 5) {
+            "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                "Insulin levels look balanced at this hour.\n" +
+                "Short term: within 5% — no adjustment needed\n" +
+                "Long term: profile within 5% of target — dialled in"
+        } else {
+            val shortLine = when {
+                shortTermAbs < 5  -> "Short term: balanced (within 5%)"
+                shortTermPct > 0  -> "Short term: pulling out ~${shortTermAbs}% insulin right now (ceiling=${"%  .0f".format(d.circCeil * 100).trim()}%)"
+                else              -> "Short term: adding ~${shortTermAbs}% extra insulin right now"
             }
-            d.aggressiveness > 1.05 -> {
-                val boostPct = ((d.aggressiveness - 1.0) * 100).roundToInt()
-                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                    "Insulin delivery increased by ~${boostPct}% on corrections and TBRs."
+            val longLine = when {
+                longTermAbs < 2   -> "Long term: profile close to target — still watching"
+                longTermPct > 0   -> "Long term: profile permanently ${longTermDir} by ~${longTermAbs}% at this hour"
+                else              -> "Long term: profile permanently ${longTermDir} by ~${longTermAbs}% at this hour"
             }
-            else ->
-                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                    "Based on your BG history over the last 24h."
+            val statusLine = when {
+                shortTermAbs >= 10 && longTermAbs < shortTermAbs ->
+                    "Still learning — long term will catch up as pattern repeats"
+                shortTermAbs < 5 && longTermAbs >= 5 ->
+                    "Dialling in — short term nearly balanced, long term corrections holding"
+                else -> "Monitoring — will continue adjusting each fasting cycle"
+            }
+            "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                "$shortLine\n$longLine\n$statusLine"
         }
         val aggrPrimary = if (!isFasting) "Aggressiveness locked — meal mode active" else aggrDesc(d.aggressiveness)
         addRow(c, aggrPrimary, aggrDetail, if (!isFasting) Color.parseColor("#FF888888") else aggrColor)
