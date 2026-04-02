@@ -722,6 +722,13 @@ open class SmartInsulinPlugin @Inject constructor(
             learningDirtyUntilMs = 0L
             preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, "0")
         }
+        // If user has disabled post-meal lockout (set to 0 mins), honour it immediately —
+        // clear any persisted lockout timestamp from previous setting so it doesn't linger.
+        val lockoutSettingMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
+        if (lockoutSettingMins == 0 && learningDirtyUntilMs > 0L) {
+            learningDirtyUntilMs = 0L
+            preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, "0")
+        }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
         // ISF overrides: correctly stored as mg/dL by sp.putDouble — use sp.getDouble directly.
