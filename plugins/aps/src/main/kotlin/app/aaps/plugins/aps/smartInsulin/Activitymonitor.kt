@@ -76,7 +76,9 @@ class ActivityMonitor @Inject constructor(
             aapsLogger.debug(LTag.APS, "ActivityMonitor: steps query failed: ${e.message}")
             emptyList()
         }
-        val lastSC = measurements.lastOrNull { it.duration == STEPS_DURATION_MS }
+        // Use tolerance rather than strict equality — OS/thread scheduling jitter
+        // can cause the recorded duration to be a few ms off the exact 300000ms bucket.
+        val lastSC = measurements.lastOrNull { Math.abs(it.duration - STEPS_DURATION_MS) < 5000L }
         lastSteps5min = lastSC?.steps5min ?: 0
 
         aapsLogger.debug(LTag.APS,
