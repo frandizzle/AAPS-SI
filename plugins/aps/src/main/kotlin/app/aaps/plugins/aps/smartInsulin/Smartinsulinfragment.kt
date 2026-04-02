@@ -480,18 +480,32 @@ class SmartInsulinFragment : DaggerFragment() {
                     } else "%02d:00".format(hour)
                 } else "?"
 
-                // Profile values — what the user originally set (never changes)
-                val profileIsf = if (d.profileIsfMgdl > 0)
-                    if (d.isMmol) "${"%.1f".format(d.profileIsfMgdl / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl)} mg/dL/U"
-                else "?"
-                val profileBas = if (d.profileBasalU > 0) "${"%.3f".format(d.profileBasalU)} U/h" else "?"
+                // Parse prev/new ISF multipliers from status string — compute actual dosingISF
+                // dosingISF = profileISF / isfMult, so "was" = profileISF / prevMult, "now" = profileISF / newMult
+                val prevIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull()
+                val newIsfMult  = nudgeParts.getOrNull(5)?.toDoubleOrNull()
+                val prevBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull()
+                val newBasMult  = nudgeParts.getOrNull(7)?.toDoubleOrNull()
 
-                // Effective values — what the loop is actually using right now
-                val effectiveIsf = if (d.finalIsfMgdl > 0)
-                    if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U"
+                // "Was" = effective ISF before this nudge cycle (profileISF / prevMult)
+                // "Now" = effective ISF after this nudge cycle (profileISF / newMult)
+                val wasIsf = if (d.profileIsfMgdl > 0 && prevIsfMult != null && prevIsfMult > 0)
+                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / prevIsfMult / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl / prevIsfMult)} mg/dL/U"
                 else "?"
+                val nowIsf = if (d.profileIsfMgdl > 0 && newIsfMult != null && newIsfMult > 0)
+                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / newIsfMult / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl / newIsfMult)} mg/dL/U"
+                else "?"
+
+                // Basal was/now from multipliers (linear — profileBasal * mult)
+                val wasBas = if (d.profileBasalU > 0 && prevBasMult != null)
+                    "${"%.3f".format(d.profileBasalU * prevBasMult)} U/h"
+                else "?"
+                val nowBas = if (d.profileBasalU > 0 && newBasMult != null)
+                    "${"%.3f".format(d.profileBasalU * newBasMult)} U/h"
+                else "?"
+
                 val effectiveBas = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
 
                 // Short term % from ceiling, long term % from basal multiplier
@@ -522,8 +536,8 @@ class SmartInsulinFragment : DaggerFragment() {
                     nudgeHeadline = "⚡ Not enough insulin — adjusting$cooldownNote"
                 }
                 nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
-                    "ISF was $profileIsf → now $effectiveIsf\n" +
-                    "Basal was $profileBas → now $effectiveBas\n" +
+                    "ISF was $wasIsf → now $nowIsf\n" +
+                    "Basal was $wasBas → now $nowBas\n" +
                     "$shortLine\n" +
                     "$longLine\n" +
                     statusLine
