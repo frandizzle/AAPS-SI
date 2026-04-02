@@ -288,7 +288,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
-                    insulinReq * (SMB_DELIVERY_FRACTION * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction * uamSmbFraction
+                    // uamSmbFraction replaces SMB_DELIVERY_FRACTION during UAM entry SMBs.
+                    // When uamSmbFraction == 1.0 (default/non-entry), SMB_DELIVERY_FRACTION applies normally.
+                    // When uamSmbFraction == 0.8, the entry SMB uses 0.8 directly — not 0.5 * 0.8 = 0.4.
+                    val baseFraction = if (uamSmbFraction < 1.0) uamSmbFraction else SMB_DELIVERY_FRACTION
+                    insulinReq * (baseFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
