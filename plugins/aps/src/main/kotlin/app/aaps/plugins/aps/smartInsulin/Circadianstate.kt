@@ -25,6 +25,6 @@ data class CircadianState(
     }
 
     companion object {
-        const val CONF_ALPHA = 0.05   // confidence grows slowly — need ~20 observations to reach 0.64
+        const val CONF_ALPHA = 0.10   // confidence grows at double rate — ~7 observations (~35 min) to reach 0.5
     }
 }

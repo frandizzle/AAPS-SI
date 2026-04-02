@@ -86,10 +86,10 @@ data class DayOfWeekCircadianState(
         /**
          * Minimum day-bucket confidence before day-specific values are
          * fully trusted over the global average.
-         * At CONF_ALPHA=0.05, ~20 obs → conf≈0.64, ~30 obs → conf≈0.78.
-         * Threshold of 0.5 ≈ ~13 observations (roughly 2 weeks of same-hour data).
+         * At CONF_ALPHA=0.10, ~7 obs → conf≈0.52 (threshold met in ~35 min).
+         * Lowered from 0.5 to 0.3 so day bucket influences blend after ~4 observations (~20 min).
          */
-        const val DAY_CONFIDENCE_THRESHOLD = 0.5
+        const val DAY_CONFIDENCE_THRESHOLD = 0.3
 
         fun fromJson(json: JSONObject): DayOfWeekCircadianState {
             val global = circadianStateFromJson(json.getJSONObject("global"))
