@@ -92,14 +92,16 @@ class MealOverrideManagerImpl @Inject constructor(
     override val activeMealMode: MealMode? get() {
         val s   = _state ?: return null
         val now = System.currentTimeMillis()
-        return if (s.modeExpiryMs > now) {
-            s.mode
-        } else {
-            aapsLogger.debug(LTag.APS, "SmartInsulin mode ${s.mode.label} expired")
-            _state = null
-            persistState()
-            null
-        }
+        if (s.modeExpiryMs > now) return s.mode
+
+        // Mode expired. If PB2 is still pending, leave _state intact so
+        // onLoopCycle can formally discard and log it rather than silently vanishing.
+        if (s.preBolus2Pending) return null
+
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode ${s.mode.label} expired")
+        _state = null
+        persistState()
+        return null
     }
 
     override val activeIsfMultiplier: Double get() = 1.0
@@ -137,15 +139,15 @@ class MealOverrideManagerImpl @Inject constructor(
     ): List<String> {
         val reasons = mutableListOf<String>()
         if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL)
-            reasons += "BG ${String.format("%.1f", bgMgdl / 18.0)}mmol < 5.0mmol min"
+            reasons += "BG too low"
         if (bgMgdl <= targetMgdl)
-            reasons += "BG ${String.format("%.1f", bgMgdl / 18.0)} not above target ${String.format("%.1f", targetMgdl / 18.0)}mmol"
+            reasons += "BG not above target"
         if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO)
-            reasons += "IOB ${String.format("%.2f", iob)}U high (max ${String.format("%.1f", maxIob)}U)"
+            reasons += "IOB too high"
         if (delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)
-            reasons += "falling fast (delta ${String.format("%.2f", delta / 18.0)}mmol)"
+            reasons += "BG falling"
         if (shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)
-            reasons += "trending down (avg ${String.format("%.2f", shortAvgDelta / 18.0)}mmol)"
+            reasons += "Trend falling"
         return reasons
     }
 
@@ -273,10 +275,10 @@ class MealOverrideManagerImpl @Inject constructor(
 
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB2 BLOCKED: ${reasons.joinToString(", ")}")
-            // If mode has already expired, drop the pending PB2 entirely to avoid stale delivery
+            // If mode has already expired, formally discard pending PB2 and clean up state entirely
             if (now > s.modeExpiryMs) {
                 aapsLogger.debug(LTag.APS, "SmartInsulin PB2: mode expired, discarding pending PB2")
-                _state = s.copy(preBolus2FiredMs = -1L)  // -1 = discarded (never null if not pending)
+                _state = null  // fully clean up — getter kept state alive for this formal discard
                 persistState()
             }
             return
@@ -284,8 +286,8 @@ class MealOverrideManagerImpl @Inject constructor(
 
         // ── Fire ─────────────────────────────────────────────────────────────
         aapsLogger.debug(LTag.APS,
-                         "SmartInsulin PB2 FIRING: ${s.preBolus2U}U bg=${String.format("%.1f", currentBgMgdl/18.0)}mmol " +
-                             "iob=${String.format("%.2f", currentIob)}U target=${String.format("%.1f", profileTarget/18.0)}mmol")
+                         "SmartInsulin PB2 FIRING: ${s.preBolus2U}U bg=${String.format("%.1f", currentBgMgdl/18.0)} " +
+                             "iob=${String.format("%.2f", currentIob)}U target=${String.format("%.1f", profileTarget/18.0)}")
 
         val bolusInfo = DetailedBolusInfo().apply {
             insulin   = s.preBolus2U
