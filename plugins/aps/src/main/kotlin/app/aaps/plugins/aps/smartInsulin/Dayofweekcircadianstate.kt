@@ -73,6 +73,19 @@ data class DayOfWeekCircadianState(
         return DayOfWeekCircadianState(newDays, newGlobal)
     }
 
+    /**
+     * EWMA update for [hour] on [dayOfWeek] — day bucket ONLY.
+     * Does NOT update global. Used by the aggression nudge which is a
+     * day-specific signal — writing it to global would corrupt the
+     * cross-day baseline and cause the blended output to move the wrong way.
+     */
+    fun updatedDayOnly(dayOfWeek: Int, hour: Int, newValue: Double, alpha: Double): DayOfWeekCircadianState {
+        val d       = dayOfWeek.coerceIn(0, 6)
+        val newDays = days.copyOf()
+        newDays[d]  = days[d].updated(hour, newValue, alpha)
+        return DayOfWeekCircadianState(newDays, global)  // global unchanged
+    }
+
     // ── Serialisation ─────────────────────────────────────────────────────────
 
     fun toJson(): JSONObject = JSONObject().apply {
