@@ -189,9 +189,7 @@ class CircadianLearner @Inject constructor(
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        val newMult       = (isfState.get(dow, hour) * (1.0 - ISF_ALPHA) + multTarget * ISF_ALPHA)
-            .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        isfState = isfState.updated(dow, hour, newMult, ISF_ALPHA)
+        isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
@@ -250,7 +248,7 @@ class CircadianLearner @Inject constructor(
                 (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
             else
                 (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-            isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, ISF_ALPHA * 0.6)
+            isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, 1.0)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                                  "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
@@ -265,7 +263,7 @@ class CircadianLearner @Inject constructor(
             (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         else
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, BASAL_ALPHA * 0.6)
+        basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
 
         // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown
         val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
