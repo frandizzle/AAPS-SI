@@ -331,22 +331,11 @@ class UamController @Inject constructor(
         }
 
         // ── Burst tracking — update local BG minimum ─────────────────────────
-        // Track from the lowest recent BG regardless of delta streak status.
-        // This ensures burst fires on sequences like +3(fail)+8+9 = total +20 mg/dL
-        // where the first weak reading would normally reset bgAtStreakStart to a higher value.
-        if (bgBurstTrackStart <= 0.0 || currentBgMmol < bgBurstTrackStart) {
-            bgBurstTrackStart = currentBgMmol  // reset to new local minimum when BG drops
-        }
-        val burstThresholdCheck = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        val absoluteRise = currentBgMmol - bgBurstTrackStart
-        if (burstThresholdCheck > 0.0 && absoluteRise >= burstThresholdCheck) {
-            aapsLogger.debug(LTag.APS,
-                             "UAM: BURST trigger (absolute) — absoluteRise=${fmtDelta(absoluteRise)}$unitLabel " +
-                                 ">= threshold=${fmtBg(burstThresholdCheck)}$unitLabel — firing ${uamMode.label}")
-            triggerUam(uamMode, currentBgMmol, deltaMmol, absoluteRise)
-            bgBurstTrackStart = 0.0
-            resetStreak()
-            return
+        // Track from the lowest recent BG, but RESET the memory when the upward
+        // trend dies (shortAvgDeltaMmol <= 0.0). This prevents a low from hours
+        // ago from triggering a phantom burst on slow baseline drift.
+        if (bgBurstTrackStart <= 0.0 || currentBgMmol < bgBurstTrackStart || shortAvgDeltaMmol <= 0.0) {
+            bgBurstTrackStart = currentBgMmol
         }
 
         // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
@@ -438,22 +427,27 @@ class UamController @Inject constructor(
         }
 
         // ── Burst trigger — fire immediately on large sudden rise ────────────
-        // If total rise from streak start exceeds burst threshold, don't wait for
-        // consecutive reading count — fire immediately. Catches sudden spikes that
-        // would otherwise take 15 min to confirm via the streak counter.
+        // ── Burst trigger — fire immediately on large sudden rise ────────────
+        // Uses absoluteRise (from the local trough) rather than totalRise (from streak start).
+        // This catches sequences like +3(fail)+8+9 = +20 total, where the failed +3 would
+        // have reset bgAtStreakStart to a higher value losing the early rise.
+        // Gated by consecutiveRiseReadings >= 1 — only bursts during an ACTIVE confirmed rise,
+        // not on slow baseline drift from an old trough.
         val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        val totalRise = currentBgMmol - bgAtStreakStart
-        if (burstThreshold > 0.0 && totalRise >= burstThreshold && consecutiveRiseReadings >= 1) {
+        val absoluteRise   = currentBgMmol - bgBurstTrackStart
+        if (burstThreshold > 0.0 && absoluteRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
-                             "UAM: BURST trigger — totalRise=${fmtDelta(totalRise)}$unitLabel " +
+                             "UAM: BURST trigger (absolute) — absoluteRise=${fmtDelta(absoluteRise)}$unitLabel " +
                                  ">= threshold=${fmtBg(burstThreshold)}$unitLabel " +
                                  "after $consecutiveRiseReadings readings — firing ${uamMode.label}")
-            triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
+            triggerUam(uamMode, currentBgMmol, deltaMmol, absoluteRise)
+            bgBurstTrackStart = 0.0
             resetStreak()
             return
         }
 
         // ── Normal trigger — consecutive readings met ─────────────────────────
+        val totalRise = currentBgMmol - bgAtStreakStart
         if (consecutiveRiseReadings >= riseReadingsNeeded) {
             triggerUam(uamMode, currentBgMmol, deltaMmol, totalRise)
             resetStreak()

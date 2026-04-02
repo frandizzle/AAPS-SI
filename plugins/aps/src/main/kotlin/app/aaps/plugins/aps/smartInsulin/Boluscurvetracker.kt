@@ -128,7 +128,10 @@ class BolusCurveTracker @Inject constructor(
             }
             return
         }
-        prevIob = currentIob
+        // New bolus detected while tracking — abandon current curve and restart
+        // Compute spike FIRST using the previous cycle's IOB, THEN update prevIob
+        val iobSpikeWhileTracking = currentIob - (prevIob.takeIf { it > 0.0 } ?: currentIob)
+        prevIob = currentIob  // update AFTER spike check so next cycle sees this cycle's value
 
         val elapsedMs = nowMs - trackStartMs
 
@@ -138,9 +141,6 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        // New bolus detected while tracking — abandon current curve and restart
-        // Either IOB spikes up by MIN_BOLUS_SPIKE_U, or jumps well above where we started
-        val iobSpikeWhileTracking = currentIob - (prevIob.takeIf { it > 0.0 } ?: currentIob)
         if (iobSpikeWhileTracking >= MIN_BOLUS_SPIKE_U || currentIob > iobPeak * 1.3) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
             reset(); return

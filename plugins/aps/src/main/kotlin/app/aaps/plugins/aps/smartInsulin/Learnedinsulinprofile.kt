@@ -23,6 +23,10 @@ data class LearnedInsulinProfile(
     val sampleCount:    Int,
     val lastUpdatedMs:  Long
 ) {
+    // Silently clamp to physiological bounds on construction — prevents corrupt
+    // JSON or learner math errors from producing dangerous out-of-range values.
+    val safePeakMinutes: Double get() = peakMinutes.coerceIn(PEAK_MIN_MINUTES, PEAK_MAX_MINUTES)
+    val safeDiaMinutes:  Double get() = diaMinutes.coerceIn(DIA_MIN_MINUTES, DIA_MAX_MINUTES)
 
     // ── Serialisation ────────────────────────────────────────────────────────
 

@@ -153,7 +153,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.diaMinutes.toInt().coerceIn(360, 480) / 5
+            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5
         )
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -164,7 +164,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // values once sampleCount >= PEAK_LEARNING_MIN_SAMPLES.
         // Hard rails ensure corrupt learned values can never cause unsafe behaviour.
         val insulinPeakTicks = run {
-            val ticks = (learnedProfile.peakMinutes / 5.0).toInt() + 2  // +2 ticks = +10 min buffer
+            val ticks = (learnedProfile.safePeakMinutes / 5.0).toInt() + 2  // +2 ticks = +10 min buffer
             if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES)
                 ticks.coerceIn(10, 18)  // seeded from real insulin, capped at 90 min until trusted
             else
@@ -183,7 +183,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // Populate rT.predBGs.IOB for the overview prediction graph
         val rawPrediction = mutableListOf<Int>()
-        predictedBg.take(learnedProfile.diaMinutes.toInt().coerceIn(360, 480) / 5)
+        predictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
             .forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
@@ -211,7 +211,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
-        sb.append(" | ${pkLabel}=${learnedProfile.peakMinutes.toInt()}m DIA=${learnedProfile.diaMinutes.toInt()}m")
+        sb.append(" | ${pkLabel}=${learnedProfile.safePeakMinutes.toInt()}m DIA=${learnedProfile.safeDiaMinutes.toInt()}m")
         sb.append(" | aggr=${"%.2f".format(Locale.US, aggressiveness)}")
         if (inDawnWindow) sb.append(" | dawn(-${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
         if (highTempTargetActive) sb.append(" | highTT=smbOff")
