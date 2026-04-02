@@ -381,13 +381,23 @@ class CircadianLearner @Inject constructor(
         // ── Penalty signal 1: Rollercoaster ──────────────────────────────────
         val rollercoaster = detectRollercoaster(targetMgdl, lowGuardMgdl)
         if (rollercoaster) {
-            val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
-            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
-            lastPenaltyMs = System.currentTimeMillis()
-            lastPenaltyWasFasting = isFasting
-            aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour ROLLERCOASTER detected fasting=$isFasting → ceil=%.3f"
-                                 .format(aggrState.get(dow, hour)))
+            // Shape-based compression filter — gate only the LEARNER penalty, not safety actions.
+            // Real lows (exercise, alcohol, spontaneous) must always fire the penalty regardless of IOB.
+            // Compression lows have a characteristic V-shape: stable pre-trend, rapid symmetric
+            // drop+recovery, and exact return to pre-drop baseline. If all signs point to a
+            // compression artifact, skip the aggrLearner penalty to prevent chronic under-aggression.
+            if (isLikelyCompression(targetMgdl, lowGuardMgdl)) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour ROLLERCOASTER detected but shape suggests compression low — skipping learner penalty")
+            } else {
+                val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
+                aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+                lastPenaltyMs = System.currentTimeMillis()
+                lastPenaltyWasFasting = isFasting
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour ROLLERCOASTER detected fasting=$isFasting → ceil=%.3f"
+                                     .format(aggrState.get(dow, hour)))
+            }
             return
         }
 
@@ -397,7 +407,7 @@ class CircadianLearner @Inject constructor(
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
-            lastPenaltyMs = System.currentTimeMillis()
+            lastPenaltyMs   = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta fasting=$isFasting → ceil=%.3f"
@@ -426,30 +436,88 @@ class CircadianLearner @Inject constructor(
         if (bgHistory.size < MIN_HISTORY_FOR_ROLLER) return false
 
         // Asymmetric thresholds — physiologically correct:
-        // Low side uses the user's actual safety floor (low guard), not an arbitrary dead band.
-        // High side uses target + dead band to ignore normal post-target wiggles.
-        // Requires chronological sequence: must breach low AND high thresholds in alternation.
-        // extremeSwings = 1 → single crash or spike (not a rollercoaster)
-        // extremeSwings ≥ 2 → confirmed Under→Above→Under (or Above→Under→Above) = rollercoaster
+        // Low side = user's low guard (personal safety floor, not arbitrary dead band)
+        // High side = target + dead band (ignores normal post-target wiggles)
+        // Requires chronological alternation — Under→Above→Under or Above→Under→Above.
+        // Compression low filtering is handled at the PENALTY level (IOB confirmation)
+        // not here, so this function purely detects the BG pattern.
         val highThreshold = targetMgdl + ROLLER_DEAD_BAND_MGDL
         val lowThreshold  = lowGuardMgdl
 
-        var state        = 0   // -1 = currently below low threshold, 1 = above high threshold
+        var state         = 0
         var extremeSwings = 0
 
         for ((_, bg) in bgHistory) {
             when {
                 bg <= lowThreshold  -> {
-                    if (state == 1) extremeSwings++   // swung from high to low
+                    if (state == 1) extremeSwings++
                     state = -1
                 }
                 bg >= highThreshold -> {
-                    if (state == -1) extremeSwings++  // swung from low to high
+                    if (state == -1) extremeSwings++
                     state = 1
                 }
             }
         }
         return extremeSwings >= ROLLER_CROSSING_THRESHOLD
+    }
+
+    /**
+     * Shape-based heuristic to distinguish compression lows from real BG events.
+     * All signals derived from bgHistory — no IOB dependency.
+     *
+     * A compression low has a characteristic signature:
+     *  1. Short total duration (10–45 min) — mechanical artifact resolves quickly
+     *  2. Stable pre-drop trend — real lows usually have a falling lead-in
+     *  3. Rapid symmetric drop + recovery — big deltas both ways
+     *  4. Exact baseline return — BG lands back where it started (carbs usually overshoot)
+     *
+     * Conservative by design — only returns true when ALL criteria are met.
+     * A single ambiguous feature keeps the full penalty.
+     */
+    private fun isLikelyCompression(targetMgdl: Double, lowGuardMgdl: Double): Boolean {
+        if (bgHistory.size < MIN_HISTORY_FOR_ROLLER) return false
+
+        // ── Find low period: first and last readings below low guard ─────────
+        val lowStart = bgHistory.firstOrNull { it.second <= lowGuardMgdl }?.first ?: return false
+        val lowEnd   = bgHistory.lastOrNull  { it.second <= lowGuardMgdl }?.first ?: return false
+        val durationMins = (lowEnd - lowStart) / 60_000.0
+
+        // 1. Duration 10–45 min — too short = single artifact, too long = real low
+        if (durationMins < 10.0 || durationMins > 45.0) return false
+
+        // 2. Pre-drop stability — real lows usually have a falling trend leading in
+        val preDropStart = lowStart - 30 * 60_000L
+        val preDropSlice = bgHistory.filter { it.first in preDropStart until lowStart }
+        if (preDropSlice.size >= 3) {
+            // Calculate average delta over pre-drop window
+            val preAvgDelta = (preDropSlice.last().second - preDropSlice.first().second) /
+                preDropSlice.size.toDouble()
+            // If BG was already trending down > 1.5 mg/dL per reading → more likely real
+            if (preAvgDelta < -COMPRESSION_PRE_TREND_GATE) return false
+        }
+
+        // 3. Rapid symmetric recovery — large positive deltas on the way back up
+        val recoverySlice = bgHistory.filter { it.first in lowEnd..(lowEnd + 20 * 60_000L) }
+        if (recoverySlice.size >= 2) {
+            val maxRecoveryDelta = recoverySlice.zipWithNext()
+                .maxOfOrNull { (a, b) -> b.second - a.second } ?: 0.0
+            // If recovery is slow (small deltas) → more likely carb-driven real rebound
+            if (maxRecoveryDelta < COMPRESSION_MIN_RECOVERY_DELTA) return false
+        }
+
+        // 4. Baseline return — BG lands back near where it started
+        val preLowReadings = bgHistory.filter { it.first in preDropStart until lowStart }.takeLast(3)
+        val postRecoveryReadings = bgHistory.filter { it.first > lowEnd + 10 * 60_000L }.take(3)
+        if (preLowReadings.size >= 2 && postRecoveryReadings.size >= 2) {
+            val preLowAvg  = preLowReadings.map { it.second }.average()
+            val postRecAvg = postRecoveryReadings.map { it.second }.average()
+            // If BG lands more than ~1.1 mmol (20 mg/dL) from where it started → real event
+            if (kotlin.math.abs(postRecAvg - preLowAvg) > COMPRESSION_BASELINE_RETURN_GATE) return false
+        }
+
+        // All four criteria met — high confidence this is a compression artifact
+        return true
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -619,9 +687,13 @@ class CircadianLearner @Inject constructor(
 
         // Rollercoaster detection
         private const val ROLLER_WINDOW_MS          = 90 * 60 * 1000L   // 90 min window
-        private const val ROLLER_CROSSING_THRESHOLD = 2                  // 2+ crossings = rollercoaster
-        private const val ROLLER_DEAD_BAND_MGDL     = 18.0              // ~1.0 mmol — must cross target by this much to count
+        private const val ROLLER_CROSSING_THRESHOLD = 2                  // 2+ extreme swings = rollercoaster
+        private const val ROLLER_DEAD_BAND_MGDL     = 18.0              // ~1.0 mmol above target to count as high crossing
         private const val MIN_HISTORY_FOR_ROLLER    = 6                  // need ≥6 readings (~30 min)
+        // Compression low heuristic constants
+        private const val COMPRESSION_PRE_TREND_GATE       = 1.5        // mg/dL per reading — pre-drop falling faster than this → likely real
+        private const val COMPRESSION_MIN_RECOVERY_DELTA   = 10.0       // mg/dL per 5min — recovery must be fast to flag as compression (~0.55 mmol/5min)
+        private const val COMPRESSION_BASELINE_RETURN_GATE = 20.0       // mg/dL — post-recovery must land within ~1.1 mmol of pre-drop baseline
 
         // General
         private const val COB_THRESHOLD_G = 5.0   // ignore cycles with active carbs
