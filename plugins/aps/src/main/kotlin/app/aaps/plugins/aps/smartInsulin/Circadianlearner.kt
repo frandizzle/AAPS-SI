@@ -111,7 +111,7 @@ class CircadianLearner @Inject constructor(
         val iob    = iobArray.firstOrNull()?.iob      ?: 0.0
         val activity = iobArray.firstOrNull()?.activity ?: 0.0
         val basalIob = iobArray.firstOrNull()?.basaliob ?: 0.0
-        val rollercoaster = if (bgHistory.size >= MIN_HISTORY_FOR_ROLLER) detectRollercoaster(targetMgdl) else false
+        val rollercoaster = if (bgHistory.size >= MIN_HISTORY_FOR_ROLLER) detectRollercoaster(targetMgdl, lowGuardMgdl) else false
 
         // Guard skip reason logged before early return
         val skipReason = when {
@@ -242,12 +242,13 @@ class CircadianLearner @Inject constructor(
 
         // Only nudge ISF if physics learner didn't fire this cycle
         if (!isfPhysicsFired) {
-            // Too much insulin → ISF mult UP (÷ smaller ISF = less insulin)
-            // Not enough insulin → ISF mult DOWN (÷ larger ISF = more insulin)
+            // dosingISF = profileISF / isfMult
+            // Too much insulin → ISF mult DOWN → dosingISF goes UP → less aggressive → less insulin ✓
+            // Not enough insulin → ISF mult UP → dosingISF goes DOWN → more aggressive → more insulin ✓
             val nudgedIsf = if (tooMuch)
-                (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-            else
                 (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+            else
+                (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
             isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, 1.0)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
@@ -378,7 +379,7 @@ class CircadianLearner @Inject constructor(
         val currentCeil = aggrState.get(dow, hour)
 
         // ── Penalty signal 1: Rollercoaster ──────────────────────────────────
-        val rollercoaster = detectRollercoaster(targetMgdl)
+        val rollercoaster = detectRollercoaster(targetMgdl, lowGuardMgdl)
         if (rollercoaster) {
             val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -421,16 +422,34 @@ class CircadianLearner @Inject constructor(
      * Returns true if BG has crossed the target band 2+ times within the detection window.
      * Zero-crossing count on (bg - target) sign changes.
      */
-    private fun detectRollercoaster(targetMgdl: Double): Boolean {
+    private fun detectRollercoaster(targetMgdl: Double, lowGuardMgdl: Double): Boolean {
         if (bgHistory.size < MIN_HISTORY_FOR_ROLLER) return false
-        var crossings = 0
-        var lastSign  = 0
+
+        // Asymmetric thresholds — physiologically correct:
+        // Low side uses the user's actual safety floor (low guard), not an arbitrary dead band.
+        // High side uses target + dead band to ignore normal post-target wiggles.
+        // Requires chronological sequence: must breach low AND high thresholds in alternation.
+        // extremeSwings = 1 → single crash or spike (not a rollercoaster)
+        // extremeSwings ≥ 2 → confirmed Under→Above→Under (or Above→Under→Above) = rollercoaster
+        val highThreshold = targetMgdl + ROLLER_DEAD_BAND_MGDL
+        val lowThreshold  = lowGuardMgdl
+
+        var state        = 0   // -1 = currently below low threshold, 1 = above high threshold
+        var extremeSwings = 0
+
         for ((_, bg) in bgHistory) {
-            val s = (bg - targetMgdl).sign.toInt()
-            if (s != 0 && lastSign != 0 && s != lastSign) crossings++
-            if (s != 0) lastSign = s
+            when {
+                bg <= lowThreshold  -> {
+                    if (state == 1) extremeSwings++   // swung from high to low
+                    state = -1
+                }
+                bg >= highThreshold -> {
+                    if (state == -1) extremeSwings++  // swung from low to high
+                    state = 1
+                }
+            }
         }
-        return crossings >= ROLLER_CROSSING_THRESHOLD
+        return extremeSwings >= ROLLER_CROSSING_THRESHOLD
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -601,6 +620,7 @@ class CircadianLearner @Inject constructor(
         // Rollercoaster detection
         private const val ROLLER_WINDOW_MS          = 90 * 60 * 1000L   // 90 min window
         private const val ROLLER_CROSSING_THRESHOLD = 2                  // 2+ crossings = rollercoaster
+        private const val ROLLER_DEAD_BAND_MGDL     = 18.0              // ~1.0 mmol — must cross target by this much to count
         private const val MIN_HISTORY_FOR_ROLLER    = 6                  // need ≥6 readings (~30 min)
 
         // General
