@@ -188,7 +188,12 @@ class CircadianLearner @Inject constructor(
 
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
-        val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        // dosingISF = profileISF / isfMult
+        // Dropping faster than expected (negative deviation) = too sensitive = need HIGHER dosingISF
+        // → mult must go UP → subtract negative normDeviation (i.e. add its magnitude)
+        // Rising faster than expected (positive deviation) = not sensitive enough = need LOWER dosingISF
+        // → mult must go DOWN → subtract positive normDeviation
+        val multTarget    = (isfState.get(dow, hour) - normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
