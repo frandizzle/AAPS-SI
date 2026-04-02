@@ -250,7 +250,7 @@ class CircadianLearner @Inject constructor(
                 (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
             else
                 (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-            isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.3)
+            isfState = isfState.updated(dow, hour, nudgedIsf, ISF_ALPHA * 0.6)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                                  "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
@@ -265,7 +265,7 @@ class CircadianLearner @Inject constructor(
             (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         else
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.3)
+        basalState = basalState.updated(dow, hour, nudgedBas, BASAL_ALPHA * 0.6)
 
         // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown
         val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
