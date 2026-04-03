@@ -67,6 +67,11 @@ class CircadianLearner @Inject constructor(
     // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
     private var lastPenaltyMs: Long = 0L
     private var lastPenaltyWasFasting: Boolean = false
+    // Rollercoaster escalation tracking — exposed to plugin to extend rebound window
+    var consecutiveRollercoasters: Int = 0
+        private set
+    var lastRollercoasterMs: Long = 0L
+        private set
 
     // Last aggression nudge status for SI tab display
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
@@ -189,11 +194,11 @@ class CircadianLearner @Inject constructor(
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
         // dosingISF = profileISF / isfMult
-        // Dropping faster than expected (negative deviation) = too sensitive = need HIGHER dosingISF
-        // → mult must go UP → subtract negative normDeviation (i.e. add its magnitude)
-        // Rising faster than expected (positive deviation) = not sensitive enough = need LOWER dosingISF
-        // → mult must go DOWN → subtract positive normDeviation
-        val multTarget    = (isfState.get(dow, hour) - normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        // BG dropping faster than expected → normDeviation negative → mult + negative = mult DOWN
+        // mult DOWN → profileISF / smallerMult → dosingISF UP → less aggressive → less insulin ✓
+        // BG rising faster than expected → normDeviation positive → mult + positive = mult UP
+        // mult UP → profileISF / biggerMult → dosingISF DOWN → more aggressive → more insulin ✓
+        val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
@@ -399,8 +404,15 @@ class CircadianLearner @Inject constructor(
                 aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
                 lastPenaltyMs = System.currentTimeMillis()
                 lastPenaltyWasFasting = isFasting
+                // Escalating rollercoaster counter — resets if >2h since last one (new episode)
+                val now = System.currentTimeMillis()
+                if (lastRollercoasterMs > 0L && now - lastRollercoasterMs > ROLLER_ESCALATION_RESET_MS) {
+                    consecutiveRollercoasters = 0
+                }
+                consecutiveRollercoasters++
+                lastRollercoasterMs = now
                 aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner Aggr h=$hour ROLLERCOASTER detected fasting=$isFasting → ceil=%.3f"
+                                 "CircadianLearner Aggr h=$hour ROLLERCOASTER #$consecutiveRollercoasters detected fasting=$isFasting → ceil=%.3f"
                                      .format(aggrState.get(dow, hour)))
             }
             return
@@ -695,6 +707,7 @@ class CircadianLearner @Inject constructor(
         private const val ROLLER_CROSSING_THRESHOLD = 2                  // 2+ extreme swings = rollercoaster
         private const val ROLLER_DEAD_BAND_MGDL     = 18.0              // ~1.0 mmol above target to count as high crossing
         private const val MIN_HISTORY_FOR_ROLLER    = 6                  // need ≥6 readings (~30 min)
+        private const val ROLLER_ESCALATION_RESET_MS = 2 * 60 * 60 * 1000L  // 2h gap = new episode, reset counter
         // Compression low heuristic constants
         private const val COMPRESSION_PRE_TREND_GATE       = 1.5        // mg/dL per reading — pre-drop falling faster than this → likely real
         private const val COMPRESSION_MIN_RECOVERY_DELTA   = 10.0       // mg/dL per 5min — recovery must be fast to flag as compression (~0.55 mmol/5min)

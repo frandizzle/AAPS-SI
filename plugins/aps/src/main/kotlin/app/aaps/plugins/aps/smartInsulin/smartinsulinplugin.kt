@@ -155,7 +155,9 @@ open class SmartInsulinPlugin @Inject constructor(
     // Queries today's readings (midnight to now) via persistenceLayer.
 
     companion object {
-        const val REBOUND_GUARD_MS      = 60 * 60 * 1000L
+        const val REBOUND_GUARD_MS              = 60 * 60 * 1000L
+        const val ROLLER_REBOUND_EXTENSION_MS   = 15 * 60 * 1000L   // +15 min per consecutive rollercoaster
+        const val ROLLER_REBOUND_EXTENSION_MAX_MS = 45 * 60 * 1000L // cap at +45 min total extension
         const val SMB_DELIVERY_FRACTION = 0.5
     }
 
@@ -367,6 +369,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val inReboundWindow:    Boolean,
         val reboundMins:        Long,
         val reboundWindowMins:  Int,
+        val totalReboundWindowMins: Int,          // base + rollercoaster extension
+        val consecutiveRollercoasters: Int,       // for escalating extension display
         val softLandingBypass:  Boolean,
         val bgWentLow:          Boolean,
         val secondLowOccurred:  Boolean,
@@ -468,6 +472,8 @@ open class SmartInsulinPlugin @Inject constructor(
             inReboundWindow    = inReboundWindow,
             reboundMins        = msSinceLastSuspend / 60_000,
             reboundWindowMins  = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins),
+            totalReboundWindowMins = (reboundGuardMs / 60_000).toInt(),
+            consecutiveRollercoasters = circadianLearner.consecutiveRollercoasters,
             softLandingBypass  = softLandingBypass,
             bgWentLow          = bgWentLow,
             secondLowOccurred  = secondLowOccurred,
@@ -976,7 +982,21 @@ open class SmartInsulinPlugin @Inject constructor(
         activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // Update configurable rebound window — inReboundWindow uses this
-        reboundGuardMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toLong() * 60_000L
+        // Extend dynamically if rollercoasters are happening in the same episode:
+        //   Rollercoaster 1 → +15 min
+        //   Rollercoaster 2+ → +15 min additional per count (capped at +45 min total)
+        // Rollercoaster counter resets after 2h gap (new episode) in CircadianLearner.
+        val baseReboundMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toLong() * 60_000L
+        val rollerCount   = circadianLearner.consecutiveRollercoasters
+        val rollerExtMs   = if (rollerCount >= 1)
+            (rollerCount * ROLLER_REBOUND_EXTENSION_MS).coerceAtMost(ROLLER_REBOUND_EXTENSION_MAX_MS)
+        else 0L
+        reboundGuardMs = baseReboundMs + rollerExtMs
+        if (rollerExtMs > 0L) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: rebound window extended by ${rollerExtMs / 60_000}min " +
+                                 "(rollercoaster #$rollerCount) → total ${reboundGuardMs / 60_000}min")
+        }
 
         // ── CGM warmup guard ─────────────────────────────────────────────────
 

@@ -131,7 +131,8 @@ class SmartInsulinFragment : DaggerFragment() {
 
         if (d.inReboundWindow) {
             val elapsedMins  = d.reboundMins.toDouble()
-            val windowMins   = d.reboundWindowMins.toDouble()
+            val windowMins   = d.totalReboundWindowMins.toDouble()  // includes rollercoaster extension
+            val baseMins     = d.reboundWindowMins.toDouble()
             val minsLeft     = (windowMins - elapsedMins).coerceAtLeast(0.0).roundToInt()
             val elapsedInt   = elapsedMins.toInt().coerceAtMost(windowMins.toInt())
             val windowInt    = windowMins.toInt()
@@ -164,6 +165,21 @@ class SmartInsulinFragment : DaggerFragment() {
                        Color.parseColor("#FF43A047"))
             }
 
+            // Rollercoaster extension rows
+            if (d.consecutiveRollercoasters >= 1) {
+                val extMins = (windowMins - baseMins).toInt()
+                val extLabel = when (d.consecutiveRollercoasters) {
+                    1 -> "Rollercoaster 1 detected — extending recovery by ${extMins}min"
+                    2 -> "Rollercoaster 2 detected — extending recovery by ${extMins}min"
+                    else -> "Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min"
+                }
+                addRow(c, extLabel,
+                       "Base window: ${baseMins.toInt()}min + ${extMins}min extension = ${windowInt}min total.\n" +
+                           "Extension increases with each consecutive rollercoaster (max +45min).\n" +
+                           "Resets automatically after 2h with no further rollercoasters.",
+                       Color.parseColor("#FFFB8C00"))
+            }
+
             // Meal mode active during recovery
             if (d.mealMode != "Fasting") {
                 addRow(c, "Meal mode active — low recovery bypassed until window finishes",
@@ -192,8 +208,12 @@ class SmartInsulinFragment : DaggerFragment() {
         } else if (d.bgWentLow) {
             // Was low but not yet in rebound window (BG still below guard, or just crossed back)
             addRow(c, "⚠ BG went low — waiting for recovery",
-                   "Once BG rises back above the low guard, the ${d.reboundWindowMins}-minute\n" +
-                       "recovery window will start automatically.",
+                   "Once BG rises back above the low guard, the ${d.totalReboundWindowMins}-minute\n" +
+                       "recovery window will start automatically." +
+                       if (d.consecutiveRollercoasters >= 1) {
+                           val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                           "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
+                       } else "",
                    Color.parseColor("#FFE53935"))
             if (d.mealMode != "Fasting") {
                 addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
