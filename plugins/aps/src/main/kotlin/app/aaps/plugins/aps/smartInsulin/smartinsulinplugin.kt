@@ -360,6 +360,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val aggressiveness:     Double,
         val circCeil:           Double,
         val isfMultiplier:      Double,
+        val nudgeSessionIsfMult: Double,   // blended ISF mult at nudge session start (loop's actual "was")
+        val nudgeSessionBasMult: Double,   // blended basal mult at nudge session start
         val profileIsfMgdl:     Double,
         val finalIsfMgdl:       Double,
         val basalMultiplier:    Double,
@@ -464,6 +466,8 @@ open class SmartInsulinPlugin @Inject constructor(
             aggressiveness     = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)),
             circCeil           = circadianLearner.aggrCeiling(hour),
             isfMultiplier      = isfMult,
+            nudgeSessionIsfMult = circadianLearner.nudgeSessionBlendedIsfMult,
+            nudgeSessionBasMult = circadianLearner.nudgeSessionBlendedBasMult,
             profileIsfMgdl     = profileIsf,
             finalIsfMgdl       = profileIsf / isfMult,
             basalMultiplier    = basalMult,

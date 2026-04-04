@@ -336,7 +336,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
         val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
         addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
-               "Profile ${"%.1f".format(pfIsf)} × multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
+               "Profile ${"%.1f".format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
                    "Higher multiplier = higher ISF = less aggressive. Lower multiplier = more aggressive.\n" +
                    "How much 1U of insulin lowers your BG.")
 
@@ -550,33 +550,25 @@ class SmartInsulinFragment : DaggerFragment() {
                     } else "%02d:00".format(hour)
                 } else "?"
 
-                // Parse session-start and current multipliers from status string
-                // Part 4 = ISF mult at start of this hour (session baseline = "was")
-                // Part 5 = ISF mult now after nudging (current = "now")
-                // Part 6 = Basal mult at start of this hour
-                // Part 7 = Basal mult now after nudging
-                val sessionIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull()
-                val currentIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull()
-                val sessionBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull()
-                val currentBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull()
-
-                // "Was" = profileISF / sessionStartMult — what the loop was using at the top of this hour
-                // "Now" = profileISF / currentMult — what the loop is using right now
-                val wasIsf = if (d.profileIsfMgdl > 0 && sessionIsfMult != null && sessionIsfMult > 0)
-                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / sessionIsfMult / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl / sessionIsfMult)} mg/dL/U"
+                // "Was" = blended ISF/basal the loop was actually using at the start of this nudge session
+                //         (same blend as isfMultiplier() — day bucket weighted by confidence + global)
+                // "Now" = d.finalIsfMgdl / d.finalBasalU — exactly what the loop is delivering right now
+                // Both now match the overview ISF/basal display.
+                val wasIsf = if (d.profileIsfMgdl > 0 && d.nudgeSessionIsfMult > 0)
+                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / d.nudgeSessionIsfMult / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.profileIsfMgdl / d.nudgeSessionIsfMult)} mg/dL/U"
                 else "?"
-                val nowIsf = if (d.profileIsfMgdl > 0 && currentIsfMult != null && currentIsfMult > 0)
-                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / currentIsfMult / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl / currentIsfMult)} mg/dL/U"
+                val nowIsf = if (d.finalIsfMgdl > 0)
+                    if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U"
                 else "?"
 
-                // Basal: "was" = profileBasal × sessionStartMult, "now" = profileBasal × currentMult
-                val wasBas = if (d.profileBasalU > 0 && sessionBasMult != null)
-                    "${"%.3f".format(d.profileBasalU * sessionBasMult)} U/h"
+                // Basal: "was" = profile × blended session-start mult, "now" = actual delivered rate
+                val wasBas = if (d.profileBasalU > 0 && d.nudgeSessionBasMult > 0)
+                    "${"%.3f".format(d.profileBasalU * d.nudgeSessionBasMult)} U/h"
                 else "?"
-                val nowBas = if (d.profileBasalU > 0 && currentBasMult != null)
-                    "${"%.3f".format(d.profileBasalU * currentBasMult)} U/h"
+                val nowBas = if (d.finalBasalU > 0)
+                    "${"%.3f".format(d.finalBasalU)} U/h"
                 else "?"
 
                 // Short term % from ceiling, long term % from basal multiplier

@@ -75,6 +75,12 @@ class CircadianLearner @Inject constructor(
     private var nudgeSessionDow:  Int = -1
     private var nudgeSessionIsfMult: Double = 1.0
     private var nudgeSessionBasMult: Double = 1.0
+    // Blended session-start values — what the loop was actually using at the top of this nudge session
+    // These match isfMultiplier()/basalMultiplier() at session start, not raw day bucket.
+    var nudgeSessionBlendedIsfMult: Double = 1.0
+        private set
+    var nudgeSessionBlendedBasMult: Double = 1.0
+        private set
     // Exposed so the plugin/fragment can show "hard low penalty applied" in the UI
     var lastHardLowPenaltyMs: Long = 0L
         private set
@@ -268,6 +274,9 @@ class CircadianLearner @Inject constructor(
             nudgeSessionDow     = dow
             nudgeSessionIsfMult = prevIsfMult
             nudgeSessionBasMult = prevBasMult
+            // Capture blended values — these match what the loop was actually using
+            nudgeSessionBlendedIsfMult = isfMultiplier(hour, dow)
+            nudgeSessionBlendedBasMult = basalMultiplier(hour, dow)
         }
 
         // Nudge always applies ISF direction — physics learner runs separately on its own signal.
