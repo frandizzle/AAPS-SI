@@ -67,6 +67,9 @@ class CircadianLearner @Inject constructor(
     // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
     private var lastPenaltyMs: Long = 0L
     private var lastPenaltyWasFasting: Boolean = false
+    // Exposed so the plugin/fragment can show "hard low penalty applied" in the UI
+    var lastHardLowPenaltyMs: Long = 0L
+        private set
     // Rollercoaster escalation tracking — exposed to plugin to extend rebound window
     var consecutiveRollercoasters: Int = 0
         private set
@@ -418,7 +421,27 @@ class CircadianLearner @Inject constructor(
             return
         }
 
-        // ── Penalty signal 2: Soft low approach ──────────────────────────────
+        // ── Penalty signal 2: Hard low — BG below low guard ─────────────────
+        // Fires the moment BG crosses below lowGuardMgdl, regardless of delta or IOB.
+        // Stronger than soft-low (20% cut vs 10%) because this is a confirmed low,
+        // not just an approach. No IOB gate — exercise/alcohol/spontaneous lows must
+        // still penalise the ceiling even with zero IOB.
+        // Only fires once per low event — AGGR_ALPHA_PENALTY is high (0.25) so repeated
+        // firings each cycle during the low are intentional: ceiling stays suppressed
+        // while BG remains below the guard.
+        if (bg < lowGuardMgdl) {
+            val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
+            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+            lastPenaltyMs = System.currentTimeMillis()
+            lastHardLowPenaltyMs = System.currentTimeMillis()
+            lastPenaltyWasFasting = isFasting
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner Aggr h=$hour HARD_LOW bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} fasting=$isFasting → ceil=%.3f"
+                                 .format(aggrState.get(dow, hour)))
+            return
+        }
+
+        // ── Penalty signal 3: Soft low approach ──────────────────────────────
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
         val approachingLow = bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
@@ -693,6 +716,7 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
         private const val AGGR_ALPHA_RECOVERY   = 0.04   // recovery is slow
         private const val AGGR_PENALTY_ROLLER   = 0.85   // 15% cut on rollercoaster
+        private const val AGGR_PENALTY_HARD_LOW = 0.80   // 20% cut when BG crosses below low guard
         private const val AGGR_PENALTY_SOFT_LOW = 0.90   // 10% cut on soft low approach
         private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle
         private const val AGGR_CEIL_MIN         = 0.60

@@ -371,6 +371,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val reboundWindowMins:  Int,
         val totalReboundWindowMins: Int,          // base + rollercoaster extension
         val consecutiveRollercoasters: Int,       // for escalating extension display
+        val hardLowPenaltyActive: Boolean,        // true if hard low penalty fired in last 90 min
         val softLandingBypass:  Boolean,
         val bgWentLow:          Boolean,
         val secondLowOccurred:  Boolean,
@@ -474,6 +475,8 @@ open class SmartInsulinPlugin @Inject constructor(
             reboundWindowMins  = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins),
             totalReboundWindowMins = (reboundGuardMs / 60_000).toInt(),
             consecutiveRollercoasters = circadianLearner.consecutiveRollercoasters,
+            hardLowPenaltyActive = circadianLearner.lastHardLowPenaltyMs > 0L &&
+                (System.currentTimeMillis() - circadianLearner.lastHardLowPenaltyMs) < 90 * 60_000L,
             softLandingBypass  = softLandingBypass,
             bgWentLow          = bgWentLow,
             secondLowOccurred  = secondLowOccurred,
