@@ -45,19 +45,16 @@ class CircadianLearner @Inject constructor(
 
     /** ISF multiplier for current hour (0.7–1.5). >1.0 = less aggressive ISF */
     fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        blend(isfState.get(dow, hour), 1.0, isfState.getConfidence(dow, hour))
-            .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        isfState.get(dow, hour).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
     /** Basal multiplier for current hour (0.5–1.5) */
     fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        blend(basalState.get(dow, hour), 1.0, basalState.getConfidence(dow, hour))
-            .coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        basalState.get(dow, hour).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
     /** Aggressiveness ceiling for current hour (0.6–1.2).
      *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling) */
     fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        blend(aggrState.get(dow, hour), 1.0, aggrState.getConfidence(dow, hour))
-            .coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
+        aggrState.get(dow, hour).coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
 
     // Last basal learning signal for SI tab display
     var lastBasalSignal: String = "No signal yet"
@@ -159,8 +156,9 @@ class CircadianLearner @Inject constructor(
             bgHistory.removeFirst()
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
+        val isFasting = mealMode == MealMode.FASTING
         val isfPhysicsFired = if (!suppressAdaptiveLearning)
-            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, aggressiveness)
+            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
@@ -190,8 +188,14 @@ class CircadianLearner @Inject constructor(
         iobArray:          Array<IobTotal>,
         profileIsfMgdl:    Double,
         inPostMealLockout: Boolean,
+        isFasting:         Boolean,
         aggressiveness:    Double
     ): Boolean {
+        // Only train ISF from clean fasting signal — meal/UAM/P/F BG changes are food-driven
+        if (!isFasting || inPostMealLockout) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: not fasting or post-meal lockout")
+            return false
+        }
         val activity = iobArray.firstOrNull()?.activity ?: run {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return false
         }
@@ -216,7 +220,10 @@ class CircadianLearner @Inject constructor(
         // BG rises when expected to fall (deviation positive) → not enough → mult UP
         // mult UP → dosingISF DOWN → more aggressive ✓
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
+        // Use updatedDayOnly — don't write ISF changes to the global bucket.
+        // Global baseline is for long-term cross-day patterns; fasting physics signal
+        // is already clean (gated above) so day bucket is sufficient.
+        isfState = isfState.updatedDayOnly(dow, hour, multTarget, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
