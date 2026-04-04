@@ -194,7 +194,7 @@ class CircadianLearner @Inject constructor(
             return false
         }
 
-        val expectedDelta = -(activity * profileIsfMgdl * 5.0)
+        val expectedDelta = activity * profileIsfMgdl * 5.0   // same sign as shortAvgDelta (negative = falling)
         val actualDelta   = glucoseStatus.shortAvgDelta
 
         if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) {
@@ -205,10 +205,10 @@ class CircadianLearner @Inject constructor(
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
         // dosingISF = profileISF / isfMult
-        // BG dropping faster than expected → normDeviation negative → mult + negative = mult DOWN
-        // mult DOWN → profileISF / smallerMult → dosingISF UP → less aggressive → less insulin ✓
-        // BG rising faster than expected → normDeviation positive → mult + positive = mult UP
-        // mult UP → profileISF / biggerMult → dosingISF DOWN → more aggressive → more insulin ✓
+        // BG drops more than expected (deviation negative) → too much insulin → mult DOWN
+        // mult DOWN → dosingISF UP → less aggressive ✓
+        // BG rises when expected to fall (deviation positive) → not enough → mult UP
+        // mult UP → dosingISF DOWN → more aggressive ✓
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
 
