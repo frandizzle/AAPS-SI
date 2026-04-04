@@ -424,30 +424,41 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Penalty signal 2: Hard low — BG below low guard ─────────────────
-        // Fires the moment BG crosses below lowGuardMgdl, regardless of delta or IOB.
-        // Stronger than soft-low (20% cut vs 10%) because this is a confirmed low,
-        // not just an approach. No IOB gate — exercise/alcohol/spontaneous lows must
-        // still penalise the ceiling even with zero IOB.
-        // Only fires once per low event — AGGR_ALPHA_PENALTY is high (0.25) so repeated
-        // firings each cycle during the low are intentional: ceiling stays suppressed
-        // while BG remains below the guard.
+        // Ceiling cut fires every cycle while BG stays below guard (EWMA keeps it converged).
+        // Basal AND ISF nudges fire ONCE per low event (gated by 30-min window) to prevent
+        // compounding — 6 cycles at *0.90 each = 0.53 multiplier after 30 min.
         if (bg < lowGuardMgdl) {
-            // Short term: 20% ceiling cut
+            // Short term: 20% ceiling cut every cycle (EWMA-bounded — converges quickly)
             val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             // NOTE: lastPenaltyMs intentionally NOT set here — hard low is a separate event
             // from rollercoaster/soft-low and should not trigger the nudge cooldown window.
-            lastHardLowPenaltyMs = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
-            // Long term: nudge basal mult DOWN by half the ceiling cut (10%)
-            // Less background insulin = less chance of going low at this hour again.
-            val prevBasMult   = basalState.days[dow].get(hour)
-            val nudgedBasMult = (prevBasMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-            basalState = basalState.updatedDayOnly(dow, hour, nudgedBasMult, 1.0)
-            aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour HARD_LOW bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
-                                 "fasting=$isFasting → ceil=%.3f basal mult %.4f→%.4f"
-                                     .format(aggrState.get(dow, hour), prevBasMult, nudgedBasMult))
+
+            // Long term: nudge basal DOWN and ISF mult UP — once per low event (30-min gate)
+            // dosingISF = profileISF / isfMult → mult UP = higher dosingISF = less aggressive
+            val nowMs = System.currentTimeMillis()
+            val msSinceLastHardLow = if (lastHardLowPenaltyMs > 0L) nowMs - lastHardLowPenaltyMs else Long.MAX_VALUE
+            val isNewLowEvent = msSinceLastHardLow > HARD_LOW_BASAL_GATE_MS
+            lastHardLowPenaltyMs = nowMs
+            if (isNewLowEvent) {
+                // Basal: mult DOWN — less background insulin
+                val prevBasMult   = basalState.days[dow].get(hour)
+                val nudgedBasMult = (prevBasMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                basalState = basalState.updatedDayOnly(dow, hour, nudgedBasMult, 1.0)
+                // ISF: mult UP — higher dosingISF = less aggressive corrections
+                val prevIsfMult   = isfState.days[dow].get(hour)
+                val nudgedIsfMult = (prevIsfMult / AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                isfState = isfState.updatedDayOnly(dow, hour, nudgedIsfMult, 1.0)
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
+                                     "fasting=$isFasting → ceil=%.3f basal %.4f→%.4f isf %.4f→%.4f"
+                                         .format(aggrState.get(dow, hour), prevBasMult, nudgedBasMult, prevIsfMult, nudgedIsfMult))
+            } else {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour HARD_LOW (ongoing) bg=${"%.1f".format(bg)} → ceil=%.3f (nudges gated)"
+                                     .format(aggrState.get(dow, hour)))
+            }
             return
         }
 
@@ -726,10 +737,11 @@ class CircadianLearner @Inject constructor(
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
         private const val AGGR_ALPHA_RECOVERY   = 0.04   // recovery is slow
-        private const val AGGR_PENALTY_ROLLER   = 0.85   // 15% cut on rollercoaster
-        private const val AGGR_PENALTY_HARD_LOW = 0.80   // 20% short-term ceiling cut when BG crosses below low guard
-        private const val AGGR_HARD_LOW_BASAL_NUDGE = 0.90  // 10% long-term basal nudge down on hard low
-        private const val AGGR_PENALTY_SOFT_LOW = 0.90   // 10% cut on soft low approach
+        private const val AGGR_PENALTY_ROLLER       = 0.85   // 15% cut on rollercoaster
+        private const val AGGR_PENALTY_HARD_LOW     = 0.80   // 20% short-term ceiling cut when BG crosses below low guard
+        private const val AGGR_HARD_LOW_BASAL_NUDGE = 0.90   // 10% long-term basal nudge down on hard low (once per event)
+        private const val HARD_LOW_BASAL_GATE_MS    = 30 * 60_000L  // basal nudge only fires once per 30-min low event
+        private const val AGGR_PENALTY_SOFT_LOW     = 0.90   // 10% cut on soft low approach
         private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle
         private const val AGGR_CEIL_MIN         = 0.60
         private const val AGGR_CEIL_MAX         = 1.20
