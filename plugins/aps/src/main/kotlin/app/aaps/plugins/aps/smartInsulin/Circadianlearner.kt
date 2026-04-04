@@ -430,14 +430,21 @@ class CircadianLearner @Inject constructor(
         // firings each cycle during the low are intentional: ceiling stays suppressed
         // while BG remains below the guard.
         if (bg < lowGuardMgdl) {
+            // Short term: 20% ceiling cut
             val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             lastPenaltyMs = System.currentTimeMillis()
             lastHardLowPenaltyMs = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
+            // Long term: nudge basal mult DOWN by half the ceiling cut (10%)
+            // Less background insulin = less chance of going low at this hour again.
+            val prevBasMult   = basalState.days[dow].get(hour)
+            val nudgedBasMult = (prevBasMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+            basalState = basalState.updatedDayOnly(dow, hour, nudgedBasMult, 1.0)
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour HARD_LOW bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} fasting=$isFasting → ceil=%.3f"
-                                 .format(aggrState.get(dow, hour)))
+                             "CircadianLearner Aggr h=$hour HARD_LOW bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
+                                 "fasting=$isFasting → ceil=%.3f basal mult %.4f→%.4f"
+                                     .format(aggrState.get(dow, hour), prevBasMult, nudgedBasMult))
             return
         }
 
@@ -716,7 +723,8 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
         private const val AGGR_ALPHA_RECOVERY   = 0.04   // recovery is slow
         private const val AGGR_PENALTY_ROLLER   = 0.85   // 15% cut on rollercoaster
-        private const val AGGR_PENALTY_HARD_LOW = 0.80   // 20% cut when BG crosses below low guard
+        private const val AGGR_PENALTY_HARD_LOW = 0.80   // 20% short-term ceiling cut when BG crosses below low guard
+        private const val AGGR_HARD_LOW_BASAL_NUDGE = 0.90  // 10% long-term basal nudge down on hard low
         private const val AGGR_PENALTY_SOFT_LOW = 0.90   // 10% cut on soft low approach
         private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle
         private const val AGGR_CEIL_MIN         = 0.60
