@@ -479,8 +479,11 @@ class SmartInsulinFragment : DaggerFragment() {
         addRow(c, primary,
                "SmartInsulin continuously refines your insulin timing, basal rate, and aggressiveness.\nState: ${d.learningState}",
                color)
-        if (d.postMealLockoutMins > 0) addRow(c, "Post-meal pause: ${d.postMealLockoutMins}min remaining",
-                                              "BG data after meals is excluded from basal/ISF learning to avoid\nfood-related changes corrupting fasting models.", Color.parseColor("#FFFB8C00"))
+        // Only show post-meal lockout when fasting — if a meal/P/F mode is still active,
+        // the nudge pause status already covers it and this would be confusing/stale.
+        if (d.postMealLockoutMins > 0 && d.mealMode == "Fasting")
+            addRow(c, "Post-meal pause: ${d.postMealLockoutMins}min remaining",
+                   "BG data after meals is excluded from basal/ISF learning to avoid\nfood-related changes corrupting fasting models.", Color.parseColor("#FFFB8C00"))
         val actColor = when (d.activityLevel) {
             "Sedentary" -> Color.parseColor("#FF888888")
             "Light"     -> Color.parseColor("#FF43A047")
