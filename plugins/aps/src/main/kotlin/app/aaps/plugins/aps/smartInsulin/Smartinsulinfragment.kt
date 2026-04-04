@@ -336,7 +336,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
         val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
         addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
-               "Profile ${"%.1f".format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
+               "Profile ${"%.1f".format(pfIsf)} × multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
                    "Higher multiplier = higher ISF = less aggressive. Lower multiplier = more aggressive.\n" +
                    "How much 1U of insulin lowers your BG.")
 
