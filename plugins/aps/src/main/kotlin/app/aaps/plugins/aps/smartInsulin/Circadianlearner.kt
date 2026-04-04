@@ -164,7 +164,7 @@ class CircadianLearner @Inject constructor(
         // ── 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) ─
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
-        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING)
+        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING, inPostMealLockout)
 
         // ── 4. Aggression nudge — independent of activity gate ───────────────
         // ISF/basal physics learning requires active IOB to fire, but the nudge
@@ -400,14 +400,15 @@ class CircadianLearner @Inject constructor(
     }
 
     private fun updateAggrLearner(
-        hour:         Int,
-        dow:          Int,
-        bg:           Double,
-        delta:        Double,
-        targetMgdl:   Double,
-        iobArray:     Array<IobTotal>,
-        lowGuardMgdl: Double,
-        isFasting:    Boolean = true
+        hour:             Int,
+        dow:              Int,
+        bg:               Double,
+        delta:            Double,
+        targetMgdl:       Double,
+        iobArray:         Array<IobTotal>,
+        lowGuardMgdl:     Double,
+        isFasting:        Boolean = true,
+        inPostMealLockout: Boolean = false
     ) {
         val currentCeil = aggrState.get(dow, hour)
 
@@ -443,10 +444,10 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Penalty signal 2: Hard low — BG below low guard ─────────────────
-        // Ceiling cut fires every cycle while BG stays below guard (EWMA keeps it converged).
-        // Basal AND ISF nudges fire ONCE per low event (gated by 30-min window) to prevent
-        // compounding — 6 cycles at *0.90 each = 0.53 multiplier after 30 min.
-        if (bg < lowGuardMgdl) {
+        // Only penalise the fasting learner if this is a genuine fasting low.
+        // If in meal mode, UAM, P/F, or post-meal lockout, the low is food-driven —
+        // penalising the fasting profile would corrupt clean fasting data.
+        if (bg < lowGuardMgdl && isFasting && !inPostMealLockout) {
             // Short term: 20% ceiling cut every cycle (EWMA-bounded — converges quickly)
             val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -482,8 +483,10 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Penalty signal 3: Soft low approach ──────────────────────────────
+        // Same gate as hard low — only penalise fasting profile for fasting lows.
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
-        val approachingLow = bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
+        val approachingLow = isFasting && !inPostMealLockout &&
+            bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
