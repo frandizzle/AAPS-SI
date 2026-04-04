@@ -67,6 +67,7 @@ class CircadianLearner @Inject constructor(
     // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
     private var lastPenaltyMs: Long = 0L
     private var lastPenaltyWasFasting: Boolean = false
+    private var lastPenaltyReason: String = "penalty"  // used in cooldown note label
     // Exposed so the plugin/fragment can show "hard low penalty applied" in the UI
     var lastHardLowPenaltyMs: Long = 0L
         private set
@@ -279,12 +280,12 @@ class CircadianLearner @Inject constructor(
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
 
-        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown
+        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown|penaltyReason
         val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
             "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
-            if (cooldownActive) "COOLDOWN" else "FULL"
+            "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason"
         lastBasalSignal = "AggrNudge[${if (tooMuch) "↓" else "↑"}]${if (cooldownActive) "[attenuated]" else ""}: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
@@ -407,6 +408,7 @@ class CircadianLearner @Inject constructor(
                 aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
                 lastPenaltyMs = System.currentTimeMillis()
                 lastPenaltyWasFasting = isFasting
+                lastPenaltyReason = "rollercoaster"
                 // Escalating rollercoaster counter — resets if >2h since last one (new episode)
                 val now = System.currentTimeMillis()
                 if (lastRollercoasterMs > 0L && now - lastRollercoasterMs > ROLLER_ESCALATION_RESET_MS) {
@@ -433,7 +435,8 @@ class CircadianLearner @Inject constructor(
             // Short term: 20% ceiling cut
             val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
-            lastPenaltyMs = System.currentTimeMillis()
+            // NOTE: lastPenaltyMs intentionally NOT set here — hard low is a separate event
+            // from rollercoaster/soft-low and should not trigger the nudge cooldown window.
             lastHardLowPenaltyMs = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
             // Long term: nudge basal mult DOWN by half the ceiling cut (10%)
@@ -456,6 +459,7 @@ class CircadianLearner @Inject constructor(
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             lastPenaltyMs   = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
+            lastPenaltyReason = "soft low approach"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta fasting=$isFasting → ceil=%.3f"
                                  .format(aggrState.get(dow, hour)))

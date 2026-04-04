@@ -527,8 +527,9 @@ class SmartInsulinFragment : DaggerFragment() {
                 val deviation    = nudgeParts.getOrNull(1) ?: "?"
                 val day          = nudgeParts.getOrNull(2) ?: "?"
                 val hour         = nudgeParts.getOrNull(3)?.toIntOrNull()
-                val cooldown     = nudgeParts.getOrNull(8) == "COOLDOWN"
-                val cooldownNote = if (cooldown) " (attenuated — recent rollercoaster)" else ""
+                val cooldown       = nudgeParts.getOrNull(8) == "COOLDOWN"
+                val penaltyReason  = nudgeParts.getOrNull(9) ?: "recent penalty"
+                val cooldownNote   = if (cooldown) " (attenuated — $penaltyReason)" else ""
 
                 // Format hour as "5:00 AM" / "14:00"
                 val hourStr = if (hour != null) {
@@ -585,7 +586,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 }
 
                 val statusLine = if (cooldown)
-                    "Adjusting cautiously — recent rollercoaster may have contributed. Full strength resumes after 2h."
+                    "Adjusting cautiously — $penaltyReason may have contributed. Full strength resumes after 2h."
                 else
                     "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
 
