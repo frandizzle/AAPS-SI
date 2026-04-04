@@ -68,6 +68,13 @@ class CircadianLearner @Inject constructor(
     private var lastPenaltyMs: Long = 0L
     private var lastPenaltyWasFasting: Boolean = false
     private var lastPenaltyReason: String = "penalty"  // used in cooldown note label
+    // Hour-start multiplier snapshot — captured once when the nudge fires for the first time
+    // in a given hour. Used as "was" baseline so the display shows cumulative learning
+    // within the hour rather than a single per-cycle step.
+    private var nudgeSessionHour: Int = -1
+    private var nudgeSessionDow:  Int = -1
+    private var nudgeSessionIsfMult: Double = 1.0
+    private var nudgeSessionBasMult: Double = 1.0
     // Exposed so the plugin/fragment can show "hard low penalty applied" in the UI
     var lastHardLowPenaltyMs: Long = 0L
         private set
@@ -254,6 +261,16 @@ class CircadianLearner @Inject constructor(
         val prevIsfMult = isfState.days[d].get(hour)
         val prevBasMult = basalState.days[d].get(hour)
 
+        // Capture session-start multipliers on first nudge of this hour/day combo.
+        // These are the "was" baseline — held constant all hour so the display shows
+        // cumulative drift (session start → now) rather than a single tiny 5-min step.
+        if (nudgeSessionHour != hour || nudgeSessionDow != dow) {
+            nudgeSessionHour    = hour
+            nudgeSessionDow     = dow
+            nudgeSessionIsfMult = prevIsfMult
+            nudgeSessionBasMult = prevBasMult
+        }
+
         // Only nudge ISF if physics learner didn't fire this cycle
         if (!isfPhysicsFired) {
             // dosingISF = profileISF / isfMult
@@ -280,11 +297,13 @@ class CircadianLearner @Inject constructor(
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
 
-        // Store: direction|deviation%|day|hour|prevIsfMult|newIsfMult|prevBasMult|newBasMult|cooldown|penaltyReason
+        // Store: direction|deviation%|day|hour|sessionIsfMult|newIsfMult|sessionBasMult|newBasMult|cooldown|penaltyReason
+        // Parts 4 and 6 are SESSION-START multipliers (hour baseline) — used as "was" in display.
+        // Parts 5 and 7 are CURRENT post-nudge multipliers — used as "now" in display.
         val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
-            "${"%.4f".format(prevIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
-            "${"%.4f".format(prevBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
+            "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
+            "${"%.4f".format(nudgeSessionBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
             "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason"
         lastBasalSignal = "AggrNudge[${if (tooMuch) "↓" else "↑"}]${if (cooldownActive) "[attenuated]" else ""}: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
         aapsLogger.debug(LTag.APS,
