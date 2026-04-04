@@ -158,6 +158,7 @@ open class SmartInsulinPlugin @Inject constructor(
         const val REBOUND_GUARD_MS              = 60 * 60 * 1000L
         const val ROLLER_REBOUND_EXTENSION_MS   = 15 * 60 * 1000L   // +15 min per consecutive rollercoaster
         const val ROLLER_REBOUND_EXTENSION_MAX_MS = 45 * 60 * 1000L // cap at +45 min total extension
+        const val UAM_EXIT_MAX_DELTA_MMOL       = 0.5                // max rising delta (mmol/5min) to allow auto-cancel at target
         const val SMB_DELIVERY_FRACTION = 0.5
     }
 
@@ -1184,6 +1185,23 @@ open class SmartInsulinPlugin @Inject constructor(
             if (reboundWindowStartMs > 0L) {
                 reboundWindowStartMs = 0L
                 aapsLogger.debug(LTag.APS, "SmartInsulin: BG dropped below lowGuard during rebound window — resetting timer")
+            }
+        }
+
+        // ── UAM / P/F auto-cancel when BG returns to target or below ─────────
+        // Insulin did its job — no need to keep the elevated ISF/target active.
+        // Gate: BG at or below profile target AND not rising fast (shortAvgDelta < 0.5 mmol/5min)
+        // so we don't cancel mid-spike just because a noisy reading dips to target briefly.
+        if (mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED) {
+            val shortAvgMmol = glucoseStatus.shortAvgDelta / 18.0
+            val bgAtOrBelowTarget = currentBgMgdl <= profileTargetMgdl
+            val notStillRising    = shortAvgMmol < UAM_EXIT_MAX_DELTA_MMOL
+            if (bgAtOrBelowTarget && notStillRising) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: BG ${fmtBg(currentBgMgdl)}$unitLabel at/below target " +
+                                     "${fmtBg(profileTargetMgdl)}$unitLabel and not rising (Δ=${String.format("%.2f", shortAvgMmol)} mmol) " +
+                                     "— auto-cancelling ${mealMode.label}")
+                mealOverrideManager.cancelOverride()
             }
         }
 
