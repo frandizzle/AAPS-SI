@@ -479,9 +479,9 @@ class CircadianLearner @Inject constructor(
                 val prevBasMult   = basalState.days[dow].get(hour)
                 val nudgedBasMult = (prevBasMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                 basalState = basalState.updatedDayOnly(dow, hour, nudgedBasMult, 1.0)
-                // ISF: mult UP — higher dosingISF = less aggressive corrections
+                // ISF: mult DOWN → dosingISF = profileISF / lowerMult → dosingISF UP → less aggressive → less insulin ✓
                 val prevIsfMult   = isfState.days[dow].get(hour)
-                val nudgedIsfMult = (prevIsfMult / AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                val nudgedIsfMult = (prevIsfMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
                 isfState = isfState.updatedDayOnly(dow, hour, nudgedIsfMult, 1.0)
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
@@ -687,6 +687,12 @@ class CircadianLearner @Inject constructor(
         bgHistory.clear()
         preferences.put(StringKey.ApsSmartInsulinCircadianState, "")
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
+    }
+
+    fun resetIsf() {
+        isfState = DayOfWeekCircadianState()
+        persist()
+        aapsLogger.debug(LTag.APS, "CircadianLearner ISF state reset — multiplier back to 1.0")
     }
 
     fun resetBasal() {
