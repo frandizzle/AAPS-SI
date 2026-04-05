@@ -173,6 +173,10 @@ open class SmartInsulinPlugin @Inject constructor(
     // Use these for all user-visible strings.
     val isMmol: Boolean get() =
         profileUtil.units == GlucoseUnit.MMOL
+    /** Profile ISF in mg/dL — for circadian table colour comparison */
+    val profileIsfMgdl: Double get() = profileFunction.getProfile()?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
+    /** Profile basal U/h — for circadian table colour comparison */
+    val profileBasalU: Double get() = profileFunction.getProfile()?.getBasal() ?: 0.0
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     /** Format a BG value in mg/dL to user units */
     private fun fmtBg(mgdl: Double): String =

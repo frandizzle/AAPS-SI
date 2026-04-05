@@ -825,8 +825,33 @@ class SmartInsulinFragment : DaggerFragment() {
         val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
         val rows  = parseCircRows(raw); if (rows.isEmpty()) return
 
-        // ── Header row ───────────────────────────────────────────────────────
-        val isMmolUnit = smartInsulinPlugin.isMmol
+        // Profile reference values for colour coding
+        val isMmolUnit  = smartInsulinPlugin.isMmol
+        val profIsfMgdl = smartInsulinPlugin.profileIsfMgdl
+        val profBasalU  = smartInsulinPlugin.profileBasalU
+        val profIsfDisp = if (isMmolUnit && profIsfMgdl > 0) (profIsfMgdl / 18.0).toFloat() else profIsfMgdl.toFloat()
+
+        // Colour logic:
+        // ISF: grey = profile, orange = lower ISF (more aggressive), blue = higher ISF (less aggressive)
+        // Basal: grey = profile, orange = higher basal (more aggressive), blue = lower basal (less aggressive)
+        fun isfColor(v: Float): Int {
+            if (profIsfDisp <= 0f) return Color.parseColor("#FFDDDDDD")
+            val ratio = v / profIsfDisp
+            return when {
+                ratio < 0.97f -> Color.parseColor("#FFFB8C00")  // lower ISF = more aggressive = orange
+                ratio > 1.03f -> Color.parseColor("#FF64B5F6")  // higher ISF = less aggressive = blue
+                else          -> Color.parseColor("#FF888888")  // at profile = grey
+            }
+        }
+        fun basColor(v: Float): Int {
+            if (profBasalU <= 0.0) return Color.parseColor("#FFDDDDDD")
+            val ratio = v / profBasalU.toFloat()
+            return when {
+                ratio > 1.03f -> Color.parseColor("#FFFB8C00")  // higher basal = more aggressive = orange
+                ratio < 0.97f -> Color.parseColor("#FF64B5F6")  // lower basal = less aggressive = blue
+                else          -> Color.parseColor("#FF888888")  // at profile = grey
+            }
+        }
         val isfHeader  = if (isMmolUnit) "ISF mmol" else "ISF mg/dL"
         val basHeader  = "Basal U/h"
         val headerRow  = LinearLayout(ctx).apply {
@@ -857,13 +882,9 @@ class SmartInsulinFragment : DaggerFragment() {
                 if (bold || isCur) setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
             }
-            // ISF colour: higher ISF = less aggressive = blue; lower = more aggressive = amber
-            val isfColor = when { row.isfVal > 2.1f -> Color.parseColor("#FF64B5F6"); row.isfVal < 1.9f -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFDDDDDD") }
-            // Basal colour: lower than profile = blue; higher = amber
-            val basColor = Color.parseColor("#FFDDDDDD")  // neutral — absolute value, no easy reference
             rowL.addView(cell(if (isCur) "►${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
-            rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor))
-            rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor))
+            rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal)))
+            rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor(row.basVal)))
             rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
             val confL = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
