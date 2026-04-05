@@ -46,6 +46,9 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.btnResetAggression.setOnClickListener {
             confirmReset("Reset aggressiveness score to 1.0?") { smartInsulinPlugin.resetAggression(); refreshStatus() }
         }
+        binding.btnResetIsf.setOnClickListener {
+            confirmReset("Reset ISF circadian learning to 1.0? Basal and aggression learning kept.") { smartInsulinPlugin.resetIsf(); refreshStatus() }
+        }
         binding.btnResetBasal.setOnClickListener {
             confirmReset("Reset basal + circadian basal learners to 1.0?") { smartInsulinPlugin.resetBasal(); refreshStatus() }
         }
@@ -771,7 +774,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     // ── Circadian table ───────────────────────────────────────────────────────
 
-    private data class CircRow(val hour: Int, val isfMult: Float, val basMult: Float, val ceil: Float, val confPct: Int)
+    private data class CircRow(val hour: Int, val isfVal: Float, val basVal: Float, val ceil: Float, val confPct: Int)
 
     private fun parseCircRows(raw: String) = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
         .findAll(raw).mapNotNull { m -> CircRow(
@@ -782,7 +785,8 @@ class SmartInsulinFragment : DaggerFragment() {
             m.groupValues[5].toIntOrNull()   ?: return@mapNotNull null) }.toList()
 
     private fun confColor(p: Int)   = when { p >= 60 -> Color.parseColor("#FF43A047"); p >= 30 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFE53935") }
-    private fun multColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
+    // Ceiling colour: <0.95 = blue (restricted), >1.05 = amber (boosted), else grey
+    private fun ceilColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
 
     private fun updateCircadianTable(ignored: String) {
         val b = _binding ?: return; val ctx = context ?: return
@@ -821,6 +825,26 @@ class SmartInsulinFragment : DaggerFragment() {
         val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
         val rows  = parseCircRows(raw); if (rows.isEmpty()) return
 
+        // ── Header row ───────────────────────────────────────────────────────
+        val isMmolUnit = smartInsulinPlugin.isMmol
+        val isfHeader  = if (isMmolUnit) "ISF mmol" else "ISF mg/dL"
+        val basHeader  = "Basal U/h"
+        val headerRow  = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (4*dp).toInt() }
+        }
+        fun hcell(t: String, w: Float) = TextView(ctx).apply {
+            text = t; textSize = 10f; setTextColor(Color.parseColor("#FF888888"))
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
+        }
+        headerRow.addView(hcell("Hr", 1f))
+        headerRow.addView(hcell(isfHeader, 2f))
+        headerRow.addView(hcell(basHeader, 2f))
+        headerRow.addView(hcell("Ceil", 2f))
+        headerRow.addView(hcell("Conf", 3f))
+        cont.addView(headerRow)
+
         rows.forEach { row ->
             val isCur = selectedCircadianDow == todayDow && row.hour == currentHr
             val rowL = LinearLayout(ctx).apply {
@@ -833,10 +857,14 @@ class SmartInsulinFragment : DaggerFragment() {
                 if (bold || isCur) setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
             }
+            // ISF colour: higher ISF = less aggressive = blue; lower = more aggressive = amber
+            val isfColor = when { row.isfVal > 2.1f -> Color.parseColor("#FF64B5F6"); row.isfVal < 1.9f -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFDDDDDD") }
+            // Basal colour: lower than profile = blue; higher = amber
+            val basColor = Color.parseColor("#FFDDDDDD")  // neutral — absolute value, no easy reference
             rowL.addView(cell(if (isCur) "►${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
-            rowL.addView(cell("%.3f".format(row.isfMult), 2f, multColor(row.isfMult)))
-            rowL.addView(cell("%.3f".format(row.basMult), 2f, multColor(row.basMult)))
-            rowL.addView(cell("%.3f".format(row.ceil),    2f, multColor(row.ceil)))
+            rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor))
+            rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor))
+            rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
             val confL = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f)

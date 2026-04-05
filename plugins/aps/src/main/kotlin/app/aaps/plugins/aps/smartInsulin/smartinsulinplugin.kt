@@ -171,7 +171,7 @@ open class SmartInsulinPlugin @Inject constructor(
     // Internal BG values are always mg/dL; deltas from glucoseStatus are mg/dL.
     // shortAvgDeltaAtLow is stored in mmol (converted at capture site).
     // Use these for all user-visible strings.
-    private val isMmol: Boolean get() =
+    val isMmol: Boolean get() =
         profileUtil.units == GlucoseUnit.MMOL
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     /** Format a BG value in mg/dL to user units */
@@ -223,6 +223,11 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: aggression reset")
     }
 
+    fun resetIsf() {
+        circadianLearner.resetIsf()
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: ISF circadian state reset")
+    }
+
     fun resetBasal() {
         basalLearner.reset()
         circadianLearner.resetBasal()
@@ -246,6 +251,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
+        val profIsf   = profileFunction.getProfile()?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
+        val profBasal = profileFunction.getProfile()?.getBasal() ?: 0.0
+        val isMmolUnit = isMmol
         return buildString {
             appendLine()
 
@@ -256,9 +264,15 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine("  TIR score: ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
             appendLine("  Circ ceiling: ${"%.3f".format(circadianLearner.aggrCeiling(hour))} (clamps score downward if < score)")
             appendLine("  Meal mode: aggressiveness locked to 1.0 during any non-fasting mode")
-            appendLine("  ISF multiplier: ${"%.3f".format(circadianLearner.isfMultiplier(hour))}")
-            appendLine("  Basal multiplier: ${"%.3f".format(basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour))} " +
-                           "(flat=${"%.3f".format(basalLearner.multiplierClamped)} circ=${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
+            val isfMult = circadianLearner.isfMultiplier(hour)
+            val learnedIsf = if (profIsf > 0 && isfMult > 0)
+                if (isMmolUnit) "${"%.2f".format(profIsf / isfMult / 18.0)} mmol/U"
+                else "${"%.1f".format(profIsf / isfMult)} mg/dL/U"
+            else "—"
+            appendLine("  ISF: $learnedIsf (×${"%.3f".format(isfMult)})")
+            val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
+            val learnedBas = if (profBasal > 0) "${"%.3f".format(profBasal * basalMult)} U/h" else "—"
+            appendLine("  Basal: $learnedBas (×${"%.3f".format(basalMult)} flat=×${"%.3f".format(basalLearner.multiplierClamped)} circ=×${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
 
@@ -324,13 +338,19 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
 
             // ── Circadian tables ──────────────────────────────────────────────
+            val isfUnit  = if (isMmolUnit) "mmol/U" else "mg/dL/U"
             appendLine("── Circadian 24h ─────────────────────")
-            appendLine("  h   ISF×   Bas×   Ceil   Conf%")
+            appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
-                val marker = if (h == hour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
+                val marker    = if (h == hour) "▶" else " "
+                val hIsfMult  = circadianLearner.isfMultiplier(h)
+                val hBasMult  = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
+                val hIsf = if (profIsf > 0 && hIsfMult > 0)
+                    if (isMmolUnit) "${"%.2f".format(profIsf / hIsfMult / 18.0)}"
+                    else "${"%.1f".format(profIsf / hIsfMult)}"
+                else "—"
+                val hBas = if (profBasal > 0) "${"%.3f".format(profBasal * hBasMult)}" else "—"
+                appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  " +
                                "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
                                "${"%.0f".format(circadianLearner.confidencePct(h))}%")
             }
@@ -435,11 +455,21 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val circRaw = buildString {
+            val isfUnit  = if (isMmol) "mmol/U" else "mg/dL/U"
+            val basUnit  = "U/h"
+            appendLine("  Hr  ISF ($isfUnit)   Basal ($basUnit)  Ceil   Conf")
             for (h in 0..23) {
-                val marker = if (h == hour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h))}  " +
+                val marker    = if (h == hour) "▶" else " "
+                val isfMult   = circadianLearner.isfMultiplier(h)
+                val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
+                val learnedIsf = if (profileIsf > 0 && isfMult > 0)
+                    if (isMmol) "${"%.2f".format(profileIsf / isfMult / 18.0)}"
+                    else "${"%.1f".format(profileIsf / isfMult)}"
+                else "—"
+                val learnedBas = if (profileBasal > 0)
+                    "${"%.3f".format(profileBasal * basalMult)}"
+                else "—"
+                appendLine("$marker ${h.toString().padStart(2)}  $learnedIsf  $learnedBas  " +
                                "${"%.3f".format(circadianLearner.aggrCeiling(h))}  " +
                                "${"%.0f".format(circadianLearner.confidencePct(h))}%")
             }
@@ -537,12 +567,20 @@ open class SmartInsulinPlugin @Inject constructor(
     fun circadianDataForDay(dow: Int): String {
         val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val currentDow  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+        val profIsf     = profileFunction.getProfile()?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
+        val profBasal   = profileFunction.getProfile()?.getBasal() ?: 0.0
+        val isMmolUnit  = isMmol
         return buildString {
             for (h in 0..23) {
-                val marker = if (dow == currentDow && h == currentHour) "▶" else " "
-                appendLine("$marker ${h.toString().padStart(2)}  " +
-                               "${"%.3f".format(circadianLearner.isfMultiplier(h, dow))}  " +
-                               "${"%.3f".format(circadianLearner.basalMultiplier(h, dow))}  " +
+                val marker   = if (dow == currentDow && h == currentHour) "▶" else " "
+                val hIsfMult = circadianLearner.isfMultiplier(h, dow)
+                val hBasMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h, dow)
+                val hIsf = if (profIsf > 0 && hIsfMult > 0)
+                    if (isMmolUnit) "${"%.2f".format(profIsf / hIsfMult / 18.0)}"
+                    else "${"%.1f".format(profIsf / hIsfMult)}"
+                else "—"
+                val hBas = if (profBasal > 0) "${"%.3f".format(profBasal * hBasMult)}" else "—"
+                appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  " +
                                "${"%.3f".format(circadianLearner.aggrCeiling(h, dow))}  " +
                                "${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
             }
