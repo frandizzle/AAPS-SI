@@ -461,20 +461,19 @@ class CircadianLearner @Inject constructor(
         // If in meal mode, UAM, P/F, or post-meal lockout, the low is food-driven —
         // penalising the fasting profile would corrupt clean fasting data.
         if (bg < lowGuardMgdl && isFasting && !inPostMealLockout) {
-            // Short term: 20% ceiling cut every cycle (EWMA-bounded — converges quickly)
-            val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
-            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
-            // NOTE: lastPenaltyMs intentionally NOT set here — hard low is a separate event
-            // from rollercoaster/soft-low and should not trigger the nudge cooldown window.
-            lastPenaltyWasFasting = isFasting
-
-            // Long term: nudge basal DOWN and ISF mult UP — once per low event (30-min gate)
-            // dosingISF = profileISF / isfMult → mult UP = higher dosingISF = less aggressive
+            // All hard low penalties fire ONCE per low event (30-min gate).
+            // Fire once, observe, let the loop and rebound window handle delivery.
+            // Don't hammer ISF/basal/ceiling every 5 min while BG stays low.
             val nowMs = System.currentTimeMillis()
             val msSinceLastHardLow = if (lastHardLowPenaltyMs > 0L) nowMs - lastHardLowPenaltyMs else Long.MAX_VALUE
             val isNewLowEvent = msSinceLastHardLow > HARD_LOW_BASAL_GATE_MS
             lastHardLowPenaltyMs = nowMs
+            lastPenaltyWasFasting = isFasting
+
             if (isNewLowEvent) {
+                // Short term: 20% ceiling cut — once per event
+                val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
+                aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
                 // Basal: mult DOWN — less background insulin
                 val prevBasMult   = basalState.days[dow].get(hour)
                 val nudgedBasMult = (prevBasMult * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
@@ -489,8 +488,8 @@ class CircadianLearner @Inject constructor(
                                          .format(aggrState.get(dow, hour), prevBasMult, nudgedBasMult, prevIsfMult, nudgedIsfMult))
             } else {
                 aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner Aggr h=$hour HARD_LOW (ongoing) bg=${"%.1f".format(bg)} → ceil=%.3f (nudges gated)"
-                                     .format(aggrState.get(dow, hour)))
+                                 "CircadianLearner Aggr h=$hour HARD_LOW (ongoing, gated) bg=${"%.1f".format(bg)} → no further penalty until next event"
+                                     .format())
             }
             return
         }
