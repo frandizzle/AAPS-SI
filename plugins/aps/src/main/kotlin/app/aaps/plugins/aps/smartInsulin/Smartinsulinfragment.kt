@@ -550,22 +550,19 @@ class SmartInsulinFragment : DaggerFragment() {
                     } else "%02d:00".format(hour)
                 } else "?"
 
-                // "Was" = blended ISF/basal the loop was actually using at the start of this nudge session
-                //         (same blend as isfMultiplier() — day bucket weighted by confidence + global)
-                // "Now" = d.finalIsfMgdl / d.finalBasalU — exactly what the loop is delivering right now
-                // Both now match the overview ISF/basal display.
-                val wasIsf = if (d.profileIsfMgdl > 0 && d.nudgeSessionIsfMult > 0)
-                    if (d.isMmol) "${"%.2f".format(d.profileIsfMgdl / d.nudgeSessionIsfMult / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.profileIsfMgdl / d.nudgeSessionIsfMult)} mg/dL/U"
+                // "Was" = full composite ISF/basal at start of this hour (same values loop was delivering)
+                // "Now" = current full composite (finalIsfMgdl / finalBasalU) — exactly what loop delivers now
+                val wasIsf = if (d.nudgeSessionIsfMgdl > 0)
+                    if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} mmol/U"
+                    else "${"%.1f".format(d.nudgeSessionIsfMgdl)} mg/dL/U"
                 else "?"
                 val nowIsf = if (d.finalIsfMgdl > 0)
                     if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U"
                     else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U"
                 else "?"
 
-                // Basal: "was" = profile × blended session-start mult, "now" = actual delivered rate
-                val wasBas = if (d.profileBasalU > 0 && d.nudgeSessionBasMult > 0)
-                    "${"%.3f".format(d.profileBasalU * d.nudgeSessionBasMult)} U/h"
+                val wasBas = if (d.nudgeSessionBasalU > 0)
+                    "${"%.3f".format(d.nudgeSessionBasalU)} U/h"
                 else "?"
                 val nowBas = if (d.finalBasalU > 0)
                     "${"%.3f".format(d.finalBasalU)} U/h"

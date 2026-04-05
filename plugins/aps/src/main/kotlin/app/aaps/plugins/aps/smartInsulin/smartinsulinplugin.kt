@@ -133,6 +133,11 @@ open class SmartInsulinPlugin @Inject constructor(
     var uamEntrySmbsDelivered: Int = 0             // SMBs delivered since current UAM mode activated
     var uamEntryModeStartMs: Long = 0L             // timestamp when current UAM mode started
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
+    // Session-start snapshots for nudge "was" display — captured when hour changes
+    // Uses full composite values so "was" matches what the loop was actually delivering
+    private var nudgeDisplaySessionHour: Int = -1
+    private var nudgeDisplaySessionIsfMgdl: Double = 0.0   // full profileISF / isfMult at session start
+    private var nudgeDisplaySessionBasalU: Double = 0.0    // full profileBasal * basalMult at session start
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
@@ -360,8 +365,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val aggressiveness:     Double,
         val circCeil:           Double,
         val isfMultiplier:      Double,
-        val nudgeSessionIsfMult: Double,   // blended ISF mult at nudge session start (loop's actual "was")
-        val nudgeSessionBasMult: Double,   // blended basal mult at nudge session start
+        val nudgeSessionIsfMgdl: Double,   // full composite ISF mg/dL at session start (matches loop delivery)
+        val nudgeSessionBasalU: Double,    // full composite basal U/h at session start (matches loop delivery)
         val profileIsfMgdl:     Double,
         val finalIsfMgdl:       Double,
         val basalMultiplier:    Double,
@@ -421,6 +426,14 @@ open class SmartInsulinPlugin @Inject constructor(
         val rawFinalBasal     = profileBasal * basalMult
         val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
 
+        // Capture full composite session-start values when hour changes
+        // These are used as "was" in the learning card — includes ALL multipliers
+        if (nudgeDisplaySessionHour != hour) {
+            nudgeDisplaySessionHour   = hour
+            nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
+            nudgeDisplaySessionBasalU  = roundedFinalBasal
+        }
+
         val circRaw = buildString {
             for (h in 0..23) {
                 val marker = if (h == hour) "▶" else " "
@@ -466,8 +479,8 @@ open class SmartInsulinPlugin @Inject constructor(
             aggressiveness     = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)),
             circCeil           = circadianLearner.aggrCeiling(hour),
             isfMultiplier      = isfMult,
-            nudgeSessionIsfMult = circadianLearner.nudgeSessionBlendedIsfMult,
-            nudgeSessionBasMult = circadianLearner.nudgeSessionBlendedBasMult,
+            nudgeSessionIsfMgdl = nudgeDisplaySessionIsfMgdl,
+            nudgeSessionBasalU  = nudgeDisplaySessionBasalU,
             profileIsfMgdl     = profileIsf,
             finalIsfMgdl       = profileIsf / isfMult,
             basalMultiplier    = basalMult,
