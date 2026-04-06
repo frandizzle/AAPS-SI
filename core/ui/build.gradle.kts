@@ -25,6 +25,10 @@ dependencies {
 
     api(libs.com.google.android.material)
     api(platform(libs.androidx.compose.bom))
+
+    // --- Added Base Compose UI ---
+    api(libs.androidx.compose.ui)
+
     api(libs.androidx.compose.material3)
     api(libs.androidx.compose.material.icons.extended)
     api(libs.androidx.compose.runtime)
