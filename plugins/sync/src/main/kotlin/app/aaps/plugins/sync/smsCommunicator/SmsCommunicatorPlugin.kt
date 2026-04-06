@@ -138,7 +138,7 @@ class SmsCommunicatorPlugin @Inject constructor(
     val repository: SmsCommunicatorRepository
 ) : PluginBaseWithPreferences(
     PluginDescription()
-        .mainType(PluginType.SYNC)
+        .mainType(PluginType.GENERAL) // <--- Changed from SYNC to GENERAL
         .composeContent { SmsCommunicatorComposeContent() }
         .pluginIcon(app.aaps.core.objects.R.drawable.ic_sms)
         .icon(IcPluginSms)
