@@ -21,7 +21,7 @@ class ActionSmartInsulinReset(injector: HasAndroidInjector) : Action(injector) {
 
     override fun generateDialog(root: LinearLayout) = Unit
 
-    override fun doAction(callback: Callback) {
+    override suspend fun doAction(callback: Callback) {
         smartInsulinLearner.resetProfiles()
         callback.result(pumpEnactResultProvider.get().success(true).comment(app.aaps.core.ui.R.string.ok)).run()
     }

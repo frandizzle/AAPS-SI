@@ -3,7 +3,6 @@ package app.aaps.plugins.aps.di
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.autotune.Autotune
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
-import app.aaps.plugins.aps.OpenAPSFragment
 import app.aaps.plugins.aps.autotune.AutotunePlugin
 import app.aaps.plugins.aps.loop.LoopPlugin
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
@@ -25,7 +24,6 @@ import dagger.hilt.components.SingletonComponent
 @Suppress("unused")
 abstract class ApsModule {
 
-    @ContributesAndroidInjector abstract fun contributesOpenAPSFragment(): OpenAPSFragment
     @ContributesAndroidInjector abstract fun contributesSmartInsulinFragment(): SmartInsulinFragment
 
 

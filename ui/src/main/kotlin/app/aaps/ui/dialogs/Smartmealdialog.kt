@@ -25,7 +25,6 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.objects.extensions.formatColor
-import app.aaps.core.ui.dialogs.OKDialog
 import app.aaps.core.ui.toast.ToastUtils
 import app.aaps.core.utils.HtmlHelper
 import app.aaps.ui.R
@@ -226,13 +225,13 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         "Cancel auto-detected ${activeMode.label}? The loop will return to fasting mode."
                     else
                         rh.gs(R.string.si_cancel_mode_confirm, activeMode.label)
-                    OKDialog.showConfirmation(act,
-                                              rh.gs(R.string.si_dialog_title),
-                                              confirmMsg, {
-                                                  mealOverrideManager.cancelOverride()
-                                                  ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_cancelled))
-                                                  dismiss()
-                                              })
+                    uiInteraction.showOkCancelDialog(act,
+                                                    rh.gs(R.string.si_dialog_title),
+                                                    confirmMsg, ok = {
+                                                        mealOverrideManager.cancelOverride()
+                                                        ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_cancelled))
+                                                        dismiss()
+                                                    })
                 }
             }
         } else {
@@ -248,13 +247,13 @@ class SmartMealDialog : DialogFragmentWithDate() {
             binding.cancelPb2Button.text = "Cancel  |  $pb2Status"
             binding.cancelPb2Button.setOnClickListener {
                 activity?.let { act ->
-                    OKDialog.showConfirmation(act,
-                                              rh.gs(R.string.si_dialog_title),
-                                              "Cancel the scheduled pre-bolus 2? The meal mode will stay active.", {
-                                                  mealOverrideManager.cancelPreBolus2()
-                                                  ToastUtils.okToast(ctx, "Pre-bolus 2 cancelled")
-                                                  dismiss()
-                                              })
+                    uiInteraction.showOkCancelDialog(act,
+                                                    rh.gs(R.string.si_dialog_title),
+                                                    "Cancel the scheduled pre-bolus 2? The meal mode will stay active.", ok = {
+                                                        mealOverrideManager.cancelPreBolus2()
+                                                        ToastUtils.okToast(ctx, "Pre-bolus 2 cancelled")
+                                                        dismiss()
+                                                    })
                 }
             }
         } else {
@@ -321,11 +320,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
         }
 
         activity?.let { activity ->
-            OKDialog.showConfirmation(
+            uiInteraction.showOkCancelDialog(
                 activity,
                 rh.gs(R.string.si_dialog_title),
-                HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)),
-                {
+                HtmlHelper.fromHtml(Joiner.on("<br/>").join(actions)).toString(),
+                ok = {
                     // Save updated ISF to SharedPreferences via sp.putDouble — must match
                     // the read path: sp.getDouble(key.key) in the plugin and rawStoredMgdl()
                     // in AdaptiveUnitPreference. preferences.put(UnitDoubleKey) also calls

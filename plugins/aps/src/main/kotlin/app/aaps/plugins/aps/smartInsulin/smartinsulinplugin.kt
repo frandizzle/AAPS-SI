@@ -63,7 +63,9 @@ import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
-import org.json.JSONObject
+import app.aaps.core.interfaces.insulin.ConcentrationHelper
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.floor
@@ -101,7 +103,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
     private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
-    private val overviewData: OverviewData
+    private val overviewData: OverviewData,
+    private val ch: ConcentrationHelper
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -277,7 +280,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── STFT / UAM ────────────────────────")
             // STFT
-            val stftStatus = stftController.statusString(profileFunction.getProfile()?.getTargetMgdl() ?: (5.5 * 18.0))
+            val stftStatus = stftController.statusString(runBlocking { profileFunction.getProfile() }?.getTargetMgdl() ?: (5.5 * 18.0))
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
             // UAM status
             val uamStatus = uamController.statusString()
@@ -414,7 +417,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        val profile = profileFunction.getProfile()
+        val profile = runBlocking { profileFunction.getProfile() }
         val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
         val profileBasal = profile?.getBasal() ?: 0.0
         val isfMult      = circadianLearner.isfMultiplier(hour)
@@ -460,7 +463,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Requires minimum 24 readings (~2h) for a meaningful estimate.
         val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
             val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
-            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
+            val bgs = runBlocking { persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true) }
             if (bgs.size >= 24) {
                 val mean  = bgs.map { it.value }.average()
                 val a1c   = (mean + 46.7) / 28.7
@@ -622,7 +625,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
-    override fun invoke(initiator: String, tempBasalFallback: Boolean) {
+    override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
         lastAPSResult = null
@@ -640,7 +643,7 @@ open class SmartInsulinPlugin @Inject constructor(
             return
         }
 
-        if (!hardLimits.checkHardLimits(profile.dia, app.aaps.core.ui.R.string.profile_dia, hardLimits.minDia(), hardLimits.maxDia())) return
+        if (!hardLimits.checkHardLimits(profile.iCfg.dia, app.aaps.core.ui.R.string.profile_dia, hardLimits.minDia(), hardLimits.maxDia())) return
         if (!hardLimits.checkHardLimits(
                 profile.getIcTimeFromMidnight(MidnightUtils.secondsFromMidnight()),
                 app.aaps.core.ui.R.string.profile_carbs_ratio_value,
@@ -935,7 +938,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
         val oapsProfile = OapsProfile(
-            dia                              = profile.dia,
+            dia                              = profile.iCfg.dia,
             min_5m_carbimpact               = 0.0,
             max_iob                         = constraintsChecker.getMaxIOBAllowed().also { inputConstraints.copyReasons(it) }.value(),
             max_daily_basal                 = profile.getMaxDailyBasal(),
@@ -971,7 +974,7 @@ open class SmartInsulinPlugin @Inject constructor(
             maxUAMSMBBasalMinutes           = Int.MAX_VALUE,
             bolus_increment                 = pump.pumpDescription.bolusStep,
             carbsReqThreshold               = preferences.get(IntKey.ApsCarbsRequestThreshold),
-            current_basal                   = pump.baseBasalRate,
+            current_basal                   = ch.fromPump(pump.baseBasalRate),
             temptargetSet                   = isTempTarget,
             autosens_max                    = preferences.get(DoubleKey.AutosensMax),
             out_units                       = if (profileUtil.units == GlucoseUnit.MMOL) "mmol/L" else "mg/dl",
@@ -1493,14 +1496,14 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? =
         glucoseStatusCalculatorSMB.getGlucoseStatusData(allowOldData)
 
-    override fun configuration(): JSONObject =
-        JSONObject()
+    override fun configuration(): JsonObject =
+        JsonObject(emptyMap())
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
             .put(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinLowGuard, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
 
-    override fun applyConfiguration(configuration: JSONObject) {
+    override fun applyConfiguration(configuration: JsonObject) {
         configuration
             .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
             .store(DoubleKey.ApsSmartInsulinLearningRate, preferences)

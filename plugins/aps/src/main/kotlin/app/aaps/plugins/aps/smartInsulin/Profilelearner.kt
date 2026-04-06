@@ -2,13 +2,13 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import java.util.Locale
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -47,8 +47,7 @@ import javax.inject.Singleton
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
     private val preferences:     Preferences,
-    private val profileFunction: ProfileFunction,
-    private val activePlugin:    ActivePlugin
+    private val profileFunction: ProfileFunction
 ) : SmartInsulinLearner {
 
     // ── In-memory cache of learned profiles ──────────────────────────────────
@@ -73,9 +72,9 @@ class ProfileLearner @Inject constructor(
 
     /** Seed default from actual profile DIA and peak so first-run values are meaningful. */
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        val profile  = profileFunction.getProfile()
-        val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = activePlugin.activeInsulin.peak.toDouble()
+        val profile  = runBlocking { profileFunction.getProfile() }
+        val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
+        val peakMins = profile?.iCfg?.peak?.toDouble() ?: 75.0
         return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
     }
 
@@ -227,9 +226,9 @@ class ProfileLearner @Inject constructor(
      * Call this after changing insulin type or if learned values have drifted badly.
      */
     override fun resetProfiles() {
-        val profile  = profileFunction.getProfile()
-        val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = activePlugin.activeInsulin.peak.toDouble()
+        val profile  = runBlocking { profileFunction.getProfile() }
+        val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
+        val peakMins = profile?.iCfg?.peak?.toDouble() ?: 75.0
         aapsLogger.debug(LTag.APS,
                          "ProfileLearner: resetting all modes — seeding peak=${peakMins}m dia=${diaMins}m from current profile/insulin")
         MealMode.entries.forEach { mode ->

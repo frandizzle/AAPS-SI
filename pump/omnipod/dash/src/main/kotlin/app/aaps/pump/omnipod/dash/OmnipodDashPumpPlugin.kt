@@ -63,6 +63,7 @@ import app.aaps.pump.omnipod.common.keys.DashStringNonPreferenceKey
 import app.aaps.pump.omnipod.common.keys.OmnipodBooleanPreferenceKey
 import app.aaps.pump.omnipod.common.keys.OmnipodIntPreferenceKey
 import app.aaps.pump.omnipod.common.queue.command.CommandDeactivatePod
+import app.aaps.pump.omnipod.common.queue.command.CommandDeliverBasalCorrection
 import app.aaps.pump.omnipod.common.queue.command.CommandDisableSuspendAlerts
 import app.aaps.pump.omnipod.common.queue.command.CommandHandleTimeChange
 import app.aaps.pump.omnipod.common.queue.command.CommandPlayTestBeep
@@ -536,8 +537,8 @@ class OmnipodDashPumpPlugin @Inject constructor(
         
         val requestedInsulinAmount = PodConstants.POD_PULSE_BOLUS_UNITS
 
-        if (requestedInsulinAmount > reservoirLevel) {
-            aapsLogger.info(LTag.PUMP, "Basal correction skipped: not enough insulin in reservoir ($requestedInsulinAmount > $reservoirLevel)")
+        if (requestedInsulinAmount > reservoirLevel.value.cU) {
+            aapsLogger.info(LTag.PUMP, "Basal correction skipped: not enough insulin in reservoir ($requestedInsulinAmount > ${reservoirLevel.value.cU})")
             return pumpEnactResultProvider.get().success(false).enacted(false).comment("Not enough insulin in reservoir")
         }
         if (podStateManager.deliveryStatus?.bolusDeliveringActive() == true) {

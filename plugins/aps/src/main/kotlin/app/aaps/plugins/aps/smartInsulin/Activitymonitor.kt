@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,7 +58,7 @@ class ActivityMonitor @Inject constructor(
         // ── Heart Rate — TriggerHeartRate pattern ─────────────────────────────
         val hrStart = nowMs - HR_WINDOW_MS
         val hrs = try {
-            persistenceLayer.getHeartRatesFromTime(hrStart)
+            runBlocking { persistenceLayer.getHeartRatesFromTime(hrStart) }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ActivityMonitor: HR query failed: ${e.message}")
             emptyList()
@@ -71,7 +72,7 @@ class ActivityMonitor @Inject constructor(
         // ── Steps — TriggerStepsCount pattern ────────────────────────────────
         val stepsStart = nowMs - STEPS_WINDOW_MS
         val measurements = try {
-            persistenceLayer.getStepsCountFromTime(stepsStart)
+            runBlocking { persistenceLayer.getStepsCountFromTime(stepsStart) }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ActivityMonitor: steps query failed: ${e.message}")
             emptyList()

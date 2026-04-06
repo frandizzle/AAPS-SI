@@ -18,6 +18,12 @@ import app.aaps.core.interfaces.smoothing.Smoothing
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.abs
@@ -184,7 +190,8 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
     // Event system
     private val resetRequested = AtomicBoolean(false)
     private val disposable = CompositeDisposable()
-    private val sensorChangeDisposables = CompositeDisposable()
+    private val sensorScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var sensorChangeJob: Job? = null
 
     // ============================================================
     // INITIALIZATION
@@ -290,31 +297,28 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
      * Queries last 30 days of therapy events
      */
     private fun loadLastSensorChange() {
-        // Clear any pending queries first
-        sensorChangeDisposables.clear()
-
-        sensorChangeDisposables += persistenceLayer
-            .getTherapyEventDataFromTime(System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000, false)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ therapyEvents ->
-                           val latestSensorChange = therapyEvents
-                               .filter { it.type == TE.Type.SENSOR_CHANGE }
-                               .maxByOrNull { it.timestamp }
-
-                           latestSensorChange?.let { sensorChange ->
-                               if (sensorChange.timestamp > lastSensorChangeTimestamp) {
-                                   aapsLogger.info(LTag.GLUCOSE, "UKF: Detected sensor change at ${sensorChange.timestamp}")
-                                   lastSensorChangeTimestamp = sensorChange.timestamp
-
-                                   if (lastProcessedTimestamp > 0 && sensorChange.timestamp > lastProcessedTimestamp) {
-                                       aapsLogger.info(LTag.GLUCOSE, "UKF: Sensor changed after last processing, scheduling learning reset")
-                                       resetRequested.set(true)
-                                   }
-                               }
-                           }
-                       }, { throwable ->
-                           aapsLogger.error(LTag.GLUCOSE, "UKF: Error loading sensor change history", throwable)
-                       })
+        sensorChangeJob?.cancel()
+        sensorChangeJob = sensorScope.launch {
+            try {
+                val therapyEvents = persistenceLayer.getTherapyEventDataFromTime(
+                    System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000, false)
+                val latestSensorChange = therapyEvents
+                    .filter { it.type == TE.Type.SENSOR_CHANGE }
+                    .maxByOrNull { it.timestamp }
+                latestSensorChange?.let { sensorChange ->
+                    if (sensorChange.timestamp > lastSensorChangeTimestamp) {
+                        aapsLogger.info(LTag.GLUCOSE, "UKF: Detected sensor change at ${sensorChange.timestamp}")
+                        lastSensorChangeTimestamp = sensorChange.timestamp
+                        if (lastProcessedTimestamp > 0 && sensorChange.timestamp > lastProcessedTimestamp) {
+                            aapsLogger.info(LTag.GLUCOSE, "UKF: Sensor changed after last processing, scheduling learning reset")
+                            resetRequested.set(true)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.GLUCOSE, "UKF: Error loading sensor change history", e)
+            }
+        }
     }
 
     /**
@@ -322,25 +326,22 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
      * Called when EventTherapyEventChange is received
      */
     private fun checkForSensorChange() {
-        // Clear any pending queries first
-        sensorChangeDisposables.clear()
-
-        sensorChangeDisposables += persistenceLayer
-            .getTherapyEventDataFromTime(lastSensorChangeTimestamp, false)
-            .observeOn(aapsSchedulers.io)
-            .subscribe({ therapyEvents ->
-                           val newSensorChanges = therapyEvents
-                               .filter { it.type == TE.Type.SENSOR_CHANGE && it.timestamp > lastSensorChangeTimestamp }
-
-                           if (newSensorChanges.isNotEmpty()) {
-                               val latestChange = newSensorChanges.maxByOrNull { it.timestamp }!!
-                               aapsLogger.info(LTag.GLUCOSE, "UKF: New sensor change at ${latestChange.timestamp}")
-                               lastSensorChangeTimestamp = latestChange.timestamp
-                               resetRequested.set(true)
-                           }
-                       }, { throwable ->
-                           aapsLogger.error(LTag.GLUCOSE, "UKF: Error checking for sensor changes", throwable)
-                       })
+        sensorChangeJob?.cancel()
+        sensorChangeJob = sensorScope.launch {
+            try {
+                val therapyEvents = persistenceLayer.getTherapyEventDataFromTime(lastSensorChangeTimestamp, false)
+                val newSensorChanges = therapyEvents
+                    .filter { it.type == TE.Type.SENSOR_CHANGE && it.timestamp > lastSensorChangeTimestamp }
+                if (newSensorChanges.isNotEmpty()) {
+                    val latestChange = newSensorChanges.maxByOrNull { it.timestamp }!!
+                    aapsLogger.info(LTag.GLUCOSE, "UKF: New sensor change at ${latestChange.timestamp}")
+                    lastSensorChangeTimestamp = latestChange.timestamp
+                    resetRequested.set(true)
+                }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.GLUCOSE, "UKF: Error checking for sensor changes", e)
+            }
+        }
     }
 
     /**
@@ -351,7 +352,8 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
         super.onStop()
         aapsLogger.info(LTag.GLUCOSE, "UKF: Cleaning up RxBus subscriptions")
         disposable.clear()
-        sensorChangeDisposables.clear()
+        sensorChangeJob?.cancel()
+        sensorScope.cancel()
     }
 
     // ============================================================
