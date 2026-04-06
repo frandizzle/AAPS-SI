@@ -54,15 +54,19 @@ import app.aaps.plugins.automation.triggers.TriggerTempTargetValue
 import app.aaps.plugins.automation.triggers.TriggerTime
 import app.aaps.plugins.automation.triggers.TriggerTimeRange
 import app.aaps.plugins.automation.triggers.TriggerWifiSsid
+import app.aaps.plugins.automation.ui.MapPickerActivity
 import dagger.Binds
 import dagger.Module
 import dagger.android.ContributesAndroidInjector
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
 
 @Module(
     includes = [
         AutomationModule.Bindings::class
     ]
 )
+@InstallIn(SingletonComponent::class)
 @Suppress("unused")
 abstract class AutomationModule {
 
@@ -73,6 +77,7 @@ abstract class AutomationModule {
     @ContributesAndroidInjector abstract fun contributesEditActionDialog(): EditActionDialog
     @ContributesAndroidInjector abstract fun contributesEditEventDialog(): EditEventDialog
     @ContributesAndroidInjector abstract fun contributesEditTriggerDialog(): EditTriggerDialog
+    @ContributesAndroidInjector abstract fun contributesMapPickerActivity(): MapPickerActivity
     @ContributesAndroidInjector abstract fun automationEventInjector(): AutomationEventObject
 
     @ContributesAndroidInjector abstract fun triggerInjector(): Trigger
@@ -122,6 +127,7 @@ abstract class AutomationModule {
     @ContributesAndroidInjector abstract fun contributesLocationService(): LocationService
 
     @Module
+    @InstallIn(SingletonComponent::class)
     interface Bindings {
 
         @Binds fun bindAutomation(automationPlugin: AutomationPlugin): Automation

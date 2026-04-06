@@ -1,11 +1,18 @@
 package app.aaps.core.keys
 
 import app.aaps.core.keys.interfaces.BooleanPreferenceKey
+import app.aaps.core.keys.interfaces.PreferenceEnabledCondition
+import app.aaps.core.keys.interfaces.PreferenceVisibility
 import app.aaps.core.keys.interfaces.StringPreferenceKey
+import app.aaps.core.keys.interfaces.StringValidator
 
 enum class StringKey(
     override val key: String,
     override val defaultValue: String,
+    override val titleResId: Int,
+    override val summaryResId: Int? = null,
+    override val preferenceType: PreferenceType = PreferenceType.TEXT_FIELD,
+    override val entries: Map<String, Int> = emptyMap(),
     override val defaultedBySM: Boolean = false,
     override val showInApsMode: Boolean = true,
     override val showInNsClientMode: Boolean = true,
@@ -15,205 +22,356 @@ enum class StringKey(
     override val hideParentScreenIfHidden: Boolean = false,
     override val isPassword: Boolean = false,
     override val isPin: Boolean = false,
-    override val exportable: Boolean = true
+    override val isHashed: Boolean = false,
+    override val exportable: Boolean = true,
+    override val validator: StringValidator = StringValidator.NONE,
+    override val visibility: PreferenceVisibility = PreferenceVisibility.ALWAYS,
+    override val enabledCondition: PreferenceEnabledCondition = PreferenceEnabledCondition.ALWAYS
 ) : StringPreferenceKey {
 
-    GeneralUnits("units", "mg/dl"),
-    GeneralLanguage("language", "default", defaultedBySM = true),
-    GeneralPatientName("patient_name", ""),
-    GeneralSkin("skin", ""),
-    GeneralDarkMode("use_dark_mode", "dark", defaultedBySM = true),
+    GeneralUnits(
+        key = "units",
+        defaultValue = "mg/dl",
+        titleResId = R.string.pref_title_units,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "mg/dl" to R.string.units_mgdl,
+            "mmol" to R.string.units_mmol
+        )
+    ),
+    GeneralLanguage(
+        key = "language",
+        defaultValue = "default",
+        titleResId = R.string.pref_title_language,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "default" to R.string.lang_default,
+            "en" to R.string.lang_en,
+            "af" to R.string.lang_af,
+            "bg" to R.string.lang_bg,
+            "cs" to R.string.lang_cs,
+            "de" to R.string.lang_de,
+            "dk" to R.string.lang_dk,
+            "fr" to R.string.lang_fr,
+            "nl" to R.string.lang_nl,
+            "es" to R.string.lang_es,
+            "el" to R.string.lang_el,
+            "ga" to R.string.lang_ga,
+            "it" to R.string.lang_it,
+            "ko" to R.string.lang_ko,
+            "lt" to R.string.lang_lt,
+            "nb" to R.string.lang_nb,
+            "pl" to R.string.lang_pl,
+            "pt" to R.string.lang_pt,
+            "pt_BR" to R.string.lang_pt_br,
+            "ro" to R.string.lang_ro,
+            "ru" to R.string.lang_ru,
+            "sk" to R.string.lang_sk,
+            "sv" to R.string.lang_sv,
+            "tr" to R.string.lang_tr,
+            "zh_TW" to R.string.lang_zh_tw,
+            "zh_CN" to R.string.lang_zh_cn
+        ),
+        defaultedBySM = true
+    ),
+    GeneralPatientName(
+        key = "patient_name",
+        defaultValue = "",
+        titleResId = R.string.pref_title_patient_name,
+        summaryResId = R.string.pref_summary_patient_name,
+        validator = StringValidator.personName()
+    ),
+    GeneralSkin(key = "skin", defaultValue = "", titleResId = R.string.pref_title_skin, preferenceType = PreferenceType.LIST),
+    GeneralDarkMode(
+        key = "use_dark_mode",
+        defaultValue = "dark",
+        titleResId = R.string.pref_title_app_color_scheme,
+        summaryResId = R.string.pref_summary_theme_switcher,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "dark" to R.string.pref_dark_theme,
+            "light" to R.string.pref_light_theme,
+            "system" to R.string.pref_follow_system_theme
+        ),
+        defaultedBySM = true
+    ),
 
-    AapsDirectoryUri("aaps_directory", ""),
+    AapsDirectoryUri(key = "aaps_directory", defaultValue = "", titleResId = R.string.pref_title_aaps_directory),
 
-    ProtectionMasterPassword("master_password", "", isPassword = true),
-    ProtectionSettingsPassword("settings_password", "", isPassword = true),
-    ProtectionSettingsPin("settings_pin", "", isPin = true),
-    ProtectionApplicationPassword("application_password", "", isPassword = true),
-    ProtectionApplicationPin("application_pin", "", isPin = true),
-    ProtectionBolusPassword("bolus_password", "", isPassword = true),
-    ProtectionBolusPin("bolus_pin", "", isPin = true),
+    ProtectionMasterPassword(key = "master_password", defaultValue = "", titleResId = R.string.pref_title_master_password, isPassword = true, isHashed = true),
+    ProtectionSettingsPassword(
+        key = "settings_password", defaultValue = "", titleResId = R.string.pref_title_settings_password, isPassword = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeSettings }, ProtectionType.CUSTOM_PASSWORD.ordinal)
+    ),
+    ProtectionSettingsPin(
+        key = "settings_pin", defaultValue = "", titleResId = R.string.pref_title_settings_pin, isPin = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeSettings }, ProtectionType.CUSTOM_PIN.ordinal)
+    ),
+    ProtectionApplicationPassword(
+        key = "application_password", defaultValue = "", titleResId = R.string.pref_title_application_password, isPassword = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeApplication }, ProtectionType.CUSTOM_PASSWORD.ordinal)
+    ),
+    ProtectionApplicationPin(
+        key = "application_pin", defaultValue = "", titleResId = R.string.pref_title_application_pin, isPin = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeApplication }, ProtectionType.CUSTOM_PIN.ordinal)
+    ),
+    ProtectionBolusPassword(
+        key = "bolus_password", defaultValue = "", titleResId = R.string.pref_title_bolus_password, isPassword = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeBolus }, ProtectionType.CUSTOM_PASSWORD.ordinal)
+    ),
+    ProtectionBolusPin(
+        key = "bolus_pin", defaultValue = "", titleResId = R.string.pref_title_bolus_pin, isPin = true, isHashed = true,
+        visibility = PreferenceVisibility.intEquals({ IntKey.ProtectionTypeBolus }, ProtectionType.CUSTOM_PIN.ordinal)
+    ),
 
-    OverviewCopySettingsFromNs(key = "statuslights_copy_ns", "", dependency = BooleanKey.OverviewShowStatusLights),
+    OverviewCopySettingsFromNs(key = "statuslights_copy_ns", defaultValue = "", titleResId = R.string.pref_title_copy_settings_from_ns),
 
-    SafetyAge("age", "adult"),
-    MaintenanceEmail("maintenance_logs_email", "logs@aaps.app", defaultedBySM = true),
-    MaintenanceIdentification("email_for_crash_report", ""),
-    AutomationLocation("location", "PASSIVE", hideParentScreenIfHidden = true),
+    SafetyAge(key = "age", defaultValue = "adult", titleResId = R.string.pref_title_patient_age, preferenceType = PreferenceType.LIST),
+    MaintenanceEmail(
+        key = "maintenance_logs_email",
+        defaultValue = "logs@aaps.app",
+        titleResId = R.string.maintenance_email,
+        defaultedBySM = true,
+        validator = StringValidator.email()
+    ),
+    MaintenanceIdentification(key = "email_for_crash_report", defaultValue = "", titleResId = R.string.pref_title_identification),
+    AutomationLocation(
+        key = "location",
+        defaultValue = "PASSIVE",
+        titleResId = R.string.pref_title_automation_location,
+        preferenceType = PreferenceType.LIST,
+        entries = mapOf(
+            "PASSIVE" to R.string.automation_location_passive,
+            "NETWORK" to R.string.automation_location_network,
+            "GPS" to R.string.automation_location_gps
+        ),
+        hideParentScreenIfHidden = true
+    ),
 
-    SmsAllowedNumbers("smscommunicator_allowednumbers", ""),
-    SmsOtpPassword("smscommunicator_otp_password", "", dependency = BooleanKey.SmsAllowRemoteCommands, isPassword = true),
+    SmsAllowedNumbers(
+        key = "smscommunicator_allowednumbers",
+        defaultValue = "",
+        titleResId = R.string.smscommunicator_allowednumbers,
+        summaryResId = R.string.smscommunicator_allowednumbers_summary,
+        validator = StringValidator.multiPhone()
+    ),
+    SmsOtpPassword(
+        key = "smscommunicator_otp_password",
+        defaultValue = "",
+        titleResId = R.string.smscommunicator_otp_pin,
+        summaryResId = R.string.smscommunicator_otp_pin_summary,
+        dependency = BooleanKey.SmsAllowRemoteCommands,
+        isPassword = true,
+        validator = StringValidator.pinStrength()
+    ),
 
-    VirtualPumpType("virtualpump_type", "Generic AAPS"),
+    VirtualPumpType(key = "virtualpump_type", defaultValue = "Generic AAPS", titleResId = R.string.pref_title_virtual_pump_type, preferenceType = PreferenceType.LIST),
 
-    NsClientUrl("nsclientinternal_url", ""),
-    NsClientApiSecret("nsclientinternal_api_secret", "", isPassword = true),
-    NsClientWifiSsids("ns_wifi_ssids", "", dependency = BooleanKey.NsClientUseWifi),
-    NsClientAccessToken("nsclient_token", "", isPassword = true),
+    NsClientUrl(
+        key = "nsclientinternal_url",
+        defaultValue = "",
+        titleResId = R.string.ns_client_url_title,
+        summaryResId = R.string.ns_client_url_summary,
+        validator = StringValidator.httpsUrl()
+    ),
+    NsClientApiSecret(
+        key = "nsclientinternal_api_secret",
+        defaultValue = "",
+        titleResId = R.string.ns_client_secret_title,
+        summaryResId = R.string.ns_client_secret_summary,
+        isPassword = true,
+        validator = StringValidator.minLength(12)
+    ),
+    NsClientWifiSsids(
+        key = "ns_wifi_ssids",
+        defaultValue = "",
+        titleResId = R.string.ns_wifi_ssids,
+        summaryResId = R.string.ns_wifi_ssids_summary,
+        dependency = BooleanKey.NsClientUseWifi
+    ),
+    NsClientAccessToken(
+        key = "nsclient_token",
+        defaultValue = "",
+        titleResId = R.string.nsclient_token_title,
+        summaryResId = R.string.nsclient_token_summary,
+        isPassword = true,
+        validator = StringValidator.minLength(17)
+    ),
 
     // Google Drive settings
-    GoogleDriveStorageType("google_drive_storage_type", "local"),
-    GoogleDriveFolderId("google_drive_folder_id", ""),
-    GoogleDriveRefreshToken("google_drive_refresh_token", "", isPassword = true),
+    GoogleDriveStorageType(key = "google_drive_storage_type", defaultValue = "local", titleResId = R.string.pref_title_google_drive_storage_type),
+    GoogleDriveFolderId(key = "google_drive_folder_id", defaultValue = "", titleResId = R.string.pref_title_google_drive_folder_id),
+    GoogleDriveRefreshToken(key = "google_drive_refresh_token", defaultValue = "", titleResId = R.string.pref_title_google_drive_refresh_token, isPassword = true),
 
-    PumpCommonBolusStorage("pump_sync_storage_bolus", ""),
-    PumpCommonTbrStorage("pump_sync_storage_tbr", ""),
-
-    // ── Additions to StringKey.kt ────────────────────────────────────────────────
-//
-// Add these entries to the existing StringKey enum in:
-//   core/keys/src/main/kotlin/app/aaps/core/keys/StringKey.kt
-//
-// Paste before the closing } of the enum:
+    PumpCommonBolusStorage(key = "pump_sync_storage_bolus", defaultValue = "", titleResId = R.string.pref_title_pump_sync_storage_bolus),
+    PumpCommonTbrStorage(key = "pump_sync_storage_tbr", defaultValue = "", titleResId = R.string.pref_title_pump_sync_storage_tbr),
 
     // SmartInsulin — learned insulin profiles (JSON, not user-visible)
     ApsSmartInsulinLearningDirtyUntil(
-        "si_learning_dirty_until",
-        defaultValue          = "0",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_learning_dirty_until",
+        defaultValue = "0",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = false
+        exportable = false
     ),
     ApsSmartInsulinProfileFasting(
-        "si_profile_fasting",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_fasting",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileLowCarb(
-        "si_profile_low_carb",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_low_carb",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileBreakfast(
-        "si_profile_breakfast",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_breakfast",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileLunch(
-        "si_profile_lunch",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_lunch",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileDinner(
-        "si_profile_dinner",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_dinner",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileExtended(
-        "si_profile_extended",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_extended",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     // SmartInsulin — BolusCurveTracker in-progress state (JSON)
     // Survives AAPS restarts so mid-bolus tracking is not lost
     ApsSmartInsulinOverrideState(
-        "si_override_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_override_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = false
+        exportable = false
     ),
     ApsSmartInsulinTrackerState(
-        "si_tracker_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_tracker_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = false  // transient — no value exporting mid-track
+        exportable = false // transient — no value exporting mid-track
     ),
     // SmartInsulin — AggressionLearner rolling TIR and score state (JSON)
     ApsSmartInsulinAggressionState(
-        "si_aggression_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_aggression_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     // SmartInsulin — BasalLearner multiplier and sample state (JSON)
     ApsSmartInsulinBasalState(
-        "si_basal_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_basal_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinCircadianState(
-        "si_circadian_state",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_circadian_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     // SmartInsulin — UAM mode learned insulin profiles (JSON, not user-visible)
     ApsSmartInsulinProfileUamBreakfast(
-        "si_profile_uam_breakfast",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_breakfast",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileUamLunch(
-        "si_profile_uam_lunch",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_lunch",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileUamDinner(
-        "si_profile_uam_dinner",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_dinner",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileUamAfternoon(
-        "si_profile_uam_afternoon",
-        defaultValue          = "{\"peakMinutes\":55,\"diaMinutes\":360,\"sampleCount\":0}",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_afternoon",
+        defaultValue = "{\"peakMinutes\":55,\"diaMinutes\":360,\"sampleCount\":0}",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileUamSnack(
-        "si_profile_uam_snack",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_snack",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
     ApsSmartInsulinProfileUamProteinFat(
-        "si_profile_uam_proteinfat",
-        defaultValue          = "",
-        showInApsMode         = false,
-        showInNsClientMode    = false,
+        key = "si_profile_uam_proteinfat",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
         showInPumpControlMode = false,
-        exportable            = true
+        exportable = true
     ),
 }
