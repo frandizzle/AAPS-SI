@@ -139,6 +139,9 @@ private object PreviewPreferences : Preferences {
 /**
  * Minimal Config implementation for Compose @Preview functions.
  */
+/**
+ * Minimal Config implementation for Compose @Preview functions.
+ */
 private object PreviewConfig : Config {
 
     override val SUPPORTED_NS_VERSION: Int = 0
@@ -163,6 +166,7 @@ private object PreviewConfig : Config {
     override val appName: Int = 0
     override val initProgressFlow: StateFlow<InitProgress> = MutableStateFlow(InitProgress(done = true))
     override val initSnackbarFlow: SharedFlow<String> = MutableSharedFlow()
+
     override fun updateInitProgress(step: String, current: Int, total: Int) {}
     override fun initCompleted() {}
     override fun initFailed(error: String) {}
@@ -172,5 +176,14 @@ private object PreviewConfig : Config {
     override fun isEngineeringModeOrRelease(): Boolean = true
     override fun isEngineeringMode(): Boolean = false
     override fun isEnabled(option: ExternalOptions): Boolean = false
+
+    // --- New overrides added to fix compilation errors ---
+    override fun isUnfinishedMode(): Boolean = false
+    override fun showUserActionsOnWatchOnly(): Boolean = false
+    override fun ignoreNightscoutV3Errors(): Boolean = false
+    override fun doNotSendSmsOnProfileChange(): Boolean = false
+    override fun enableAutotune(): Boolean = false
+    override fun enableOmnipodDriftCompensation(): Boolean = false
+    override fun disableLeakCanary(): Boolean = false
 }
 
