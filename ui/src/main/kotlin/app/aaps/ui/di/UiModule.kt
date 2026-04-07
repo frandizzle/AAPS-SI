@@ -54,7 +54,6 @@ abstract class UiModule {
     @ContributesAndroidInjector abstract fun contributesWidget(): Widget
     @ContributesAndroidInjector abstract fun contributesWidgetConfigureActivity(): WidgetConfigureActivity
     @ContributesAndroidInjector abstract fun contributesSmartMealDialog(): SmartMealDialog
-    @ContributesAndroidInjector abstract fun contributesWizardDialog(): WizardDialog
     @ContributesAndroidInjector abstract fun contributesCalibrationDialog(): CalibrationDialog
     @ContributesAndroidInjector abstract fun contributesCarbsDialog(): CarbsDialog
     @ContributesAndroidInjector abstract fun contributesCareDialog(): CareDialog

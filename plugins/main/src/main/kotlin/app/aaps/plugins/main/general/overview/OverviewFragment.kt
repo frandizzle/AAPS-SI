@@ -267,8 +267,6 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         binding.buttonsLayout.insulinButton.setOnClickListener(this)
         binding.buttonsLayout.carbsButton.setOnClickListener(this)
         binding.buttonsLayout.smartMealButton.setOnClickListener(this)
-        binding.buttonsLayout.quickWizardButton.setOnClickListener(this)
-        binding.buttonsLayout.quickWizardButton.setOnLongClickListener(this)
         binding.infoLayout.apsMode.setOnClickListener(this)
         binding.infoLayout.apsMode.setOnLongClickListener(this)
     }
@@ -439,10 +437,8 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             if (childFragmentManager.isStateSaved) return@launch
             when (v.id) {
                 R.id.treatment_button    -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runTreatmentDialog(childFragmentManager) })
-                R.id.wizard_button       -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runWizardDialog(childFragmentManager) })
                 R.id.insulin_button      -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runInsulinDialog(childFragmentManager) })
                 R.id.smart_meal_button   -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runSmartMealDialog(childFragmentManager) })
-                R.id.quick_wizard_button -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) onClickQuickWizard() })
                 R.id.carbs_button        -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runCarbsDialog(childFragmentManager) })
                 R.id.temp_target         -> protectionCheck.queryProtection(requireActivity(), ProtectionCheck.Protection.BOLUS, UIRunnable { if (isAdded) uiInteraction.runTempTargetDialog(childFragmentManager) })
                 R.id.active_profile      -> uiInteraction.runProfileViewerActivity(requireContext(), dateUtil.now(), UiInteraction.Mode.RUNNING_PROFILE)
