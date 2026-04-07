@@ -15,7 +15,6 @@ import app.aaps.ui.dialogs.FillDialog
 import app.aaps.ui.dialogs.InsulinDialog
 import app.aaps.ui.dialogs.LoopDialog
 import app.aaps.ui.dialogs.ProfileSwitchDialog
-import app.aaps.ui.dialogs.SiteRotationDialog
 import app.aaps.ui.dialogs.SmartMealDialog
 import app.aaps.ui.dialogs.TempBasalDialog
 import app.aaps.ui.dialogs.TempTargetDialog
