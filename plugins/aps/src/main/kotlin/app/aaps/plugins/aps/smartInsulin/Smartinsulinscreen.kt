@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -306,22 +307,27 @@ fun SmartInsulinScreen(
                         if (d.isMmol) { val ap = if (h < 12) "AM" else "PM"; val h12 = if (h == 0) 12 else if (h > 12) h - 12 else h; "$h12:00 $ap" }
                         else "%02d:00".format(h)
                     } ?: "?"
-                    val isfUnit2   = if (d.isMmol) "mmol/U" else "mg/dL/U"
-                    val wasIsf     = if (d.nudgeSessionIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} $isfUnit2" else "${"%.1f".format(d.nudgeSessionIsfMgdl)} $isfUnit2" else "?"
-                    val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} $isfUnit2" else "${"%.1f".format(d.finalIsfMgdl)} $isfUnit2" else "?"
+                    val wasIsf     = if (d.nudgeSessionIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.nudgeSessionIsfMgdl)} mg/dL/U" else "?"
+                    val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U" else "?"
                     val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
                     val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
-                    val shortPct   = kotlin.math.abs(((1.0 - d.circCeil) * 100).toInt())
-                    val longPct    = kotlin.math.abs(((1.0 - d.basalMultiplier) * 100).toInt())
-                    val shortLine  = if (nudgeActiveHigh) "Short term: pulling out ~${shortPct}% insulin right now (ceiling ${(d.circCeil * 100).toInt()}%)"
-                    else "Short term: adding ~${shortPct}% extra insulin right now (ceiling ${(d.circCeil * 100).toInt()}%)"
+                    val shortPct   = kotlin.math.abs(((1.0 - d.circCeil) * 100).roundToInt())
+                    val longPct    = kotlin.math.abs(((1.0 - d.basalMultiplier) * 100).roundToInt())
+                    val shortLine  = if (nudgeActiveHigh)
+                        "Short term: pulling out ~${shortPct}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                    else
+                        "Short term: adding ~${shortPct}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
                     val longLine   = when {
                         longPct < 2     -> "Long term: still building — less than 2% change so far"
-                        nudgeActiveHigh -> "Long term: permanently reduced by ~${longPct}% at this hour"
-                        else            -> "Long term: permanently increased by ~${longPct}% at this hour"
+                        nudgeActiveHigh -> "Long term: permanently reduced by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
+                        else            -> "Long term: permanently increased by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
                     }
+                    val statusLine = if (cooldown)
+                        "Adjusting cautiously — $penaltyR may have contributed. Full strength resumes after 2h."
+                    else
+                        "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
                     nudgeHeadline = "⚡ ${if (nudgeActiveHigh) "Too much insulin — adjusting" else "Not enough insulin — adjusting"}$coolNote"
-                    nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortLine\n$longLine"
+                    nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortLine\n$longLine\n$statusLine"
                 }
                 nudgePaused -> {
                     val reason    = nudgeParts.getOrNull(1) ?: "Learning suppressed"
@@ -330,223 +336,228 @@ fun SmartInsulinScreen(
                 }
                 d.inReboundWindow -> {
                     val minsLeft   = (d.totalReboundWindowMins - d.reboundMins).coerceAtLeast(0)
-                    val taperPct   = ((0.3 + 0.7 * (d.reboundMins.toDouble() / d.totalReboundWindowMins)) * 100).toInt()
-                    val smbUnlock  = ((d.totalReboundWindowMins * 0.75) - d.reboundMins).coerceAtLeast(0.0).toInt()
+                    val taperPct   = ((0.3 + 0.7 * (d.reboundMins.toDouble() / d.totalReboundWindowMins)) * 100).roundToInt()
+                    val smbUnlock  = ((d.totalReboundWindowMins * 0.75) - d.reboundMins).coerceAtLeast(0.0).roundToInt()
+                    val hardLow1   = if (d.hardLowPenaltyActive) "\nShort term: aggressiveness ceiling cut by 20% — resets as BG stabilises near target." else ""
+                    val hardLow2   = if (d.hardLowPenaltyActive) "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
+                    else "\nLong term: learning paused during recovery — resumes when window expires ($minsLeft min left)."
+                    val rollerN    = if (d.consecutiveRollercoasters >= 1) { val ext = d.totalReboundWindowMins - d.reboundWindowMins; "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${ext}min." } else ""
                     nudgeHeadline  = "⚠ BG is below low guard — reducing insulin"
-                    nudgeDetail    = "BG crossed below low guard — holding back to avoid stacking.\nShort term: TBR at ${taperPct}% of normal — ramps up over ${d.totalReboundWindowMins}min window\nShort term: SMBs ${if (smbUnlock > 0) "blocked for ~${smbUnlock}min more" else "restored ✓"}\nLong term: learning paused during recovery — resumes in ${minsLeft}min."
+                    nudgeDetail    = "BG crossed below low guard — holding back to avoid stacking.\nShort term: TBR at ${taperPct}% of normal — ramps up over ${d.totalReboundWindowMins}min window\nShort term: SMBs ${if (smbUnlock > 0) "blocked for ~${smbUnlock}min more" else "restored ✓"}$hardLow1$hardLow2$rollerN"
                 }
                 d.bgWentLow -> {
+                    val hardLow1   = if (d.hardLowPenaltyActive) "\nShort term: aggressiveness ceiling cut by 20% — resets as BG stabilises near target." else ""
+                    val hardLow2   = if (d.hardLowPenaltyActive) "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
+                    else "\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
                     nudgeHeadline  = "⚠ BG is below low guard — waiting for recovery"
-                    nudgeDetail    = "BG is below the low guard threshold. Insulin delivery limited.\nShort term: insulin being held back until BG recovers above low guard\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
+                    nudgeDetail    = "BG is below the low guard threshold. Insulin delivery limited.\nShort term: insulin being held back until BG recovers above low guard$hardLow1$hardLow2"
                 }
                 else -> {
                     nudgeHeadline  = "Insulin levels look right for this hour"
                     nudgeDetail    = "No consistent over- or under-delivery detected.\nISF and basal learning running on observed BG patterns."
                 }
+                SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
             }
-            SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
-        }
 
-        // ── UAM card ───────────────────────────────────────────────────
-        SiCard(title = "UAM Auto-Detection") {
-            val uamLine = d.uamStatusLine ?: ""
-            val uamPart = uamLine.substringBefore(" | P/F:").trim()
-            val (uamPrimary, uamColor) = when {
-                uamPart.contains("watching") -> "BG rising — building confirmation streak ↑" to Color(0xFFFB8C00)
-                uamPart.contains("last")     -> "Meal auto-detected recently" to Color(0xFF64B5F6)
-                uamPart.contains("armed")    -> "Watching for unannounced meals" to Color(0xFF43A047)
-                uamPart.contains("off")      -> "Auto-detection off — outside hours" to MaterialTheme.colorScheme.onSurfaceVariant
-                else                         -> "UAM status" to MaterialTheme.colorScheme.onSurface
-            }
-            SiRow(uamPrimary, uamPart.ifEmpty { null }, primaryColor = uamColor)
+            // ── UAM card ───────────────────────────────────────────────────
+            SiCard(title = "UAM Auto-Detection") {
+                val uamLine = d.uamStatusLine ?: ""
+                val uamPart = uamLine.substringBefore(" | P/F:").trim()
+                val (uamPrimary, uamColor) = when {
+                    uamPart.contains("watching") -> "BG rising — building confirmation streak ↑" to Color(0xFFFB8C00)
+                    uamPart.contains("last")     -> "Meal auto-detected recently" to Color(0xFF64B5F6)
+                    uamPart.contains("armed")    -> "Watching for unannounced meals" to Color(0xFF43A047)
+                    uamPart.contains("off")      -> "Auto-detection off — outside hours" to MaterialTheme.colorScheme.onSurfaceVariant
+                    else                         -> "UAM status" to MaterialTheme.colorScheme.onSurface
+                }
+                SiRow(uamPrimary, uamPart.ifEmpty { null }, primaryColor = uamColor)
 
-            val pfPart = if (uamLine.contains("P/F:")) uamLine.substringAfter("P/F:").trim() else null
+                val pfPart = if (uamLine.contains("P/F:")) uamLine.substringAfter("P/F:").trim() else null
 
-            // Detection thresholds from uamDebug (non-P/F lines)
-            val debugClean = d.uamDebug.lines()
-                .filter { !it.trimStart().startsWith("P/F") }
-                .joinToString("\n") { it.trimStart() }
-                .trim()
-            if (debugClean.isNotEmpty()) {
+                // Detection thresholds from uamDebug (non-P/F lines)
+                val debugClean = d.uamDebug.lines()
+                    .filter { !it.trimStart().startsWith("P/F") }
+                    .joinToString("\n") { it.trimStart() }
+                    .trim()
+                if (debugClean.isNotEmpty()) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    SiRow("Detection thresholds",
+                          debugClean + "\n\nUAM fires when BG rises consistently above the trigger threshold during your configured meal windows.\n\nClean window = fasting, normal thresholds apply.\nDirty window = post-meal lockout active — thresholds raised (~1.5×) to avoid detecting fat/protein tail rises as a new meal.")
+                }
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                SiRow("Detection thresholds",
-                      debugClean + "\n\nUAM fires when BG rises consistently above the trigger threshold during your configured meal windows.\n\nClean window = fasting, normal thresholds apply.\nDirty window = post-meal lockout active — thresholds raised (~1.5×) to avoid detecting fat/protein tail rises as a new meal.")
-            }
-
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            Text("Protein / Fat Detection (P/F)",
-                 style = MaterialTheme.typography.labelLarge,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            val pfDebug = d.uamDebug.lines()
-                .filter { it.trimStart().startsWith("P/F") }
-                .joinToString("\n") { it.trimStart() }
-                .trim()
-            val (pfPrimary, pfColor) = when {
-                pfPart == null                                        -> "P/F detection disabled" to MaterialTheme.colorScheme.onSurfaceVariant
-                pfPart.contains("off")                               -> "P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}" to MaterialTheme.colorScheme.onSurfaceVariant
-                pfPart.contains("armed")                             -> "Armed — will activate after meal expires" to Color(0xFF43A047)
-                pfPart.contains("/") && pfPart.contains("stuck")     -> {
-                    val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
-                    "BG stuck high — counting readings ($count)" to Color(0xFFFB8C00)
-                }
-                else                                                  -> "P/F: $pfPart" to MaterialTheme.colorScheme.onSurface
-            }
-            SiRow(pfPrimary, pfDebug.takeIf { it.isNotEmpty() }, primaryColor = pfColor)
-        }
-
-        // ── Soft Target Fine-Tune card ────────────────────────────────
-        SiCard(title = "Soft Target Fine-Tune") {
-            if (d.stftActive && d.stftStatus != null) {
-                SiRow("Active — gently nudging the loop to correct",
-                      d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
-                      primaryColor = Color(0xFFFB8C00))
-            } else {
-                val inactiveReason = when {
-                    d.stftStatus?.contains("high temp target") == true -> "Inactive — high temp target set"
-                    d.mealMode.contains("Protein") || d.mealMode.contains("P/F") -> "Inactive — P/F running"
-                    d.mealMode.startsWith("UAM") || d.mealMode.contains("(UAM)") -> "Inactive — UAM running"
-                    d.mealMode != "Fasting" -> "Inactive — meal mode running (${d.mealMode})"
-                    else -> "Inactive — BG is responding normally"
-                }
-                SiRow(inactiveReason,
-                      "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.")
-            }
-        }
-
-        // ── Circadian table ────────────────────────────────────────────
-// ── Circadian table ────────────────────────────────────────────
-        SiCard(title = "Circadian 24h") {
-            Text("Hourly multipliers learned from your BG patterns.\nISF× and Bas× = how much to adjust sensitivity and basal for that hour.\nCeil = aggressiveness cap — if the loop is being too aggressive for this hour, this number clamps it down. Lower = more conservative.\nConf = confidence — how much real data has been collected. Green ≥60%, amber ≥30%, red <30%.",
-                 style = MaterialTheme.typography.bodySmall,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-
-            // Day selector
-            val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-            val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
-            val todayDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                displayOrder.forEach { d2 ->
-                    val label = if (d2 == todayDow) "Today" else dayLabels[d2]
-                    val selected = d2 == selectedDow
-                    Button(
-                        onClick = { selectedDow = d2 },
-                        modifier = Modifier.weight(1f).height(32.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
-                            contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
-                        ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                    ) {
-                        Text(label, fontSize = 10.sp, maxLines = 1)
+                Text("Protein / Fat Detection (P/F)",
+                     style = MaterialTheme.typography.labelLarge,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val pfDebug = d.uamDebug.lines()
+                    .filter { it.trimStart().startsWith("P/F") }
+                    .joinToString("\n") { it.trimStart() }
+                    .trim()
+                val (pfPrimary, pfColor) = when {
+                    pfPart == null                                        -> "P/F detection disabled" to MaterialTheme.colorScheme.onSurfaceVariant
+                    pfPart.contains("off")                               -> "P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}" to MaterialTheme.colorScheme.onSurfaceVariant
+                    pfPart.contains("armed")                             -> "Armed — will activate after meal expires" to Color(0xFF43A047)
+                    pfPart.contains("/") && pfPart.contains("stuck")     -> {
+                        val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
+                        "BG stuck high — counting readings ($count)" to Color(0xFFFB8C00)
                     }
+                    else                                                  -> "P/F: $pfPart" to MaterialTheme.colorScheme.onSurface
+                }
+                SiRow(pfPrimary, pfDebug.takeIf { it.isNotEmpty() }, primaryColor = pfColor)
+            }
+
+            // ── Soft Target Fine-Tune card ────────────────────────────────
+            SiCard(title = "Soft Target Fine-Tune") {
+                if (d.stftActive && d.stftStatus != null) {
+                    SiRow("Active — gently nudging the loop to correct",
+                          d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
+                          primaryColor = Color(0xFFFB8C00))
+                } else {
+                    val inactiveReason = when {
+                        d.stftStatus?.contains("high temp target") == true -> "Inactive — high temp target set"
+                        d.mealMode.contains("Protein") || d.mealMode.contains("P/F") -> "Inactive — P/F running"
+                        d.mealMode.startsWith("UAM") || d.mealMode.contains("(UAM)") -> "Inactive — UAM running"
+                        d.mealMode != "Fasting" -> "Inactive — meal mode running (${d.mealMode})"
+                        else -> "Inactive — BG is responding normally"
+                    }
+                    SiRow(inactiveReason,
+                          "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.")
                 }
             }
-            Spacer(Modifier.height(8.dp))
-            // Table header
-            Row(modifier = Modifier.fillMaxWidth()) {
-                Text("Hr",  modifier = Modifier.weight(1f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("ISF×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Bas×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Ceil", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Conf", modifier = Modifier.weight(3f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
-            val raw = plugin.circadianDataForDay(selectedDow)
-            val currentHr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-            raw.lines().filter { it.isNotBlank() }.forEach { line ->
-                val m = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
-                val hr = m.groupValues[1].toIntOrNull() ?: return@forEach
-                val isf = m.groupValues[2].toFloatOrNull() ?: return@forEach
-                val bas = m.groupValues[3].toFloatOrNull() ?: return@forEach
-                val ceil = m.groupValues[4].toFloatOrNull() ?: return@forEach
-                val conf = m.groupValues[5].toIntOrNull() ?: return@forEach
-                val isCur = selectedDow == todayDow && hr == currentHr
-                val rowBg = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
-                fun multColor(v: Float) = when { v > 1.05f -> Color(0xFFFB8C00); v < 0.95f -> Color(0xFF64B5F6); else -> Color(0xFFAAAAAA) }
-                fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
-                Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
-                    Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1f), fontSize = 11.sp,
-                         color = if (isCur) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                         fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
-                    Text("%.3f".format(isf),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(isf))
-                    Text("%.3f".format(bas),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(bas))
-                    Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(ceil))
-                    // Confidence bar — Box based, always fills correctly
-                    Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Box(modifier = Modifier.width(40.dp).height(6.dp)
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                            .background(Color(0xFF333333))) {
-                            Box(modifier = Modifier.fillMaxHeight()
-                                .width(40.dp * (conf / 100f))
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                                .background(confColor(conf)))
+
+            // ── Circadian table ────────────────────────────────────────────
+            SiCard(title = "Circadian 24h") {
+                // Day selector
+                val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+                val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
+                val todayDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    displayOrder.forEach { d2 ->
+                        val label = if (d2 == todayDow) "Today" else dayLabels[d2]
+                        val selected = d2 == selectedDow
+                        Button(
+                            onClick = { selectedDow = d2 },
+                            modifier = Modifier.weight(1f).height(32.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
+                                contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
+                            ),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        ) {
+                            Text(label, fontSize = 10.sp, maxLines = 1)
                         }
-                        Text("$conf%", fontSize = 10.sp, color = confColor(conf),
-                             fontFamily = FontFamily.Monospace)
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("Hourly multipliers learned from your BG patterns.\n" +
+                         "ISF and Bas = values the loop actually delivers for that hour.\n" +
+                         "Ceil = aggressiveness cap — lower = more conservative.\n" +
+                         "Conf = confidence — how much real data collected. Green ≥60%, amber ≥30%, red <30%.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                // Table header
+                val isfHeader = if (d.isMmol) "ISF mmol" else "ISF mg/dL"
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text("Hr",       modifier = Modifier.weight(1.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(isfHeader,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Basal U/h",modifier = Modifier.weight(2.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Ceil",     modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Conf",     modifier = Modifier.weight(3f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
+                val raw = plugin.circadianDataForDay(selectedDow)
+                val currentHr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                // Compute profile values for conversion: finalISF = profileISF / isfMult, finalBasal = profileBasal * basMult
+                val profileIsfMgdl = d.profileIsfMgdl.toFloat()
+                val profileBasalU  = d.profileBasalU.toFloat()
+                raw.lines().filter { it.isNotBlank() }.forEach { line ->
+                    val m = Regex("""[\u25ba\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
+                    val hr      = m.groupValues[1].toIntOrNull() ?: return@forEach
+                    val isfMult = m.groupValues[2].toFloatOrNull() ?: return@forEach
+                    val basMult = m.groupValues[3].toFloatOrNull() ?: return@forEach
+                    val ceil    = m.groupValues[4].toFloatOrNull() ?: return@forEach
+                    val conf    = m.groupValues[5].toIntOrNull() ?: return@forEach
+                    // Convert multipliers to actual values
+                    val finalIsf   = if (isfMult > 0f && profileIsfMgdl > 0f) profileIsfMgdl / isfMult else 0f
+                    val finalBasal = profileBasalU * basMult
+                    // ISF display: mg/dL or mmol
+                    val isfStr  = if (d.isMmol) "%.2f".format(finalIsf / 18.0f) else "%.1f".format(finalIsf)
+                    val basStr  = "%.3f".format(finalBasal)
+                    // Color: lower ISF = more sensitive = blue, higher = less sensitive = orange
+                    fun isfColor(mult: Float) = when { mult < 0.95f -> Color(0xFF64B5F6); mult > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) }
+                    fun basColor(mult: Float) = when { mult < 0.95f -> Color(0xFF64B5F6); mult > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) }
+                    fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
+                    val isCur  = selectedDow == todayDow && hr == currentHr
+                    val rowBg  = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+                    Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
+                        Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1.5f), fontSize = 11.sp,
+                             color = if (isCur) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                             fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
+                        Text(isfStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = isfColor(isfMult))
+                        Text(basStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = basColor(basMult))
+                        Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp,
+                             color = when { ceil < 0.95f -> Color(0xFF64B5F6); ceil > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) })
+                        Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Box(modifier = Modifier.width(40.dp).height(6.dp)
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                                .background(Color(0xFF333333))) {
+                                Box(modifier = Modifier.fillMaxHeight()
+                                    .width(40.dp * (conf / 100f))
+                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                                    .background(confColor(conf)))
+                            }
+                            Text("$conf%", fontSize = 10.sp, color = confColor(conf),
+                                 fontFamily = FontFamily.Monospace)
+                        }
                     }
                 }
             }
-        }
 
-        // ── Insulin profiles card ──────────────────────────────────────
-// ── Insulin profiles card ──────────────────────────────────────
-        SiCard(title = "Insulin Profiles") {
-            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
-                 style = MaterialTheme.typography.bodySmall,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
-                val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
-                val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
-                val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
-
-                // Active profile logic
-                val isActive = name.equals(d.mealMode, ignoreCase = true)
-                val prefix = if (isActive) "► " else "  "
-                val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
-                val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
-                        .background(rowBg)
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
-                ) {
-                    Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // ── Insulin profiles card ──────────────────────────────────────
+            SiCard(title = "Insulin Profiles") {
+                Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
+                     style = MaterialTheme.typography.bodySmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
+                    val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
+                    val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
+                    val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                    val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
+                    Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
+                    Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
                 }
             }
-        }
 
-        // ── Raw status log ─────────────────────────────────────────────
-        SiCard(title = "Raw Status Log") {
-            Text(plugin.statusSummary(),
-                 fontFamily = FontFamily.Monospace,
-                 fontSize = 11.sp,
-                 lineHeight = 15.sp,
-                 color = MaterialTheme.colorScheme.onSurface)
-        }
+            // ── Raw status log ─────────────────────────────────────────────
+            SiCard(title = "Raw Status Log") {
+                Text(plugin.statusSummary(),
+                     fontFamily = FontFamily.Monospace,
+                     fontSize = 11.sp,
+                     lineHeight = 15.sp,
+                     color = MaterialTheme.colorScheme.onSurface)
+            }
 
-        // ── Reset card ─────────────────────────────────────────────────
-        SiCard(title = "Reset Learners") {
-            ResetRow("Aggressiveness score") { plugin.resetAggression() }
-            ResetRow("Basal multiplier") { plugin.resetBasal() }
-            ResetRow("Circadian hourly learning") { plugin.resetCircadian() }
-            ResetRow("Insulin profiles (peak/DIA)") { plugin.resetProfiles() }
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            Button(
-                onClick = { plugin.resetAllLearners() },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-            ) { Text("Reset ALL Learners", fontSize = 18.sp) }
+            // ── Reset card ─────────────────────────────────────────────────
+            SiCard(title = "Reset Learners") {
+                ResetRow("Aggressiveness score") { plugin.resetAggression() }
+                ResetRow("Basal multiplier") { plugin.resetBasal() }
+                ResetRow("Circadian hourly learning") { plugin.resetCircadian() }
+                ResetRow("Insulin profiles (peak/DIA)") { plugin.resetProfiles() }
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                Button(
+                    onClick = { plugin.resetAllLearners() },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("Reset ALL Learners", fontSize = 18.sp) }
+            }
         }
     }
-}
 
+}
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 @Composable
