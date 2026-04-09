@@ -168,7 +168,7 @@ fun ElementType.icon(): ImageVector = when (this) {
 
 fun ElementType.labelResId(): Int = when (this) {
     ElementType.INSULIN                 -> R.string.overview_insulin_label
-    ElementType.SMART_MEAL              -> R.string.smart_meal // TODO: add <string name="smart_meal">Smart Meal</string> to core-ui/src/main/res/values/strings.xml
+    ElementType.SMART_MEAL              -> R.string.smart_meal
     ElementType.CARBS                   -> R.string.carbs
     ElementType.BOLUS_WIZARD            -> R.string.boluswizard
     ElementType.QUICK_WIZARD            -> 0 // dynamic label
