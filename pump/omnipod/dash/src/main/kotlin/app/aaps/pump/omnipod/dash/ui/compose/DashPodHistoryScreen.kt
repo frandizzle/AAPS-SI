@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
@@ -115,7 +116,7 @@ fun DashPodHistoryScreen(
                     )
                 }
 
-                items(itemsForDay, key = { it.displayTimestamp() }) { record ->
+                itemsIndexed(itemsForDay, key = { idx, item -> "${item.displayTimestamp()}_$idx" }) { _, record ->
                     DashHistoryCard(record, rh, profileUtil, dateUtil)
                 }
             }
