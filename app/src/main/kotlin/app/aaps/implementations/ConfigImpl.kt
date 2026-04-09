@@ -79,6 +79,5 @@ class ConfigImpl @Inject constructor(
     override fun ignoreNightscoutV3Errors(): Boolean = isEnabled(ExternalOptions.IGNORE_NS_V3_ERRORS)
     override fun doNotSendSmsOnProfileChange(): Boolean = isEnabled(ExternalOptions.DO_NOT_SEND_SMS_ON_PROFILE_CHANGE)
     override fun enableAutotune(): Boolean = isEnabled(ExternalOptions.ENABLE_AUTOTUNE)
-    override fun enableOmnipodDriftCompensation(): Boolean = isEnabled(ExternalOptions.OMNIPOD_DRIFT_COMPENSATION)
     override fun disableLeakCanary(): Boolean = isEnabled(ExternalOptions.DISABLE_LEAK_CANARY)
 }
