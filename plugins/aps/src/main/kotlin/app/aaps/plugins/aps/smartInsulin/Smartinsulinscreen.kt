@@ -309,114 +309,118 @@ fun SmartInsulinScreen(
                 }
                 SiRow(inactiveReason,
                       "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.")
-                // Day selector
-                val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-                val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
-                val todayDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    displayOrder.forEach { d2 ->
-                        val label = if (d2 == todayDow) "Today" else dayLabels[d2]
-                        val selected = d2 == selectedDow
-                        Button(
-                            onClick = { selectedDow = d2 },
-                            modifier = Modifier.weight(1f).height(32.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
-                                contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
-                            ),
-                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
-                        ) {
-                            Text(label, fontSize = 10.sp, maxLines = 1)
-                        }
+            }
+        }
+
+        // ── Circadian table ────────────────────────────────────────────
+        SiCard(title = "Circadian 24h") {
+            // Day selector
+            val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+            val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
+            val todayDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                displayOrder.forEach { d2 ->
+                    val label = if (d2 == todayDow) "Today" else dayLabels[d2]
+                    val selected = d2 == selectedDow
+                    Button(
+                        onClick = { selectedDow = d2 },
+                        modifier = Modifier.weight(1f).height(32.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
+                        ),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text(label, fontSize = 10.sp, maxLines = 1)
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                // Table header
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Text("Hr",  modifier = Modifier.weight(1f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("ISF×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Bas×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Ceil", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Conf", modifier = Modifier.weight(3f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
-                val raw = plugin.circadianDataForDay(selectedDow)
-                val currentHr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                raw.lines().filter { it.isNotBlank() }.forEach { line ->
-                    val m = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
-                    val hr = m.groupValues[1].toIntOrNull() ?: return@forEach
-                    val isf = m.groupValues[2].toFloatOrNull() ?: return@forEach
-                    val bas = m.groupValues[3].toFloatOrNull() ?: return@forEach
-                    val ceil = m.groupValues[4].toFloatOrNull() ?: return@forEach
-                    val conf = m.groupValues[5].toIntOrNull() ?: return@forEach
-                    val isCur = selectedDow == todayDow && hr == currentHr
-                    val rowBg = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
-                    fun multColor(v: Float) = when { v > 1.05f -> Color(0xFFFB8C00); v < 0.95f -> Color(0xFF64B5F6); else -> Color(0xFFAAAAAA) }
-                    fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
-                    Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
-                        Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1f), fontSize = 11.sp,
-                             color = if (isCur) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
-                             fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
-                        Text("%.3f".format(isf),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(isf))
-                        Text("%.3f".format(bas),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(bas))
-                        Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(ceil))
-                        // Confidence bar — Box based, always fills correctly
-                        Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.width(40.dp).height(6.dp)
+            }
+            Spacer(Modifier.height(8.dp))
+            // Table header
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text("Hr",  modifier = Modifier.weight(1f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("ISF×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Bas×", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Ceil", modifier = Modifier.weight(2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Conf", modifier = Modifier.weight(3f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
+            val raw = plugin.circadianDataForDay(selectedDow)
+            val currentHr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            raw.lines().filter { it.isNotBlank() }.forEach { line ->
+                val m = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
+                val hr = m.groupValues[1].toIntOrNull() ?: return@forEach
+                val isf = m.groupValues[2].toFloatOrNull() ?: return@forEach
+                val bas = m.groupValues[3].toFloatOrNull() ?: return@forEach
+                val ceil = m.groupValues[4].toFloatOrNull() ?: return@forEach
+                val conf = m.groupValues[5].toIntOrNull() ?: return@forEach
+                val isCur = selectedDow == todayDow && hr == currentHr
+                val rowBg = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+                fun multColor(v: Float) = when { v > 1.05f -> Color(0xFFFB8C00); v < 0.95f -> Color(0xFF64B5F6); else -> Color(0xFFAAAAAA) }
+                fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
+                Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
+                    Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1f), fontSize = 11.sp,
+                         color = if (isCur) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                         fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
+                    Text("%.3f".format(isf),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(isf))
+                    Text("%.3f".format(bas),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(bas))
+                    Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(ceil))
+                    // Confidence bar — Box based, always fills correctly
+                    Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.width(40.dp).height(6.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                            .background(Color(0xFF333333))) {
+                            Box(modifier = Modifier.fillMaxHeight()
+                                .width(40.dp * (conf / 100f))
                                 .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                                .background(Color(0xFF333333))) {
-                                Box(modifier = Modifier.fillMaxHeight()
-                                    .width(40.dp * (conf / 100f))
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
-                                    .background(confColor(conf)))
-                            }
-                            Text("$conf%", fontSize = 10.sp, color = confColor(conf),
-                                 fontFamily = FontFamily.Monospace)
+                                .background(confColor(conf)))
                         }
+                        Text("$conf%", fontSize = 10.sp, color = confColor(conf),
+                             fontFamily = FontFamily.Monospace)
                     }
                 }
             }
+        }
 
-            // ── Insulin profiles card ──────────────────────────────────────
-            SiCard(title = "Insulin Profiles") {
-                Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
-                     style = MaterialTheme.typography.bodySmall,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(8.dp))
-                d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
-                    val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
-                    val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
-                    val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                    val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
-                    Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                    Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                }
+        // ── Insulin profiles card ──────────────────────────────────────
+        SiCard(title = "Insulin Profiles") {
+            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
+                val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
+                val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
+                val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
+                Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
+                Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
             }
+        }
 
-            // ── Raw status log ─────────────────────────────────────────────
-            SiCard(title = "Raw Status Log") {
-                Text(plugin.statusSummary(),
-                     fontFamily = FontFamily.Monospace,
-                     fontSize = 11.sp,
-                     lineHeight = 15.sp,
-                     color = MaterialTheme.colorScheme.onSurface)
-            }
+        // ── Raw status log ─────────────────────────────────────────────
+        SiCard(title = "Raw Status Log") {
+            Text(plugin.statusSummary(),
+                 fontFamily = FontFamily.Monospace,
+                 fontSize = 11.sp,
+                 lineHeight = 15.sp,
+                 color = MaterialTheme.colorScheme.onSurface)
+        }
 
-            // ── Reset card ─────────────────────────────────────────────────
-            SiCard(title = "Reset Learners") {
-                ResetRow("Aggressiveness score") { plugin.resetAggression() }
-                ResetRow("Basal multiplier") { plugin.resetBasal() }
-                ResetRow("Circadian hourly learning") { plugin.resetCircadian() }
-                ResetRow("Insulin profiles (peak/DIA)") { plugin.resetProfiles() }
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                Button(
-                    onClick = { plugin.resetAllLearners() },
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text("Reset ALL Learners", fontSize = 18.sp) }
-            }
+        // ── Reset card ─────────────────────────────────────────────────
+        SiCard(title = "Reset Learners") {
+            ResetRow("Aggressiveness score") { plugin.resetAggression() }
+            ResetRow("Basal multiplier") { plugin.resetBasal() }
+            ResetRow("Circadian hourly learning") { plugin.resetCircadian() }
+            ResetRow("Insulin profiles (peak/DIA)") { plugin.resetProfiles() }
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            Button(
+                onClick = { plugin.resetAllLearners() },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+            ) { Text("Reset ALL Learners", fontSize = 18.sp) }
         }
     }
 }
