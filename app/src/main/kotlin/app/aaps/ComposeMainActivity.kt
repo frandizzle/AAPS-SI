@@ -957,6 +957,12 @@ class ComposeMainActivity : AppCompatActivity() {
             // Treatment dialogs
             ElementType.CARBS                   -> navController.navigate(AppRoute.CarbsDialog.route)
             ElementType.INSULIN                 -> navController.navigate(AppRoute.InsulinDialog.route)
+            ElementType.SMART_MEAL              -> {
+                val pluginIndex = activePlugin.getPluginsList().indexOfFirst {
+                    it.javaClass.simpleName == "SmartInsulinPlugin"
+                }
+                if (pluginIndex >= 0) navController.navigate(AppRoute.PluginContent.createRoute(pluginIndex))
+            }
             ElementType.TREATMENT               -> navController.navigate(AppRoute.TreatmentDialog.route)
             ElementType.FILL                    -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.CARTRIDGE_CHANGE.ordinal))
             ElementType.CANNULA_CHANGE          -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.SITE_CHANGE.ordinal))
@@ -1015,5 +1021,12 @@ class ComposeMainActivity : AppCompatActivity() {
             )
         }
     }
-}
 
+    /** Called by UiInteractionImpl to navigate to the SmartInsulin plugin tab. */
+    fun navigateToSmartInsulin() {
+        val pluginIndex = activePlugin.getPluginsList().indexOfFirst {
+            it.javaClass.simpleName == "SmartInsulinPlugin"
+        }
+        if (pluginIndex >= 0) navController?.navigate(AppRoute.PluginContent.createRoute(pluginIndex))
+    }
+}

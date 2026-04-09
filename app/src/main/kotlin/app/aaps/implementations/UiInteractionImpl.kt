@@ -7,6 +7,7 @@ import androidx.annotation.RawRes
 import androidx.annotation.StringRes
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
+import app.aaps.ComposeMainActivity
 import app.aaps.MainActivity
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.MyPreferenceFragment
@@ -75,6 +76,10 @@ class UiInteractionImpl @Inject constructor(
     }
     override fun runSmartMealDialog(fragmentManager: FragmentManager) {
         SmartMealDialog().show(fragmentManager, "SmartMealDialog")
+    }
+
+    override fun navigateToSmartInsulinTab(activity: FragmentActivity) {
+        (activity as? ComposeMainActivity)?.navigateToSmartInsulin()
     }
 
     override fun runLoopDialog(fragmentManager: FragmentManager, showOkCancel: Int) {
