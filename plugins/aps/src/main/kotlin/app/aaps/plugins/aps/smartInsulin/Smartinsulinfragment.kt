@@ -1,6 +1,8 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import android.graphics.Color
+import android.util.TypedValue
+import androidx.core.content.ContextCompat
 import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
@@ -21,6 +23,14 @@ import javax.inject.Inject
 import kotlin.math.roundToInt
 
 class SmartInsulinFragment : DaggerFragment() {
+
+    /** Resolves ?android:attr/textColorPrimary from the current theme — dark in dark theme, dark in light theme */
+    private val primaryTextColor: Int get() {
+        val tv = TypedValue()
+        context?.theme?.resolveAttribute(android.R.attr.textColorPrimary, tv, true)
+        return if (tv.resourceId != 0) ContextCompat.getColor(requireContext(), tv.resourceId)
+        else Color.BLACK
+    }
 
     @Inject lateinit var smartInsulinPlugin: SmartInsulinPlugin
     @Inject lateinit var aapsLogger: AAPSLogger
@@ -43,6 +53,12 @@ class SmartInsulinFragment : DaggerFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // Ensure fragment background matches the host activity theme
+        val bgTv = TypedValue()
+        context?.theme?.resolveAttribute(android.R.attr.colorBackground, bgTv, true)
+        if (bgTv.resourceId != 0) {
+            view.setBackgroundColor(ContextCompat.getColor(requireContext(), bgTv.resourceId))
+        }
         binding.btnResetAggression.setOnClickListener {
             confirmReset("Reset aggressiveness score to 1.0?") { smartInsulinPlugin.resetAggression(); refreshStatus() }
         }
@@ -87,7 +103,7 @@ class SmartInsulinFragment : DaggerFragment() {
     private val dp get() = context?.resources?.displayMetrics?.density ?: 1f
 
     private fun addRow(container: LinearLayout, primary: String, detail: String? = null,
-                       primaryColor: Int = Color.WHITE) {
+                       primaryColor: Int = primaryTextColor) {
         val ctx = context ?: return
         container.addView(TextView(ctx).apply {
             text = primary; textSize = 14f; setTextColor(primaryColor)
@@ -97,7 +113,11 @@ class SmartInsulinFragment : DaggerFragment() {
         })
         if (detail != null) {
             container.addView(TextView(ctx).apply {
-                text = detail; textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
+                val tv2 = TypedValue()
+                context?.theme?.resolveAttribute(android.R.attr.textColorSecondary, tv2, true)
+                val secondaryColor = if (tv2.resourceId != 0) ContextCompat.getColor(requireContext(), tv2.resourceId)
+                else Color.parseColor("#FF888888")
+                text = detail; textSize = 11f; setTextColor(secondaryColor)
                 typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.bottomMargin = (10 * dp).toInt() }
@@ -237,12 +257,12 @@ class SmartInsulinFragment : DaggerFragment() {
         addRow(c, "${d.dayLabel}  ${d.hour}:00",
                "Current hour used for circadian adjustments")
 
-        val modeColor = if (d.mealMode == "Fasting") Color.WHITE else Color.parseColor("#FF64B5F6")
+        val modeColor = if (d.mealMode == "Fasting") primaryTextColor else Color.parseColor("#FF64B5F6")
         addRow(c, "Mode: ${d.mealMode}",
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
 
-        val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
+        val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> primaryTextColor }
         val isFasting = d.mealMode == "Fasting"
 
         // ── Plain-English short-term / long-term insulin summary ─────────────

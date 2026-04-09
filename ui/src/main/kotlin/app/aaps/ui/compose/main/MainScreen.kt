@@ -264,12 +264,12 @@ fun MainScreen(
                     // FABs — positioned above the toolbar when it's visible
                     val fabBottomPadding = paddingValues.calculateBottomPadding() +
                         if (hasToolbar) 64.dp else 16.dp
-                    // SmartInsulin tab shortcut FAB — sits above the SwitchUi FAB
+                    // SmartInsulin tab shortcut FAB — sits to the left of the SwitchUi FAB
                     SmartInsulinFab(
                         onClick = onSmartInsulinClick,
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(bottom = fabBottomPadding + 56.dp, end = 16.dp)
+                            .padding(bottom = fabBottomPadding, end = 72.dp)
                     )
                     SwitchUiFab(
                         onClick = onSwitchToClassicUi,
