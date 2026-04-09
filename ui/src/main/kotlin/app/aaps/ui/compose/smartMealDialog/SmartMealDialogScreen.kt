@@ -380,9 +380,15 @@ fun SmartMealDialogScreen(
                             steps = ((120 - 15) / 15) - 1,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("Safety checks: BG must be above target, not falling, IOB has headroom",
-                             style = MaterialTheme.typography.bodySmall,
-                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "Pre-bolus 2 fires automatically when all safety gates pass:\n" +
+                                "• BG above profile target (not falling)\n" +
+                                "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
+                                "• 15min avg delta not in sustained fall\n" +
+                                "• IOB below 75% of max IOB\n" +
+                                "Gates are checked every 5min until all pass or mode expires.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
