@@ -1,21 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fillViewport="true">
+    android:fillViewport="true"
+    android:background="?android:attr/windowBackground">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="12dp">
+        android:padding="12dp"
+        android:background="?android:attr/windowBackground">
 
         <!-- Overview card -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -32,7 +36,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
-            android:visibility="gone">
+            android:visibility="gone"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -41,7 +46,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Active protection window after a low BG event."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/rebound_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
@@ -51,7 +56,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -59,7 +65,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="How much time BG has spent in the healthy range over the last 24h."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Fasting" android:textSize="13sp" android:textStyle="bold" android:layout_marginBottom="6dp" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="20dp"
@@ -94,7 +100,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -102,7 +109,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="SmartInsulin adapts to your body over time using real BG data."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/learning_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
@@ -112,7 +119,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -120,7 +128,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Detects unannounced meals from unexpected BG rises."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/uam_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
@@ -130,7 +138,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -138,7 +147,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Nudges the loop to correct stubborn high BG without changing your profile."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/stft_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
@@ -148,7 +157,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -156,7 +166,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Hourly multipliers learned from your BG patterns.\nISF× and Bas× = how much to adjust sensitivity and basal for that hour.\nCeil = aggressiveness cap — if the loop is being too aggressive for this hour, this number clamps it down. Lower = more conservative.\nConf = confidence — how much real data has been collected. Green ≥60%, amber ≥30%, red &lt;30%."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="12dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="12dp" />
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginBottom="4dp">
                     <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Hr"   android:textSize="12sp" android:textStyle="bold" />
@@ -177,7 +187,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -185,7 +196,7 @@
                     android:layout_marginBottom="4dp" />
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:text="Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values."
-                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="16dp" />
+                    android:textSize="11sp" android:textColor="?android:attr/textColorSecondary" android:layout_marginBottom="16dp" />
                 <LinearLayout android:id="@+id/profile_rows" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" />
             </LinearLayout>
@@ -195,7 +206,8 @@
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                 android:orientation="vertical" android:padding="16dp">
                 <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
