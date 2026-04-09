@@ -141,6 +141,10 @@ open class SmartInsulinPlugin @Inject constructor(
     private var nudgeDisplaySessionHour: Int = -1
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0   // full profileISF / isfMult at session start
     private var nudgeDisplaySessionBasalU: Double = 0.0    // full profileBasal * basalMult at session start
+    // Cached profile values — updated each invoke() so fragmentData() can read without runBlocking
+    @Volatile private var cachedProfileIsf: Double = 0.0
+    @Volatile private var cachedProfileBasal: Double = 0.0
+    @Volatile private var cachedProfileTarget: Double = 99.0  // 5.5 mmol default
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
@@ -280,7 +284,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── STFT / UAM ────────────────────────")
             // STFT
-            val stftStatus = stftController.statusString(runBlocking { profileFunction.getProfile() }?.getTargetMgdl() ?: (5.5 * 18.0))
+            val stftStatus = stftController.statusString(cachedProfileTarget.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getTargetMgdl() ?: (5.5 * 18.0)))
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
             // UAM status
             val uamStatus = uamController.statusString()
@@ -417,9 +421,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        val profile = runBlocking { profileFunction.getProfile() }
-        val profileIsf   = profile?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
-        val profileBasal = profile?.getBasal() ?: 0.0
+        // Use cached profile values — avoids runBlocking deadlock on main/UI thread
+        val profileIsf   = cachedProfileIsf.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0)
+        val profileBasal = cachedProfileBasal.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getBasal() ?: 0.0)
         val isfMult      = circadianLearner.isfMultiplier(hour)
         val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
         val activeMode   = mealOverrideManager.activeMealMode
@@ -463,7 +467,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Requires minimum 24 readings (~2h) for a meaningful estimate.
         val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
             val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
-            val bgs = runBlocking { persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true) }
+            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
             if (bgs.size >= 24) {
                 val mean  = bgs.map { it.value }.average()
                 val a1c   = (mean + 46.7) / 28.7
@@ -634,6 +638,10 @@ open class SmartInsulinPlugin @Inject constructor(
             rxBus.send(EventResetOpenAPSGui(rh.gs(app.aaps.core.ui.R.string.no_profile_set)))
             return
         }
+        // Cache profile values for fragmentData() — avoids any blocking calls on UI thread
+        cachedProfileIsf   = profile.getIsfMgdl("SmartInsulinPlugin")
+        cachedProfileBasal = profile.getBasal()
+        cachedProfileTarget = profile.getTargetMgdl()
         if (!isEnabled()) {
             rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_disabled)))
             return
@@ -1208,20 +1216,36 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
-        // ── UAM / P/F auto-cancel when BG returns to target or below ─────────
+        // ── UAM / P/F auto-cancel when BG returns to target or below ────────────────────────
         // Insulin did its job — no need to keep the elevated ISF/target active.
         // Gate: BG at or below profile target AND not rising fast (shortAvgDelta < 0.5 mmol/5min)
         // so we don't cancel mid-spike just because a noisy reading dips to target briefly.
+        //
+        // Extra safety guards — do NOT cancel if:
+        //   1. BG is below low guard — user manually entered meal mode during a low (food to treat it).
+        //      Hold the mode until BG actually recovers above target, not the first cycle at target.
+        //   2. Mode age < modeWindowMins — pre-bolus or early-meal window: food hasn't arrived yet,
+        //      BG is still at target because insulin hasn't been overwhelmed by carbs yet.
         if (mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED) {
-            val shortAvgMmol = glucoseStatus.shortAvgDelta / 18.0
+            val shortAvgMmol      = glucoseStatus.shortAvgDelta / 18.0
             val bgAtOrBelowTarget = currentBgMgdl <= profileTargetMgdl
             val notStillRising    = shortAvgMmol < UAM_EXIT_MAX_DELTA_MMOL
-            if (bgAtOrBelowTarget && notStillRising) {
+            val bgBelowLowGuard   = currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL
+            val modeWindowMins    = preferences.get(IntKey.ApsSmartInsulinModeWindowMins)
+            val modeAgeMs         = if (mealOverrideManager.modeStartMs > 0L)
+                now - mealOverrideManager.modeStartMs else Long.MAX_VALUE
+            val inEarlyWindow     = modeAgeMs < modeWindowMins * 60_000L
+            if (bgAtOrBelowTarget && notStillRising && !bgBelowLowGuard && !inEarlyWindow) {
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: BG ${fmtBg(currentBgMgdl)}$unitLabel at/below target " +
                                      "${fmtBg(profileTargetMgdl)}$unitLabel and not rising (Δ=${String.format("%.2f", shortAvgMmol)} mmol) " +
                                      "— auto-cancelling ${mealMode.label}")
                 mealOverrideManager.cancelOverride()
+            } else if (bgAtOrBelowTarget && notStillRising) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: auto-cancel suppressed — " +
+                                     "bgBelowLowGuard=$bgBelowLowGuard (${fmtBg(currentBgMgdl)} < ${fmtBg(REBOUND_LOW_THRESHOLD_MGDL)}$unitLabel) " +
+                                     "inEarlyWindow=$inEarlyWindow (${modeAgeMs / 60_000}min < ${modeWindowMins}min)")
             }
         }
 
