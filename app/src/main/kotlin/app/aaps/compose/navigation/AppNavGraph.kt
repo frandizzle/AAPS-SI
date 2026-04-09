@@ -303,6 +303,21 @@ fun NavGraphBuilder.appNavGraph(
         )
     }
 
+    composable(route = AppRoute.SmartInsulin.route) {
+        val plugin = activePlugin.getPluginsList()
+            .firstOrNull { it.javaClass.simpleName == "SmartInsulinPlugin" } ?: return@composable
+        val composeContent = plugin.getComposeContent()
+        if (composeContent is ComposablePluginContent) {
+            PluginContentRoute(
+                navController = navController,
+                plugin = plugin,
+                composeContent = composeContent,
+                onNavigationRequest = onNavigationRequest,
+                withProtection = withProtection,
+            )
+        }
+    }
+
     composable(route = AppRoute.TreatmentDialog.route) {
         TreatmentDialogScreen(
             bgInfoState = graphViewModel.bgInfoState,

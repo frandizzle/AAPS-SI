@@ -1018,10 +1018,8 @@ class ComposeMainActivity : AppCompatActivity() {
         }
     }
 
-    /** Called by UiInteractionImpl to navigate to the SmartInsulin plugin tab. */
+    /** Called by UiInteractionImpl to navigate to the SmartInsulin screen. */
     fun navigateToSmartInsulin() {
-        val plugin = activePlugin.getPluginsList()
-            .firstOrNull { it.javaClass.simpleName == "SmartInsulinPlugin" } ?: return
-        handlePluginClick(plugin)
+        navController?.navigate(AppRoute.SmartInsulin.route)
     }
 }

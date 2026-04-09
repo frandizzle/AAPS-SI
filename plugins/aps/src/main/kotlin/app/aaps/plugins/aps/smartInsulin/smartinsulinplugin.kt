@@ -60,6 +60,10 @@ import app.aaps.core.validators.preferences.AdaptiveUnitPreference
 import app.aaps.core.validators.preferences.AdaptiveIntPreference
 import app.aaps.core.validators.preferences.AdaptiveSwitchPreference
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
+import app.aaps.plugins.aps.smartInsulin.SmartInsulinScreen
+import app.aaps.core.ui.compose.ComposablePluginContent
+import app.aaps.core.ui.compose.ToolbarConfig
+import androidx.compose.runtime.Composable
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
@@ -115,7 +119,22 @@ open class SmartInsulinPlugin @Inject constructor(
         .preferencesId(PluginDescription.PREFERENCE_SCREEN)
         .preferencesVisibleInSimpleMode(false)
         .showInList { config.APS }
-        .description(R.string.smart_insulin_description),
+        .description(R.string.smart_insulin_description)
+        .composeContent { plugin ->
+            object : ComposablePluginContent {
+                @Composable
+                override fun Render(
+                    setToolbarConfig: (ToolbarConfig) -> Unit,
+                    onNavigateBack: () -> Unit,
+                    onSettings: (() -> Unit)?
+                ) {
+                    SmartInsulinScreen(
+                        plugin = plugin as SmartInsulinPlugin,
+                        onNavigateBack = onNavigateBack
+                    )
+                }
+            }
+        },
     aapsLogger, rh
 ), APS, PluginConstraints, app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview {
 
@@ -249,6 +268,8 @@ open class SmartInsulinPlugin @Inject constructor(
         profileLearner.resetProfiles()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: profiles reset")
     }
+
+
 
 
     // ── Status summary for tab UI ─────────────────────────────────────────────
