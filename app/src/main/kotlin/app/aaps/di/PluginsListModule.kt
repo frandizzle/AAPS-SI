@@ -10,8 +10,8 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.plugins.aps.smartInsulin.MealOverrideManagerImpl
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
-import app.aaps.plugins.aps.openAPSSMB.OpenAPSSMBPlugin
 import app.aaps.plugins.aps.smartInsulin.ProfileLearner
+import app.aaps.plugins.aps.openAPSSMB.OpenAPSSMBPlugin
 import app.aaps.plugins.automation.AutomationPlugin
 import app.aaps.plugins.configuration.configBuilder.ConfigBuilderPlugin
 import app.aaps.plugins.constraints.bgQualityCheck.BgQualityCheckPlugin
@@ -32,7 +32,6 @@ import app.aaps.plugins.sensitivity.SensitivityWeightedAveragePlugin
 import app.aaps.plugins.smoothing.AvgSmoothingPlugin
 import app.aaps.plugins.smoothing.ExponentialSmoothingPlugin
 import app.aaps.plugins.smoothing.NoSmoothingPlugin
-import app.aaps.plugins.smoothing.UnscentedKalmanFilterPlugin
 import app.aaps.plugins.source.DexcomPlugin
 import app.aaps.plugins.source.GlimpPlugin
 import app.aaps.plugins.source.GlunovoPlugin
@@ -163,12 +162,6 @@ abstract class PluginsListModule {
     @Binds
     @Singleton
     abstract fun bindSmartInsulinLearner(impl: ProfileLearner): SmartInsulinLearner
-
-    @Binds
-    @AllConfigs
-    @IntoMap
-    @IntKey(240)
-    abstract fun bindLocalProfilePlugin(plugin: ProfilePlugin): PluginBase
 
     @Binds
     @AllConfigs
@@ -385,12 +378,6 @@ abstract class PluginsListModule {
     @IntoMap
     @IntKey(610)
     abstract fun bindAvgSmoothingPlugin(plugin: AvgSmoothingPlugin): PluginBase
-
-    @Binds
-    @AllConfigs
-    @IntoMap
-    @IntKey(615)
-    abstract fun bindUnscentedKalmanFilterPlugin(plugin: UnscentedKalmanFilterPlugin): PluginBase
 
     @Qualifier
     annotation class AllConfigs
