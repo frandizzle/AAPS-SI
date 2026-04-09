@@ -162,19 +162,69 @@ fun SmartInsulinScreen(
         if (d.inReboundWindow || d.bgWentLow) {
             SiCard(title = "Low Recovery", titleColor = Color(0xFFFB8C00)) {
                 if (d.inReboundWindow) {
-                    val minsLeft = (d.totalReboundWindowMins - d.reboundMins).coerceAtLeast(0)
-                    SiRow("⚠ Recovery in progress — ${d.reboundMins}min of ${d.totalReboundWindowMins}min",
-                          "SMBs blocked / tapering. ${minsLeft}min remaining.",
-                          primaryColor = Color(0xFFFB8C00))
+                    val elapsedMins = d.reboundMins.toDouble()
+                    val windowMins  = d.totalReboundWindowMins.toDouble()
+                    val baseMins    = d.reboundWindowMins.toDouble()
+                    val minsLeft    = (windowMins - elapsedMins).coerceAtLeast(0.0).toInt()
+                    val elapsedInt  = elapsedMins.toInt().coerceAtMost(windowMins.toInt())
+                    val taperFrac   = (0.3 + (0.7 * (elapsedMins / windowMins))).coerceIn(0.3, 1.0)
+                    val tbrPct      = (taperFrac * 100).toInt()
+                    val smbGateMins = windowMins * 0.75
+                    val smbUnlockIn = (smbGateMins - elapsedMins).coerceAtLeast(0.0).toInt()
+                    val headline    = if (smbUnlockIn > 0)
+                        "⚠ Recovery in progress — ${elapsedInt}min of ${windowMins.toInt()}min"
+                    else
+                        "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
+                    SiRow(headline, null, primaryColor = Color(0xFFFB8C00))
+                    SiRow("TBR capped at ${tbrPct}% of normal",
+                          "Starts at 30% and ramps back to 100% over ${windowMins.toInt()} minutes.\nPrevents insulin stacking after a low.")
+                    if (smbUnlockIn > 0) {
+                        SiRow("SMBs blocked — unlocks in ~${smbUnlockIn}min",
+                              "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
+                              primaryColor = Color(0xFFE53935))
+                    } else {
+                        SiRow("SMBs restored ✓",
+                              "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
+                              primaryColor = Color(0xFF43A047))
+                    }
+                    if (d.consecutiveRollercoasters >= 1) {
+                        val extMins = (windowMins - baseMins).toInt()
+                        SiRow("Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min",
+                              "Base: ${baseMins.toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\nExtension grows with each consecutive rollercoaster (max +45min).\nResets after 2h with no further rollercoasters.",
+                              primaryColor = Color(0xFFFB8C00))
+                    }
+                    if (d.mealMode != "Fasting") {
+                        SiRow("Meal mode active — low recovery bypassed until window finishes",
+                              "Recovery protection (TBR taper, SMB gate) continues in background.\nMeal mode ISF and dosing applied on top. Recovery ends in ${minsLeft}min.",
+                              primaryColor = Color(0xFF64B5F6))
+                    }
+                    if (d.softLandingBypass) {
+                        SiRow("Soft landing — meal detection still active",
+                              "The low was borderline (not a crash). UAM can still fire during recovery in case you eat.",
+                              primaryColor = Color(0xFF64B5F6))
+                    }
+                    if (d.minBgDuringLow < Double.MAX_VALUE) {
+                        val lowStr = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol" else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
+                        val secNote = if (d.secondLowOccurred) "\n⚠ Second low occurred — full lockout, UAM blocked." else ""
+                        SiRow("Lowest BG: $lowStr", "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U$secNote")
+                    }
                 } else {
+                    val extNote = if (d.consecutiveRollercoasters >= 1) {
+                        val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                        "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
+                    } else ""
                     SiRow("⚠ BG is below low guard — waiting for recovery",
-                          "Recovery window will start automatically when BG rises.",
+                          "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically.$extNote",
                           primaryColor = Color(0xFFE53935))
-                }
-                if (d.minBgDuringLow < Double.MAX_VALUE) {
-                    val lowStr = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
-                    else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
-                    SiRow("Lowest BG: $lowStr", "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U")
+                    if (d.mealMode != "Fasting") {
+                        SiRow("✓ Low recovery bypassed — meal mode active (${d.mealMode})",
+                              "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
+                              primaryColor = Color(0xFF43A047))
+                    }
+                    if (d.minBgDuringLow < Double.MAX_VALUE) {
+                        val lowStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol" else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
+                        SiRow("Lowest BG: $lowStr2", "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U")
+                    }
                 }
             }
         }
@@ -228,22 +278,73 @@ fun SmartInsulinScreen(
                 SiRow("New sensor — learning paused for first 24h",
                       "Resumes automatically after 24h.", primaryColor = Color(0xFFFB8C00))
 
-            // Aggression nudge
-            val nudgeParts = d.lastAggrNudgeStatus.split("|")
-            val nudgeState = nudgeParts.getOrNull(0) ?: "INACTIVE"
-            val nudgeColor = when (nudgeState) {
-                "ACTIVE_HIGH" -> Color(0xFFFB8C00)
-                "ACTIVE_LOW"  -> Color(0xFF4CAF50)
-                "PAUSED"      -> Color(0xFF64B5F6)
-                else          -> MaterialTheme.colorScheme.onSurfaceVariant
+            // Aggression nudge — full detail matching old fragment
+            val nudgeParts      = d.lastAggrNudgeStatus.split("|")
+            val nudgeState      = nudgeParts.getOrNull(0) ?: "INACTIVE"
+            val nudgeActiveHigh = nudgeState == "ACTIVE_HIGH"
+            val nudgeActiveLow  = nudgeState == "ACTIVE_LOW"
+            val nudgeActive     = nudgeActiveHigh || nudgeActiveLow
+            val nudgePaused     = nudgeState == "PAUSED"
+            val nudgeColor = when {
+                nudgeActiveHigh                  -> Color(0xFFFB8C00)
+                nudgeActiveLow                   -> Color(0xFF4CAF50)
+                nudgePaused                      -> Color(0xFF64B5F6)
+                d.inReboundWindow || d.bgWentLow -> Color(0xFFFB8C00)
+                else                             -> MaterialTheme.colorScheme.onSurfaceVariant
             }
-            val nudgeHeadline = when (nudgeState) {
-                "ACTIVE_HIGH" -> "⚡ Too much insulin — adjusting"
-                "ACTIVE_LOW"  -> "⚡ Not enough insulin — adjusting"
-                "PAUSED"      -> "⏸ Paused — ${nudgeParts.getOrNull(1) ?: "Learning suppressed"}"
-                else          -> "Insulin levels look right for this hour"
+            val nudgeHeadline: String
+            val nudgeDetail: String
+            when {
+                nudgeActive -> {
+                    val deviation  = nudgeParts.getOrNull(1) ?: "?"
+                    val day        = nudgeParts.getOrNull(2) ?: "?"
+                    val hour2      = nudgeParts.getOrNull(3)?.toIntOrNull()
+                    val cooldown   = nudgeParts.getOrNull(8) == "COOLDOWN"
+                    val penaltyR   = nudgeParts.getOrNull(9) ?: "recent penalty"
+                    val coolNote   = if (cooldown) " (attenuated — $penaltyR)" else ""
+                    val hourStr    = hour2?.let { h ->
+                        if (d.isMmol) { val ap = if (h < 12) "AM" else "PM"; val h12 = if (h == 0) 12 else if (h > 12) h - 12 else h; "$h12:00 $ap" }
+                        else "%02d:00".format(h)
+                    } ?: "?"
+                    val isfUnit2   = if (d.isMmol) "mmol/U" else "mg/dL/U"
+                    val wasIsf     = if (d.nudgeSessionIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} $isfUnit2" else "${"%.1f".format(d.nudgeSessionIsfMgdl)} $isfUnit2" else "?"
+                    val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} $isfUnit2" else "${"%.1f".format(d.finalIsfMgdl)} $isfUnit2" else "?"
+                    val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
+                    val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
+                    val shortPct   = kotlin.math.abs(((1.0 - d.circCeil) * 100).toInt())
+                    val longPct    = kotlin.math.abs(((1.0 - d.basalMultiplier) * 100).toInt())
+                    val shortLine  = if (nudgeActiveHigh) "Short term: pulling out ~${shortPct}% insulin right now (ceiling ${(d.circCeil * 100).toInt()}%)"
+                    else "Short term: adding ~${shortPct}% extra insulin right now (ceiling ${(d.circCeil * 100).toInt()}%)"
+                    val longLine   = when {
+                        longPct < 2     -> "Long term: still building — less than 2% change so far"
+                        nudgeActiveHigh -> "Long term: permanently reduced by ~${longPct}% at this hour"
+                        else            -> "Long term: permanently increased by ~${longPct}% at this hour"
+                    }
+                    nudgeHeadline = "⚡ ${if (nudgeActiveHigh) "Too much insulin — adjusting" else "Not enough insulin — adjusting"}$coolNote"
+                    nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortLine\n$longLine"
+                }
+                nudgePaused -> {
+                    val reason    = nudgeParts.getOrNull(1) ?: "Learning suppressed"
+                    nudgeHeadline = "⏸ Paused — $reason"
+                    nudgeDetail   = "Adjustments paused while not in clean fasting state.\nWill resume nudging ISF and basal once fasting resumes."
+                }
+                d.inReboundWindow -> {
+                    val minsLeft   = (d.totalReboundWindowMins - d.reboundMins).coerceAtLeast(0)
+                    val taperPct   = ((0.3 + 0.7 * (d.reboundMins.toDouble() / d.totalReboundWindowMins)) * 100).toInt()
+                    val smbUnlock  = ((d.totalReboundWindowMins * 0.75) - d.reboundMins).coerceAtLeast(0.0).toInt()
+                    nudgeHeadline  = "⚠ BG is below low guard — reducing insulin"
+                    nudgeDetail    = "BG crossed below low guard — holding back to avoid stacking.\nShort term: TBR at ${taperPct}% of normal — ramps up over ${d.totalReboundWindowMins}min window\nShort term: SMBs ${if (smbUnlock > 0) "blocked for ~${smbUnlock}min more" else "restored ✓"}\nLong term: learning paused during recovery — resumes in ${minsLeft}min."
+                }
+                d.bgWentLow -> {
+                    nudgeHeadline  = "⚠ BG is below low guard — waiting for recovery"
+                    nudgeDetail    = "BG is below the low guard threshold. Insulin delivery limited.\nShort term: insulin being held back until BG recovers above low guard\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
+                }
+                else -> {
+                    nudgeHeadline  = "Insulin levels look right for this hour"
+                    nudgeDetail    = "No consistent over- or under-delivery detected.\nISF and basal learning running on observed BG patterns."
+                }
             }
-            SiRow(nudgeHeadline, null, primaryColor = nudgeColor)
+            SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
         }
 
         // ── UAM card ───────────────────────────────────────────────────
