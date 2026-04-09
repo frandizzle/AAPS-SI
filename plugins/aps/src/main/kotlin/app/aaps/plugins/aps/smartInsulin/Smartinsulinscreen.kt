@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +20,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -276,15 +277,19 @@ fun SmartInsulinScreen(
                     Text("%.3f".format(isf),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(isf))
                     Text("%.3f".format(bas),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(bas))
                     Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp, color = multColor(ceil))
-                    // Confidence bar
-                    Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically) {
-                        LinearProgressIndicator(
-                            progress = { conf / 100f },
-                            modifier = Modifier.width(36.dp).height(6.dp),
-                            color = confColor(conf),
-                            trackColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
-                        Text(" $conf%", fontSize = 10.sp, color = confColor(conf))
+                    // Confidence bar — Box based, always fills correctly
+                    Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.width(40.dp).height(6.dp)
+                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                            .background(Color(0xFF333333))) {
+                            Box(modifier = Modifier.fillMaxHeight()
+                                .width(40.dp * (conf / 100f))
+                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                                .background(confColor(conf)))
+                        }
+                        Text("$conf%", fontSize = 10.sp, color = confColor(conf),
+                             fontFamily = FontFamily.Monospace)
                     }
                 }
             }
@@ -382,20 +387,35 @@ private fun TirSection(label: String, tirRaw: String, prefix: String) {
     val highPct = m?.groupValues?.get(2)?.toFloatOrNull() ?: 0f
     val lowPct  = m?.groupValues?.get(3)?.toFloatOrNull() ?: 0f
     Text(label, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface)
-    Spacer(Modifier.height(4.dp))
-    Row(modifier = Modifier.fillMaxWidth().height(16.dp)) {
-        if (lowPct  > 0) Box(Modifier.weight(lowPct).background(Color(0xFFE53935)))
-        if (inPct   > 0) Box(Modifier.weight(inPct).background(Color(0xFF43A047)))
-        if (highPct > 0) Box(Modifier.weight(highPct).background(Color(0xFFFB8C00)))
-        if (lowPct + inPct + highPct == 0f) Box(Modifier.weight(1f).background(MaterialTheme.colorScheme.surfaceVariant))
-    }
-    Spacer(Modifier.height(4.dp))
-    if (m != null)
-        Text("${inPct.toInt()}% in range  •  ${highPct.toInt()}% high  •  ${lowPct.toInt()}% low",
-             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    else
+    Spacer(Modifier.height(6.dp))
+    val total = lowPct + inPct + highPct
+    if (total > 0f) {
+        // Stacked bar — use fillMaxWidth with proportional widths via BoxWithConstraints
+        androidx.compose.foundation.layout.BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().height(14.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+        ) {
+            val totalWidth = maxWidth
+            Row(modifier = Modifier.fillMaxSize()) {
+                if (lowPct  > 0f) Box(Modifier.width(totalWidth * (lowPct  / total)).fillMaxHeight().background(Color(0xFFE53935)))
+                if (inPct   > 0f) Box(Modifier.width(totalWidth * (inPct   / total)).fillMaxHeight().background(Color(0xFF43A047)))
+                if (highPct > 0f) Box(Modifier.width(totalWidth * (highPct / total)).fillMaxHeight().background(Color(0xFFFB8C00)))
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (inPct   > 0f) Text("${inPct.toInt()}% in range",  fontSize = 11.sp, color = Color(0xFF43A047))
+            if (highPct > 0f) Text("${highPct.toInt()}% high",    fontSize = 11.sp, color = Color(0xFFFB8C00))
+            if (lowPct  > 0f) Text("${lowPct.toInt()}% low",      fontSize = 11.sp, color = Color(0xFFE53935))
+        }
+    } else {
+        Box(modifier = Modifier.fillMaxWidth().height(14.dp)
+            .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant))
+        Spacer(Modifier.height(4.dp))
         Text("Not enough data yet — needs ~2 hours of ${label.lowercase()} readings",
-             fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 private fun aggrDesc(a: Double) = when {
