@@ -123,15 +123,11 @@ class SmartMealDialogViewModel @Inject constructor(
 
     fun confirmAndActivate(onDeliveryError: (String) -> Unit, onDone: () -> Unit) {
         val s = _uiState.value
-        val mode = modeList[s.selectedModeIndex]
-        val durationMs = TimeUnit.MINUTES.toMillis(s.durationMins.toLong())
-        val bolusStep = s.bolusStep
         val maxPb = s.maxPreBolus
         val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
-        val pb2 = if (s.preBolus2Enabled) s.preBolus2U.coerceAtMost(maxPb) else 0.0
-        val pb2DelayMs = TimeUnit.MINUTES.toMillis(s.preBolus2DelayMins.toLong())
 
-        // Save ISF
+        // Save ISF preference regardless of bolus outcome
+        val mode = modeList[s.selectedModeIndex]
         val key = isfKeyFor(mode)
         if (key != null) {
             val isfMgdl = if (s.isfValue == 0.0) 0.0
@@ -139,15 +135,8 @@ class SmartMealDialogViewModel @Inject constructor(
             sp.putDouble(key.key, isfMgdl)
         }
 
-        // Activate mode
-        mealOverrideManager.activateOverride(
-            mode = mode, doseU = if (pb1 > 0.0) pb1 else null,
-            carbsG = 0, modeWindowMs = durationMs,
-            preBolus2U = pb2, preBolus2DelayMs = pb2DelayMs
-        )
-
-        // Deliver PB1
         if (pb1 > 0.0) {
+            // PB1 requested — send bolus FIRST, only activate mode if pump accepts it
             val info = DetailedBolusInfo().apply {
                 insulin = pb1
                 notes = "SmartMeal ${mode.label} pre-bolus 1"
@@ -155,11 +144,35 @@ class SmartMealDialogViewModel @Inject constructor(
             }
             commandQueue.bolus(info, object : Callback() {
                 override fun run() {
-                    if (!result.success) onDeliveryError(result.comment)
+                    if (result.success) {
+                        startMealMode(s)
+                        onDone()
+                    } else {
+                        onDeliveryError(result.comment)
+                        // Mode NOT activated — pump rejected the bolus
+                    }
                 }
             })
+        } else {
+            // No PB1 — activate mode immediately, no pump interaction needed
+            startMealMode(s)
+            onDone()
         }
-        onDone()
+    }
+
+    private fun startMealMode(s: SmartMealUiState) {
+        val mode = modeList[s.selectedModeIndex]
+        val maxPb = s.maxPreBolus
+        val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
+        val pb2 = if (s.preBolus2Enabled) s.preBolus2U.coerceAtMost(maxPb) else 0.0
+        mealOverrideManager.activateOverride(
+            mode = mode,
+            doseU = if (pb1 > 0.0) pb1 else null,
+            carbsG = 0,
+            modeWindowMs = TimeUnit.MINUTES.toMillis(s.durationMins.toLong()),
+            preBolus2U = pb2,
+            preBolus2DelayMs = if (s.preBolus2Enabled && pb2 > 0.0) TimeUnit.MINUTES.toMillis(s.preBolus2DelayMins.toLong()) else 0L
+        )
     }
 
     fun buildSummary(): String {

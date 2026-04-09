@@ -221,9 +221,7 @@ fun SmartMealDialogScreen(
                     val isfUnit = if (uiState.isMmol) "mmol/U" else "mg/dL/U"
                     val isfMax = if (uiState.isMmol) 20.0 else 360.0
                     val isfStep = if (uiState.isMmol) 0.1 else 1.0
-                    var isfText by rememberSaveable { mutableStateOf(
-                        if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else "0"
-                    ) }
+                    var isfText by rememberSaveable { mutableStateOf(if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else "") }
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("ISF override", style = MaterialTheme.typography.bodyLarge,
@@ -266,7 +264,7 @@ fun SmartMealDialogScreen(
                                onCheckedChange = { viewModel.setPreBolus1Enabled(it) })
                     }
                     if (uiState.preBolus1Enabled) {
-                        var pb1Text by rememberSaveable { mutableStateOf("%.2f".format(uiState.preBolus1U)) }
+                        var pb1Text by rememberSaveable { mutableStateOf(if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else "") }
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Amount", style = MaterialTheme.typography.bodyLarge,
@@ -325,7 +323,7 @@ fun SmartMealDialogScreen(
                     }
                     if (uiState.preBolus2Enabled) {
                         HorizontalDivider()
-                        var pb2Text by rememberSaveable { mutableStateOf("%.2f".format(uiState.preBolus2U)) }
+                        var pb2Text by rememberSaveable { mutableStateOf(if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else "") }
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Amount", style = MaterialTheme.typography.bodyLarge,
