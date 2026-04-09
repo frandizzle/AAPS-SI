@@ -175,7 +175,7 @@
                     <TextView android:layout_width="0dp" android:layout_weight="2" android:layout_height="wrap_content" android:text="Ceil" android:textSize="12sp" android:textStyle="bold" />
                     <TextView android:layout_width="0dp" android:layout_weight="3" android:layout_height="wrap_content" android:text="Conf" android:textSize="12sp" android:textStyle="bold" />
                 </LinearLayout>
-                <com.google.android.material.divider.MaterialDivider
+                <View
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginBottom="4dp" />
                 <LinearLayout android:id="@+id/circadian_rows" android:layout_width="match_parent"
@@ -235,7 +235,7 @@
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="Aggressiveness score" android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_aggression"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
@@ -244,7 +244,7 @@
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="Basal multiplier" android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_basal"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
@@ -253,7 +253,7 @@
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="Circadian hourly learning" android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_circadian"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
@@ -262,14 +262,14 @@
                     <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="Insulin profiles (peak/DIA)" android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_profiles"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
-                <com.google.android.material.divider.MaterialDivider android:layout_width="match_parent"
+                <View android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginBottom="16dp" />
                 <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_all"
-                    style="@style/Widget.Material3.Button"
+                    style="@style/Widget.MaterialComponents.Button"
                     android:layout_width="match_parent" android:layout_height="56dp"
                     android:textSize="18sp" android:text="Reset ALL Learners" />
             </LinearLayout>

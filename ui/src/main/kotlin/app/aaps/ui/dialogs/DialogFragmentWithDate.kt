@@ -61,12 +61,6 @@ abstract class DialogFragmentWithDate : DaggerDialogFragment() {
         savedInstanceState.putLong("eventTimeOriginal", eventTimeOriginal)
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // Force AAPS dark theme for this dialog window
-        setStyle(STYLE_NO_TITLE, app.aaps.core.ui.R.style.AppTheme)
-    }
-
     fun onCreateViewGeneral() {
         dialog?.window?.requestFeature(Window.FEATURE_NO_TITLE)
         dialog?.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
