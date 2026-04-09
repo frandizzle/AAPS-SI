@@ -57,6 +57,7 @@ fun ElementType.color(): Color = when (this) {
     ElementType.TREATMENT,
     ElementType.FILL                    -> AapsTheme.elementColors.insulin
 
+    ElementType.SMART_MEAL              -> AapsTheme.elementColors.bolusWizard
     ElementType.CARBS                   -> AapsTheme.elementColors.carbs
     ElementType.BOLUS_WIZARD            -> AapsTheme.elementColors.bolusWizard
     ElementType.QUICK_WIZARD,
@@ -113,6 +114,7 @@ fun ElementType.color(): Color = when (this) {
 
 fun ElementType.icon(): ImageVector = when (this) {
     ElementType.INSULIN                 -> IcBolus
+    ElementType.SMART_MEAL              -> IcSmb
     ElementType.CARBS                   -> IcCarbs
     ElementType.BOLUS_WIZARD            -> IcCalculator
     ElementType.QUICK_WIZARD,
@@ -166,6 +168,7 @@ fun ElementType.icon(): ImageVector = when (this) {
 
 fun ElementType.labelResId(): Int = when (this) {
     ElementType.INSULIN                 -> R.string.overview_insulin_label
+    ElementType.SMART_MEAL              -> R.string.smart_meal // TODO: add <string name="smart_meal">Smart Meal</string> to core-ui/src/main/res/values/strings.xml
     ElementType.CARBS                   -> R.string.carbs
     ElementType.BOLUS_WIZARD            -> R.string.boluswizard
     ElementType.QUICK_WIZARD            -> 0 // dynamic label
@@ -249,6 +252,7 @@ fun ElementType.descriptionResId(): Int = when (this) {
     ElementType.CONFIGURATION           -> R.string.nav_configuration_desc
     ElementType.ABOUT                   -> R.string.nav_about_desc
     ElementType.QUICK_LAUNCH_CONFIG     -> R.string.quick_launch_configure_desc
+    ElementType.SMART_MEAL,
     ElementType.QUICK_WIZARD,
     ElementType.RUNNING_MODE,
     ElementType.AUTOMATION,

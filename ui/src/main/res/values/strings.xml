@@ -11,6 +11,7 @@
     <string name="remind_to_bolus_later">Remind to bolus later</string>
 
     <string name="a11y_carb_reminder">Set reminder to carbs time</string>
+    <string name="smart_meal">Smart Meal</string>
 
     <!--    Widget-->
     <string name="configure">Configure opacity</string>
