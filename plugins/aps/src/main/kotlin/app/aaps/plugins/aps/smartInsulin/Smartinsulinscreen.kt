@@ -267,7 +267,7 @@ fun SmartInsulinScreen(
                 val conf = m.groupValues[5].toIntOrNull() ?: return@forEach
                 val isCur = selectedDow == todayDow && hr == currentHr
                 val rowBg = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
-                fun multColor(v: Float) = when { v > 1.05f -> Color(0xFFFB8C00); v < 0.95f -> Color(0xFF64B5F6); else -> MaterialTheme.colorScheme.onSurfaceVariant }
+                fun multColor(v: Float) = when { v > 1.05f -> Color(0xFFFB8C00); v < 0.95f -> Color(0xFF64B5F6); else -> Color(0xFFAAAAAA) }
                 fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
                 Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
                     Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1f), fontSize = 11.sp,
@@ -300,7 +300,7 @@ fun SmartInsulinScreen(
                 val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> MaterialTheme.colorScheme.onSurfaceVariant }
+                val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
                 Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
                 Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
