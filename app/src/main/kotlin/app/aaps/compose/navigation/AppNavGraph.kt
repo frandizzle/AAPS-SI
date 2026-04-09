@@ -61,6 +61,7 @@ import app.aaps.ui.compose.configuration.ConfigurationViewModel
 import app.aaps.ui.compose.extendedBolusDialog.ExtendedBolusDialogScreen
 import app.aaps.ui.compose.fillDialog.FillDialogScreen
 import app.aaps.ui.compose.insulinDialog.InsulinDialogScreen
+import app.aaps.ui.compose.smartMealDialog.SmartMealDialogScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
 import app.aaps.ui.compose.main.MainViewModel
@@ -286,6 +287,15 @@ fun NavGraphBuilder.appNavGraph(
             bgInfoState = graphViewModel.bgInfoState,
             iobUiState = graphViewModel.iobUiState,
             cobUiState = graphViewModel.cobUiState,
+            onNavigateBack = { navController.safePopBackStack() },
+            onShowDeliveryError = { comment ->
+                onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
+            }
+        )
+    }
+
+    composable(route = AppRoute.SmartMealDialog.route) {
+        SmartMealDialogScreen(
             onNavigateBack = { navController.safePopBackStack() },
             onShowDeliveryError = { comment ->
                 onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)

@@ -100,7 +100,6 @@ import app.aaps.core.ui.compose.LocalProfileUtil
 import app.aaps.core.ui.compose.ProtectionHost
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.dialogs.OkDialog
-import app.aaps.ui.dialogs.SmartMealDialog
 import app.aaps.core.ui.compose.icons.Pump
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
@@ -959,11 +958,7 @@ class ComposeMainActivity : AppCompatActivity() {
             // Treatment dialogs
             ElementType.CARBS                   -> navController.navigate(AppRoute.CarbsDialog.route)
             ElementType.INSULIN                 -> navController.navigate(AppRoute.InsulinDialog.route)
-            ElementType.SMART_MEAL              -> {
-                // SmartMeal is a fragment dialog — show directly on supportFragmentManager
-                if (!supportFragmentManager.isStateSaved)
-                    SmartMealDialog().show(supportFragmentManager, "SmartMealDialog")
-            }
+            ElementType.SMART_MEAL              -> navController.navigate(AppRoute.SmartMealDialog.route)
             ElementType.TREATMENT               -> navController.navigate(AppRoute.TreatmentDialog.route)
             ElementType.FILL                    -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.CARTRIDGE_CHANGE.ordinal))
             ElementType.CANNULA_CHANGE          -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.SITE_CHANGE.ordinal))

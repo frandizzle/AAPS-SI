@@ -250,6 +250,7 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: profiles reset")
     }
 
+
     // ── Status summary for tab UI ─────────────────────────────────────────────
 
     fun statusSummary(): String {
