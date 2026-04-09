@@ -3,6 +3,7 @@ package app.aaps.plugins.main.skins
 import android.util.TypedValue.COMPLEX_UNIT_PX
 import android.view.View
 import android.widget.LinearLayout
+import android.view.ViewGroup
 import androidx.annotation.StringRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import app.aaps.plugins.main.R
@@ -68,7 +69,7 @@ interface SkinInterface {
         }
     }
 
-    fun moveButtonsLayout(root: LinearLayout) {
+    fun moveButtonsLayout(root: ViewGroup) {
         val buttonsLayout = root.findViewById<LinearLayout>(R.id.buttons_layout)
         root.removeView(buttonsLayout)
         val innerLayout = root.findViewById<LinearLayout>(R.id.inner_layout)
