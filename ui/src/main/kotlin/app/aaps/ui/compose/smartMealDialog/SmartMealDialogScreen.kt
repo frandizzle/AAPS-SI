@@ -34,6 +34,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -185,27 +188,66 @@ fun SmartMealDialogScreen(
                         }
                     }
 
-                    // Duration slider
-                    val durSteps = ((480 - 30) / 30) - 1
-                    Text("Duration: ${uiState.durationMins} min",
-                         style = MaterialTheme.typography.bodyLarge)
+                    // Duration slider + text field
+                    var durationText by rememberSaveable { mutableStateOf(uiState.durationMins.toString()) }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Duration", style = MaterialTheme.typography.bodyLarge,
+                             modifier = Modifier.weight(1f))
+                        OutlinedTextField(
+                            value = durationText,
+                            onValueChange = { v ->
+                                durationText = v
+                                v.toIntOrNull()?.coerceIn(30, 480)?.let { viewModel.setDuration(it) }
+                            },
+                            suffix = { Text("min") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.width(110.dp)
+                        )
+                    }
                     Slider(
                         value = uiState.durationMins.toFloat(),
-                        onValueChange = { viewModel.setDuration(it.toInt()) },
+                        onValueChange = { v ->
+                            viewModel.setDuration(v.toInt())
+                            durationText = v.toInt().toString()
+                        },
                         valueRange = 30f..480f,
-                        steps = durSteps,
+                        steps = ((480 - 30) / 30) - 1,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    // ISF
+                    // ISF slider + text field
                     val isfUnit = if (uiState.isMmol) "mmol/U" else "mg/dL/U"
                     val isfMax = if (uiState.isMmol) 20.0 else 360.0
                     val isfStep = if (uiState.isMmol) 0.1 else 1.0
-                    Text("ISF override: ${if (uiState.isfValue > 0.0) "${"%.1f".format(uiState.isfValue)} $isfUnit" else "Profile ISF (0 = use profile)"}",
-                         style = MaterialTheme.typography.bodyLarge)
+                    var isfText by rememberSaveable { mutableStateOf(
+                        if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else "0"
+                    ) }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("ISF override", style = MaterialTheme.typography.bodyLarge,
+                             modifier = Modifier.weight(1f))
+                        OutlinedTextField(
+                            value = isfText,
+                            onValueChange = { v ->
+                                isfText = v
+                                v.toDoubleOrNull()?.coerceIn(0.0, isfMax)?.let { viewModel.setIsf(it) }
+                            },
+                            suffix = { Text(isfUnit) },
+                            placeholder = { Text("0 = profile") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            singleLine = true,
+                            modifier = Modifier.width(130.dp)
+                        )
+                    }
                     Slider(
                         value = uiState.isfValue.toFloat(),
-                        onValueChange = { viewModel.setIsf((it / isfStep).toLong() * isfStep) },
+                        onValueChange = { v ->
+                            val snapped = (v / isfStep).toLong() * isfStep
+                            viewModel.setIsf(snapped)
+                            isfText = if (snapped > 0.0) "%.1f".format(snapped) else "0"
+                        },
                         valueRange = 0f..isfMax.toFloat(),
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -224,12 +266,31 @@ fun SmartMealDialogScreen(
                                onCheckedChange = { viewModel.setPreBolus1Enabled(it) })
                     }
                     if (uiState.preBolus1Enabled) {
-                        Text("Amount: ${"%.2f".format(uiState.preBolus1U)} U",
-                             style = MaterialTheme.typography.bodyLarge)
+                        var pb1Text by rememberSaveable { mutableStateOf("%.2f".format(uiState.preBolus1U)) }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = pb1Text,
+                                onValueChange = { v ->
+                                    pb1Text = v
+                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                        ?.let { viewModel.setPreBolus1U(it) }
+                                },
+                                suffix = { Text("U") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.width(100.dp)
+                            )
+                        }
                         Slider(
                             value = uiState.preBolus1U.toFloat(),
-                            onValueChange = { viewModel.setPreBolus1U(
-                                (it / uiState.bolusStep).toLong() * uiState.bolusStep) },
+                            onValueChange = { v ->
+                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                viewModel.setPreBolus1U(snapped)
+                                pb1Text = "%.2f".format(snapped)
+                            },
                             valueRange = 0f..uiState.maxPreBolus.toFloat(),
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -264,20 +325,57 @@ fun SmartMealDialogScreen(
                     }
                     if (uiState.preBolus2Enabled) {
                         HorizontalDivider()
-                        Text("Amount: ${"%.2f".format(uiState.preBolus2U)} U",
-                             style = MaterialTheme.typography.bodyLarge)
+                        var pb2Text by rememberSaveable { mutableStateOf("%.2f".format(uiState.preBolus2U)) }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = pb2Text,
+                                onValueChange = { v ->
+                                    pb2Text = v
+                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                        ?.let { viewModel.setPreBolus2U(it) }
+                                },
+                                suffix = { Text("U") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.width(100.dp)
+                            )
+                        }
                         Slider(
                             value = uiState.preBolus2U.toFloat(),
-                            onValueChange = { viewModel.setPreBolus2U(
-                                (it / uiState.bolusStep).toLong() * uiState.bolusStep) },
+                            onValueChange = { v ->
+                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                viewModel.setPreBolus2U(snapped)
+                                pb2Text = "%.2f".format(snapped)
+                            },
                             valueRange = 0f..uiState.maxPreBolus.toFloat(),
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("Delay: ${uiState.preBolus2DelayMins} min",
-                             style = MaterialTheme.typography.bodyLarge)
+                        var delayText by rememberSaveable { mutableStateOf(uiState.preBolus2DelayMins.toString()) }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Delay", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = delayText,
+                                onValueChange = { v ->
+                                    delayText = v
+                                    v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus2DelayMins(it) }
+                                },
+                                suffix = { Text("min") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(100.dp)
+                            )
+                        }
                         Slider(
                             value = uiState.preBolus2DelayMins.toFloat(),
-                            onValueChange = { viewModel.setPreBolus2DelayMins(it.toInt()) },
+                            onValueChange = { v ->
+                                viewModel.setPreBolus2DelayMins(v.toInt())
+                                delayText = v.toInt().toString()
+                            },
                             valueRange = 15f..120f,
                             steps = ((120 - 15) / 15) - 1,
                             modifier = Modifier.fillMaxWidth()
