@@ -459,13 +459,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val rawFinalBasal     = profileBasal * basalMult
         val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
 
-        // Capture full composite session-start values when hour changes
-        // These are used as "was" in the learning card — includes ALL multipliers
-        if (nudgeDisplaySessionHour != hour) {
-            nudgeDisplaySessionHour   = hour
-            nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
-            nudgeDisplaySessionBasalU  = roundedFinalBasal
-        }
+        // Session-start snapshot is captured in invoke() BEFORE circadianLearner.update()
+        // so nudgeDisplaySessionIsfMgdl/BasalU represent true pre-nudge values.
+        // fragmentData() just reads them — never writes them.
 
         val circRaw = buildString {
             for (h in 0..23) {
@@ -1422,6 +1418,27 @@ open class SmartInsulinPlugin @Inject constructor(
         // ISF learning also runs during lockout — activity-based deviation is independent of meals.
         // The negIOB gate is handled inside CircadianLearner via inPostMealLockout parameter.
         val suppressCircadianLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
+
+        // ── Session-start snapshot — capture BEFORE learner updates this cycle ──
+        // This gives us the true "was" values for the learning card display:
+        // what the loop was actually delivering at the start of this hour,
+        // before any nudges from today's learning changed the multipliers.
+        run {
+            val snapHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val snapIsfMult   = circadianLearner.isfMultiplier(snapHour)
+            val snapBasalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(snapHour)
+            val snapProfileIsf   = cachedProfileIsf
+            val snapProfileBasal = cachedProfileBasal
+            val snapTbrStep = activePlugin.activePump.pumpDescription.tempAbsoluteStep.takeIf { it > 0.0 } ?: 0.05
+            val snapRawBasal = snapProfileBasal * snapBasalMult
+            val snapRoundedBasal = Math.round(snapRawBasal / snapTbrStep) * snapTbrStep
+            if (nudgeDisplaySessionHour != snapHour) {
+                nudgeDisplaySessionHour    = snapHour
+                nudgeDisplaySessionIsfMgdl = if (snapIsfMult > 0) snapProfileIsf / snapIsfMult else 0.0
+                nudgeDisplaySessionBasalU  = snapRoundedBasal
+            }
+        }
+
         if (!highTempTarget && !suppressRollercoaster) {
             circadianLearner.update(
                 glucoseStatus            = glucoseStatus,
