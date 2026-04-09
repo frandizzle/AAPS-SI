@@ -100,6 +100,7 @@ import app.aaps.core.ui.compose.LocalProfileUtil
 import app.aaps.core.ui.compose.ProtectionHost
 import app.aaps.core.ui.compose.ScreenMode
 import app.aaps.core.ui.compose.dialogs.OkDialog
+import app.aaps.ui.dialogs.SmartMealDialog
 import app.aaps.core.ui.compose.icons.Pump
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
@@ -560,6 +561,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     onNavigate = { request -> handleNavigationRequest(request, navController) },
                     onDrawerClosed = { mainViewModel.closeDrawer() },
                     onSwitchToClassicUi = { switchToClassicUi() },
+                    onSmartInsulinClick = { navigateToSmartInsulin() },
                     onAboutDialogDismiss = { mainViewModel.setShowAboutDialog(false) },
                     onMaintenanceSheetDismiss = { mainViewModel.setShowMaintenanceSheet(false) },
                     onDirectoryClick = {
@@ -958,10 +960,9 @@ class ComposeMainActivity : AppCompatActivity() {
             ElementType.CARBS                   -> navController.navigate(AppRoute.CarbsDialog.route)
             ElementType.INSULIN                 -> navController.navigate(AppRoute.InsulinDialog.route)
             ElementType.SMART_MEAL              -> {
-                val pluginIndex = activePlugin.getPluginsList().indexOfFirst {
-                    it.javaClass.simpleName == "SmartInsulinPlugin"
-                }
-                if (pluginIndex >= 0) navController.navigate(AppRoute.PluginContent.createRoute(pluginIndex))
+                // SmartMeal is a fragment dialog — show directly on supportFragmentManager
+                if (!supportFragmentManager.isStateSaved)
+                    SmartMealDialog().show(supportFragmentManager, "SmartMealDialog")
             }
             ElementType.TREATMENT               -> navController.navigate(AppRoute.TreatmentDialog.route)
             ElementType.FILL                    -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.CARTRIDGE_CHANGE.ordinal))
@@ -1024,9 +1025,8 @@ class ComposeMainActivity : AppCompatActivity() {
 
     /** Called by UiInteractionImpl to navigate to the SmartInsulin plugin tab. */
     fun navigateToSmartInsulin() {
-        val pluginIndex = activePlugin.getPluginsList().indexOfFirst {
-            it.javaClass.simpleName == "SmartInsulinPlugin"
-        }
-        if (pluginIndex >= 0) navController?.navigate(AppRoute.PluginContent.createRoute(pluginIndex))
+        val plugin = activePlugin.getPluginsList()
+            .firstOrNull { it.javaClass.simpleName == "SmartInsulinPlugin" } ?: return
+        handlePluginClick(plugin)
     }
 }

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -78,6 +79,7 @@ fun MainScreen(
     onNavigate: (NavigationRequest) -> Unit,
     onDrawerClosed: () -> Unit,
     onSwitchToClassicUi: () -> Unit,
+    onSmartInsulinClick: () -> Unit = {},
     onAboutDialogDismiss: () -> Unit,
     onMaintenanceSheetDismiss: () -> Unit,
     onDirectoryClick: () -> Unit,
@@ -262,6 +264,13 @@ fun MainScreen(
                     // FABs — positioned above the toolbar when it's visible
                     val fabBottomPadding = paddingValues.calculateBottomPadding() +
                         if (hasToolbar) 64.dp else 16.dp
+                    // SmartInsulin tab shortcut FAB — sits above the SwitchUi FAB
+                    SmartInsulinFab(
+                        onClick = onSmartInsulinClick,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(bottom = fabBottomPadding + 56.dp, end = 16.dp)
+                    )
                     SwitchUiFab(
                         onClick = onSwitchToClassicUi,
                         modifier = Modifier
@@ -347,6 +356,22 @@ private fun SwitchUiFab(
         Icon(
             imageVector = Icons.Filled.SwapHoriz,
             contentDescription = "Switch to classic UI"
+        )
+    }
+}
+
+@Composable
+private fun SmartInsulinFab(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    AapsFab(
+        onClick = onClick,
+        modifier = modifier
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Medication,
+            contentDescription = "Open SmartInsulin"
         )
     }
 }
