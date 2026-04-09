@@ -24,6 +24,10 @@ interface MealOverrideManager {
     /** Milliseconds remaining in the active mode window, or 0 if no override active */
     val modeTimeRemainingMs: Long
 
+    /** Timestamp (ms) when the current override was activated, or 0 if no override active.
+     *  Used by auto-cancel logic to protect the early-meal window from premature cancellation. */
+    val modeStartMs: Long
+
     /** True if pre-bolus 2 is pending delivery (scheduled but not yet fired) */
     val preBolus2Pending: Boolean
 

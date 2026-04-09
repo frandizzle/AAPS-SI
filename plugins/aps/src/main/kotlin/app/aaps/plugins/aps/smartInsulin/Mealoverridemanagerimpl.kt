@@ -15,7 +15,6 @@ import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
-import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -120,6 +119,8 @@ class MealOverrideManagerImpl @Inject constructor(
         val s = _state ?: return 0L
         return (s.modeExpiryMs - System.currentTimeMillis()).coerceAtLeast(0L)
     }
+
+    override val modeStartMs: Long get() = _state?.triggerTimeMs ?: 0L
 
     override val preBolus2Pending: Boolean
         get() = _state?.preBolus2Pending == true
@@ -254,7 +255,7 @@ class MealOverrideManagerImpl @Inject constructor(
         // ── Safety checks ─────────────────────────────────────────────────────
         val currentBgMgdl = glucoseStatus.glucose
         val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
-        val profile       = runBlocking { profileFunction.getProfile() }
+        val profile       = profileFunction.getProfile()
         val profileTarget = profile?.getTargetMgdl() ?: 108.0
 
         // Cache for preBolus2StatusText so dialog can show live block reasons between cycles
