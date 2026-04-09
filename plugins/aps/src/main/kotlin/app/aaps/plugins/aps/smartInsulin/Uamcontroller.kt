@@ -103,11 +103,6 @@ class UamController @Inject constructor(
         private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5   // 0.2 → 0.3
         private const val DIRTY_WINDOW_UNEXPECTED_MULT    = 1.67  // 0.15 → 0.25
 
-        // How long to show "UAM: last <mode> HH:MM" in the status line.
-        // After this window the display resets to idle/armed — prevents showing a
-        // 12-hour-old detection time indefinitely.
-        private const val LAST_UAM_DISPLAY_WINDOW_MS  = 4 * 60 * 60 * 1000L  // 4h
-
         // Stuck-high detection for UAM_PROTEIN_FAT
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
         private const val STUCK_DELTA_MIN_MMOL        = -0.15  // -0.1 with small noise tolerance — genuinely falling (-0.2+) excluded
@@ -640,8 +635,7 @@ class UamController @Inject constructor(
                 val burstNote = if (burstThreshold > 0.0) " | Burst: ${fmtDelta(absoluteRise)}/${fmtDelta(burstThreshold)}$unitLabel" else ""
                 "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
             }
-            lastUamMode != null && lastUamTimeMs > 0L &&
-                (System.currentTimeMillis() - lastUamTimeMs) < LAST_UAM_DISPLAY_WINDOW_MS -> {
+            lastUamMode != null && lastUamTimeMs > 0L -> {
                 val cal = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
                 val timeStr = "%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))
                 val countStr = if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""

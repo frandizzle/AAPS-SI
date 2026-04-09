@@ -120,8 +120,6 @@ class MealOverrideManagerImpl @Inject constructor(
         return (s.modeExpiryMs - System.currentTimeMillis()).coerceAtLeast(0L)
     }
 
-    override val modeStartMs: Long get() = _state?.triggerTimeMs ?: 0L
-
     override val preBolus2Pending: Boolean
         get() = _state?.preBolus2Pending == true
 
