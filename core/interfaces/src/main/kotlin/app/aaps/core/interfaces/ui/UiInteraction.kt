@@ -79,13 +79,6 @@ interface UiInteraction {
     fun updateWidget(context: Context, from: String)
 
     /**
-     * Shows a dialog related to the loop status.
-     * @param fragmentManager The fragment manager to use.
-     * @param showOkCancel A flag to determine dialog buttons.
-     */
-    fun runLoopDialog(fragmentManager: FragmentManager, showOkCancel: Int)
-
-    /**
      * Shows the profile switch dialog.
      * @param fragmentManager The fragment manager to use.
      * @param profileName Optional pre-selected profile name.
@@ -215,14 +208,6 @@ interface UiInteraction {
         /** An announcement. */
         ANNOUNCEMENT
     }
-
-    /**
-     * Shows the care portal dialog for a specific event type.
-     * @param fragmentManager The fragment manager to use.
-     * @param options The type of event.
-     * @param event A string resource for the event title.
-     */
-    fun runCareDialog(fragmentManager: FragmentManager, options: EventType, @StringRes event: Int)
 
     /**
      * Opens the preferences screen for a specific plugin.

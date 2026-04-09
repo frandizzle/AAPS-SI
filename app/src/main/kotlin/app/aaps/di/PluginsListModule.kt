@@ -25,7 +25,7 @@ import app.aaps.plugins.main.general.actions.ActionsPlugin
 import app.aaps.plugins.main.general.overview.OverviewPlugin
 import app.aaps.plugins.main.general.persistentNotification.PersistentNotificationPlugin
 import app.aaps.plugins.main.iob.iobCobCalculator.IobCobCalculatorPlugin
-import app.aaps.plugins.main.profile.ProfilePlugin
+
 import app.aaps.plugins.sensitivity.SensitivityAAPSPlugin
 import app.aaps.plugins.sensitivity.SensitivityOref1Plugin
 import app.aaps.plugins.sensitivity.SensitivityWeightedAveragePlugin
