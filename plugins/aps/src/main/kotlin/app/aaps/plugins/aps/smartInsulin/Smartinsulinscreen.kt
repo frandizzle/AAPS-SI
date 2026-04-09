@@ -414,7 +414,13 @@ fun SmartInsulinScreen(
         }
 
         // ── Circadian table ────────────────────────────────────────────
+// ── Circadian table ────────────────────────────────────────────
         SiCard(title = "Circadian 24h") {
+            Text("Hourly multipliers learned from your BG patterns.\nISF× and Bas× = how much to adjust sensitivity and basal for that hour.\nCeil = aggressiveness cap — if the loop is being too aggressive for this hour, this number clamps it down. Lower = more conservative.\nConf = confidence — how much real data has been collected. Green ≥60%, amber ≥30%, red <30%.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+
             // Day selector
             val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
             val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
@@ -485,6 +491,7 @@ fun SmartInsulinScreen(
         }
 
         // ── Insulin profiles card ──────────────────────────────────────
+// ── Insulin profiles card ──────────────────────────────────────
         SiCard(title = "Insulin Profiles") {
             Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
                  style = MaterialTheme.typography.bodySmall,
@@ -495,9 +502,23 @@ fun SmartInsulinScreen(
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
-                Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(4.dp))
+
+                // Active profile logic
+                val isActive = name.equals(d.mealMode, ignoreCase = true)
+                val prefix = if (isActive) "► " else "  "
+                val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
+                val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                        .background(rowBg)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                ) {
+                    Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
+                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 
