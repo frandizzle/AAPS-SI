@@ -18,14 +18,12 @@ import app.aaps.core.ui.extensions.toVisibility
 import com.google.android.material.datepicker.MaterialDatePicker
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
-import dagger.hilt.android.AndroidEntryPoint
-import androidx.fragment.app.DialogFragment
+import dagger.android.support.DaggerDialogFragment
 import java.util.Calendar
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
-@AndroidEntryPoint
-abstract class DialogFragmentWithDate : DialogFragment() {
+abstract class DialogFragmentWithDate : DaggerDialogFragment() {
 
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var preferences: Preferences
@@ -61,6 +59,12 @@ abstract class DialogFragmentWithDate : DialogFragment() {
         super.onSaveInstanceState(savedInstanceState)
         savedInstanceState.putLong("eventTime", eventTime)
         savedInstanceState.putLong("eventTimeOriginal", eventTimeOriginal)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Force AAPS dark theme for this dialog window
+        setStyle(STYLE_NO_TITLE, app.aaps.core.ui.R.style.AppTheme)
     }
 
     fun onCreateViewGeneral() {
