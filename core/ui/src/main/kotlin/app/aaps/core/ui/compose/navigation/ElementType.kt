@@ -19,6 +19,7 @@ enum class ElementType(
 
     // Treatment dialogs
     INSULIN(category = ElementCategory.TREATMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
+    SMART_MEAL(category = ElementCategory.TREATMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
     CARBS(category = ElementCategory.TREATMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
     BOLUS_WIZARD(category = ElementCategory.TREATMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
     QUICK_WIZARD(protection = ProtectionCheck.Protection.BOLUS),

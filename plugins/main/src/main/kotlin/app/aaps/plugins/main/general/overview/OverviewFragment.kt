@@ -267,6 +267,9 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
         binding.buttonsLayout.insulinButton.setOnClickListener(this)
         binding.buttonsLayout.carbsButton.setOnClickListener(this)
         binding.buttonsLayout.smartMealButton.setOnClickListener(this)
+        binding.fabSmartInsulin.setOnClickListener {
+            uiInteraction.navigateToSmartInsulinTab(requireActivity())
+        }
         binding.infoLayout.apsMode.setOnClickListener(this)
         binding.infoLayout.apsMode.setOnLongClickListener(this)
     }

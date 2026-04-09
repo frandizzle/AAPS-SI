@@ -107,6 +107,12 @@ interface UiInteraction {
     fun runSmartMealDialog(fragmentManager: FragmentManager)
 
     /**
+     * Navigate to the SmartInsulin tab in the main activity.
+     * Used by the overview FAB shortcut.
+     */
+    fun navigateToSmartInsulinTab(activity: FragmentActivity)
+
+    /**
      * Shows the insulin dialog.
      * @param fragmentManager The fragment manager to use.
      */
