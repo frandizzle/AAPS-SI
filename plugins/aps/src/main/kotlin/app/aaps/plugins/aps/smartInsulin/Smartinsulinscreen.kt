@@ -49,7 +49,8 @@ import kotlinx.coroutines.delay
 @Composable
 fun SmartInsulinScreen(
     plugin: SmartInsulinPlugin,
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    onSettings: (() -> Unit)? = null
 ) {
     var data by remember { mutableStateOf<SmartInsulinPlugin.FragmentData?>(null) }
     var selectedDow by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1) }
@@ -527,9 +528,28 @@ fun SmartInsulinScreen(
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
-                Text("$name:", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(4.dp))
+                // Highlight the active insulin profile — match mode label against profile name
+                val isActive = d.mealMode.contains(name, ignoreCase = true) ||
+                    name.contains(d.mealMode.substringBefore(" ("), ignoreCase = true)
+                val prefix = if (isActive) "► " else "  "
+                val note = when {
+                    n == 0 -> "  (using profile values — not enough data yet)"
+                    n < 5  -> "  (still learning)"
+                    else   -> ""
+                }
+                val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                        .background(rowBg)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                ) {
+                    Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
+                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(2.dp))
             }
         }
 
