@@ -18,12 +18,14 @@ import app.aaps.core.ui.extensions.toVisibility
 import com.google.android.material.datepicker.MaterialDatePicker
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
-import dagger.android.support.DaggerDialogFragment
+import dagger.hilt.android.AndroidEntryPoint
+import androidx.fragment.app.DialogFragment
 import java.util.Calendar
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
-abstract class DialogFragmentWithDate : DaggerDialogFragment() {
+@AndroidEntryPoint
+abstract class DialogFragmentWithDate : DialogFragment() {
 
     @Inject lateinit var aapsLogger: AAPSLogger
     @Inject lateinit var preferences: Preferences

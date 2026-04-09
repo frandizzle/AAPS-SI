@@ -17,12 +17,14 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.plugins.aps.databinding.FragmentSmartInsulinBinding
-import dagger.android.support.DaggerFragment
+import dagger.hilt.android.AndroidEntryPoint
+import androidx.fragment.app.Fragment
 import java.util.Calendar
 import javax.inject.Inject
 import kotlin.math.roundToInt
 
-class SmartInsulinFragment : DaggerFragment() {
+@AndroidEntryPoint
+class SmartInsulinFragment : Fragment() {
 
     /** Resolves ?android:attr/textColorPrimary from the current theme — dark in dark theme, dark in light theme */
     private val primaryTextColor: Int get() {
