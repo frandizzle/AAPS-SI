@@ -221,6 +221,7 @@
     <string name="select_site_location">Select site location</string>
     <string name="site_location">Site location</string>
     <string name="overview_insulin_label">Insulin</string>
+    <string name="smart_meal">Smart Meal</string>
     <string name="stoptemptarget">Stop temp target</string>
     <string name="closedloop">Closed Loop</string>
     <string name="openloop">Open Loop</string>
