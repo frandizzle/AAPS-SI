@@ -1251,16 +1251,32 @@ open class SmartInsulinPlugin @Inject constructor(
         // Insulin did its job — no need to keep the elevated ISF/target active.
         // Gate: BG at or below profile target AND not rising fast (shortAvgDelta < 0.5 mmol/5min)
         // so we don't cancel mid-spike just because a noisy reading dips to target briefly.
+        //
+        // Extra safety guards — do NOT cancel if:
+        //   1. BG is below low guard — user manually entered meal mode during a low (food to treat it).
+        //      Hold the mode until BG actually recovers above target, not the first cycle at target.
+        //   2. Mode age < modeWindowMins — pre-bolus or early-meal window: food hasn't arrived yet,
+        //      BG is still at target because insulin hasn't been overwhelmed by carbs yet.
         if (mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED) {
-            val shortAvgMmol = glucoseStatus.shortAvgDelta / 18.0
+            val shortAvgMmol      = glucoseStatus.shortAvgDelta / 18.0
             val bgAtOrBelowTarget = currentBgMgdl <= profileTargetMgdl
             val notStillRising    = shortAvgMmol < UAM_EXIT_MAX_DELTA_MMOL
-            if (bgAtOrBelowTarget && notStillRising) {
+            val bgBelowLowGuard   = currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL
+            val modeWindowMins    = preferences.get(IntKey.ApsSmartInsulinModeWindowMins)
+            val modeAgeMs         = if (mealOverrideManager.modeStartMs > 0L)
+                now - mealOverrideManager.modeStartMs else Long.MAX_VALUE
+            val inEarlyWindow     = modeAgeMs < modeWindowMins * 60_000L
+            if (bgAtOrBelowTarget && notStillRising && !bgBelowLowGuard && !inEarlyWindow) {
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: BG ${fmtBg(currentBgMgdl)}$unitLabel at/below target " +
                                      "${fmtBg(profileTargetMgdl)}$unitLabel and not rising (Δ=${String.format("%.2f", shortAvgMmol)} mmol) " +
                                      "— auto-cancelling ${mealMode.label}")
                 mealOverrideManager.cancelOverride()
+            } else if (bgAtOrBelowTarget && notStillRising) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: auto-cancel suppressed — " +
+                                     "bgBelowLowGuard=$bgBelowLowGuard (${fmtBg(currentBgMgdl)} < ${fmtBg(REBOUND_LOW_THRESHOLD_MGDL)}$unitLabel) " +
+                                     "inEarlyWindow=$inEarlyWindow (${modeAgeMs / 60_000}min < ${modeWindowMins}min)")
             }
         }
 
