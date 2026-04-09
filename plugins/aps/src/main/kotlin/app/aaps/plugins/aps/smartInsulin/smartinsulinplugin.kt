@@ -145,6 +145,10 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedProfileIsf: Double = 0.0
     @Volatile private var cachedProfileBasal: Double = 0.0
     @Volatile private var cachedProfileTarget: Double = 99.0  // 5.5 mmol default
+    // Cached HbA1c estimate — computed in invoke() (background thread) from suspend DB call
+    @Volatile private var cachedHba1cAvgMgdl: Double = 0.0
+    @Volatile private var cachedHba1cEstimate: Double = 0.0
+    @Volatile private var cachedHba1cWindowHours: Int = 0
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
@@ -284,7 +288,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
             appendLine("── STFT / UAM ────────────────────────")
             // STFT
-            val stftStatus = stftController.statusString(cachedProfileTarget.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getTargetMgdl() ?: (5.5 * 18.0)))
+            val stftStatus = stftController.statusString(cachedProfileTarget.takeIf { it > 0.0 } ?: (5.5 * 18.0))
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
             // UAM status
             val uamStatus = uamController.statusString()
@@ -421,9 +425,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour    = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow     = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day     = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        // Use cached profile values — avoids runBlocking deadlock on main/UI thread
-        val profileIsf   = cachedProfileIsf.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0)
-        val profileBasal = cachedProfileBasal.takeIf { it > 0.0 } ?: (profileFunction.getProfile()?.getBasal() ?: 0.0)
+        // Use cached profile values — written each invoke() on background thread, safe to read here
+        val profileIsf   = cachedProfileIsf
+        val profileBasal = cachedProfileBasal
         val isfMult      = circadianLearner.isfMultiplier(hour)
         val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
         val activeMode   = mealOverrideManager.activeMealMode
@@ -462,21 +466,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs)
             (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
-        // ── Today's HbA1c estimate (AIMI/GMI formula: (mean_mgdl + 46.7) / 28.7) ──
-        // Query from midnight to now
-        // Requires minimum 24 readings (~2h) for a meaningful estimate.
-        val (hba1cAvgMgdl, hba1cEstimate, hba1cWindowHours) = try {
-            val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
-            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
-            if (bgs.size >= 24) {
-                val mean  = bgs.map { it.value }.average()
-                val a1c   = (mean + 46.7) / 28.7
-                val hours = if (bgs.size >= 2) {
-                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
-                } else 0
-                Triple(mean, a1c, hours)
-            } else Triple(0.0, 0.0, 0)
-        } catch (e: Exception) { Triple(0.0, 0.0, 0) }
+        // HbA1c — read from cache (computed each invoke() on background thread)
+        val hba1cAvgMgdl      = cachedHba1cAvgMgdl
+        val hba1cEstimate     = cachedHba1cEstimate
+        val hba1cWindowHours  = cachedHba1cWindowHours
 
         return FragmentData(
             hour               = hour,
@@ -516,7 +509,7 @@ open class SmartInsulinPlugin @Inject constructor(
             restingHrBpm       = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm),
             postMealLockoutMins = postMealLeft,
             cgmWarmup          = cachedOverviewState.learningState.contains("CGM"),
-            stftStatus         = stftController.statusString(profile?.getTargetMgdl() ?: (5.5 * 18.0)),
+            stftStatus         = stftController.statusString(cachedProfileTarget.takeIf { it > 0.0 } ?: (5.5 * 18.0)),
             stftActive         = stftController.isActive,
             uamStatusLine      = uamController.statusString(),
             uamDebug           = uamController.debugSummary(),
@@ -642,6 +635,22 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedProfileIsf   = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
         cachedProfileTarget = profile.getTargetMgdl()
+        // Cache HbA1c estimate — suspend DB call must stay on background thread
+        try {
+            val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
+            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
+            if (bgs.size >= 24) {
+                cachedHba1cAvgMgdl      = bgs.map { it.value }.average()
+                cachedHba1cEstimate     = (cachedHba1cAvgMgdl + 46.7) / 28.7
+                cachedHba1cWindowHours  = if (bgs.size >= 2)
+                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+                else 0
+            } else {
+                cachedHba1cAvgMgdl     = 0.0
+                cachedHba1cEstimate    = 0.0
+                cachedHba1cWindowHours = 0
+            }
+        } catch (_: Exception) {}
         if (!isEnabled()) {
             rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_disabled)))
             return
