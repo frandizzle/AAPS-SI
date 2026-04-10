@@ -1003,6 +1003,14 @@ class ComposeMainActivity : AppCompatActivity() {
 
             ElementType.PUMP                    -> handlePluginClick(activePlugin.activePumpInternal as PluginBase)
 
+            ElementType.SMART_MEAL               -> {
+                withProtection(ElementType.BOLUS.protection) {
+                    supportFragmentManager.let { fm ->
+                        uiInteraction.runSmartMealDialog(fm)
+                    }
+                }
+            }
+
             // Non-searchable types — listed explicitly so the compiler catches new enum values
             ElementType.QUICK_WIZARD,
             ElementType.AUTOMATION,
@@ -1010,7 +1018,6 @@ class ComposeMainActivity : AppCompatActivity() {
             ElementType.SENSITIVITY,
             ElementType.USER_ENTRY,
             ElementType.LOOP,
-            ElementType.SMART_MEAL,
             ElementType.AAPS                    -> {
             }
         }
