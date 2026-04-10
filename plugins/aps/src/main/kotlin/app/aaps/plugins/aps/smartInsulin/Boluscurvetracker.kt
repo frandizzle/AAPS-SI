@@ -5,7 +5,6 @@ import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import java.util.Locale
@@ -174,7 +173,7 @@ class BolusCurveTracker @Inject constructor(
             nadirConfirmed = true
             val observedPeakMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
             val observedDiaMins  = elapsedMs.toDouble() / 60_000.0
-            val learningRate     = preferences.get(DoubleKey.ApsSmartInsulinLearningRate)
+            val learningRate     = 0.15  // profile peak/DIA learning rate — independent of ISF/basal alpha
 
             aapsLogger.debug(
                 LTag.APS,
