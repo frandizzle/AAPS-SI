@@ -1001,6 +1001,7 @@ class ComposeMainActivity : AppCompatActivity() {
             ElementType.SENSITIVITY,
             ElementType.USER_ENTRY,
             ElementType.LOOP,
+            ElementType.SMART_MEAL,
             ElementType.AAPS                    -> {
             }
         }
