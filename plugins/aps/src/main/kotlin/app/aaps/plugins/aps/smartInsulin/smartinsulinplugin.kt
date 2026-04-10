@@ -507,7 +507,10 @@ open class SmartInsulinPlugin @Inject constructor(
             nudgeSessionIsfMgdl = nudgeDisplaySessionIsfMgdl,
             nudgeSessionBasalU  = nudgeDisplaySessionBasalU,
             profileIsfMgdl     = profileIsf,
-            finalIsfMgdl       = profileIsf / isfMult,
+            // finalIsfMgdl = effective ISF right now = profileISF / (isfMult × circCeil)
+            // This includes the short-term aggressiveness ceiling so "now" reflects
+            // what the loop is actually delivering, not just the long-term learned value.
+            finalIsfMgdl       = if (isfMult > 0) profileIsf / (isfMult * circadianLearner.aggrCeiling(hour)) else 0.0,
             basalMultiplier    = basalMult,
             profileBasalU      = profileBasal,
             finalBasalU        = roundedFinalBasal,
