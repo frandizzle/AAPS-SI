@@ -1557,14 +1557,12 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun configuration(): JsonObject =
         JsonObject(emptyMap())
             .put(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .put(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinLowGuard, preferences)
             .put(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
 
     override fun applyConfiguration(configuration: JsonObject) {
         configuration
             .store(BooleanKey.ApsSmartInsulinEnableLearning, preferences)
-            .store(DoubleKey.ApsSmartInsulinLearningRate, preferences)
             .store(UnitDoubleKey.ApsSmartInsulinLowGuard, preferences)
             .store(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
     }
