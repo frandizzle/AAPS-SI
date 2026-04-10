@@ -609,7 +609,11 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
             learningColor = Color(0xFF43A047)
             learningLabel = "Learning"
         }
-        state.learningState == "limited" -> {
+        state.learningState == "limited: P/F mode" -> {
+            learningColor = Color(0xFF9C27B0)
+            learningLabel = "State: Limited (P/F mode)"
+        }
+        state.learningState.startsWith("limited") -> {
             learningColor = Color(0xFFFB8C00)
             learningLabel = "State: Limited (meal mode)"
         }

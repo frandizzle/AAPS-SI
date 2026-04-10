@@ -1120,16 +1120,20 @@ open class SmartInsulinPlugin @Inject constructor(
         // highTempTarget, mealMode, cgmState, activityMonitor all available now.
         val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val isMealMode = mealMode != MealMode.FASTING
+        // Re-evaluate inPostMealLockout — mealMode may have changed this cycle
+        // (e.g. P/F just fired). If mealMode is no longer FASTING, lockout is irrelevant.
+        val effectivePostMealLockout = inPostMealLockout && mealMode == MealMode.FASTING
         val learningStateStr = when {
             !learningEnabledCache                -> "off: Learning disabled"
             activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
             cgmState.suppressLearning            -> "off: CGM warmup"
-            inPostMealLockout                    -> {
+            effectivePostMealLockout             -> {
                 val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
                 "off: Post-meal ${minsLeft}m left"
             }
             highTempTarget                       -> "off: High temp target"
-            isMealMode || mealMode.isUam         -> "limited"  // DIA/peak only — no basal/ISF learning
+            mealMode == MealMode.UAM_PROTEIN_FAT -> "limited: P/F mode"
+            isMealMode || mealMode.isUam         -> "limited: meal mode"
             else                                 -> "Learning"
         }
         val modeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
