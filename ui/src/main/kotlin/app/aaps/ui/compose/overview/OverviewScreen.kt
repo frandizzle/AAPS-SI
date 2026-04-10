@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
@@ -618,7 +619,7 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         // Meal line
         Text(
             text = state.modeLine,
-            style = MaterialTheme.typography.labelMedium,
+            fontSize = 14.sp,
             color = mealColor,
             maxLines = 1
         )
@@ -626,7 +627,7 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         state.pb2Line?.let { pb2 ->
             Text(
                 text = pb2,
-                style = MaterialTheme.typography.labelMedium,
+                fontSize = 14.sp,
                 color = Color(0xFFFB8C00),
                 maxLines = 1
             )
@@ -634,7 +635,7 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         // Learning state line
         Text(
             text = if (state.learningState == "Learning") "Learning" else learningLabel,
-            style = MaterialTheme.typography.labelMedium,
+            fontSize = 14.sp,
             color = learningColor,
             maxLines = 1
         )
