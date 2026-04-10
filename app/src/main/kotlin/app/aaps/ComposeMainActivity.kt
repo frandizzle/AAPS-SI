@@ -1004,10 +1004,8 @@ class ComposeMainActivity : AppCompatActivity() {
             ElementType.PUMP                    -> handlePluginClick(activePlugin.activePumpInternal as PluginBase)
 
             ElementType.SMART_MEAL               -> {
-                withProtection(ElementType.BOLUS.protection) {
-                    supportFragmentManager.let { fm ->
-                        uiInteraction.runSmartMealDialog(fm)
-                    }
+                withProtection(ProtectionCheck.Protection.BOLUS) {
+                    uiInteraction.runSmartMealDialog(supportFragmentManager)
                 }
             }
 
