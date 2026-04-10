@@ -150,14 +150,14 @@ class SmartMealDialogViewModel @Inject constructor(
             commandQueue.bolus(info, object : Callback() {
                 override fun run() {
                     // Callback runs on worker thread — post to main thread for nav safety
-                    if (result.success) {
-                        startMealMode(s)
-                        onDone()  // dismisses confirmation dialog on main thread via Handler
-                        viewModelScope.launch {
-                            _sideEffect.send(SideEffect.Done)
+                    Handler(Looper.getMainLooper()).post {
+                        if (result.success) {
+                            startMealMode(s)
+                            onDone()
+                            viewModelScope.launch { _sideEffect.send(SideEffect.Done) }
+                        } else {
+                            onDeliveryError(result.comment)
                         }
-                    } else {
-                        Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
                     }
                 }
             })
