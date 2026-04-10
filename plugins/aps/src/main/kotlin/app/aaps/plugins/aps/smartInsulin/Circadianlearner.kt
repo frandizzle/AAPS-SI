@@ -190,7 +190,7 @@ class CircadianLearner @Inject constructor(
         trimWindowMs = (fastingPeakMins * 60_000.0).toLong().coerceIn(60 * 60_000L, 120 * 60_000L)
 
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
-                                                      bg = bg, targetMgdl = targetMgdl, now = now)
+                                                      bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = now)
 
         persist()
     }
@@ -261,6 +261,7 @@ class CircadianLearner @Inject constructor(
         aggressiveness:    Double,
         bg:                Double  = 0.0,
         targetMgdl:        Double  = 99.0,
+        lowGuardMgdl:      Double  = 90.0,
         now:               Long    = System.currentTimeMillis()
     ) {
         // ── Short-term fuel trim (λ sensor analogy) ───────────────────────────
@@ -303,7 +304,10 @@ class CircadianLearner @Inject constructor(
                     }
                     belowBand -> {
                         // Too much insulin — trim ceiling DOWN (less aggressive)
-                        val magnitude  = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                        // Below low guard: amplify trim by 2× — this is the danger zone
+                        val baseMagnitude = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                        val amplifier  = if (avgBg < lowGuardMgdl) 2.0 else 1.0
+                        val magnitude  = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
                         trimStrength   = -magnitude
                         trimDirection  = -1
                         if (!trimActive) { trimActive = true; trimStartMs = now }
@@ -894,7 +898,7 @@ class CircadianLearner @Inject constructor(
         private const val COMPRESSION_BASELINE_RETURN_GATE = 20.0       // mg/dL — post-recovery must land within ~1.1 mmol of pre-drop baseline
 
         // Short-term fuel trim
-        private const val TRIM_DEAD_BAND_MGDL      = 9.0    // ~0.5 mmol — must be this far from target
+        private const val TRIM_DEAD_BAND_MGDL      = 5.4    // ~0.3 mmol — must be this far from target to trim
         private const val TRIM_MAX_STRENGTH         = 0.20   // cap trim magnitude at 20%
         private const val TRIM_CEIL_SCALE           = 0.15   // ceiling shift per unit of trim magnitude
         private const val TRIM_CEIL_MAX             = 1.20   // ceiling upper bound from trim
