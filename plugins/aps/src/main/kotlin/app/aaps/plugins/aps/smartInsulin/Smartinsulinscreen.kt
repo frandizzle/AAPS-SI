@@ -375,7 +375,7 @@ fun SmartInsulinScreen(
                     else
                         "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
                     nudgeHeadline = "⚡ ${if (nudgeActiveHigh) "Not enough insulin — adjusting" else "Too much insulin — adjusting"}$coolNote"
-                    nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nLearned ISF $wasIsf → active $nowIsf\nLearned basal $wasBas → active $nowBas\n$shortLine\n$longLine\n$statusLine"
+                    nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortLine\n$longLine\n$statusLine"
                 }
                 nudgePaused -> {
                     val reason    = nudgeParts.getOrNull(1) ?: "Learning suppressed"
