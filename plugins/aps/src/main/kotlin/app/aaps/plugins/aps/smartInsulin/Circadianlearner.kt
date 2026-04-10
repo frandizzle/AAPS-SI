@@ -422,7 +422,7 @@ class CircadianLearner @Inject constructor(
         // Store: direction|deviation%|day|hour|sessionIsfMult|newIsfMult|sessionBasMult|newBasMult|cooldown|penaltyReason
         // Parts 4 and 6 are SESSION-START multipliers (hour baseline) — used as "was" in display.
         // Parts 5 and 7 are CURRENT post-nudge multipliers — used as "now" in display.
-        val direction = if (tooMuch) "ACTIVE_HIGH" else "ACTIVE_LOW"
+        val direction = if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
             "${"%.4f".format(nudgeSessionBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
