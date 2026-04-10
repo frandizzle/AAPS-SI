@@ -90,8 +90,8 @@ enum class StringKey(
         preferenceType = PreferenceType.LIST,
         entries = mapOf(
             "dark" to R.string.pref_dark_theme,
-            "light" to R.string.pref_light_theme,
-            "system" to R.string.pref_follow_system_theme
+            "light" to R.string.pref_dark_theme,
+            "system" to R.string.pref_dark_theme
         ),
         defaultedBySM = true
     ),
