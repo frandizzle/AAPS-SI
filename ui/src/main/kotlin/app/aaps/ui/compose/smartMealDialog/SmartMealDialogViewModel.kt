@@ -21,10 +21,8 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.interfaces.Preferences
 import android.os.Handler
 import android.os.Looper
-import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -75,7 +73,6 @@ class SmartMealDialogViewModel @Inject constructor(
 
     sealed class SideEffect {
         data class DeliveryError(val message: String) : SideEffect()
-        data object Done : SideEffect()
     }
     private val _sideEffect = Channel<SideEffect>()
     val sideEffect = _sideEffect.receiveAsFlow()
@@ -150,14 +147,11 @@ class SmartMealDialogViewModel @Inject constructor(
             commandQueue.bolus(info, object : Callback() {
                 override fun run() {
                     // Callback runs on worker thread — post to main thread for nav safety
-                    Handler(Looper.getMainLooper()).post {
-                        if (result.success) {
-                            startMealMode(s)
-                            onDone()
-                            viewModelScope.launch { _sideEffect.send(SideEffect.Done) }
-                        } else {
-                            onDeliveryError(result.comment)
-                        }
+                    if (result.success) {
+                        startMealMode(s)
+                        onDone()
+                    } else {
+                        Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
                     }
                 }
             })
