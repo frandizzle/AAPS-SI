@@ -509,10 +509,10 @@ open class SmartInsulinPlugin @Inject constructor(
             nudgeSessionIsfMgdl = nudgeDisplaySessionIsfMgdl,
             nudgeSessionBasalU  = nudgeDisplaySessionBasalU,
             profileIsfMgdl     = profileIsf,
-            // finalIsfMgdl = effective ISF right now = profileISF / (isfMult × circCeil)
-            // This includes the short-term aggressiveness ceiling so "now" reflects
-            // what the loop is actually delivering, not just the long-term learned value.
-            finalIsfMgdl       = if (isfMult > 0) profileIsf / (isfMult * circadianLearner.aggrCeiling(hour)) else 0.0,
+            // finalIsfMgdl = profileISF / isfMult — matches OapsProfile.sens exactly.
+            // aggrCeiling acts on the aggressiveness score (SMB sizing), not on sens/ISF.
+            // Including ceiling here would show numbers that don't match actual delivery.
+            finalIsfMgdl       = if (isfMult > 0) profileIsf / isfMult else 0.0,
             basalMultiplier    = basalMult,
             profileBasalU      = profileBasal,
             finalBasalU        = roundedFinalBasal,
@@ -872,12 +872,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val circAggrCeil  = circadianLearner.aggrCeiling()
         // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
         // Meal mode ISF overrides are user-set — don't touch them
-        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → less insulin (insulin weaker than profile)
+        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → more aggressive → more insulin
         // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
         // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
         var dosingIsfMgdl = when {
             modeIsfMgdl > 0.0 -> modeIsfMgdl                    // user meal-mode override — already mg/dL
-            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → less insulin
+            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → more aggressive → more insulin
         }
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
