@@ -1436,7 +1436,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
                 aggressiveness           = circAggrCeil,
-                suppressAdaptiveLearning = suppressCircadianLearning
+                suppressAdaptiveLearning = suppressCircadianLearning,
+                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
             )
             // If nudge is suppressed within update() (activity/CGM warmup), mark paused
             if (suppressCircadianLearning) {

@@ -321,16 +321,29 @@ fun SmartInsulinScreen(
             val nudgeActiveLow  = nudgeState == "ACTIVE_LOW"
             val nudgeActive     = nudgeActiveHigh || nudgeActiveLow
             val nudgePaused     = nudgeState == "PAUSED"
+            val nudgeTrim       = nudgeState == "TRIM"
+            val trimDirection   = nudgeParts.getOrNull(1) ?: ""
+            val trimPct         = nudgeParts.getOrNull(2) ?: "0%"
             val nudgeColor = when {
-                nudgeActiveHigh                  -> Color(0xFFFB8C00)
-                nudgeActiveLow                   -> Color(0xFF4CAF50)
-                nudgePaused                      -> Color(0xFF64B5F6)
-                d.inReboundWindow || d.bgWentLow -> Color(0xFFFB8C00)
-                else                             -> MaterialTheme.colorScheme.onSurfaceVariant
+                nudgeActiveHigh                              -> Color(0xFFFB8C00)
+                nudgeActiveLow                               -> Color(0xFF4CAF50)
+                nudgePaused                                  -> Color(0xFF64B5F6)
+                nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color(0xFFFB8C00)
+                nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color(0xFF43A047)
+                d.inReboundWindow || d.bgWentLow             -> Color(0xFFFB8C00)
+                else                                         -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val nudgeHeadline: String
             val nudgeDetail: String
             when {
+                nudgeTrim -> {
+                    val adding = trimDirection == "ACTIVE_LOW"
+                    val trimPctVal = trimPct.removeSuffix("%").toFloatOrNull() ?: 0f
+                    val shortTerm = if (adding) "adding ~${"%.0f".format(trimPctVal)}% insulin" else "removing ~${"%.0f".format(trimPctVal)}% insulin"
+                    val longTerm  = if (adding) "feeding +${"%.0f".format(trimPctVal * 0.5f)}% long-term" else "feeding -${"%.0f".format(trimPctVal * 0.5f)}% long-term"
+                    nudgeHeadline = "⚡ Fuel trim: $shortTerm (BG off target for full peak window)"
+                    nudgeDetail   = "$shortTerm short-term (ceiling moved)\n$longTerm into ISF & basal at this hour\nDecays automatically once BG returns to target."
+                }
                 nudgeActive -> {
                     val deviation  = nudgeParts.getOrNull(1) ?: "?"
                     val day        = nudgeParts.getOrNull(2) ?: "?"
