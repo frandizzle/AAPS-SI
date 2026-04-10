@@ -21,6 +21,7 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.interfaces.Preferences
 import android.os.Handler
 import android.os.Looper
+import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -149,14 +150,14 @@ class SmartMealDialogViewModel @Inject constructor(
             commandQueue.bolus(info, object : Callback() {
                 override fun run() {
                     // Callback runs on worker thread — post to main thread for nav safety
-                    Handler(Looper.getMainLooper()).post {
-                        if (result.success) {
-                            startMealMode(s)
-                            onDone()
-                        } else {
-                            onDeliveryError(result.comment)
-                            // Mode NOT activated — pump rejected the bolus
+                    if (result.success) {
+                        startMealMode(s)
+                        onDone()  // dismisses confirmation dialog on main thread via Handler
+                        viewModelScope.launch {
+                            _sideEffect.send(SideEffect.Done)
                         }
+                    } else {
+                        Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
                     }
                 }
             })

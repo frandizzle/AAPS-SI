@@ -70,7 +70,10 @@ fun SmartMealDialogScreen(
             when (effect) {
                 is SmartMealDialogViewModel.SideEffect.DeliveryError ->
                     onShowDeliveryError(effect.message)
-                is SmartMealDialogViewModel.SideEffect.Done -> onNavigateBack()
+                is SmartMealDialogViewModel.SideEffect.Done -> {
+                    showConfirmation = false
+                    onNavigateBack()
+                }
             }
         }
     }
@@ -91,7 +94,7 @@ fun SmartMealDialogScreen(
             onConfirm = {
                 viewModel.confirmAndActivate(
                     onDeliveryError = onShowDeliveryError,
-                    onDone = { showConfirmation = false; onNavigateBack() }
+                    onDone = { showConfirmation = false }
                 )
             },
             onDismiss = { showConfirmation = false }

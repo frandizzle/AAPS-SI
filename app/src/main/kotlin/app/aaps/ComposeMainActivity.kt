@@ -630,7 +630,7 @@ class ComposeMainActivity : AppCompatActivity() {
                         initialValue = smartInsulinOverview.overviewState()
                     ) {
                         while (true) {
-                            delay(30_000L)  // refresh every 30s — keeps time-remaining live
+                            delay(10_000L)  // refresh every 10s — keeps mode/state transitions live
                             value = smartInsulinOverview.overviewState()
                         }
                     }.value,
