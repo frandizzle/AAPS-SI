@@ -162,6 +162,19 @@ class CircadianLearner @Inject constructor(
 
         if (skipReason != null) return
 
+        // Clear trim history if BG crosses below low guard — prevents the recovery
+        // period from being averaged with the low itself, which would make the trim
+        // think less insulin is needed right as BG is rebounding.
+        if (bg < lowGuardMgdl) {
+            if (trimBgHistory.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS, "FuelTrim: clearing history — BG below low guard (${"%.1f".format(bg)} < ${"%.0f".format(lowGuardMgdl)})")
+                trimBgHistory.clear()
+                trimActive = false
+                trimStrength = 0.0
+                trimDirection = 0
+            }
+        }
+
         // Maintain BG history for rollercoaster detection
         bgHistory.addLast(now to bg)
         // Prune entries older than detection window
