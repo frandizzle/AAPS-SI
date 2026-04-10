@@ -92,9 +92,10 @@ fun SmartMealDialogScreen(
             icon = Icons.Filled.Restaurant,
             iconTint = Color(0xFFFB8C00),
             onConfirm = {
+                showConfirmation = false  // dismiss immediately on OK tap
                 viewModel.confirmAndActivate(
                     onDeliveryError = onShowDeliveryError,
-                    onDone = { showConfirmation = false }
+                    onDone = {}
                 )
             },
             onDismiss = { showConfirmation = false }
