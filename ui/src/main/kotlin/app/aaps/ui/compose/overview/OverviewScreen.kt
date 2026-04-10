@@ -591,39 +591,63 @@ private fun CompactStatusItem(item: StatusItem) {
 
 @Composable
 private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
-    // Meal mode line — colored text, no background, matches the existing chip column style
     val mealColor = when {
         state.modeLine.contains("Fasting", ignoreCase = true) ->
             MaterialTheme.colorScheme.onSurfaceVariant
         state.modeLine.contains("Protein", ignoreCase = true) ||
             state.modeLine.contains("P/F", ignoreCase = true) ->
-            Color(0xFF9C27B0)  // purple — P/F is distinct from meal modes
+            Color(0xFF9C27B0)
         else ->
-            MaterialTheme.colorScheme.primary  // active meal/UAM — same green as "Closed Loop"
+            MaterialTheme.colorScheme.primary
     }
-    val learningColor = when (state.learningState) {
-        "Learning"  -> Color(0xFF43A047)   // green
-        "limited"   -> Color(0xFFFB8C00)   // amber
-        else        -> Color(0xFFE53935)   // red
-    }
-    val learningLabel = when (state.learningState) {
-        "Learning"  -> "Learning"
-        "limited"   -> "State: Limited"
-        else        -> "State: Paused"
+
+    // Parse learningState — format is either "Learning", "limited", or "off: <reason>"
+    val learningColor: Color
+    val learningLabel: String
+    when {
+        state.learningState == "Learning" -> {
+            learningColor = Color(0xFF43A047)
+            learningLabel = "Learning"
+        }
+        state.learningState == "limited" -> {
+            learningColor = Color(0xFFFB8C00)
+            learningLabel = "State: Limited (meal mode)"
+        }
+        state.learningState.startsWith("off:") -> {
+            learningColor = Color(0xFFE53935)
+            val reason = state.learningState.removePrefix("off:").trim()
+            // Humanise the reason string
+            learningLabel = when {
+                reason.startsWith("Post-meal") ->
+                    "State: Post-meal pause — $reason"
+                reason.startsWith("Activity") ->
+                    "State: Paused — ${reason}"
+                reason.startsWith("High temp") ->
+                    "State: Paused — temp target"
+                reason.startsWith("CGM") ->
+                    "State: Paused — CGM warmup"
+                reason.startsWith("Learning disabled") ->
+                    "State: Learning disabled"
+                else ->
+                    "State: Paused — $reason"
+            }
+        }
+        else -> {
+            learningColor = Color(0xFF43A047)
+            learningLabel = state.learningState
+        }
     }
 
     Column(
         modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        // Meal line
         Text(
             text = state.modeLine,
             fontSize = 14.sp,
             color = mealColor,
             maxLines = 1
         )
-        // PB2 line — amber, only shown when active
         state.pb2Line?.let { pb2 ->
             Text(
                 text = pb2,
@@ -632,12 +656,12 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
                 maxLines = 1
             )
         }
-        // Learning state line
         Text(
-            text = if (state.learningState == "Learning") "Learning" else learningLabel,
+            text = learningLabel,
             fontSize = 14.sp,
             color = learningColor,
-            maxLines = 1
+            maxLines = 2,
+            lineHeight = 16.sp
         )
     }
 }

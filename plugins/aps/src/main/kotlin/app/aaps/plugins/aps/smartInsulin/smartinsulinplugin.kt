@@ -1122,8 +1122,8 @@ open class SmartInsulinPlugin @Inject constructor(
             activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
             cgmState.suppressLearning            -> "off: CGM warmup"
             inPostMealLockout                    -> {
-                val minsLeft = (learningDirtyUntilMs - now) / 60_000
-                "off: Post-meal (${minsLeft}min left)"
+                val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
+                "off: Post-meal ${minsLeft}m left"
             }
             highTempTarget                       -> "off: High temp target"
             isMealMode || mealMode.isUam         -> "limited"  // DIA/peak only — no basal/ISF learning
