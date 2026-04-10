@@ -170,7 +170,7 @@ fun OverviewScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.Top
             ) {
                 // BG Info section + sensitivity chip on the left
                 Column(
@@ -611,11 +611,14 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         else        -> "State: Paused"
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    Column(
+        modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
         // Meal line
         Text(
             text = state.modeLine,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             color = mealColor,
             maxLines = 1
         )
@@ -623,7 +626,7 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         state.pb2Line?.let { pb2 ->
             Text(
                 text = pb2,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelMedium,
                 color = Color(0xFFFB8C00),
                 maxLines = 1
             )
@@ -631,7 +634,7 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
         // Learning state line
         Text(
             text = if (state.learningState == "Learning") "Learning" else learningLabel,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelMedium,
             color = learningColor,
             maxLines = 1
         )
