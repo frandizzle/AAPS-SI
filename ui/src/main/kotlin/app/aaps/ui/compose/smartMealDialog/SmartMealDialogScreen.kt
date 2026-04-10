@@ -37,6 +37,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,6 +72,12 @@ fun SmartMealDialogScreen(
                     onShowDeliveryError(effect.message)
             }
         }
+    }
+
+    // Intercept predictive back gesture while confirmation dialog is showing
+    // — prevents "not in back stack" crash from nav entry being popped mid-dialog
+    BackHandler(enabled = showConfirmation) {
+        showConfirmation = false
     }
 
     if (showConfirmation) {
@@ -190,6 +197,9 @@ fun SmartMealDialogScreen(
 
                     // Duration slider + text field
                     var durationText by rememberSaveable { mutableStateOf(uiState.durationMins.toString()) }
+                    androidx.compose.runtime.LaunchedEffect(uiState.durationMins) {
+                        durationText = uiState.durationMins.toString()
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Duration", style = MaterialTheme.typography.bodyLarge,
@@ -222,6 +232,9 @@ fun SmartMealDialogScreen(
                     val isfMax = if (uiState.isMmol) 20.0 else 360.0
                     val isfStep = if (uiState.isMmol) 0.1 else 1.0
                     var isfText by rememberSaveable { mutableStateOf(if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else "") }
+                    androidx.compose.runtime.LaunchedEffect(uiState.isfValue) {
+                        isfText = if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else ""
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("ISF override", style = MaterialTheme.typography.bodyLarge,
@@ -265,6 +278,9 @@ fun SmartMealDialogScreen(
                     }
                     if (uiState.preBolus1Enabled) {
                         var pb1Text by rememberSaveable { mutableStateOf(if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else "") }
+                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus1U) {
+                            pb1Text = if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else ""
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Amount", style = MaterialTheme.typography.bodyLarge,
@@ -324,6 +340,9 @@ fun SmartMealDialogScreen(
                     if (uiState.preBolus2Enabled) {
                         HorizontalDivider()
                         var pb2Text by rememberSaveable { mutableStateOf(if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else "") }
+                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus2U) {
+                            pb2Text = if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else ""
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Amount", style = MaterialTheme.typography.bodyLarge,
@@ -352,6 +371,9 @@ fun SmartMealDialogScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                         var delayText by rememberSaveable { mutableStateOf(uiState.preBolus2DelayMins.toString()) }
+                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus2DelayMins) {
+                            delayText = uiState.preBolus2DelayMins.toString()
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Delay", style = MaterialTheme.typography.bodyLarge,
