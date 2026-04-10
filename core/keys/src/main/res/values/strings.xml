@@ -172,6 +172,9 @@
     <string name="pref_title_carbs_button_increment_2">Carbs button increment 2</string>
     <string name="pref_title_carbs_button_increment_3">Carbs button increment 3</string>
     <string name="carb_increment_button_message">Number of carbs to add when button is pressed</string>
+    <string name="pref_title_eating_soon_duration">Eating soon duration</string>
+    <string name="pref_title_activity_duration">Activity duration</string>
+    <string name="pref_title_hypo_duration">Hypo duration</string>
     <string name="pref_title_cage_warning">Threshold warning cannula age</string>
     <string name="pref_title_cage_critical">Threshold critical cannula age</string>
     <string name="pref_title_iage_warning">Threshold warning insulin age</string>
@@ -453,6 +456,9 @@
     <string name="openapsama_smb_max_range_extension_summary">Default value: 1 This is another key OpenAPS safety cap, and specifies by what factor you can exceed the regular 120 maxSMB/maxUAM minutes. Increase this experimental value slowly and with caution.</string>
 
     <!-- UnitDoubleKey: Overview preferences -->
+    <string name="pref_title_eating_soon_target">Eating soon target</string>
+    <string name="pref_title_activity_target">Activity target</string>
+    <string name="pref_title_hypo_target">Hypo target</string>
     <string name="pref_title_low_mark">Low BG mark</string>
     <string name="pref_title_high_mark">High BG mark</string>
 
@@ -499,7 +505,8 @@
     <string name="pref_title_si_aggression_max">SI max aggression multiplier</string>
     <string name="pref_title_si_max_prebolus">SI max pre-bolus (U)</string>
     <string name="pref_title_si_prebolus2_default_u">SI pre-bolus 2 default amount (U)</string>
-    <string name="pref_title_si_learning_rate">SI learning rate</string>
+    <string name="pref_title_si_isf_alpha">ISF learning speed (α)</string>
+    <string name="pref_title_si_basal_alpha">Basal learning speed (α)</string>
     <string name="pref_title_si_dawn_smb_reduction">SI dawn SMB reduction factor</string>
     <string name="pref_title_si_resting_hr_bpm">Resting heart rate (BPM)</string>
     <string name="pref_title_si_uam_entry_smb_fraction">UAM entry SMB fraction</string>

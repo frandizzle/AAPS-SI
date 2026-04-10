@@ -131,7 +131,8 @@ open class SmartInsulinPlugin @Inject constructor(
                     SmartInsulinScreen(
                         plugin = plugin as SmartInsulinPlugin,
                         onNavigateBack = onNavigateBack,
-                        onSettings = onSettings
+                        onSettings = onSettings,
+                        setToolbarConfig = setToolbarConfig
                     )
                 }
             }
@@ -1645,6 +1646,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 key   = "si_screen_learning"
                 title = "Learning"
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinEnableLearning,       title = R.string.smart_insulin_enable_learning))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinIsfAlpha,              title = R.string.pref_title_si_isf_alpha))
+                addPreference(AdaptiveDoublePreference(ctx = context, doubleKey  = DoubleKey.ApsSmartInsulinBasalAlpha,            title = R.string.pref_title_si_basal_alpha))
                 addPreference(AdaptiveSwitchPreference(ctx = context, booleanKey = BooleanKey.ApsSmartInsulinBasalLearningEnabled, title = R.string.si_basal_learning_title))
                 addPreference(AdaptiveIntPreference(   ctx = context, intKey     = IntKey.ApsSmartInsulinPostModeLockoutMins,      title = R.string.si_post_mode_lockout_mins_title))
             })

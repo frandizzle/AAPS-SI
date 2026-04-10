@@ -15,6 +15,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.platform.LocalContext
+import app.aaps.core.ui.compose.ToolbarConfig
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,7 +55,8 @@ import kotlinx.coroutines.delay
 fun SmartInsulinScreen(
     plugin: SmartInsulinPlugin,
     onNavigateBack: () -> Unit = {},
-    onSettings: (() -> Unit)? = null
+    onSettings: (() -> Unit)? = null,
+    setToolbarConfig: ((ToolbarConfig) -> Unit)? = null
 ) {
     var data by remember { mutableStateOf<SmartInsulinPlugin.FragmentData?>(null) }
     var selectedDow by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1) }
@@ -61,6 +67,33 @@ fun SmartInsulinScreen(
             data = plugin.fragmentData()
             delay(10_000)
         }
+    }
+
+    // Override the toolbar settings icon to launch PreferencesActivity directly.
+    // PluginContentRoute's default gear navigates to PluginPreferencesScreen which
+    // can't render addPreferenceScreen()-based prefs — this bypasses that broken path.
+    val context = LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        setToolbarConfig?.invoke(
+            ToolbarConfig(
+                title = plugin.name,
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(
+                            androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        plugin.openPreferences(context)
+                    }) {
+                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                    }
+                }
+            )
+        )
     }
 
     val d = data

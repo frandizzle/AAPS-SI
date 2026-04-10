@@ -260,7 +260,10 @@ enum class DoubleKey(
     ApsSmartInsulinMaxPreBolus(key = "si_max_prebolus_u", defaultValue = 8.0, min = 0.5, max = 15.0, titleResId = R.string.pref_title_si_max_prebolus, defaultedBySM = true),
     // Pre-bolus 2: default amount in units (user can override per-activation in SmartMealDialog)
     ApsSmartInsulinPreBolus2DefaultU(key = "si_prebolus2_default_u", defaultValue = 2.0, min = 0.5, max = 10.0, titleResId = R.string.pref_title_si_prebolus2_default_u, defaultedBySM = true),
-    ApsSmartInsulinLearningRate(key = "si_learning_rate", defaultValue = 0.15, min = 0.05, max = 0.5, titleResId = R.string.pref_title_si_learning_rate, defaultedBySM = true),
+    // ISF learner speed — higher = learns faster but more reactive to single bad readings
+    ApsSmartInsulinIsfAlpha(key = "si_isf_alpha", defaultValue = 0.08, min = 0.02, max = 0.20, titleResId = R.string.pref_title_si_isf_alpha, defaultedBySM = true),
+    // Basal learner speed — higher = learns faster
+    ApsSmartInsulinBasalAlpha(key = "si_basal_alpha", defaultValue = 0.06, min = 0.02, max = 0.15, titleResId = R.string.pref_title_si_basal_alpha, defaultedBySM = true),
     // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
     ApsSmartInsulinDawnSmbReduction(key = "si_dawn_smb_reduction", defaultValue = 0.5, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_dawn_smb_reduction, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm(key = "si_resting_hr_bpm", defaultValue = 70.0, min = 50.0, max = 110.0, titleResId = R.string.pref_title_si_resting_hr_bpm, defaultedBySM = true),

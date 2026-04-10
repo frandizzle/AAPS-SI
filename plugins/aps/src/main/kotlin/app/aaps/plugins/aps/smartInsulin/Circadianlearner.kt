@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
+import app.aaps.core.keys.DoubleKey
 import org.json.JSONObject
 import java.util.Calendar
 import javax.inject.Inject
@@ -223,7 +224,7 @@ class CircadianLearner @Inject constructor(
         // Use updatedDayOnly — don't write ISF changes to the global bucket.
         // Global baseline is for long-term cross-day patterns; fasting physics signal
         // is already clean (gated above) so day bucket is sufficient.
-        isfState = isfState.updatedDayOnly(dow, hour, multTarget, ISF_ALPHA)
+        isfState = isfState.updatedDayOnly(dow, hour, multTarget, preferences.get(DoubleKey.ApsSmartInsulinIsfAlpha))
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
@@ -374,7 +375,7 @@ class CircadianLearner @Inject constructor(
                     else -> {
                         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
                         val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
+                        basalState = basalState.updated(dow, hour, newMult, preferences.get(DoubleKey.ApsSmartInsulinBasalAlpha))
                         basalDriftWindow.clear()
                         driftFired = true
                         lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mgdlhr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
@@ -404,7 +405,7 @@ class CircadianLearner @Inject constructor(
             val belowTargetMgdl = targetMgdl - bg
             val adjustment = 1.0 - (belowTargetMgdl / BASAL_NEG_IOB_SENSITIVITY).coerceIn(0.0, BASAL_NEG_IOB_MAX_ADJUST)
             val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
+            basalState = basalState.updated(dow, hour, newMult, preferences.get(DoubleKey.ApsSmartInsulinBasalAlpha) * 0.5) // half alpha — softer signal
             lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[negIOB] h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
