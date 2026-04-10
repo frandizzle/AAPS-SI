@@ -4,10 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.annotation.RawRes
-import androidx.annotation.StringRes
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
-import app.aaps.ComposeMainActivity
 import app.aaps.MainActivity
 import app.aaps.activities.HistoryBrowseActivity
 import app.aaps.activities.MyPreferenceFragment
@@ -21,18 +19,10 @@ import app.aaps.core.objects.extensions.toJson
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.dialogs.AlertDialogs
-import app.aaps.ui.dialogs.CalibrationDialog
-import app.aaps.ui.dialogs.CarbsDialog
-import app.aaps.ui.dialogs.CareDialog
-import app.aaps.ui.dialogs.ExtendedBolusDialog
-import app.aaps.ui.dialogs.FillDialog
-import app.aaps.ui.dialogs.InsulinDialog
-import app.aaps.ui.dialogs.LoopDialog
-import app.aaps.ui.dialogs.ProfileSwitchDialog
 import app.aaps.ui.dialogs.SmartMealDialog
-import app.aaps.ui.dialogs.TempBasalDialog
-import app.aaps.ui.dialogs.TempTargetDialog
-import app.aaps.ui.dialogs.TreatmentDialog
+import app.aaps.ComposeMainActivity
+
+import app.aaps.ui.dialogs.ProfileSwitchDialog
 import app.aaps.ui.services.AlarmSoundService
 import app.aaps.ui.services.AlarmSoundServiceHelper
 import app.aaps.ui.widget.Widget
@@ -74,18 +64,13 @@ class UiInteractionImpl @Inject constructor(
     override fun updateWidget(context: Context, from: String) {
         Widget.updateWidget(context, from)
     }
+
     override fun runSmartMealDialog(fragmentManager: FragmentManager) {
         SmartMealDialog().show(fragmentManager, "SmartMealDialog")
     }
 
     override fun navigateToSmartInsulinTab(activity: FragmentActivity) {
         (activity as? ComposeMainActivity)?.navigateToSmartInsulin()
-    }
-
-    override fun runLoopDialog(fragmentManager: FragmentManager, showOkCancel: Int) {
-        LoopDialog()
-            .also { it.arguments = Bundle().also { bundle -> bundle.putInt("showOkCancel", showOkCancel) } }
-            .show(fragmentManager, "LoopDialog")
     }
 
     override fun runProfileSwitchDialog(fragmentManager: FragmentManager, profileName: String?, iCfg: ICfg?) {
@@ -97,61 +82,6 @@ class UiInteractionImpl @Inject constructor(
                 }
             }
             .show(fragmentManager, "ProfileSwitchDialog")
-    }
-
-    override fun runTempBasalDialog(fragmentManager: FragmentManager) {
-        TempBasalDialog()
-            .show(fragmentManager, "TempBasalDialog")
-    }
-
-    override fun runTreatmentDialog(fragmentManager: FragmentManager) {
-        TreatmentDialog()
-            .show(fragmentManager, "TreatmentDialog")
-    }
-
-    override fun runInsulinDialog(fragmentManager: FragmentManager) {
-        InsulinDialog()
-            .show(fragmentManager, "InsulinDialog")
-    }
-
-    override fun runCalibrationDialog(fragmentManager: FragmentManager) {
-        CalibrationDialog()
-            .show(fragmentManager, "CalibrationDialog")
-    }
-
-    override fun runCarbsDialog(fragmentManager: FragmentManager) {
-        CarbsDialog()
-            .show(fragmentManager, "CarbsDialog")
-    }
-
-    override fun runTempTargetDialog(fragmentManager: FragmentManager) {
-        TempTargetDialog()
-            .show(fragmentManager, "TempTargetDialog")
-    }
-
-    override fun runExtendedBolusDialog(fragmentManager: FragmentManager) {
-        ExtendedBolusDialog()
-            .show(fragmentManager, "ExtendedBolusDialog")
-    }
-
-    override fun runFillDialog(fragmentManager: FragmentManager) {
-        FillDialog(fragmentManager)
-            .show(fragmentManager, "FillDialog")
-    }
-
-    override fun runProfileViewerActivity(context: Context, time: Long, mode: UiInteraction.Mode, customProfile: String?, customProfileName: String?, customProfile2: String?) {
-        // ProfileViewerActivity was migrated to Compose — pending replacement implementation
-    }
-
-    override fun runCareDialog(fragmentManager: FragmentManager, options: UiInteraction.EventType, @StringRes event: Int) {
-        CareDialog(fragmentManager)
-            .also {
-                it.arguments = Bundle().also { bundle ->
-                    bundle.putInt("event", event)
-                    bundle.putInt("options", options.ordinal)
-                }
-            }
-            .show(fragmentManager, "CareDialog")
     }
 
     override fun runPreferencesForPlugin(activity: FragmentActivity, pluginSimpleName: String?) {
@@ -204,4 +134,5 @@ class UiInteractionImpl @Inject constructor(
     override fun showError(context: Context, title: String, message: String, positiveButton: Int?, ok: (() -> Unit)?, cancel: (() -> Unit)?) {
         alertDialogs.showError(context, title, message, positiveButton, ok, cancel)
     }
+
 }

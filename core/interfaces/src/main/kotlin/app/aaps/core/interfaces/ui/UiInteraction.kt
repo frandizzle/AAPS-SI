@@ -86,89 +86,11 @@ interface UiInteraction {
      */
     fun runProfileSwitchDialog(fragmentManager: FragmentManager, profileName: String? = null, iCfg: ICfg? = null)
 
-    /**
-     * Shows the temporary basal dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTempBasalDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the treatment dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTreatmentDialog(fragmentManager: FragmentManager)
+    /** Shows the SmartMeal dialog. */
     fun runSmartMealDialog(fragmentManager: FragmentManager)
 
-    /**
-     * Navigate to the SmartInsulin tab in the main activity.
-     * Used by the overview FAB shortcut.
-     */
+    /** Navigate to the SmartInsulin tab in the main activity. */
     fun navigateToSmartInsulinTab(activity: FragmentActivity)
-
-    /**
-     * Shows the insulin dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runInsulinDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the calibration dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runCalibrationDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the carbs dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runCarbsDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the temporary target dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runTempTargetDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the extended bolus dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runExtendedBolusDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Shows the pump fill/prime dialog.
-     * @param fragmentManager The fragment manager to use.
-     */
-    fun runFillDialog(fragmentManager: FragmentManager)
-
-    /**
-     * Defines modes for the profile viewer.
-     */
-    enum class Mode(val i: Int) {
-
-        /** View the currently running profile. */
-        RUNNING_PROFILE(1),
-
-        /** View a custom profile from a string. */
-        CUSTOM_PROFILE(2),
-
-        /** View a profile from the database. */
-        DB_PROFILE(3),
-
-        /** Compare two custom profiles. */
-        PROFILE_COMPARE(4)
-    }
-
-    /**
-     * Shows the profile viewer dialog.
-     * @param context The context.
-     * @param time The time for which to view the profile.
-     * @param mode The viewing mode.
-     * @param customProfile The first custom profile JSON string (for applicable modes).
-     * @param customProfileName The name of the first custom profile.
-     * @param customProfile2 The second custom profile JSON string (for compare mode).
-     */
-    fun runProfileViewerActivity(context: Context, time: Long, mode: Mode, customProfile: String? = null, customProfileName: String? = null, customProfile2: String? = null)
 
     /**
      * Defines modes for the site rotation dialog.
