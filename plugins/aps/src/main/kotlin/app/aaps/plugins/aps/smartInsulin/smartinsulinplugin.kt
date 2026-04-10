@@ -584,8 +584,29 @@ open class SmartInsulinPlugin @Inject constructor(
      * or null if learning is currently active.
      * Called from OverviewFragment.updateIobCob() each loop cycle.
      */
-    override fun overviewState(): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
-        cachedOverviewState
+    override fun overviewState(): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState {
+        // Recompute modeLine live so the time remaining is always current — not stale from last loop.
+        // learningState and pb2Line are cheap to recompute from already-cached values.
+        val activeMode = mealOverrideManager.activeMealMode
+        val liveModeLine = activeMode?.let { mode ->
+            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
+            if (mode.isUam) {
+                val uamLabel = when (mode) {
+                    MealMode.UAM_BREAKFAST    -> "Breakfast"
+                    MealMode.UAM_LUNCH        -> "Lunch"
+                    MealMode.UAM_DINNER       -> "Dinner"
+                    MealMode.UAM_SNACK        -> "Snack"
+                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
+                    MealMode.UAM_AFTERNOON    -> "Afternoon"
+                    else                      -> mode.label
+                }
+                "Meal: UAM ($uamLabel) ${mins}m left"
+            } else {
+                "Meal: ${mode.label} ${mins}m left"
+            }
+        } ?: "Meal: Fasting"
+        return cachedOverviewState.copy(modeLine = liveModeLine)
+    }
 
     // ── RxBus subscriptions for HR and steps from wear ───────────────────────
     override fun onStart() {

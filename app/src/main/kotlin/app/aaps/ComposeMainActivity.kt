@@ -38,6 +38,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -624,7 +626,14 @@ class ComposeMainActivity : AppCompatActivity() {
                     pumpStatusText = pumpCommunicationStatus.statusBanner()?.text ?: "",
                     queueStatusText = pumpCommunicationStatus.queueStatus(),
                     isPumpCommunicating = pumpCommunicationStatus.statusBanner() != null,
-                    siOverviewState = smartInsulinOverview.overviewState(),
+                    siOverviewState = produceState(
+                        initialValue = smartInsulinOverview.overviewState()
+                    ) {
+                        while (true) {
+                            delay(30_000L)  // refresh every 30s — keeps time-remaining live
+                            value = smartInsulinOverview.overviewState()
+                        }
+                    }.value,
                     onStopBolus = {
                         commandQueue.cancelAllBoluses(null)
                     }
