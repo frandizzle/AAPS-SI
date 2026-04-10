@@ -165,6 +165,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var nudgeDisplaySessionBasalU: Double = 0.0    // full profileBasal * basalMult at session start
     // Cached profile values — updated each invoke() so fragmentData() can read without runBlocking
     @Volatile private var cachedProfileIsf: Double = 0.0
+    @Volatile private var cachedLearningEnabled: Boolean = true
+    @Volatile private var cachedCgmSuppressLearning: Boolean = false
     @Volatile private var cachedProfileBasal: Double = 0.0
     @Volatile private var cachedProfileTarget: Double = 99.0  // 5.5 mmol default
     // Cached HbA1c estimate — computed in invoke() (background thread) from suspend DB call
@@ -611,9 +613,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMealModeActive = activeMode != null
         val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
         val liveLearningState = when {
-            !learningEnabledCache                    -> "off: Learning disabled"
+            !cachedLearningEnabled                   -> "off: Learning disabled"
             activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
-            cgmState.suppressLearning                -> "off: CGM warmup"
+            cachedCgmSuppressLearning                -> "off: CGM warmup"
             effectivePostMealLockout                 -> {
                 val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
                 "off: Post-meal ${minsLeft}m left"
@@ -1159,6 +1161,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── Cache Overview state — updated here where all conditions are in scope ──
         // highTempTarget, mealMode, cgmState, activityMonitor all available now.
         val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
+        cachedLearningEnabled = learningEnabledCache
+        cachedCgmSuppressLearning = cgmState.suppressLearning
         val isMealMode = mealMode != MealMode.FASTING
         // Re-evaluate inPostMealLockout — mealMode may have changed this cycle
         // (e.g. P/F just fired). If mealMode is no longer FASTING, lockout is irrelevant.
