@@ -7,7 +7,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,9 +24,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -592,81 +589,50 @@ private fun CompactStatusItem(item: StatusItem) {
 
 @Composable
 private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
+    // Meal mode line — colored text, no background, matches the existing chip column style
     val mealColor = when {
-        state.modeLine.startsWith("Meal:") && !state.modeLine.contains("Fasting") ->
-            MaterialTheme.colorScheme.primaryContainer
+        state.modeLine.contains("Fasting", ignoreCase = true) ->
+            MaterialTheme.colorScheme.onSurfaceVariant
+        state.modeLine.contains("Protein", ignoreCase = true) ||
+            state.modeLine.contains("P/F", ignoreCase = true) ->
+            Color(0xFF9C27B0)  // purple — P/F is distinct from meal modes
         else ->
-            MaterialTheme.colorScheme.surfaceVariant
+            MaterialTheme.colorScheme.primary  // active meal/UAM — same green as "Closed Loop"
     }
     val learningColor = when (state.learningState) {
-        "Learning"  -> MaterialTheme.colorScheme.tertiaryContainer
-        "limited"   -> MaterialTheme.colorScheme.secondaryContainer
-        else        -> MaterialTheme.colorScheme.errorContainer
+        "Learning"  -> Color(0xFF43A047)   // green
+        "limited"   -> Color(0xFFFB8C00)   // amber
+        else        -> Color(0xFFE53935)   // red
     }
     val learningLabel = when (state.learningState) {
         "Learning"  -> "Learning"
-        "limited"   -> "Limited"
-        else        -> "Paused"
+        "limited"   -> "State: Limited"
+        else        -> "State: Paused"
     }
-    androidx.compose.foundation.layout.Column(
-        verticalArrangement = Arrangement.spacedBy(2.dp)
-    ) {
-        // Meal mode row
-        androidx.compose.foundation.layout.Row(
-            modifier = androidx.compose.ui.Modifier
-                .fillMaxWidth()
-                .background(
-                    mealColor,
-                    shape = MaterialTheme.shapes.small
-                )
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = state.modeLine,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
-            )
-        }
-        // PB2 line if present
+
+    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        // Meal line
+        Text(
+            text = state.modeLine,
+            style = MaterialTheme.typography.bodySmall,
+            color = mealColor,
+            maxLines = 1
+        )
+        // PB2 line — amber, only shown when active
         state.pb2Line?.let { pb2 ->
-            androidx.compose.foundation.layout.Row(
-                modifier = androidx.compose.ui.Modifier
-                    .fillMaxWidth()
-                    .background(
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        shape = MaterialTheme.shapes.small
-                    )
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            ) {
-                Text(
-                    text = pb2,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
-                )
-            }
-        }
-        // Learning state row
-        androidx.compose.foundation.layout.Row(
-            modifier = androidx.compose.ui.Modifier
-                .fillMaxWidth()
-                .background(
-                    learningColor,
-                    shape = MaterialTheme.shapes.small
-                )
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
             Text(
-                text = "State: $learningLabel",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = pb2,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFFB8C00),
                 maxLines = 1
             )
         }
+        // Learning state line
+        Text(
+            text = if (state.learningState == "Learning") "Learning" else learningLabel,
+            style = MaterialTheme.typography.bodySmall,
+            color = learningColor,
+            maxLines = 1
+        )
     }
 }
