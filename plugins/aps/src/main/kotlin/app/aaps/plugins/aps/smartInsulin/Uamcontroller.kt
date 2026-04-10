@@ -10,6 +10,7 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import java.util.Calendar
 import javax.inject.Inject
