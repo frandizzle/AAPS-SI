@@ -70,12 +70,14 @@ fun SmartMealDialogScreen(
             when (effect) {
                 is SmartMealDialogViewModel.SideEffect.DeliveryError ->
                     onShowDeliveryError(effect.message)
+                is SmartMealDialogViewModel.SideEffect.Done -> onNavigateBack()
             }
         }
     }
 
-    // Intercept predictive back gesture while confirmation dialog is showing
-    // — prevents "not in back stack" crash from nav entry being popped mid-dialog
+    // Guard predictive back gesture — prevents "not in back stack" crash.
+    // When confirmation is showing, dismiss it instead of popping nav.
+    // Always intercept to use safePopBackStack via onNavigateBack.
     BackHandler(enabled = showConfirmation) {
         showConfirmation = false
     }
