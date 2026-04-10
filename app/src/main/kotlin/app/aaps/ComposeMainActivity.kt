@@ -1007,6 +1007,13 @@ class ComposeMainActivity : AppCompatActivity() {
         }
     }
 
+    /** Called from UiInteractionImpl.navigateToSmartInsulinTab() */
+    fun navigateToSmartInsulin() {
+        val plugin = activePlugin.getPluginsList()
+            .firstOrNull { it.javaClass.simpleName == "SmartInsulinPlugin" } ?: return
+        handlePluginClick(plugin)
+    }
+
     private fun handlePluginClick(plugin: PluginBase) {
         val pluginIndex = activePlugin.getPluginsList().indexOf(plugin)
         if (plugin.hasComposeContent()) {
