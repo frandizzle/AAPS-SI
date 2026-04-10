@@ -618,8 +618,10 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
             val reason = state.learningState.removePrefix("off:").trim()
             // Humanise the reason string
             learningLabel = when {
-                reason.startsWith("Post-meal") ->
-                    "State: Post-meal pause — $reason"
+                reason.startsWith("Post-meal") -> {
+                    val mins = reason.removePrefix("Post-meal").trim().removeSuffix("left").trim().removeSuffix("m").trim()
+                    "State: Post-meal pause — ${mins}m remaining"
+                }
                 reason.startsWith("Activity") ->
                     "State: Paused — ${reason}"
                 reason.startsWith("High temp") ->
