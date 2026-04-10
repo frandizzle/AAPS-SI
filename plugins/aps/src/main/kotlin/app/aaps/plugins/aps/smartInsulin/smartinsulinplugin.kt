@@ -1149,10 +1149,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_AFTERNOON    -> "Afternoon"
                     else                   -> mode.label
                 }
-                "Meal: UAM ($uamLabel) ${mins}m"
+                "Meal: UAM ($uamLabel) ${mins}m left"
             } else {
-                // Manual modes: "Meal: Dinner 25m"
-                "Meal: ${mode.label} ${mins}m"
+                // Manual modes: "Meal: Dinner 25m left"
+                "Meal: ${mode.label} ${mins}m left"
             }
         } ?: "Meal: Fasting"
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {

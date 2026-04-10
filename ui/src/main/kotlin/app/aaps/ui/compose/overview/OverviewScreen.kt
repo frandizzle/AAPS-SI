@@ -47,7 +47,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.BasicText
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -591,7 +593,9 @@ private fun CompactStatusItem(item: StatusItem) {
 
 @Composable
 private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
-    val mealColor = when {
+    val whiteColor = MaterialTheme.colorScheme.onSurface
+
+    val mealValueColor = when {
         state.modeLine.contains("Fasting", ignoreCase = true) ->
             MaterialTheme.colorScheme.onSurfaceVariant
         state.modeLine.contains("Protein", ignoreCase = true) ||
@@ -601,73 +605,79 @@ private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
             MaterialTheme.colorScheme.primary
     }
 
-    // Parse learningState — format is either "Learning", "limited", or "off: <reason>"
     val learningColor: Color
-    val learningLabel: String
+    val learningValue: String
     when {
         state.learningState == "Learning" -> {
             learningColor = Color(0xFF43A047)
-            learningLabel = "Learning"
+            learningValue = "Learning"
         }
         state.learningState == "limited: P/F mode" -> {
             learningColor = Color(0xFF9C27B0)
-            learningLabel = "State: Limited (P/F mode)"
+            learningValue = "Limited (P/F mode)"
         }
         state.learningState.startsWith("limited") -> {
             learningColor = Color(0xFFFB8C00)
-            learningLabel = "State: Limited (meal mode)"
+            learningValue = "Limited (meal mode)"
         }
         state.learningState.startsWith("off:") -> {
             learningColor = Color(0xFFE53935)
             val reason = state.learningState.removePrefix("off:").trim()
-            // Humanise the reason string
-            learningLabel = when {
+            learningValue = when {
                 reason.startsWith("Post-meal") -> {
                     val mins = reason.removePrefix("Post-meal").trim().removeSuffix("left").trim().removeSuffix("m").trim()
-                    "State: Post-meal pause — ${mins}m remaining"
+                    "Post-meal pause — ${mins}m remaining"
                 }
-                reason.startsWith("Activity") ->
-                    "State: Paused — ${reason}"
-                reason.startsWith("High temp") ->
-                    "State: Paused — temp target"
-                reason.startsWith("CGM") ->
-                    "State: Paused — CGM warmup"
-                reason.startsWith("Learning disabled") ->
-                    "State: Learning disabled"
-                else ->
-                    "State: Paused — $reason"
+                reason.startsWith("Activity") -> reason
+                reason.startsWith("High temp") -> "Temp target active"
+                reason.startsWith("CGM") -> "CGM warmup"
+                reason.startsWith("Learning disabled") -> "Disabled"
+                else -> reason
             }
         }
         else -> {
             learningColor = Color(0xFF43A047)
-            learningLabel = state.learningState
+            learningValue = state.learningState
         }
     }
+
+    // Meal value — strip "Meal: " prefix so we can colour label and value separately
+    val mealValue = state.modeLine.removePrefix("Meal:").trim()
+    val isFasting = state.modeLine.contains("Fasting", ignoreCase = true)
 
     Column(
         modifier = androidx.compose.ui.Modifier.padding(top = 2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        Text(
-            text = state.modeLine,
-            fontSize = 14.sp,
-            color = mealColor,
+        // Meal line: "Meal: " white + value coloured
+        BasicText(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(color = if (isFasting) MaterialTheme.colorScheme.onSurfaceVariant else whiteColor)) {
+                    append("Meal: ")
+                }
+                withStyle(SpanStyle(color = mealValueColor)) {
+                    append(mealValue)
+                }
+            },
+            style = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
             maxLines = 1
         )
+        // PB2 line — all amber
         state.pb2Line?.let { pb2 ->
-            Text(
-                text = pb2,
-                fontSize = 14.sp,
-                color = Color(0xFFFB8C00),
-                maxLines = 1
-            )
+            Text(text = pb2, fontSize = 14.sp, color = Color(0xFFFB8C00), maxLines = 1)
         }
-        Text(
-            text = learningLabel,
-            fontSize = 14.sp,
-            color = learningColor,
-            maxLines = 2,
-            lineHeight = 16.sp
+        // State line: "State: " white + value coloured
+        BasicText(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(color = whiteColor)) {
+                    append("State: ")
+                }
+                withStyle(SpanStyle(color = learningColor)) {
+                    append(learningValue)
+                }
+            },
+            style = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+            maxLines = 2
         )
     }
 }
