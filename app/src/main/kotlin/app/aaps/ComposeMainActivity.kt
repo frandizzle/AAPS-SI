@@ -152,6 +152,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -182,6 +183,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var builtInSearchables: BuiltInSearchables
     @Inject lateinit var localProfileManager: LocalProfileManager
     @Inject lateinit var bolusProgressData: BolusProgressData
+    @Inject lateinit var smartInsulinOverview: SmartInsulinOverview
     @Inject lateinit var commandQueue: CommandQueue
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
@@ -560,7 +562,6 @@ class ComposeMainActivity : AppCompatActivity() {
                     onNavigate = { request -> handleNavigationRequest(request, navController) },
                     onDrawerClosed = { mainViewModel.closeDrawer() },
                     onSwitchToClassicUi = { switchToClassicUi() },
-                    onSmartInsulinClick = { navigateToSmartInsulin() },
                     onAboutDialogDismiss = { mainViewModel.setShowAboutDialog(false) },
                     onMaintenanceSheetDismiss = { mainViewModel.setShowMaintenanceSheet(false) },
                     onDirectoryClick = {
@@ -623,6 +624,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     pumpStatusText = pumpCommunicationStatus.statusBanner()?.text ?: "",
                     queueStatusText = pumpCommunicationStatus.queueStatus(),
                     isPumpCommunicating = pumpCommunicationStatus.statusBanner() != null,
+                    siOverviewState = smartInsulinOverview.overviewState(),
                     onStopBolus = {
                         commandQueue.cancelAllBoluses(null)
                     }
@@ -958,7 +960,6 @@ class ComposeMainActivity : AppCompatActivity() {
             // Treatment dialogs
             ElementType.CARBS                   -> navController.navigate(AppRoute.CarbsDialog.route)
             ElementType.INSULIN                 -> navController.navigate(AppRoute.InsulinDialog.route)
-            ElementType.SMART_MEAL              -> navController.navigate(AppRoute.SmartMealDialog.route)
             ElementType.TREATMENT               -> navController.navigate(AppRoute.TreatmentDialog.route)
             ElementType.FILL                    -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.CARTRIDGE_CHANGE.ordinal))
             ElementType.CANNULA_CHANGE          -> navController.navigate(AppRoute.FillDialog.createRoute(FillPreselect.SITE_CHANGE.ordinal))
@@ -1016,10 +1017,5 @@ class ComposeMainActivity : AppCompatActivity() {
                     .putExtra("plugin", pluginIndex)
             )
         }
-    }
-
-    /** Called by UiInteractionImpl to navigate to the SmartInsulin screen. */
-    fun navigateToSmartInsulin() {
-        navController?.navigate(AppRoute.SmartInsulin.route)
     }
 }

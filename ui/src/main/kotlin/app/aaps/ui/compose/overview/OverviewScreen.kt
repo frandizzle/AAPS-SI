@@ -25,6 +25,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +59,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.notifications.AapsNotification
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.pump.BolusProgressState
 import app.aaps.core.keys.IntKey
 import app.aaps.core.ui.compose.AapsTheme
@@ -118,6 +122,7 @@ fun OverviewScreen(
     pumpStatusText: String = "",
     queueStatusText: String? = null,
     isPumpCommunicating: Boolean = false,
+    siOverviewState: SmartInsulinOverview.OverviewState? = null,
     onStopBolus: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -251,6 +256,10 @@ fun OverviewScreen(
                         iobUiState = iobUiState,
                         cobUiState = cobUiState
                     )
+                    // SmartInsulin meal mode + learning state chip
+                    siOverviewState?.let { si ->
+                        SmartInsulinStatusChip(state = si)
+                    }
                 }
             }
 
@@ -581,3 +590,83 @@ private fun CompactStatusItem(item: StatusItem) {
     }
 }
 
+@Composable
+private fun SmartInsulinStatusChip(state: SmartInsulinOverview.OverviewState) {
+    val mealColor = when {
+        state.modeLine.startsWith("Meal:") && !state.modeLine.contains("Fasting") ->
+            MaterialTheme.colorScheme.primaryContainer
+        else ->
+            MaterialTheme.colorScheme.surfaceVariant
+    }
+    val learningColor = when (state.learningState) {
+        "Learning"  -> MaterialTheme.colorScheme.tertiaryContainer
+        "limited"   -> MaterialTheme.colorScheme.secondaryContainer
+        else        -> MaterialTheme.colorScheme.errorContainer
+    }
+    val learningLabel = when (state.learningState) {
+        "Learning"  -> "Learning"
+        "limited"   -> "Limited"
+        else        -> "Paused"
+    }
+    androidx.compose.foundation.layout.Column(
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        // Meal mode row
+        androidx.compose.foundation.layout.Row(
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxWidth()
+                .background(
+                    mealColor,
+                    shape = MaterialTheme.shapes.small
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = state.modeLine,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+        }
+        // PB2 line if present
+        state.pb2Line?.let { pb2 ->
+            androidx.compose.foundation.layout.Row(
+                modifier = androidx.compose.ui.Modifier
+                    .fillMaxWidth()
+                    .background(
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        shape = MaterialTheme.shapes.small
+                    )
+                    .padding(horizontal = 8.dp, vertical = 3.dp)
+            ) {
+                Text(
+                    text = pb2,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+            }
+        }
+        // Learning state row
+        androidx.compose.foundation.layout.Row(
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxWidth()
+                .background(
+                    learningColor,
+                    shape = MaterialTheme.shapes.small
+                )
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "State: $learningLabel",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1
+            )
+        }
+    }
+}
