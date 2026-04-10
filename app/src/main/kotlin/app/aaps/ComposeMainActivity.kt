@@ -1005,7 +1005,7 @@ class ComposeMainActivity : AppCompatActivity() {
 
             ElementType.SMART_MEAL               -> {
                 withProtection(ProtectionCheck.Protection.BOLUS) {
-                    uiInteraction.runSmartMealDialog(supportFragmentManager)
+                    navController.navigate(AppRoute.SmartMealDialog.route)
                 }
             }
 

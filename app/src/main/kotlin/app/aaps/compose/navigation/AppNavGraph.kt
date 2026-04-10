@@ -56,12 +56,12 @@ import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.core.ui.compose.siteRotation.SiteLocationPickerScreen
 import app.aaps.ui.compose.calibrationDialog.CalibrationDialogScreen
 import app.aaps.ui.compose.carbsDialog.CarbsDialogScreen
+import app.aaps.ui.compose.smartMealDialog.SmartMealDialogScreen
 import app.aaps.ui.compose.careDialog.CareDialogScreen
 import app.aaps.ui.compose.configuration.ConfigurationViewModel
 import app.aaps.ui.compose.extendedBolusDialog.ExtendedBolusDialogScreen
 import app.aaps.ui.compose.fillDialog.FillDialogScreen
 import app.aaps.ui.compose.insulinDialog.InsulinDialogScreen
-import app.aaps.ui.compose.smartMealDialog.SmartMealDialogScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
 import app.aaps.ui.compose.main.MainViewModel
@@ -268,6 +268,15 @@ fun NavGraphBuilder.appNavGraph(
         )
     }
 
+    composable(route = AppRoute.SmartMealDialog.route) {
+        SmartMealDialogScreen(
+            onNavigateBack = { navController.safePopBackStack() },
+            onShowDeliveryError = { comment ->
+                onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
+            }
+        )
+    }
+
     composable(route = AppRoute.CarbsDialog.route) {
         CarbsDialogScreen(
             carbsButtonsDef = builtInSearchables.carbsButtons,
@@ -292,30 +301,6 @@ fun NavGraphBuilder.appNavGraph(
                 onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
             }
         )
-    }
-
-    composable(route = AppRoute.SmartMealDialog.route) {
-        SmartMealDialogScreen(
-            onNavigateBack = { navController.safePopBackStack() },
-            onShowDeliveryError = { comment ->
-                onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
-            }
-        )
-    }
-
-    composable(route = AppRoute.SmartInsulin.route) {
-        val plugin = activePlugin.getPluginsList()
-            .firstOrNull { it.javaClass.simpleName == "SmartInsulinPlugin" } ?: return@composable
-        val composeContent = plugin.getComposeContent()
-        if (composeContent is ComposablePluginContent) {
-            PluginContentRoute(
-                navController = navController,
-                plugin = plugin,
-                composeContent = composeContent,
-                onNavigationRequest = onNavigationRequest,
-                withProtection = withProtection,
-            )
-        }
     }
 
     composable(route = AppRoute.TreatmentDialog.route) {
