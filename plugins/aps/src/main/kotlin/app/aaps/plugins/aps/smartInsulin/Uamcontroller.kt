@@ -80,9 +80,23 @@ class UamController @Inject constructor(
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
     private var currentlyCgmWarmup         = false  // true when CGM is in warmup — UAM/P/F blocked
     private var currentlyHighTempTarget    = false  // true when high temp target active — UAM/P/F blocked
-    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
+    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — persisted to survive restarts
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
+
+    init {
+        // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts
+        val saved = preferences.get(StringKey.ApsSmartInsulinLastMealEndedMs).toLongOrNull() ?: 0L
+        if (saved > 0L) {
+            // Validate — discard if from a previous calendar day
+            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = saved }
+            val nowCal  = java.util.Calendar.getInstance()
+            lastMealEndedMs = if (
+                mealCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR) &&
+                mealCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR)
+            ) saved else 0L
+        }
+    }
 
     // Last reject tracking for debug display
     private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
@@ -210,6 +224,7 @@ class UamController @Inject constructor(
                 mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)) {
                 aapsLogger.debug(LTag.APS, "UAM: new day — resetting lastMealEndedMs, P/F requires today's meal")
                 lastMealEndedMs = 0L
+                preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
             }
         }
 
@@ -218,7 +233,8 @@ class UamController @Inject constructor(
         // Track when meal mode expires so P/F knows a meal has happened
         if (wasMealMode && !currentlyInMealMode) {
             lastMealEndedMs = System.currentTimeMillis()
-            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail")
+            preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, lastMealEndedMs.toString())
+            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail (persisted)")
         }
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
@@ -492,8 +508,8 @@ class UamController @Inject constructor(
         }
 
         // P/F only arms after a meal or UAM mode has occurred today.
-        // Without a prior meal, stuck-high fasting BG is a basal issue — not fat/protein tail.
-        // lastMealEndedMs resets at midnight so P/F requires a same-day meal each day.
+        // lastMealEndedMs is persisted to SharedPreferences so it survives app restarts.
+        // Resets at midnight (handled above) so P/F requires a fresh meal each day.
         if (lastMealEndedMs <= 0L) {
             if (stuckHighReadings > 0) {
                 aapsLogger.debug(LTag.APS, "UAM_PROTEIN_FAT: blocked — no meal has occurred today")

@@ -90,8 +90,8 @@ enum class StringKey(
         preferenceType = PreferenceType.LIST,
         entries = mapOf(
             "dark" to R.string.pref_dark_theme,
-            "light" to R.string.pref_dark_theme,
-            "system" to R.string.pref_dark_theme
+            "light" to R.string.pref_light_theme,
+            "system" to R.string.pref_follow_system_theme
         ),
         defaultedBySM = true
     ),
@@ -318,6 +318,17 @@ enum class StringKey(
         showInNsClientMode = false,
         showInPumpControlMode = false,
         exportable = true
+    ),
+    // SmartInsulin — timestamp of last meal/UAM mode expiry (ms). Persisted so
+    // P/F gate survives app restarts. Resets at midnight via UamController.
+    ApsSmartInsulinLastMealEndedMs(
+        key = "si_last_meal_ended_ms",
+        defaultValue = "0",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
+        showInPumpControlMode = false,
+        exportable = false
     ),
     // SmartInsulin — UAM mode learned insulin profiles (JSON, not user-visible)
     ApsSmartInsulinProfileUamBreakfast(
