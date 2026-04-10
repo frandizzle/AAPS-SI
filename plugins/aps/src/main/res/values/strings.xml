@@ -38,6 +38,8 @@
     <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
 
     <!-- Learning prefs -->
+    <string name="pref_title_si_isf_alpha">ISF learning speed (α)</string>
+    <string name="pref_title_si_basal_alpha">Basal learning speed (α)</string>
     <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
     <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
     <string name="smart_insulin_learning_rate">Learning rate</string>

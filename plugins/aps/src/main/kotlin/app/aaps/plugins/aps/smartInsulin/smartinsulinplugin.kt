@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import android.content.Context
+import android.content.Intent
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
@@ -1603,6 +1604,17 @@ open class SmartInsulinPlugin @Inject constructor(
         if (!preferences.get(BooleanKey.ApsUseUam))
             value.set(false, rh.gs(R.string.uam_disabled_in_preferences), this)
         return value
+    }
+
+    /** Opens SmartInsulin preferences directly via PreferencesActivity,
+     *  bypassing PluginPreferencesScreen which requires PreferenceSubScreenDef. */
+    fun openPreferences(context: Context) {
+        val intent = Intent()
+            .setClassName(context, "app.aaps.activities.PreferencesActivity")
+            .setAction("info.nightscout.androidaps.MainActivity")
+            .putExtra("PluginName", javaClass.simpleName)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
     }
 
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
