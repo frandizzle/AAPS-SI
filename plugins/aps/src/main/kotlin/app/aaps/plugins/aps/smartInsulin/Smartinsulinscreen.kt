@@ -81,7 +81,7 @@ fun SmartInsulinScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
-                            ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = null
                         )
                     }
