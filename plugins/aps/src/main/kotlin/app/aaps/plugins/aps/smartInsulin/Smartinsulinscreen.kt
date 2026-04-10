@@ -325,8 +325,8 @@ fun SmartInsulinScreen(
             val trimDirection   = nudgeParts.getOrNull(1) ?: ""
             val trimPct         = nudgeParts.getOrNull(2) ?: "0%"
             val nudgeColor = when {
-                nudgeActiveHigh                              -> Color(0xFFFB8C00)
-                nudgeActiveLow                               -> Color(0xFF4CAF50)
+                nudgeActiveHigh                              -> Color(0xFF4CAF50)
+                nudgeActiveLow                               -> Color(0xFFFB8C00)
                 nudgePaused                                  -> Color(0xFF64B5F6)
                 nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color(0xFFFB8C00)
                 nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color(0xFF43A047)
@@ -362,19 +362,19 @@ fun SmartInsulinScreen(
                     val shortPct   = kotlin.math.abs(((1.0 - d.circCeil) * 100).roundToInt())
                     val longPct    = kotlin.math.abs(((1.0 - d.basalMultiplier) * 100).roundToInt())
                     val shortLine  = if (nudgeActiveHigh)
-                        "Short term: pulling out ~${shortPct}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
-                    else
                         "Short term: adding ~${shortPct}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                    else
+                        "Short term: pulling out ~${shortPct}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
                     val longLine   = when {
                         longPct < 2     -> "Long term: still building — less than 2% change so far"
-                        nudgeActiveHigh -> "Long term: permanently reduced by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
-                        else            -> "Long term: permanently increased by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
+                        nudgeActiveHigh -> "Long term: permanently increased by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
+                        else            -> "Long term: permanently reduced by ~${longPct}% at this hour${if (longPct < shortPct) " (still learning)" else " (dialling in)"}"
                     }
                     val statusLine = if (cooldown)
                         "Adjusting cautiously — $penaltyR may have contributed. Full strength resumes after 2h."
                     else
                         "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
-                    nudgeHeadline = "⚡ ${if (nudgeActiveHigh) "Too much insulin — adjusting" else "Not enough insulin — adjusting"}$coolNote"
+                    nudgeHeadline = "⚡ ${if (nudgeActiveHigh) "Not enough insulin — adjusting" else "Too much insulin — adjusting"}$coolNote"
                     nudgeDetail   = "$deviation detected at $hourStr on ${day}s\nISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortLine\n$longLine\n$statusLine"
                 }
                 nudgePaused -> {
