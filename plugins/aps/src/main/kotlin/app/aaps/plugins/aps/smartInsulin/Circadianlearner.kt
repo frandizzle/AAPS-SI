@@ -403,8 +403,21 @@ class CircadianLearner @Inject constructor(
             }
         }
 
-        val tooMuch      = !inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD
-        val notEnough    = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
+        var tooMuch      = !inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD
+        var notEnough    = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
+
+        // --- POST-LOW BLINDFOLD ---
+        // Calculate the cooldown early so we can use it as a safety gate
+        val msSincePenalty = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
+        val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
+
+        // If we are recovering from a low, the rise is from rescue carbs/liver, NOT a basal deficit.
+        // Block the learner from falsely increasing insulin (dropping ISF / raising basal).
+        if (notEnough && cooldownActive && (lastPenaltyReason.contains("low") || lastPenaltyReason.contains("rollercoaster"))) {
+            notEnough = false
+            lastAggrNudgeStatus = "PAUSED|Low Recovery Spike"
+        }
+        // --------------------------
 
         if (!tooMuch && !notEnough) {
             if (!trimActive) lastAggrNudgeStatus = "INACTIVE"
@@ -417,13 +430,11 @@ class CircadianLearner @Inject constructor(
         // Fasting penalties are more likely a real profile issue → 35% strength.
         // Meal/post-meal penalties are more likely a food/event issue → 15% strength.
         // After 120 min cooldown with no new penalty, full strength resumes.
-        val msSincePenalty = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
         val effectiveScale = when {
             msSincePenalty > AGGR_NUDGE_COOLDOWN_MS -> AGGR_NUDGE_SCALE                  // no recent penalty — full strength
             lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_FASTING  // fasting penalty — 35%
             else                                    -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_MEAL     // meal penalty — 15%
         }
-        val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
         val cooldownNote   = if (cooldownActive) " [cooldown ${msSincePenalty / 60_000}min/${AGGR_NUDGE_COOLDOWN_MS / 60_000}min fasting=$lastPenaltyWasFasting]" else ""
         val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
 
