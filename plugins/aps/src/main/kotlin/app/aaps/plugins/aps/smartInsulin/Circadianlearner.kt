@@ -338,8 +338,16 @@ class CircadianLearner @Inject constructor(
             val windowReadings = trimWindowMs / (5 * 60_000L)  // expected readings in window
             if (trimBgHistory.size >= windowReadings.coerceAtLeast(6)) {
                 val avgBg     = trimBgHistory.map { it.second }.average()
-                val aboveBand = avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL   // persistently high
-                val belowBand = avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL   // persistently low
+
+                // --- STFT POST-LOW BLINDFOLD ---
+                // Check if we are currently in a low recovery cooldown
+                val timeSincePen = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
+                val isLowRecovery = (timeSincePen <= AGGR_NUDGE_COOLDOWN_MS) &&
+                    (lastPenaltyReason.contains("low") || lastPenaltyReason.contains("rollercoaster"))
+
+                // Block the STFT from triggering a high-trim (and corrupting the long-term profile) if it's a rebound
+                val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery
+                val belowBand = avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL
 
                 // --- HUMAN "STEP AND WAIT" LOGIC ---
                 val timeSinceLastAction = now - lastTrimActionMs
