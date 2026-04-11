@@ -409,10 +409,9 @@ fun SmartInsulinScreen(
             }
             SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
 
-            // ── Feed-forward debug section ────────────────────────────
+// ── Feed-forward debug section ────────────────────────────
             var showFfDebug by rememberSaveable { mutableStateOf(false) }
-            androidx.compose.foundation.clickable(
-            ) {}
+
             androidx.compose.material3.TextButton(
                 onClick = { showFfDebug = !showFfDebug },
                 modifier = Modifier.fillMaxWidth()
