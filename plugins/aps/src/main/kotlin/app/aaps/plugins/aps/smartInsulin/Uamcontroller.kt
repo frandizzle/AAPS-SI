@@ -408,7 +408,12 @@ class UamController @Inject constructor(
             if (isDuplicateReading) {
                 aapsLogger.debug(LTag.APS, "UAM: same CGM reading (${bgTimestampMs}), skipping streak increment")
             } else {
-                if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
+                // Only set start if no preserved burst history from a previous weak reading
+                if (consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0) {
+                    bgAtStreakStart = currentBgMmol
+                } else if (consecutiveRiseReadings == 0 && bgAtStreakStart != 0.0) {
+                    aapsLogger.debug(LTag.APS, "UAM: resuming preserved burst (start=${fmtBg(bgAtStreakStart)})")
+                }
                 consecutiveRiseReadings++
                 lastCountedBgTimestampMs = bgTimestampMs
             }
@@ -645,7 +650,7 @@ class UamController @Inject constructor(
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
-            consecutiveRiseReadings > 0 -> {
+            consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
                 val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
                 val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
