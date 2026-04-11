@@ -26,6 +26,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -34,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -328,8 +330,8 @@ fun SmartInsulinScreen(
                 nudgeActiveHigh                              -> Color(0xFF4CAF50)
                 nudgeActiveLow                               -> Color(0xFFFB8C00)
                 nudgePaused                                  -> Color(0xFF64B5F6)
+                nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color(0xFF4CAF50)
                 nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color(0xFFFB8C00)
-                nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color(0xFF43A047)
                 d.inReboundWindow || d.bgWentLow             -> Color(0xFFFB8C00)
                 else                                         -> MaterialTheme.colorScheme.onSurfaceVariant
             }
@@ -337,7 +339,7 @@ fun SmartInsulinScreen(
             val nudgeDetail: String
             when {
                 nudgeTrim -> {
-                    val adding = trimDirection == "ACTIVE_LOW"
+                    val adding = trimDirection == "ACTIVE_HIGH"
                     val trimPctVal = trimPct.removeSuffix("%").toFloatOrNull() ?: 0f
                     val shortTerm = if (adding) "adding ~${"%.0f".format(trimPctVal)}% insulin" else "removing ~${"%.0f".format(trimPctVal)}% insulin"
                     val longTerm  = if (adding) "feeding +${"%.0f".format(trimPctVal * 0.5f)}% long-term" else "feeding -${"%.0f".format(trimPctVal * 0.5f)}% long-term"
@@ -406,6 +408,57 @@ fun SmartInsulinScreen(
                 }
             }
             SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
+
+            // ── Feed-forward debug section ────────────────────────────
+            var showFfDebug by rememberSaveable { mutableStateOf(false) }
+            androidx.compose.foundation.clickable(
+            ) {}
+            androidx.compose.material3.TextButton(
+                onClick = { showFfDebug = !showFfDebug },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (showFfDebug) {
+                androidx.compose.foundation.layout.Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = MaterialTheme.shapes.small
+                        )
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text("Acceleration (2nd derivative)",
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.primary)
+                    Text(d.lastAccelDebug,
+                         style = MaterialTheme.typography.bodySmall,
+                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Predictive Basal Trim (60min projection)",
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.primary)
+                    Text(d.lastPredTrimDebug,
+                         style = MaterialTheme.typography.bodySmall,
+                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Last basal signal",
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.primary)
+                    Text(d.lastBasalSignal,
+                         style = MaterialTheme.typography.bodySmall,
+                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
 
         // ── UAM card ───────────────────────────────────────────────────
