@@ -95,16 +95,13 @@ class CircadianLearner @Inject constructor(
     private var lowGuardPenaltyFired = false
 
     // ── Short-term fuel trim state ───────────────────────────────────────────
-    // Tracks BG above/below target during fasting over a window aligned to the
-    // learned insulin peak. When BG is persistently off target for that window,
-    // fires a short-term trim (ceiling boost/cut) and feeds a proportional nudge
-    // into long-term ISF/basal — like an O2 sensor λ = 1 fuel trim system.
-    private val trimBgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(36) // up to 3h at 5min
-    private var trimWindowMs: Long = 90 * 60_000L  // updated each cycle from learned peak
+    private val trimBgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(36)
+    private var trimWindowMs: Long = 90 * 60_000L
     private var trimActive   = false
-    private var trimStrength = 0.0   // current trim magnitude: positive = add insulin, negative = remove
-    private var trimDirection = 0    // +1 = not enough insulin, -1 = too much
+    private var trimStrength = 0.0
+    private var trimDirection = 0
     private var trimStartMs  = 0L
+    private var lastTrimActionMs = 0L // NEW: Tracks the "Wait and Re-assess" window
 
     // Last aggression nudge status for SI tab display
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
@@ -344,57 +341,76 @@ class CircadianLearner @Inject constructor(
                 val aboveBand = avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL   // persistently high
                 val belowBand = avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL   // persistently low
 
+                // --- HUMAN "STEP AND WAIT" LOGIC ---
+                val timeSinceLastAction = now - lastTrimActionMs
+                val readyToReassess = timeSinceLastAction >= trimWindowMs
+
                 when {
                     aboveBand -> {
                         // Not enough insulin — trim ceiling UP (more aggressive)
-                        val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                        trimStrength   = magnitude
-                        trimDirection  = +1
-                        if (!trimActive) { trimActive = true; trimStartMs = now }
-                        val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
-                            .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
-                        aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+                        if (readyToReassess) {
+                            val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            trimStrength   = magnitude
+                            trimDirection  = +1
+                            if (!trimActive) { trimActive = true; trimStartMs = now }
 
-                        // Long-term feed: proportional nudge into ISF/basal — half the trim magnitude
-                        val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
-                        val d = dow.coerceIn(0, 6)
-                        isfState   = isfState.updatedDayOnly(dow, hour,
-                                                             (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
-                        basalState = basalState.updatedDayOnly(dow, hour,
-                                                               (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
-                        aapsLogger.debug(LTag.APS,
-                                         "FuelTrim[+] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                             "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                            val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
+                                .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
+                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+
+                            val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
+                            val d = dow.coerceIn(0, 6)
+                            isfState   = isfState.updatedDayOnly(dow, hour,
+                                                                 (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
+                            basalState = basalState.updatedDayOnly(dow, hour,
+                                                                   (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
+
+                            lastTrimActionMs = now // Reset the timer. We wait 90 mins from NOW before pushing harder.
+
+                            aapsLogger.debug(LTag.APS,
+                                             "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
+                                                 "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                        } else {
+                            aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding extra insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
+                        }
                     }
                     belowBand -> {
                         // Too much insulin — trim ceiling DOWN (less aggressive)
-                        // Below low guard: amplify trim by 2× — this is the danger zone
-                        val baseMagnitude = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                        val amplifier  = if (avgBg < lowGuardMgdl) 2.0 else 1.0
-                        val magnitude  = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                        trimStrength   = -magnitude
-                        trimDirection  = -1
-                        if (!trimActive) { trimActive = true; trimStartMs = now }
-                        val trimmedCeil = (aggrState.get(dow, hour) - magnitude * TRIM_CEIL_SCALE)
-                            .coerceIn(TRIM_CEIL_MIN, AGGR_CEIL_MAX)
-                        aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+                        if (readyToReassess) {
+                            val baseMagnitude = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            val amplifier  = if (avgBg < lowGuardMgdl) 2.0 else 1.0
+                            val magnitude  = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            trimStrength   = -magnitude
+                            trimDirection  = -1
+                            if (!trimActive) { trimActive = true; trimStartMs = now }
 
-                        val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
-                        val d = dow.coerceIn(0, 6)
-                        isfState   = isfState.updatedDayOnly(dow, hour,
-                                                             (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
-                        basalState = basalState.updatedDayOnly(dow, hour,
-                                                               (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
-                        aapsLogger.debug(LTag.APS,
-                                         "FuelTrim[-] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                             "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                            val trimmedCeil = (aggrState.get(dow, hour) - magnitude * TRIM_CEIL_SCALE)
+                                .coerceIn(TRIM_CEIL_MIN, AGGR_CEIL_MAX)
+                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+
+                            val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
+                            val d = dow.coerceIn(0, 6)
+                            isfState   = isfState.updatedDayOnly(dow, hour,
+                                                                 (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
+                            basalState = basalState.updatedDayOnly(dow, hour,
+                                                                   (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
+
+                            lastTrimActionMs = now // Reset the timer.
+
+                            aapsLogger.debug(LTag.APS,
+                                             "FuelTrim[STEP -] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
+                                                 "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                        } else {
+                            aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding reduced insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
+                        }
                     }
                     else -> {
-                        // BG in band — decay trim back toward neutral
+                        // SAFETY VALVE: BG is back in band. Start decaying immediately so we don't overshoot.
                         if (trimActive) {
                             trimStrength *= TRIM_DECAY_RATE
                             if (kotlin.math.abs(trimStrength) < 0.005) {
                                 trimActive = false; trimStrength = 0.0; trimDirection = 0
+                                lastTrimActionMs = 0L // Clear the timer when neutral
                                 aapsLogger.debug(LTag.APS, "FuelTrim: decayed to neutral at h=$hour")
                             }
                         }
