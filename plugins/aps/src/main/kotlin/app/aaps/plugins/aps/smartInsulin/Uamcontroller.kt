@@ -443,7 +443,13 @@ class UamController @Inject constructor(
                 else                                  -> "threshold not met"
             }
             lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
-            resetStreak(); return
+            // Preserve bgAtStreakStart if BG hasn't fallen back — burst progress survives
+            // a single weak reading so +0.4+0.2+0.4 doesn't reset to zero on the +0.2.
+            val preserveBurst = bgAtStreakStart > 0.0 && currentBgMmol > bgAtStreakStart
+            val savedStreakStart = bgAtStreakStart
+            resetStreak()
+            if (preserveBurst) bgAtStreakStart = savedStreakStart
+            return
         }
 
         // ── Burst trigger — fire when cumulative streak delta meets threshold ──
