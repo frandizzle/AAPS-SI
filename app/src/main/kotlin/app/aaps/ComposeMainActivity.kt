@@ -38,7 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.produceState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -186,6 +190,9 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var localProfileManager: LocalProfileManager
     @Inject lateinit var bolusProgressData: BolusProgressData
     @Inject lateinit var smartInsulinOverview: SmartInsulinOverview
+    // Ticks every 5s independent of composition — always current regardless of nav state
+    private val _siOverviewState = MutableStateFlow<app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState?>(null)
+    private val siOverviewStateFlow = _siOverviewState.asStateFlow()
     @Inject lateinit var commandQueue: CommandQueue
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
@@ -225,6 +232,14 @@ class ComposeMainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // SI overview ticker — runs independently of composition so it stays current
+        // even when navigating away from overview and back
+        lifecycleScope.launch {
+            while (isActive) {
+                _siOverviewState.value = smartInsulinOverview.overviewState()
+                kotlinx.coroutines.delay(5_000L)
+            }
+        }
 
         // Activity result launchers (from base class)
         accessTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
@@ -626,14 +641,8 @@ class ComposeMainActivity : AppCompatActivity() {
                     pumpStatusText = pumpCommunicationStatus.statusBanner()?.text ?: "",
                     queueStatusText = pumpCommunicationStatus.queueStatus(),
                     isPumpCommunicating = pumpCommunicationStatus.statusBanner() != null,
-                    siOverviewState = produceState(
-                        initialValue = smartInsulinOverview.overviewState()
-                    ) {
-                        while (true) {
-                            delay(10_000L)  // refresh every 10s — keeps mode/state transitions live
-                            value = smartInsulinOverview.overviewState()
-                        }
-                    }.value,
+                    siOverviewState = siOverviewStateFlow
+                        .collectAsState().value,
                     onStopBolus = {
                         commandQueue.cancelAllBoluses(null)
                     }
