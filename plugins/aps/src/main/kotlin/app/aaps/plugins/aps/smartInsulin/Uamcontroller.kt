@@ -6,6 +6,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
@@ -79,6 +80,27 @@ class UamController @Inject constructor(
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
+
+    init {
+        // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts.
+        // Validate it's from today — discard if from a previous calendar day.
+        val saved = preferences.get(StringKey.ApsSmartInsulinLastMealEndedMs).toLongOrNull() ?: 0L
+        if (saved > 0L) {
+            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = saved }
+            val nowCal  = java.util.Calendar.getInstance()
+            lastMealEndedMs = if (
+                mealCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR) &&
+                mealCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR)
+            ) {
+                aapsLogger.debug(LTag.APS, "UAM: restored lastMealEndedMs from prefs — P/F armed")
+                saved
+            } else {
+                aapsLogger.debug(LTag.APS, "UAM: discarding stale lastMealEndedMs (different day) — P/F requires today's meal")
+                preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
+                0L
+            }
+        }
+    }
 
     // Last reject tracking for debug display
     private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
@@ -206,6 +228,7 @@ class UamController @Inject constructor(
                 mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)) {
                 aapsLogger.debug(LTag.APS, "UAM: new day — resetting lastMealEndedMs, P/F requires today's meal")
                 lastMealEndedMs = 0L
+                preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
             }
         }
 
@@ -214,7 +237,8 @@ class UamController @Inject constructor(
         // Track when meal mode expires so P/F knows a meal has happened
         if (wasMealMode && !currentlyInMealMode) {
             lastMealEndedMs = System.currentTimeMillis()
-            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail")
+            preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, lastMealEndedMs.toString())
+            aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail (persisted)")
         }
 
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
