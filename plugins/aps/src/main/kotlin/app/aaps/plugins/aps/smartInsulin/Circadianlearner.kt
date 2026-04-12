@@ -90,6 +90,10 @@ class CircadianLearner @Inject constructor(
     var lastRollercoasterMs: Long = 0L
         private set
 
+    // ── Mode transition tracking — clears drift window on mode change ────────
+    // Prevents stale pre-P/F fasting samples from mixing with post-P/F fasting
+    private var previousMealModeForDrift: MealMode = MealMode.FASTING
+
     // ── Low guard penalty state ──────────────────────────────────────────────
     // One-time 20% ISF+basal reduction when BG crosses below low guard.
     // Resets when BG recovers back above low guard so it can fire again next low.
@@ -164,6 +168,17 @@ class CircadianLearner @Inject constructor(
                              "roller=$rollercoaster histSize=${bgHistory.size} " +
                              "→ ISF×${"%.3f".format(isfMultiplier(hour))} basal×${"%.3f".format(basalMultiplier(hour))} aggrCeil=${"%.3f".format(aggrCeiling(hour))}" +
                              (skipReason?.let { " | $it" } ?: ""))
+
+        // Clear basalDriftWindow on any mode transition into or out of fasting.
+        // Prevents stale pre-P/F samples mixing with post-P/F fasting signal.
+        if (mealMode != previousMealModeForDrift) {
+            if (basalDriftWindow.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner: mode transition $previousMealModeForDrift→$mealMode — clearing basalDriftWindow (${basalDriftWindow.size} samples)")
+                basalDriftWindow.clear()
+            }
+            previousMealModeForDrift = mealMode
+        }
 
         if (skipReason != null) return
 
