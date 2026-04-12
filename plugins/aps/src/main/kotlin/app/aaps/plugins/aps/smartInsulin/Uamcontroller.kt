@@ -128,21 +128,9 @@ class UamController @Inject constructor(
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
         private const val STUCK_DELTA_MIN_MMOL        = -0.15  // -0.1 with small noise tolerance — genuinely falling (-0.2+) excluded
         private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
-        // 6 readings = 30 min at 5 min intervals
-        // STUCK_READINGS_NEEDED moved to user preference ApsSmartInsulinUamProteinFatStuckReadings
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
-    // All SI UnitDoubleKey values store raw mg/dL in SharedPreferences.
-    // We MUST NOT use preferences.get(UnitDoubleKey) here — PreferencesImpl applies
-    // valueInCurrentUnitsDetect() which uses a <36 heuristic that misidentifies small
-    // mg/dL values (e.g. 3.6 riseMinDelta, 9/18/27 activity targets) as mmol and
-    // multiplies by 18, making thresholds 18× too high for mg/dL users.
-    // Read a UnitDoubleKey value, handling both storage formats:
-    //  - New format: stored as mg/dL float (after AdaptiveUnitPreference fix)
-    //  - Old format: stored as mmol display value float (before fix)
-    // BG/threshold keys: values <20 were stored as mmol → ×18 to get mg/dL
-    // ISF keys: already stored as mg/dL by sp.putDouble — use sp.getDouble directly
     private fun rawMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
         val raw = sp.getDouble(key.key, key.defaultValue)
         return if (raw < mmolThreshold) raw * 18.0 else raw
@@ -152,49 +140,25 @@ class UamController @Inject constructor(
     private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
-    // Internal BG/threshold values are always in mmol. Convert to mg/dL for display
-    // when the user has selected mg/dL units. Delta values follow the same rule.
     private val isMmol: Boolean get() =
         profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
 
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
 
-    /** Format a BG or threshold value (internal mmol) for display in user units */
     private fun fmtBg(mmol: Double): String =
         if (isMmol) String.format("%.1f", mmol)
         else        String.format("%.0f", mmol * 18.0)
 
-    /** Format a delta value (internal mmol) for display in user units */
     private fun fmtDelta(mmol: Double): String =
         if (isMmol) String.format("%+.2f", mmol)
         else        String.format("%+.1f", mmol * 18.0)
 
-    /** Format a delta threshold (internal mmol, no sign) for display in user units */
     private fun fmtThresh(mmol: Double): String =
         if (isMmol) String.format("%.2f", mmol)
         else        String.format("%.1f", mmol * 18.0)
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /**
-     * Call once per loop cycle from SmartInsulinPlugin.invoke().
-     *
-     * @param currentMealMode    Current active meal mode
-     * @param currentBgMmol      Current BG in mmol/L
-     * @param deltaMmol          5-min delta in mmol/L
-     * @param shortAvgDeltaMmol  Short average delta (~15 min) in mmol/L
-     * @param bgiMmol            Blood glucose impact from insulin activity (negative = insulin pulling BG down)
-     * Computed as: -(iobActivity * ISF * 5) / 18.0
-     * @param currentHour        Hour of day (0-23)
-     * @param bgWentLow          True if a real low occurred (rebound protection)
-     * @param inReboundWindow    True if currently in post-low rebound window
-     * @param lastLowTimeMs      Timestamp of last low event (0 if never)
-     * @param highTempTarget     True if a high temp target is active — blocks UAM triggering
-     * @param cgmInWarmup        True if CGM is in warmup period — blocks UAM if pref enabled
-     * @param inPostMealLockout  True if within post-meal dirty window — stricter thresholds apply
-     * @param profileTargetMmol  Profile target in mmol — P/F streak resets if BG returns to target
-     * @param softLandingBypass  True if soft landing — UAM allowed during rebound window
-     */
     fun onLoopCycle(
         currentMealMode:   MealMode,
         currentBgMmol:     Double,
@@ -218,13 +182,17 @@ class UamController @Inject constructor(
         currentlyHighTempTarget    = highTempTarget
         justFiredThisCycle         = null  // reset each cycle
 
-        // Reset lastMealEndedMs if it's from a previous calendar day
+        // ── ROBUST EXPIRY: Reset lastMealEndedMs if from a previous day OR >10h old
         if (lastMealEndedMs > 0L) {
             val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = lastMealEndedMs }
             val nowCal  = java.util.Calendar.getInstance()
-            if (mealCal.get(java.util.Calendar.DAY_OF_YEAR) != nowCal.get(java.util.Calendar.DAY_OF_YEAR) ||
-                mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)) {
-                aapsLogger.debug(LTag.APS, "UAM: new day — resetting lastMealEndedMs, P/F requires today's meal")
+            val isNewDay = mealCal.get(java.util.Calendar.DAY_OF_YEAR) != nowCal.get(java.util.Calendar.DAY_OF_YEAR) ||
+                mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)
+            val isExpired = (System.currentTimeMillis() - lastMealEndedMs) > 10 * 60 * 60 * 1000L
+
+            if (isNewDay || isExpired) {
+                val reason = if (isNewDay) "new day" else ">10h old"
+                aapsLogger.debug(LTag.APS, "UAM: $reason — resetting lastMealEndedMs, P/F disarmed")
                 lastMealEndedMs = 0L
                 preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
             }
@@ -275,14 +243,12 @@ class UamController @Inject constructor(
         // ── Hard night cutoff ─────────────────────────────────────────────────
         val nightCutoff = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
         val dayStart    = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
-        // UAM active window: dayStart until nightCutoff, wrapping midnight.
-        // e.g. dayStart=10, cutoff=1 → active 10am–1am (blocked 1am–10am).
-        // When cutoff < dayStart the window crosses midnight — split into two ranges.
         val inActiveWindow = if (nightCutoff > dayStart) {
             currentHour in dayStart until nightCutoff          // simple: e.g. 9am–11pm
         } else {
             currentHour >= dayStart || currentHour < nightCutoff  // wraps: e.g. 10am–1am
         }
+
         if (!inActiveWindow) {
             currentlyPastNightCutoff = true
             if (consecutiveRiseReadings > 0 || stuckHighReadings > 0) {
@@ -290,8 +256,16 @@ class UamController @Inject constructor(
                 resetStreak()
                 stuckHighReadings = 0
             }
+
+            // --- NEW: Automatically wipe ghost meals overnight ---
+            if (lastMealEndedMs > 0L) {
+                aapsLogger.debug(LTag.APS, "UAM: outside active window — resetting lastMealEndedMs, P/F disarmed")
+                lastMealEndedMs = 0L
+                preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
+            }
             return
         }
+
         currentlyPastNightCutoff = false
         if (softLandingBypass && (bgWentLow || inReboundWindow)) {
             aapsLogger.debug(LTag.APS, "UAM: soft landing bypass active — detection allowed during rebound")
@@ -300,7 +274,6 @@ class UamController @Inject constructor(
         // ── Safety block: recent low / rebound ───────────────────────────────
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
-        // softLandingBypass overrides bgWentLow/inReboundWindow but not the time-based block
         val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) && !softLandingBypass
         if (blockedByLow) {
             if (consecutiveRiseReadings > 0) {
@@ -315,12 +288,7 @@ class UamController @Inject constructor(
             return
         }
 
-        // Re-arm deliberately removed — UAM fires once, loop handles the rest.
-        // A fresh genuine rise will be detected naturally without a re-arm gate.
-
-        // ── Protein/Fat stuck-high detection (runs in parallel with rise detection) ──
-        // UAM_PROTEIN_FAT has its own separate counter and logic — it's not time-window
-        // gated like meal slots. Runs every fasting cycle after safety checks pass.
+        // ── Protein/Fat stuck-high detection ──────────────────────────────────
         checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol, bgTimestampMs)
 
         // ── Resolve time window ───────────────────────────────────────────────
@@ -329,8 +297,6 @@ class UamController @Inject constructor(
             resetStreak(); return
         }
 
-        // Reset streak if we've moved into a different meal window mid-streak.
-        // Avoids carrying a Lunch-window streak into the Dinner window.
         if (consecutiveRiseReadings > 0 && lastResolvedMode != null && lastResolvedMode != uamMode) {
             aapsLogger.debug(LTag.APS, "UAM: window changed ${lastResolvedMode!!.label}→${uamMode.label}, streak reset")
             resetStreak()
@@ -340,10 +306,6 @@ class UamController @Inject constructor(
         // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
 
-        // Wobble tolerance: allow a single dip up to 0.3 mmol below threshold without
-        // killing an active streak, as long as shortAvgDelta is still positive.
-        // CGM noise/compression commonly produces one low reading mid-rise — without this,
-        // a genuine upward trend gets reset by a single noisy point.
         val aboveThreshold = currentBgMmol >= triggerThresholdMmol ||
             (consecutiveRiseReadings > 0 &&
                 shortAvgDeltaMmol > 0.0 &&
@@ -354,36 +316,18 @@ class UamController @Inject constructor(
         }
 
         // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
-        // unexpectedDelta = how much BG is rising beyond what insulin predicts.
-        // BGI is typically negative (insulin pulling BG down), so unexpectedDelta
-        // is larger than raw delta when insulin is active — amplifying genuine UAM signal.
-        // A low unexpectedDelta means the rise is mostly explained by weak/absent insulin
-        // activity and is likely drift or noise rather than food.
         val riseMinDeltaBase   = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
 
-        // During post-meal dirty window, require a stronger rise to confirm it's a new
-        // meal rather than a fat/protein tail. Slow tails fail the stricter bar and
-        // fall through to STFT + UAM_PROTEIN_FAT stuck-high detection instead.
         val dirtyMultiplier    = if (inPostMealLockout) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
         val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
-        // unexpectedMin = 75% of riseMinDeltaBase — scales with user setting.
-        // Gate 1 (Δ >= riseMinDelta) always evaluated first, so a rise smaller than
-        // riseMinDelta can never trigger UAM regardless of unexpectedMin.
-        // The 75% gives slight tolerance for meals eaten with active IOB — if BG rises
-        // 0.20 but IOB accounts for -0.02, unexpected = 0.18 which passes 0.15 gate.
         val unexpectedMin      = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * unexpectedMultiplier
 
         val unexpectedDelta = deltaMmol - bgiMmol
         val unexpectedShort = shortAvgDeltaMmol - bgiMmol
 
-        // shortAvgDelta is the primary trend confirmation — it smooths over single noisy
-        // readings. If shortAvgDelta confirms a genuine rise, allow instantaneous delta
-        // to be a CGM noise reading without resetting the streak.
-        // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
-        // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
         val wobbleEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamWobbleTolerance)
         val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
@@ -393,14 +337,10 @@ class UamController @Inject constructor(
             unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
 
         if (risingNow) {
-            // Only count each CGM reading once — prevents manual loop refreshes from gaming the streak.
-            // Guard only applies when bgTimestampMs is a real timestamp (> 0) — avoids
-            // 0L == 0L false positive after resetStreak() which also sets lastCounted to 0L.
             val isDuplicateReading = bgTimestampMs > 0L && bgTimestampMs == lastCountedBgTimestampMs
             if (isDuplicateReading) {
                 aapsLogger.debug(LTag.APS, "UAM: same CGM reading (${bgTimestampMs}), skipping streak increment")
             } else {
-                // Only set start if no preserved burst history from a previous weak reading
                 if (consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0) {
                     bgAtStreakStart = currentBgMmol
                 } else if (consecutiveRiseReadings == 0 && bgAtStreakStart != 0.0) {
@@ -431,7 +371,6 @@ class UamController @Inject constructor(
                                      "uΔ=${fmtDelta(unexpectedDelta)}(need>=${fmtThresh(unexpectedMin)}) " +
                                      "bgi=${fmtDelta(bgiMmol)}, reset")
             }
-            // Always record reject reason — even at streak=0 so SI tab shows why UAM isn't counting
             val rejectReason = when {
                 deltaMmol < deltaMin                  -> "Δ ${fmtDelta(deltaMmol)} < ${fmtThresh(deltaMin)}"
                 shortAvgDeltaMmol < shortAvgThreshold -> "avg ${fmtDelta(shortAvgDeltaMmol)} < ${fmtThresh(shortAvgThreshold)}"
@@ -440,8 +379,7 @@ class UamController @Inject constructor(
                 else                                  -> "threshold not met"
             }
             lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
-            // Preserve bgAtStreakStart if BG hasn't fallen back — burst progress survives
-            // a single weak reading so +0.4+0.2+0.4 doesn't reset to zero on the +0.2.
+
             val preserveBurst = bgAtStreakStart > 0.0 && currentBgMmol > bgAtStreakStart
             val savedStreakStart = bgAtStreakStart
             resetStreak()
@@ -451,7 +389,7 @@ class UamController @Inject constructor(
 
         // ── Burst trigger — fire when cumulative streak delta meets threshold ──
         val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        val streakRise     = currentBgMmol - bgAtStreakStart  // cumulative within confirmed streak
+        val streakRise     = currentBgMmol - bgAtStreakStart
         if (burstThreshold > 0.0 && streakRise >= burstThreshold && consecutiveRiseReadings >= 1) {
             aapsLogger.debug(LTag.APS,
                              "UAM: BURST trigger (streak) — streakRise=${fmtDelta(streakRise)}$unitLabel " +
@@ -470,12 +408,6 @@ class UamController @Inject constructor(
         }
     }
 
-    /**
-     * Stuck-high detection for UAM_PROTEIN_FAT.
-     * Called every fasting loop cycle. Triggers when BG has been above threshold
-     * with flat delta for [STUCK_READINGS_NEEDED] consecutive readings (default 30 min).
-     * Only fires when no meal-slot UAM window is active — protein/fat is the fallback.
-     */
     private fun checkStuckHigh(
         currentBgMmol:     Double,
         deltaMmol:         Double,
@@ -489,32 +421,22 @@ class UamController @Inject constructor(
         profileTargetMmol: Double,
         bgTimestampMs:     Long = 0L
     ) {
-        // Check P/F preference directly — uamModeEnabled() returns false for P/F
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)) {
             stuckHighReadings = 0
             return
         }
 
-        // Block P/F while a meal or UAM mode is active — let those handle the carb rise.
-        // P/F is for the fat/protein TAIL after the meal mode expires, not the initial rise.
         if (currentMealMode != MealMode.FASTING) {
             if (stuckHighReadings > 0) stuckHighReadings = 0
             return
         }
 
         // --- NEW GATE: Block P/F if no meal has finished today yet ---
-        // P/F is for the tail of a meal, it should not trigger before the first meal.
         if (lastMealEndedMs == 0L) {
             if (stuckHighReadings > 0) stuckHighReadings = 0
             return
         }
 
-        // P/F runs as default fasting watchdog within the active time window.
-        // If BG is stuck above threshold during fasting, P/F handles it regardless of
-        // whether a meal has occurred — the time window + flat delta + 4 readings is
-        // sufficient filter. UAM rise detection overrides P/F if carbs arrive.
-
-        // Respect the same safety blocks as rise detection
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
         if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
@@ -522,11 +444,8 @@ class UamController @Inject constructor(
             return
         }
 
-        // P/F uses its own threshold — higher than rise detection threshold
-        // since fat/protein genuinely elevates BG, don't want P/F firing near target
         val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
 
-        // Reset if BG has returned to profile target — stuck-high condition no longer valid
         if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
             aapsLogger.debug(LTag.APS,
                              "UAM_PROTEIN_FAT: streak reset — BG ${fmtBg(currentBgMmol)}$unitLabel " +
@@ -535,18 +454,13 @@ class UamController @Inject constructor(
             return
         }
 
-        // Track last values for SI tab debug display
         lastStuckAvgDelta = shortAvgDeltaMmol
         lastStuckBgMmol   = currentBgMmol
 
-        // BG must be above threshold AND shortAvgDelta must be flat (not falling, not spiking).
-        // Using shortAvgDelta rather than instantaneous delta prevents a single noisy CGM
-        // reading (e.g. +0.3 on an otherwise flat plateau) from killing a 25-min streak.
         val isStuck = currentBgMmol >= triggerThresholdMmol &&
             shortAvgDeltaMmol >= STUCK_DELTA_MIN_MMOL &&
             shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL
 
-        // Debug: always log isStuck evaluation so we can see why it's not counting
         if (!isStuck) {
             aapsLogger.debug(LTag.APS,
                              "UAM_PROTEIN_FAT: not stuck — " +
@@ -555,7 +469,6 @@ class UamController @Inject constructor(
         }
 
         if (isStuck) {
-            // Only count each CGM reading once
             if (bgTimestampMs > 0L && bgTimestampMs == lastStuckBgTimestampMs) {
                 aapsLogger.debug(LTag.APS, "UAM_PROTEIN_FAT: same CGM reading, skipping increment")
                 return
@@ -584,9 +497,6 @@ class UamController @Inject constructor(
         }
     }
 
-    /**
-     * Full debug summary for the SmartInsulin tab — shows thresholds, active state, last reject.
-     */
     fun debugSummary(): String {
         val riseMinDeltaBase = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
@@ -607,7 +517,6 @@ class UamController @Inject constructor(
                 val dirtyTag = if (reject.wasDirtyWindow) " [dirty]" else ""
                 appendLine("  Last UAM reject$dirtyTag: ${reject.reason}")
             }
-            // P/F stuck-high detail
             val triggerMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
             val pfEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
             if (pfEnabled) {
@@ -641,13 +550,11 @@ class UamController @Inject constructor(
         }.trimEnd()
     }
 
-    /** Status string for loop reason output — null if nothing to show */
     fun statusString(): String? {
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
 
-        // ── UAM meal detection status ─────────────────────────────────────────
         val uamLine = when {
-            currentlyInMealMode        -> null  // meal mode active — UAM not needed
+            currentlyInMealMode        -> null
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
@@ -675,7 +582,6 @@ class UamController @Inject constructor(
             }
         }
 
-        // ── P/F stuck-high status ─────────────────────────────────────────────
         val pfLine = when {
             !preferences.get(BooleanKey.ApsSmartInsulinUamProteinFatEnabled) -> null
             currentlyHighTempTarget  -> "P/F: off (high temp target set)"
@@ -705,7 +611,6 @@ class UamController @Inject constructor(
         lastRiseBgMmol            = 0.0
     }
 
-    /** The UAM mode fired this cycle — set by triggerUam, reset at start of each cycle. Null if nothing fired. */
     var justFiredThisCycle: MealMode? = null
         private set
 
@@ -753,7 +658,6 @@ class UamController @Inject constructor(
             Triple(MealMode.UAM_AFTERNOON,
                    preferences.get(IntKey.ApsSmartInsulinUamAfternoonStartHour),
                    preferences.get(IntKey.ApsSmartInsulinUamAfternoonEndHour)),
-            // UAM_PROTEIN_FAT has no time window — handled separately by checkStuckHigh()
         )
         return candidates.firstOrNull { (mode, start, end) ->
             uamModeEnabled(mode) && hourInWindow(currentHour, start, end)
@@ -770,7 +674,7 @@ class UamController @Inject constructor(
         MealMode.UAM_DINNER    -> preferences.get(BooleanKey.ApsSmartInsulinUamDinnerEnabled)
         MealMode.UAM_SNACK     -> preferences.get(BooleanKey.ApsSmartInsulinUamSnackEnabled)
         MealMode.UAM_AFTERNOON -> preferences.get(BooleanKey.ApsSmartInsulinUamAfternoonEnabled)
-        MealMode.UAM_PROTEIN_FAT  -> false  // no time window — P/F uses direct pref check in checkStuckHigh()
+        MealMode.UAM_PROTEIN_FAT  -> false
         else                   -> false
     }
 
