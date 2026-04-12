@@ -274,16 +274,18 @@ class CircadianLearner @Inject constructor(
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity=${"%.5f".format(activity)} < $MIN_ACTIVITY")
             return false
         }
-        // Positive activity = pump withholding insulin (negative IOB / TBR cut).
-        // Signal is inverted — BG rising while pump cuts back looks like "not enough insulin"
-        // but is actually the correct physiological response. Skip to avoid wrong direction learning.
-        if (activity > 0.0) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity > 0 (negative IOB / TBR reduction — inverted signal)")
+        // In AAPS, normal active insulin produces POSITIVE activity.
+        // Negative activity = pump withholding insulin (negative IOB / TBR cut) — inverted signal.
+        // Skip negative activity to avoid learning from inverted signals.
+        // Proven by UamController BGI calc: uamBgiMmol = -(activity * ISF * 5) / 18 — the
+        // negation is required because activity is positive when insulin is actively working.
+        if (activity < 0.0) {
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity < 0 (negative IOB / TBR reduction — inverted signal)")
             return false
         }
 
-
-        val expectedDelta = activity * profileIsfMgdl * 5.0   // same sign as shortAvgDelta (negative = falling)
+        // Multiply by -1: positive activity means insulin pulling BG DOWN → negative expected delta
+        val expectedDelta = -activity * profileIsfMgdl * 5.0   // negative = BG expected to fall
         val actualDelta   = glucoseStatus.shortAvgDelta
 
         if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) {
@@ -294,15 +296,16 @@ class CircadianLearner @Inject constructor(
         val deviation     = actualDelta - expectedDelta
         val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 2.0)
         // dosingISF = profileISF / isfMult
-        // BG drops more than expected (deviation negative) → too much insulin → mult DOWN
-        // mult DOWN → dosingISF UP → less aggressive ✓
-        // BG rises when expected to fall (deviation positive) → not enough → mult UP
-        // mult UP → dosingISF DOWN → more aggressive ✓
+        // expectedDelta is negative (BG should fall from insulin)
+        // actualDelta - expectedDelta:
+        //   BG drops MORE than expected → deviation negative → mult DOWN → dosingISF UP → less aggressive ✓
+        //   BG drops LESS than expected (insulin weaker) → deviation positive → mult UP → dosingISF DOWN → more aggressive ✓
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        // Use updatedDayOnly — don't write ISF changes to the global bucket.
-        // Global baseline is for long-term cross-day patterns; fasting physics signal
-        // is already clean (gated above) so day bucket is sufficient.
-        isfState = isfState.updatedDayOnly(dow, hour, multTarget, ISF_ALPHA)
+        // Write to both day bucket AND global so the blended output actually reflects
+        // what the learner has observed. updatedDayOnly left global at 1.0 permanently,
+        // causing get() to return 1.0 regardless of day bucket learnings until day
+        // confidence crossed DAY_CONFIDENCE_THRESHOLD.
+        isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"

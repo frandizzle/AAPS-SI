@@ -1,47 +1,15 @@
 package app.aaps.ui.compose.overview
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ExpandLess
-import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,36 +30,18 @@ import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.notifications.AapsNotification
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.pump.BolusProgressState
-import app.aaps.core.keys.IntKey
-import app.aaps.core.ui.compose.AapsTheme
-import app.aaps.core.ui.compose.LocalConfig
-import app.aaps.core.ui.compose.LocalDateUtil
-import app.aaps.core.ui.compose.dialogs.OkCancelDialog
-import app.aaps.core.ui.compose.icons.IcSettingsOff
-import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
-import app.aaps.core.ui.compose.preference.AdaptivePreferenceList
-import app.aaps.core.ui.compose.preference.PreferenceCategory
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
-import app.aaps.core.ui.compose.preference.ProvidePreferenceTheme
 import app.aaps.core.ui.compose.pump.PumpActivityDialog
 import app.aaps.core.ui.compose.pump.PumpActivityFab
-import app.aaps.core.ui.compose.statusLevelToColor
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.notificationsSheet.NotificationBottomSheet
 import app.aaps.ui.compose.notificationsSheet.NotificationFab
-import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
-import app.aaps.ui.compose.overview.chips.IobCobChipsRow
-import app.aaps.ui.compose.overview.chips.ProfileChip
-import app.aaps.ui.compose.overview.chips.RunningModeChip
-import app.aaps.ui.compose.overview.chips.SensitivityChip
-import app.aaps.ui.compose.overview.chips.TempTargetChip
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
-import app.aaps.ui.compose.overview.graphs.GraphsSection
-import app.aaps.ui.compose.overview.statusLights.StatusItem
-import app.aaps.ui.compose.overview.statusLights.StatusSectionContent
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
+
+private val SPLIT_LAYOUT_MIN_WIDTH: Dp = 720.dp
 
 @Composable
 fun OverviewScreen(
@@ -127,24 +77,14 @@ fun OverviewScreen(
     onStopBolus: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val config = LocalConfig.current
-    LocalDateUtil.current
-    // Collect BG info state from ViewModel
-    val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
-    val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
-
-    // Notification bottom sheet state
     var showNotificationSheet by remember { mutableStateOf(false) }
-    // Pump activity dialog state
     var showPumpActivityDialog by remember { mutableStateOf(false) }
     val showPumpFab = isPumpCommunicating || (bolusState != null && bolusState.isSMB)
 
-    // Auto-close pump dialog when bolus ends
     LaunchedEffect(bolusState) {
         if (bolusState == null) showPumpActivityDialog = false
     }
 
-    // Auto-show bottom sheet on resume when urgent notifications exist
     LaunchedEffect(autoShowNotificationSheet) {
         if (autoShowNotificationSheet) {
             showNotificationSheet = true
@@ -153,19 +93,48 @@ fun OverviewScreen(
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-        ) {
-            // Calculation progress bar
-            if (calcProgress < 100) {
-                LinearProgressIndicator(
-                    progress = { calcProgress / 100f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp),
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            if (maxWidth >= SPLIT_LAYOUT_MIN_WIDTH) {
+                OverviewScreenSplit(
+                    profileName = profileName,
+                    isProfileModified = isProfileModified,
+                    profileProgress = profileProgress,
+                    tempTargetText = tempTargetText,
+                    tempTargetState = tempTargetState,
+                    tempTargetProgress = tempTargetProgress,
+                    tempTargetReason = tempTargetReason,
+                    runningMode = runningMode,
+                    runningModeText = runningModeText,
+                    runningModeProgress = runningModeProgress,
+                    isSimpleMode = isSimpleMode,
+                    calcProgress = calcProgress,
+                    graphViewModel = graphViewModel,
+                    manageViewModel = manageViewModel,
+                    statusViewModel = statusViewModel,
+                    statusLightsDef = statusLightsDef,
+                    onNavigate = onNavigate,
+                    paddingValues = paddingValues
+                )
+            } else {
+                OverviewScreenStacked(
+                    profileName = profileName,
+                    isProfileModified = isProfileModified,
+                    profileProgress = profileProgress,
+                    tempTargetText = tempTargetText,
+                    tempTargetState = tempTargetState,
+                    tempTargetProgress = tempTargetProgress,
+                    tempTargetReason = tempTargetReason,
+                    runningMode = runningMode,
+                    runningModeText = runningModeText,
+                    runningModeProgress = runningModeProgress,
+                    isSimpleMode = isSimpleMode,
+                    calcProgress = calcProgress,
+                    graphViewModel = graphViewModel,
+                    manageViewModel = manageViewModel,
+                    statusViewModel = statusViewModel,
+                    statusLightsDef = statusLightsDef,
+                    onNavigate = onNavigate,
+                    paddingValues = paddingValues
                 )
             }
             // BG Info and Chips in a row
@@ -295,7 +264,6 @@ fun OverviewScreen(
             GraphsSection(graphViewModel = graphViewModel, isSimpleMode = isSimpleMode)
         }
 
-        // Pump activity FAB — visible during pump communication or SMB
         PumpActivityFab(
             visible = showPumpFab,
             bolusState = bolusState,
@@ -306,7 +274,6 @@ fun OverviewScreen(
                 .padding(end = 16.dp, bottom = 128.dp + fabBottomOffset)
         )
 
-        // Notification FAB overlay
         NotificationFab(
             notificationCount = notifications.size,
             highestLevel = notifications.minByOrNull { it.level.ordinal }?.level,
@@ -318,7 +285,6 @@ fun OverviewScreen(
         )
     }
 
-    // Pump activity dialog (non-modal, opened from FAB)
     if (showPumpActivityDialog) {
         PumpActivityDialog(
             bolusState = bolusState,
@@ -330,7 +296,6 @@ fun OverviewScreen(
         )
     }
 
-    // Notification bottom sheet
     if (showNotificationSheet && notifications.isNotEmpty()) {
         NotificationBottomSheet(
             notifications = notifications,

@@ -69,8 +69,7 @@ sealed class AppRoute(val route: String) {
         fun createRoute(preselect: Int) = "fill_dialog/$preselect"
     }
 
-    data object CalibrationDialog : AppRoute("calibration_dialog")
-    data object SmartMealDialog : AppRoute("smart_meal_dialog")
+    data object CalibrationDialog : AppRoute("calibration_dialog")data object SmartMealDialog : AppRoute("smart_meal_dialog")
     data object CarbsDialog : AppRoute("carbs_dialog")
     data object InsulinDialog : AppRoute("insulin_dialog")
     data object TreatmentDialog : AppRoute("treatment_dialog")
@@ -108,4 +107,5 @@ sealed class AppRoute(val route: String) {
     data object FoodManagement : AppRoute("food_management")
     data object SiteRotationManagement : AppRoute("siteRotationManagement")
     data object SiteRotationSettings : AppRoute("siteRotationSettings")
+    data object SetupWizard : AppRoute("setup_wizard")
 }

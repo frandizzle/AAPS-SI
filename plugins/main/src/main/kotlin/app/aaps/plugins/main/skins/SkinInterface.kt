@@ -7,19 +7,15 @@ import android.view.ViewGroup
 import androidx.annotation.StringRes
 import androidx.constraintlayout.widget.ConstraintLayout
 import app.aaps.plugins.main.R
-import app.aaps.plugins.main.databinding.ActionsFragmentBinding
 import app.aaps.plugins.main.databinding.OverviewFragmentBinding
 
+@Deprecated("remove")
 interface SkinInterface {
 
     @get:StringRes val description: Int
 
     val mainGraphHeight: Int // in dp
     val secondaryGraphHeight: Int // in dp
-
-    // no pre processing by default
-    fun preProcessLandscapeActionsLayout(isLandscape: Boolean, binding: ActionsFragmentBinding) {
-    }
 
     fun preProcessLandscapeOverviewLayout(binding: OverviewFragmentBinding, isLandscape: Boolean, isTablet: Boolean, isSmallHeight: Boolean) {
         if (isLandscape) {
