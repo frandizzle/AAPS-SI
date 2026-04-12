@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
 import app.aaps.core.ui.compose.navigation.NavigationRequest
@@ -54,6 +55,7 @@ fun OverviewScreenSplit(
     statusLightsDef: PreferenceSubScreenDef,
     onNavigate: (NavigationRequest) -> Unit,
     paddingValues: PaddingValues,
+    siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
     val config = LocalConfig.current
@@ -125,6 +127,7 @@ fun OverviewScreenSplit(
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 8.dp),
+                        siOverviewState = siOverviewState,
                         trailingContent = {
                             LargeClock(
                                 bgTimestamp = bgInfoState.bgInfo?.timestamp,
