@@ -58,7 +58,8 @@ class CircadianLearner @Inject constructor(
 
     // Last basal learning signal for SI tab display
     var lastBasalSignal:  String = "No signal yet"
-    var lastAccelDebug:   String = "No data"
+    var lastAccelDebug:    String = "No data"
+        private set
     var lastPredTrimDebug: String = "No data"
         private set
 
@@ -368,9 +369,9 @@ class CircadianLearner @Inject constructor(
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
                             isfState   = isfState.updatedDayOnly(dow, hour,
-                                                                 (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
+                                                                 (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
                             basalState = basalState.updatedDayOnly(dow, hour,
-                                                                   (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
+                                                                   (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
 
                             lastTrimActionMs = now // Reset the timer. We wait 90 mins from NOW before pushing harder.
 
@@ -398,9 +399,9 @@ class CircadianLearner @Inject constructor(
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
                             isfState   = isfState.updatedDayOnly(dow, hour,
-                                                                 (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), 1.0)
+                                                                 (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
                             basalState = basalState.updatedDayOnly(dow, hour,
-                                                                   (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), 1.0)
+                                                                   (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
 
                             lastTrimActionMs = now // Reset the timer.
 
@@ -417,7 +418,10 @@ class CircadianLearner @Inject constructor(
                             trimStrength *= TRIM_DECAY_RATE
                             if (kotlin.math.abs(trimStrength) < 0.005) {
                                 trimActive = false; trimStrength = 0.0; trimDirection = 0
-                                lastTrimActionMs = 0L // Clear the timer when neutral
+                                // Set timer to half a window ago rather than 0 — prevents
+                                // immediate re-fire if BG briefly dips into band then exits.
+                                // Requires at least half a peak window before next trim fires.
+                                lastTrimActionMs = now - (trimWindowMs / 2)
                                 aapsLogger.debug(LTag.APS, "FuelTrim: decayed to neutral at h=$hour")
                             }
                         }
@@ -731,8 +735,12 @@ class CircadianLearner @Inject constructor(
         // ── Penalty signal 3: Soft low approach ──────────────────────────────
         // Same gate as hard low — only penalise fasting profile for fasting lows.
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
+        // Soft low approach: BG above low guard but falling fast with IOB on board.
+        // Previous check was bg < lowGuardMgdl which is unreachable — hard low already
+        // returns at line 697. Correct condition: within SOFT_LOW_APPROACH_MGDL above guard.
         val approachingLow = isFasting && !inPostMealLockout &&
-            bg < lowGuardMgdl && delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
+            bg >= lowGuardMgdl && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
+            delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -1036,6 +1044,7 @@ class CircadianLearner @Inject constructor(
         private const val STABLE_BAND_MGDL      = 18.0   // ±1 mmol = stable
         private const val STABLE_DELTA_MGDL     = 1.5    // mg/dL per 5min = flat
         private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast (mg/dL per 5min)
+        private const val SOFT_LOW_APPROACH_MGDL = 18.0  // ~1 mmol above low guard — approaching but not yet below
         private const val SOFT_LOW_MIN_IOB      = 0.3    // must have meaningful IOB
 
         // Rollercoaster detection
