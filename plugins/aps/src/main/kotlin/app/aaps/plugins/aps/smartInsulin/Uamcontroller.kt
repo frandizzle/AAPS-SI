@@ -27,8 +27,8 @@ import javax.inject.Singleton
  * - No recent low / rebound window active (hard block)
  * - BG must be above [triggerThresholdMmol] (default 6.0 mmol)
  * - [riseConsecutiveReadings] consecutive readings with:
- *     - delta >= [riseMinDeltaMmol]
- *     - shortAvgDelta >= [riseMinDeltaMmol] * 0.75  (filters single-reading noise)
+ * - delta >= [riseMinDeltaMmol]
+ * - shortAvgDelta >= [riseMinDeltaMmol] * 0.75  (filters single-reading noise)
  * - Total BG rise since streak start >= [RISE_TOTAL_MMOL_MIN] (filters wobble streaks)
  * → auto-activate the matching UAM mode via [MealOverrideManager.activateOverride]
  *
@@ -38,8 +38,8 @@ import javax.inject.Singleton
  *
  * ## Safety blocks
  * UAM will not fire if:
- *   - A real low occurred recently (within [LOW_BLOCK_MINS])
- *   - The rebound window is active
+ * - A real low occurred recently (within [LOW_BLOCK_MINS])
+ * - The rebound window is active
  *
  * ## Window priority
  * Breakfast → Lunch → Dinner → Snack → Low Carb (first match wins).
@@ -64,8 +64,6 @@ class UamController @Inject constructor(
     private var lastUamTriggerCount       = 0
     private var previousMealMode: MealMode?  = null  // for expiry transition detection
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
-
-
 
     // Stuck-high state for UAM_PROTEIN_FAT detection
     private var stuckHighReadings = 0
@@ -186,7 +184,7 @@ class UamController @Inject constructor(
      * @param deltaMmol          5-min delta in mmol/L
      * @param shortAvgDeltaMmol  Short average delta (~15 min) in mmol/L
      * @param bgiMmol            Blood glucose impact from insulin activity (negative = insulin pulling BG down)
-     *                           Computed as: -(iobActivity * ISF * 5) / 18.0
+     * Computed as: -(iobActivity * ISF * 5) / 18.0
      * @param currentHour        Hour of day (0-23)
      * @param bgWentLow          True if a real low occurred (rebound protection)
      * @param inReboundWindow    True if currently in post-low rebound window
@@ -386,12 +384,6 @@ class UamController @Inject constructor(
         // to be a CGM noise reading without resetting the streak.
         // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
         // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
-        // shortAvgDelta is the primary trend confirmation — it smooths over single noisy
-        // readings. If shortAvgDelta confirms a genuine rise, allow instantaneous delta
-        // to be a CGM noise reading without resetting the streak.
-        // Rule: if shortAvgDelta >= riseMinDelta, delta only needs >= 50% of threshold.
-        // This handles: shortAvg=+0.20, delta=+0.06 (noisy reading mid-rise) → still counts.
-        // Can be disabled in settings — when OFF every reading must meet the full threshold.
         val wobbleEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamWobbleTolerance)
         val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
@@ -510,6 +502,13 @@ class UamController @Inject constructor(
             return
         }
 
+        // --- NEW GATE: Block P/F if no meal has finished today yet ---
+        // P/F is for the tail of a meal, it should not trigger before the first meal.
+        if (lastMealEndedMs == 0L) {
+            if (stuckHighReadings > 0) stuckHighReadings = 0
+            return
+        }
+
         // P/F runs as default fasting watchdog within the active time window.
         // If BG is stuck above threshold during fasting, P/F handles it regardless of
         // whether a meal has occurred — the time window + flat delta + 4 readings is
@@ -619,6 +618,8 @@ class UamController @Inject constructor(
                         appendLine("  P/F stuck: off (outside active window ${preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)}:00–${preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)}:00)")
                     currentlyInMealMode ->
                         appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
+                    lastMealEndedMs == 0L ->
+                        appendLine("  P/F stuck: off (waiting for first meal today)")
                     else -> {
                         val avgStr   = fmtDelta(lastStuckAvgDelta)
                         val bgStr    = fmtBg(lastStuckBgMmol)
@@ -681,6 +682,7 @@ class UamController @Inject constructor(
             currentlyCgmWarmup       -> "P/F: off (new sensor <24h)"
             currentlyPastNightCutoff -> "P/F: off (outside hours)"
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
+            lastMealEndedMs == 0L    -> "P/F: waiting for first meal today"
             else -> {
                 val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
                 val stuckNeeded = preferences.get(IntKey.ApsSmartInsulinUamProteinFatStuckReadings)
