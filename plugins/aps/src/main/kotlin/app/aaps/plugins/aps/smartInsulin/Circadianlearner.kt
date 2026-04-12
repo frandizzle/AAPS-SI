@@ -325,11 +325,12 @@ class CircadianLearner @Inject constructor(
         lowGuardMgdl:      Double  = 90.0,
         now:               Long    = System.currentTimeMillis()
     ) {
+        // --- CALCULATE COOLDOWN ONCE AT THE TOP ---
+        // This allows both the STFT and the Nudge Learner to share the same blindfold logic
+        val msSincePenalty = if (lastPenaltyMs > 0L) now - lastPenaltyMs else Long.MAX_VALUE
+        val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
+
         // ── Short-term fuel trim (λ sensor analogy) ───────────────────────────
-        // Maintain a rolling BG history over the trim window (= learned insulin peak).
-        // If BG has been consistently above/below target for the full window during
-        // fasting, fire a short-term trim on the ceiling and feed a proportional
-        // long-term nudge into ISF/basal at this hour.
         if (!inPostMealLockout && bg > 0.0) {
             trimBgHistory.addLast(now to bg)
             while (trimBgHistory.isNotEmpty() && now - trimBgHistory.first().first > trimWindowMs)
@@ -340,12 +341,10 @@ class CircadianLearner @Inject constructor(
                 val avgBg     = trimBgHistory.map { it.second }.average()
 
                 // --- STFT POST-LOW BLINDFOLD ---
-                // Check if we are currently in a low recovery cooldown
-                val timeSincePen = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
-                val isLowRecovery = (timeSincePen <= AGGR_NUDGE_COOLDOWN_MS) &&
+                // Prevent the trim from injecting permanent long-term nudges during rebound.
+                // We only block "aboveBand" (adding insulin). "belowBand" (cutting insulin) stays active.
+                val isLowRecovery = cooldownActive &&
                     (lastPenaltyReason.contains("low") || lastPenaltyReason.contains("rollercoaster"))
-
-                // Block the STFT from triggering a high-trim (and corrupting the long-term profile) if it's a rebound
                 val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery
                 val belowBand = avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL
 
@@ -430,18 +429,13 @@ class CircadianLearner @Inject constructor(
         var tooMuch      = !inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD
         var notEnough    = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
 
-        // --- POST-LOW BLINDFOLD ---
-        // Calculate the cooldown early so we can use it as a safety gate
-        val msSincePenalty = if (lastPenaltyMs > 0L) System.currentTimeMillis() - lastPenaltyMs else Long.MAX_VALUE
-        val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
-
+        // --- POST-LOW BLINDFOLD (Main Learner) ---
         // If we are recovering from a low, the rise is from rescue carbs/liver, NOT a basal deficit.
         // Block the learner from falsely increasing insulin (dropping ISF / raising basal).
         if (notEnough && cooldownActive && (lastPenaltyReason.contains("low") || lastPenaltyReason.contains("rollercoaster"))) {
             notEnough = false
             lastAggrNudgeStatus = "PAUSED|Low Recovery Spike"
         }
-        // --------------------------
 
         if (!tooMuch && !notEnough) {
             if (!trimActive) lastAggrNudgeStatus = "INACTIVE"
@@ -450,10 +444,6 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Attenuation during penalty cooldown ───────────────────────────────
-        // If a rollercoaster or soft-low penalty fired recently, attenuate nudge strength.
-        // Fasting penalties are more likely a real profile issue → 35% strength.
-        // Meal/post-meal penalties are more likely a food/event issue → 15% strength.
-        // After 120 min cooldown with no new penalty, full strength resumes.
         val effectiveScale = when {
             msSincePenalty > AGGR_NUDGE_COOLDOWN_MS -> AGGR_NUDGE_SCALE                  // no recent penalty — full strength
             lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_FASTING  // fasting penalty — 35%
@@ -462,7 +452,7 @@ class CircadianLearner @Inject constructor(
         val cooldownNote   = if (cooldownActive) " [cooldown ${msSincePenalty / 60_000}min/${AGGR_NUDGE_COOLDOWN_MS / 60_000}min fasting=$lastPenaltyWasFasting]" else ""
         val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
 
-// ── Acceleration component — anticipatory signal that catches curves before velocity builds.
+        // ── Acceleration component — anticipatory signal that catches curves before velocity builds.
         val accel = computeAcceleration()
 
         // Acceleration aligns with deviation based on direction:
@@ -489,24 +479,16 @@ class CircadianLearner @Inject constructor(
         val prevBasMult = basalState.days[d].get(hour)
 
         // Capture session-start multipliers on first nudge of this hour/day combo.
-        // These are the "was" baseline — held constant all hour so the display shows
-        // cumulative drift (session start → now) rather than a single tiny 5-min step.
         if (nudgeSessionHour != hour || nudgeSessionDow != dow) {
             nudgeSessionHour    = hour
             nudgeSessionDow     = dow
             nudgeSessionIsfMult = prevIsfMult
             nudgeSessionBasMult = prevBasMult
-            // Capture blended values — these match what the loop was actually using
             nudgeSessionBlendedIsfMult = isfMultiplier(hour, dow)
             nudgeSessionBlendedBasMult = basalMultiplier(hour, dow)
         }
 
-        // Nudge always applies ISF direction — physics learner runs separately on its own signal.
-        // Both signals agree on direction (sign fix ensures this). Removing the gate ensures
-        // the display and the actual delivered ISF always match what the nudge card says.
-        // dosingISF = profileISF / isfMult
-        // Too much insulin → ISF mult DOWN → dosingISF goes UP → less aggressive → less insulin ✓
-        // Not enough insulin → ISF mult UP → dosingISF goes DOWN → more aggressive → more insulin ✓
+        // Nudge always applies ISF direction
         val nudgedIsf = if (tooMuch)
             (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         else
@@ -517,17 +499,13 @@ class CircadianLearner @Inject constructor(
                              "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
                              "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.days[d].get(hour))}")
 
-        // Too much insulin → basal mult DOWN (less background insulin)
-        // Not enough insulin → basal mult UP (more background insulin)
         val nudgedBas = if (tooMuch)
             (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         else
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
 
-        // Store: direction|deviation%|day|hour|sessionIsfMult|newIsfMult|sessionBasMult|newBasMult|cooldown|penaltyReason
-        // Parts 4 and 6 are SESSION-START multipliers (hour baseline) — used as "was" in display.
-        // Parts 5 and 7 are CURRENT post-nudge multipliers — used as "now" in display.
+        // Store status
         val direction = if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
