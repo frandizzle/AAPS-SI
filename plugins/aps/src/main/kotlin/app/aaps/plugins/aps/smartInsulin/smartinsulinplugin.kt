@@ -970,7 +970,11 @@ open class SmartInsulinPlugin @Inject constructor(
         // Using var reassignment so ALL downstream logic (determine_basal, learners, logging)
         // sees the correct mode and ISF immediately. The previous approach only updated sens
         // in OapsProfile but left dosingIsfMgdl stale everywhere else.
-        val latestMealMode = mealOverrideManager.activeMealMode ?: MealMode.FASTING
+        // Use justFiredThisCycle as the authoritative UAM fire signal — more reliable than
+        // reading activeMealMode immediately after activateOverride, which may not have
+        // propagated yet depending on MealOverrideManager implementation timing.
+        val justFiredMode = uamController.justFiredThisCycle
+        val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
         if (latestMealMode != mealMode) {
             val latestModeIsfMgdl = run {
                 val unitVal = when (latestMealMode) {
