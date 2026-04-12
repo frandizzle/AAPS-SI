@@ -433,6 +433,13 @@ class CircadianLearner @Inject constructor(
         var tooMuch      = !inPostMealLockout && aggressiveness < AGGR_NUDGE_THRESHOLD
         var notEnough    = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
 
+        // Always compute and log acceleration — even when ceiling is neutral —
+        // so the debug panel shows current data regardless of nudge state.
+        val accelAlways = computeAcceleration()
+        lastAccelDebug = "accel=${"%.2f".format(accelAlways)} mgdl/5min | " +
+            "${if (abs(accelAlways) <= ACCEL_DEAD_BAND_MGDL) "dead-band" else if (accelAlways > 0) "curving↑" else "curving↓"} | " +
+            "history=${bgHistory.size} readings"
+
         // --- POST-LOW BLINDFOLD (Main Learner) ---
         // If we are recovering from a low, the rise is from rescue carbs/liver, NOT a basal deficit.
         // Block the learner from falsely increasing insulin (dropping ISF / raising basal).
@@ -467,10 +474,8 @@ class CircadianLearner @Inject constructor(
             tooMuch -> -accel * ACCEL_PENALTY_FACTOR  // Crash (-5) -> returns +1.0 -> increases deviation
             else -> accel * ACCEL_PENALTY_FACTOR      // Rise (+5) -> returns +1.0 -> increases deviation
         }
-
-        lastAccelDebug = "accel=${"%.2f".format(accel)} mgdl/5min | nudge=${"%.3f".format(accelNudge)} | " +
-            "${if (abs(accel) <= ACCEL_DEAD_BAND_MGDL) "dead-band" else if (accel > 0) "curving↑" else "curving↓"} | " +
-            "history=${bgHistory.size} readings"
+        // Append nudge contribution to the debug string now that we know it
+        if (accelNudge != 0.0) lastAccelDebug += " | nudge=${"%.3f".format(accelNudge)}"
 
         // Combine: accel adds to existing deviation, or provides standalone signal.
         // coerceAtLeast(0.0) ensures a contradicting accel can cancel but not reverse the nudge.
@@ -627,7 +632,8 @@ class CircadianLearner @Inject constructor(
                     val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                     basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
                     lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | adj=${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))}"
+                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
+                        "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA α=0.03 — slow)"
                     aapsLogger.debug(LTag.APS,
                                      "CircadianLearner Basal[predTrim] h=$hour projectedBg=${"%.1f".format(projectedBg)} " +
                                          "target=${"%.1f".format(targetMgdl)} error=${"%.1f".format(projectedError)} rawAdjust=${"%.3f".format(rawAdjust)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
