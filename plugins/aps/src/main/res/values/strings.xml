@@ -244,6 +244,17 @@
     <string name="si_rebound_window_mins_title">Low recovery window (min, default 60)</string>
     <string name="si_rebound_window_mins_summary">How long after a low BG event the loop runs in recovery mode — tapering basal from 30% back to 100% and blocking SMBs for the first 75% of the window. Shorter = faster return to normal dosing. Range: 20–90 min.</string>
 
+    <!-- SmartInsulin Preference Screen Titles -->
+    <string name="si_screen_general_title">General Settings</string>
+    <string name="si_screen_learning_title">Adaptive Learning</string>
+    <string name="si_screen_dawn_title">Dawn Phenomenon</string>
+    <string name="si_screen_activity_title">Activity &amp; Heart Rate</string>
+    <string name="si_screen_meal_title">Meal &amp; ISF Overrides</string>
+    <string name="si_screen_stft_title">STFT (Short-Term Trend Filter)</string>
+    <string name="si_screen_first_day_cgm_title">First-Day CGM Guard</string>
+    <string name="si_screen_uam_title">UAM (Unannounced Meal)</string>
+    <string name="si_screen_uam_windows_title">UAM Meal Windows</string>
+
     <!-- SmartInsulin STFT/UAM CGM warmup blocks -->
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
     <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
