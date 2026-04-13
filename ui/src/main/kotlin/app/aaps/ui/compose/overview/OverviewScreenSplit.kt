@@ -99,7 +99,7 @@ fun OverviewScreenSplit(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 4.dp),
-                    verticalAlignment = Alignment.Bottom
+                    verticalAlignment = Alignment.Top
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         BgInfoSection(
