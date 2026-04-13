@@ -3,11 +3,16 @@ package app.aaps.implementations
 import android.content.Context
 import android.content.Intent
 import androidx.annotation.RawRes
+import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.FragmentManager
+import app.aaps.ComposeMainActivity
 import app.aaps.MainActivity
 import app.aaps.activities.HistoryBrowseActivity
+import app.aaps.core.data.model.ICfg
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.dialogs.AlertDialogs
@@ -32,6 +37,8 @@ class UiInteractionImpl @Inject constructor(
     override val historyBrowseActivity: Class<*> = HistoryBrowseActivity::class.java
     override val errorHelperActivity: Class<*> = ErrorActivity::class.java
     override val singleFragmentActivity: Class<*> = SingleFragmentActivity::class.java
+    override val preferencesActivity: Class<*> = MainActivity::class.java
+    override val myPreferenceFragment: Class<*> = MainActivity::class.java // Placeholder
 
     override val unitsEntries = arrayOf<CharSequence>("mg/dL", "mmol/L")
     override val unitsValues = arrayOf<CharSequence>("mg/dl", "mmol")
@@ -47,6 +54,26 @@ class UiInteractionImpl @Inject constructor(
 
     override fun updateWidget(context: Context, from: String) {
         Widget.updateWidget(context, from)
+    }
+
+    override fun runProfileSwitchDialog(
+        fragmentManager: FragmentManager,
+        profileName: String?,
+        iCfg: ICfg?
+    ) {
+        // Implementation for profile switch dialog
+    }
+
+    override fun runSmartMealDialog(fragmentManager: FragmentManager) {
+        (context as? ComposeMainActivity)?.navigateToElement(ElementType.SMART_MEAL)
+    }
+
+    override fun navigateToSmartInsulinTab(activity: FragmentActivity) {
+        (activity as? ComposeMainActivity)?.navigateToSmartInsulin()
+    }
+
+    override fun runPreferencesForPlugin(activity: FragmentActivity, pluginSimpleName: String?) {
+        // Implementation
     }
 
     override fun startAlarm(@RawRes sound: Int, reason: String) {

@@ -843,7 +843,7 @@ class ComposeMainActivity : AppCompatActivity() {
 
     private fun handleQuickLaunchAction(action: QuickLaunchAction, navController: NavController) {
         when (action) {
-            is QuickLaunchAction.StaticAction      -> navigateProtected(action.elementType, navController)
+            is QuickLaunchAction.StaticAction      -> navigateProtected(action.elementType)
 
             // Dynamic actions — execution-based, not navigation
             is QuickLaunchAction.QuickWizardAction -> withProtection(ElementType.QUICK_WIZARD.protection) {
@@ -869,7 +869,7 @@ class ComposeMainActivity : AppCompatActivity() {
 
     private fun handleNavigationRequest(request: NavigationRequest, navController: NavController) {
         when (request) {
-            is NavigationRequest.Element           -> navigateProtected(request.type, navController)
+            is NavigationRequest.Element           -> navigateProtected(request.type)
             is NavigationRequest.QuickWizard       -> withProtection(ElementType.QUICK_WIZARD.protection) {
                 mainViewModel.executeQuickWizard(this@ComposeMainActivity, request.guid)
             }
@@ -901,17 +901,17 @@ class ComposeMainActivity : AppCompatActivity() {
      * For management screens, the granted level determines the screen mode
      * (PLAY for BOLUS, EDIT for PREFERENCES or higher).
      */
-    private fun navigateProtected(elementType: ElementType, navController: NavController) {
+    private fun navigateProtected(elementType: ElementType) {
         val minLevel = elementType.protection
         if (minLevel == ProtectionCheck.Protection.NONE) {
-            navigateToElement(elementType, navController)
+            navigateToElement(elementType)
             return
         }
         protectionCheck.requestAuthorization(minLevel) { result ->
             result.grantedLevel?.let { granted ->
                 val mode = if (granted.level >= ProtectionCheck.Protection.PREFERENCES.level)
                     ScreenMode.EDIT else ScreenMode.PLAY
-                navigateToElement(elementType, navController, mode)
+                navigateToElement(elementType, mode)
             }
         }
     }
@@ -949,7 +949,7 @@ class ComposeMainActivity : AppCompatActivity() {
                 }
             }
 
-            is SearchableItem.Dialog     -> navigateProtected(item.elementType, navController)
+            is SearchableItem.Dialog     -> navigateProtected(item.elementType)
 
             is SearchableItem.Plugin     -> {
                 handlePluginClick(item.pluginRef)
@@ -966,7 +966,8 @@ class ComposeMainActivity : AppCompatActivity() {
      * Navigate to an [ElementType] destination. Protection is handled by the caller.
      * No `else` — compiler catches missing enum values.
      */
-    private fun navigateToElement(elementType: ElementType, navController: NavController, mode: ScreenMode = ScreenMode.EDIT) {
+    fun navigateToElement(elementType: ElementType, mode: ScreenMode = ScreenMode.EDIT) {
+        val navController = navController ?: return
         when (elementType) {
             // Navigation screens (drawer)
             ElementType.TREATMENTS              -> navController.navigate(AppRoute.Treatments.route)

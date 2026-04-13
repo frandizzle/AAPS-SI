@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 
 data class SmartMealUiState(
     val selectedModeIndex: Int = 1,
@@ -77,7 +79,11 @@ class SmartMealDialogViewModel @Inject constructor(
     private val _sideEffect = Channel<SideEffect>()
     val sideEffect = _sideEffect.receiveAsFlow()
 
-    init { refresh() }
+    init {
+        viewModelScope.launch {
+            refresh()
+        }
+    }
 
     fun refresh() {
         val isMmol = profileUtil.units == GlucoseUnit.MMOL
