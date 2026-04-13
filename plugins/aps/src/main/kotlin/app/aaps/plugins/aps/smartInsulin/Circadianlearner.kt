@@ -174,7 +174,7 @@ class CircadianLearner @Inject constructor(
         if (mealMode != previousMealModeForDrift) {
             if (basalDriftWindow.isNotEmpty()) {
                 aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner: mode transition $previousMealModeForDrift→$mealMode — clearing basalDriftWindow (${basalDriftWindow.size} samples)")
+                    "CircadianLearner: mode transition $previousMealModeForDrift→$mealMode — clearing basalDriftWindow (${basalDriftWindow.size} samples)")
                 basalDriftWindow.clear()
             }
             previousMealModeForDrift = mealMode
