@@ -72,10 +72,7 @@ fun SmartInsulinScreen(
         }
     }
 
-    // Override the toolbar settings icon to launch PreferencesActivity directly.
-    // PluginContentRoute's default gear navigates to PluginPreferencesScreen which
-    // can't render addPreferenceScreen()-based prefs — this bypasses that broken path.
-    val context = LocalContext.current
+    // Use the provided onSettings callback to navigate to plugin preferences.
     androidx.compose.runtime.LaunchedEffect(Unit) {
         setToolbarConfig?.invoke(
             ToolbarConfig(
@@ -90,7 +87,7 @@ fun SmartInsulinScreen(
                 },
                 actions = {
                     IconButton(onClick = {
-                        plugin.openPreferences(context)
+                        onSettings?.invoke()
                     }) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
