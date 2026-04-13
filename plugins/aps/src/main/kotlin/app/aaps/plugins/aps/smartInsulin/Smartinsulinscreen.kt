@@ -625,8 +625,12 @@ fun SmartInsulinScreen(
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
                 // Highlight the active insulin profile — match mode label against profile name
-                val isActive = d.mealMode.contains(name, ignoreCase = true) ||
-                    name.contains(d.mealMode.substringBefore(" ("), ignoreCase = true)
+                // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
+                val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
+                    name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name.substringBefore(" ("), ignoreCase = true)
+                } else {
+                    !name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name, ignoreCase = true)
+                }
                 val prefix = if (isActive) "► " else "  "
                 val note = when {
                     n == 0 -> "  (using profile values — not enough data yet)"
