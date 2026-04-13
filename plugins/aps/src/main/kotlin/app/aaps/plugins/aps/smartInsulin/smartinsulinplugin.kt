@@ -1689,9 +1689,9 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinMaxSmb,
                     DoubleKey.ApsSmartInsulinMaxTbr,
                     DoubleKey.ApsSmartInsulinAggressionMax,
-                    UnitDoubleKey.ApsSmartInsulinLowGuard,
-                    UnitDoubleKey.ApsSmartInsulinWarnGuard,
+                    BooleanKey.ApsUseDynamicSensitivity,
                     UnitDoubleKey.ApsLgsThreshold,
+                    UnitDoubleKey.ApsSmartInsulinLowGuard,
                     IntKey.ApsSmartInsulinReboundWindowMins
                 )
             ),

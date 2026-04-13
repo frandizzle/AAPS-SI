@@ -31,8 +31,7 @@ enum class UnitDoubleKey(
         maxMgdl = 100,
         titleResId = R.string.pref_title_lgs_threshold,
         summaryResId = R.string.lgs_threshold_summary,
-        defaultedBySM = true,
-        dependency = BooleanKey.ApsUseDynamicSensitivity
+        defaultedBySM = true
     ),
 
     // ── SmartInsulin ─────────────────────────────────────────────────────────
