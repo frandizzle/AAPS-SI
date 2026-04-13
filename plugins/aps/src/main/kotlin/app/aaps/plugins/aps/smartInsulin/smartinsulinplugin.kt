@@ -1068,7 +1068,7 @@ open class SmartInsulinPlugin @Inject constructor(
             temptargetSet                   = isTempTarget,
             autosens_max                    = preferences.get(DoubleKey.AutosensMax),
             out_units                       = if (profileUtil.units == GlucoseUnit.MMOL) "mmol/L" else "mg/dl",
-            lgsThreshold                    = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt(),
+            lgsThreshold                    = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.ApsLgsThreshold), profileUtil.units).toInt(),
             variable_sens                   = 0.0,
             insulinDivisor                  = 0,
             TDD                             = 0.0

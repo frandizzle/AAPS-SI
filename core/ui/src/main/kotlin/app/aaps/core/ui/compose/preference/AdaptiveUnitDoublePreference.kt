@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import app.aaps.core.data.model.GlucoseUnit
+import app.aaps.core.keys.decimalPlaces
+import app.aaps.core.keys.step
 import app.aaps.core.keys.interfaces.PreferenceVisibilityContext
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
 import app.aaps.core.ui.compose.LocalPreferences
@@ -60,10 +62,16 @@ fun AdaptiveUnitDoublePreferenceItem(
     // Check current units from ProfileUtil
     val isMgdl = profileUtil.units == GlucoseUnit.MGDL
 
-    // Adaptive step: 1.0 for mg/dL, 0.1 for mmol/L
-    val step = if (isMgdl) 1.0 else 0.1
-    val decimalPlaces = if (isMgdl) 0 else 1
-    val valueFormat = if (isMgdl) DecimalFormat("0") else DecimalFormat("0.0")
+    // Adaptive step and precision from unitType or default by unit mode
+    val precisionFromType = unitKey.unitType.decimalPlaces()
+    val stepFromType = unitKey.unitType.step()
+
+    // If it's a standard MGDL key, use 0/1 logic. Otherwise follow unitType precision.
+    val isStandardMgdl = unitKey.unitType == app.aaps.core.keys.UnitType.MGDL
+    val decimalPlaces = if (isStandardMgdl) (if (isMgdl) 0 else 1) else precisionFromType
+    val step = if (isStandardMgdl) (if (isMgdl) 1.0 else 0.1) else stepFromType
+    
+    val valueFormat = DecimalFormat("0" + if (decimalPlaces > 0) "." + "0".repeat(decimalPlaces) else "")
 
     // Get unit label from resources - short form for slider
     val unitLabel = stringResource(if (isMgdl) UiR.string.mgdl else UiR.string.mmol)
