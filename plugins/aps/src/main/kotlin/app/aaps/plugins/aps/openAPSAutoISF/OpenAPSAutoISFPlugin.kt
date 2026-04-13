@@ -334,7 +334,7 @@ open class OpenAPSAutoISFPlugin @Inject constructor(
             autosens_adjust_targets = false, // not used
             max_daily_safety_multiplier = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
-            lgsThreshold = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt(),
+            lgsThreshold = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.ApsLgsThreshold), profileUtil.units).toInt(),
             high_temptarget_raises_sensitivity = exerciseMode || highTemptargetRaisesSensitivity, //was false,
             low_temptarget_lowers_sensitivity = preferences.get(BooleanKey.ApsAutoIsfLowTtLowersSens), // was false,
             sensitivity_raises_target = preferences.get(BooleanKey.ApsSensitivityRaisesTarget),

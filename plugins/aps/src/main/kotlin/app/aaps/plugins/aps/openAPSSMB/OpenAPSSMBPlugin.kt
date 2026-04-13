@@ -410,7 +410,7 @@ open class OpenAPSSMBPlugin @Inject constructor(
             autosens_adjust_targets = false, // not used
             max_daily_safety_multiplier = preferences.get(DoubleKey.ApsMaxDailyMultiplier),
             current_basal_safety_multiplier = preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier),
-            lgsThreshold = profileUtil.convertToMgdlDetect(preferences.get(UnitDoubleKey.ApsLgsThreshold)).toInt(),
+            lgsThreshold = profileUtil.convertToMgdl(preferences.get(UnitDoubleKey.ApsLgsThreshold), profileUtil.units).toInt(),
             high_temptarget_raises_sensitivity = false,
             low_temptarget_lowers_sensitivity = false,
             sensitivity_raises_target = preferences.get(BooleanKey.ApsSensitivityRaisesTarget),
