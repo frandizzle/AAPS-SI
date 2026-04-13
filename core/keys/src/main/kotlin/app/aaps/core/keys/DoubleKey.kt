@@ -253,21 +253,21 @@ enum class DoubleKey(
     ),
 
     // SmartInsulin plugin
-    ApsSmartInsulinMaxSmb(key = "si_max_smb_u", defaultValue = 3.0, min = 0.1, max = 20.0, titleResId = R.string.pref_title_si_max_smb, defaultedBySM = true),
-    ApsSmartInsulinMaxTbr(key = "si_max_tbr_u", defaultValue = 3.0, min = 0.5, max = 10.0, titleResId = R.string.pref_title_si_max_tbr, defaultedBySM = true),
-    ApsSmartInsulinAggressionMax(key = "si_aggression_max", defaultValue = 1.5, min = 1.0, max = 2.5, titleResId = R.string.pref_title_si_aggression_max, defaultedBySM = true),
+    ApsSmartInsulinMaxSmb(key = "si_max_smb_u", defaultValue = 3.0, min = 0.1, max = 20.0, titleResId = R.string.pref_title_si_max_smb, defaultedBySM = true, unitType = UnitType.INSULIN),
+    ApsSmartInsulinMaxTbr(key = "si_max_tbr_u", defaultValue = 3.0, min = 0.5, max = 10.0, titleResId = R.string.pref_title_si_max_tbr, defaultedBySM = true, unitType = UnitType.INSULIN_RATE),
+    ApsSmartInsulinAggressionMax(key = "si_aggression_max", defaultValue = 1.5, min = 1.0, max = 2.5, titleResId = R.string.pref_title_si_aggression_max, defaultedBySM = true, unitType = UnitType.DOUBLE),
     // ISF overrides moved to UnitDoubleKey (ApsSmartInsulinBreakfastIsf etc.)
-    ApsSmartInsulinMaxPreBolus(key = "si_max_prebolus_u", defaultValue = 8.0, min = 0.5, max = 15.0, titleResId = R.string.pref_title_si_max_prebolus, defaultedBySM = true),
+    ApsSmartInsulinMaxPreBolus(key = "si_max_prebolus_u", defaultValue = 8.0, min = 0.5, max = 15.0, titleResId = R.string.pref_title_si_max_prebolus, defaultedBySM = true, unitType = UnitType.INSULIN),
     // Pre-bolus 2: default amount in units (user can override per-activation in SmartMealDialog)
-    ApsSmartInsulinPreBolus2DefaultU(key = "si_prebolus2_default_u", defaultValue = 2.0, min = 0.5, max = 10.0, titleResId = R.string.pref_title_si_prebolus2_default_u, defaultedBySM = true),
+    ApsSmartInsulinPreBolus2DefaultU(key = "si_prebolus2_default_u", defaultValue = 2.0, min = 0.5, max = 10.0, titleResId = R.string.pref_title_si_prebolus2_default_u, defaultedBySM = true, unitType = UnitType.INSULIN),
     // ISF learner speed — higher = learns faster but more reactive to single bad readings
-    ApsSmartInsulinIsfAlpha(key = "si_isf_alpha", defaultValue = 0.08, min = 0.02, max = 0.20, titleResId = R.string.pref_title_si_isf_alpha, defaultedBySM = true),
+    ApsSmartInsulinIsfAlpha(key = "si_isf_alpha", defaultValue = 0.08, min = 0.02, max = 0.20, titleResId = R.string.pref_title_si_isf_alpha, defaultedBySM = true, unitType = UnitType.DOUBLE_2),
     // Basal learner speed — higher = learns faster
-    ApsSmartInsulinBasalAlpha(key = "si_basal_alpha", defaultValue = 0.06, min = 0.02, max = 0.15, titleResId = R.string.pref_title_si_basal_alpha, defaultedBySM = true),
+    ApsSmartInsulinBasalAlpha(key = "si_basal_alpha", defaultValue = 0.06, min = 0.02, max = 0.15, titleResId = R.string.pref_title_si_basal_alpha, defaultedBySM = true, unitType = UnitType.DOUBLE_2),
     // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
-    ApsSmartInsulinDawnSmbReduction(key = "si_dawn_smb_reduction", defaultValue = 0.5, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_dawn_smb_reduction, defaultedBySM = true),
+    ApsSmartInsulinDawnSmbReduction(key = "si_dawn_smb_reduction", defaultValue = 0.5, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_dawn_smb_reduction, defaultedBySM = true, unitType = UnitType.DOUBLE),
     ApsSmartInsulinRestingHrBpm(key = "si_resting_hr_bpm", defaultValue = 70.0, min = 50.0, max = 110.0, titleResId = R.string.pref_title_si_resting_hr_bpm, defaultedBySM = true),
-    ApsSmartInsulinUamEntrySmbFraction(key = "si_uam_entry_smb_fraction", defaultValue = 0.8, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_uam_entry_smb_fraction, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamEntrySmbFraction(key = "si_uam_entry_smb_fraction", defaultValue = 0.8, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_uam_entry_smb_fraction, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled, unitType = UnitType.DOUBLE),
     // UAM thresholds, ISF overrides, activity targets all in UnitDoubleKey
 
 }
