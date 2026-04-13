@@ -285,7 +285,7 @@
         android:layout_marginEnd="16dp"
         android:layout_marginBottom="80dp"
         android:contentDescription="Open SmartInsulin tab"
-        app:srcCompat="@drawable/ic_insulin"
+        app:srcCompat="@drawable/ic_cp_age_insulin"
         app:fabSize="mini"
         app:tint="@color/white"
         app:backgroundTint="?attr/colorSecondary"
