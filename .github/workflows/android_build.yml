@@ -1,0 +1,98 @@
+name: Android Build (Signed)
+
+on:
+  push:
+    branches:
+      - dev  # Changed to your branch
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - dev  # Changed to your branch
+
+jobs:
+  build-signed:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    env:
+      APP_APK_PATH: app/build/outputs/apk/full/release/app-full-release.apk
+      CLIENT_APK_PATH: app/build/outputs/apk/aapsclient/release/app-aapsclient-release.apk
+      WEAR_APK_PATH: wear/build/outputs/apk/full/release/wear-full-release.apk
+
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v5
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Decode keystore
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > monkeystore.jks
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+
+      - name: Grant execute permission for Gradlew
+        run: chmod +x gradlew
+        
+      # Run Lint to catch code errors before building
+      - name: Run Lint
+        run: ./gradlew lintFullDebug
+
+      # Build the signed release APKs
+      - name: Build Release APKs
+        run: ./gradlew :app:assembleFullRelease :wear:assembleFullRelease :app:assembleAapsClientRelease
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/monkeystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Verify APK Generation
+        run: |
+          echo "Listing APKs in app module:"
+          find app/build/outputs/apk -type f -name "*.apk"
+          echo "Listing APKs in wear module:"
+          find wear/build/outputs/apk -type f -name "*.apk"
+
+      - name: Upload App APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-full-release.apk
+          path: ${{ env.APP_APK_PATH }}
+
+      - name: Upload Wear APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wear-full-release.apk
+          path: ${{ env.WEAR_APK_PATH }}
+
+      - name: Upload AAPS Client APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-aapsclient-release.apk
+          path: ${{ env.CLIENT_APK_PATH }}
+
+      # Automatically creates a release if you push a tag like "v1.0.0"
+      - name: Create GitHub Release with APKs
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ env.APP_APK_PATH }}
+            ${{ env.CLIENT_APK_PATH }}
+            ${{ env.WEAR_APK_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
