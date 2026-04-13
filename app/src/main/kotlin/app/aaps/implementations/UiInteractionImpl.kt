@@ -2,31 +2,18 @@ package app.aaps.implementations
 
 import android.content.Context
 import android.content.Intent
-import android.os.Bundle
 import androidx.annotation.RawRes
-import androidx.fragment.app.FragmentActivity
-import androidx.fragment.app.FragmentManager
 import app.aaps.MainActivity
 import app.aaps.activities.HistoryBrowseActivity
-import app.aaps.activities.MyPreferenceFragment
-import app.aaps.activities.PreferencesActivity
-import app.aaps.core.data.model.ICfg
-import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.objects.extensions.toJson
 import app.aaps.plugins.configuration.activities.SingleFragmentActivity
 import app.aaps.ui.activities.ErrorActivity
 import app.aaps.ui.dialogs.AlertDialogs
-import app.aaps.ui.dialogs.SmartMealDialog
-import app.aaps.ComposeMainActivity
-
-import app.aaps.ui.dialogs.ProfileSwitchDialog
 import app.aaps.ui.services.AlarmSoundService
 import app.aaps.ui.services.AlarmSoundServiceHelper
 import app.aaps.ui.widget.Widget
-import dagger.Lazy
 import dagger.Reusable
 import javax.inject.Inject
 
@@ -36,7 +23,6 @@ class UiInteractionImpl @Inject constructor(
     private val context: Context,
     rxBus: RxBus,
     private val alarmSoundServiceHelper: AlarmSoundServiceHelper,
-    private val protectionCheck: Lazy<ProtectionCheck>,
     preferences: Preferences
 ) : UiInteraction {
 
@@ -46,8 +32,6 @@ class UiInteractionImpl @Inject constructor(
     override val historyBrowseActivity: Class<*> = HistoryBrowseActivity::class.java
     override val errorHelperActivity: Class<*> = ErrorActivity::class.java
     override val singleFragmentActivity: Class<*> = SingleFragmentActivity::class.java
-    override val preferencesActivity: Class<*> = PreferencesActivity::class.java
-    override val myPreferenceFragment: Class<*> = MyPreferenceFragment::class.java
 
     override val unitsEntries = arrayOf<CharSequence>("mg/dL", "mmol/L")
     override val unitsValues = arrayOf<CharSequence>("mg/dl", "mmol")
@@ -63,36 +47,6 @@ class UiInteractionImpl @Inject constructor(
 
     override fun updateWidget(context: Context, from: String) {
         Widget.updateWidget(context, from)
-    }
-
-    override fun runSmartMealDialog(fragmentManager: FragmentManager) {
-        SmartMealDialog().show(fragmentManager, "SmartMealDialog")
-    }
-
-    override fun navigateToSmartInsulinTab(activity: FragmentActivity) {
-        (activity as? ComposeMainActivity)?.navigateToSmartInsulin()
-    }
-
-    override fun runProfileSwitchDialog(fragmentManager: FragmentManager, profileName: String?, iCfg: ICfg?) {
-        ProfileSwitchDialog()
-            .also {
-                it.arguments = Bundle().also { bundle ->
-                    bundle.putString("profileName", profileName)
-                    iCfg?.let { bundle.putString("iCfg", it.toJson().toString()) }
-                }
-            }
-            .show(fragmentManager, "ProfileSwitchDialog")
-    }
-
-    override fun runPreferencesForPlugin(activity: FragmentActivity, pluginSimpleName: String?) {
-        pluginSimpleName ?: return
-        protectionCheck.get().queryProtection(activity, ProtectionCheck.Protection.PREFERENCES, {
-            activity.startActivity(
-                Intent(activity, PreferencesActivity::class.java)
-                    .setAction("info.nightscout.androidaps.MainActivity")
-                    .putExtra(UiInteraction.PLUGIN_NAME, pluginSimpleName)
-            )
-        })
     }
 
     override fun startAlarm(@RawRes sound: Int, reason: String) {
@@ -134,5 +88,4 @@ class UiInteractionImpl @Inject constructor(
     override fun showError(context: Context, title: String, message: String, positiveButton: Int?, ok: (() -> Unit)?, cancel: (() -> Unit)?) {
         alertDialogs.showError(context, title, message, positiveButton, ok, cancel)
     }
-
 }
