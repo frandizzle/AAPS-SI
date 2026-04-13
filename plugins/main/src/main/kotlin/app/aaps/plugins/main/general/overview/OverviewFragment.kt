@@ -374,6 +374,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
             updateSensitivity()
             updateGraph()
             updateNotification()
+            updateSmartInsulin()
         }
         updateBg()
         updateTemporaryBasal()
@@ -1090,6 +1091,23 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener {
         val status = overviewData.pumpStatus
         binding.pumpStatus.text = status
         binding.pumpStatusLayout.visibility = (status != "").toVisibility()
+    }
+
+    private fun updateSmartInsulin() {
+        _binding ?: return
+        val activeAps = activePlugin.activeAPS
+        if (activeAps != null && activeAps is PluginBase && activeAps.nameShort == "SmartInsulin") {
+            val state = smartInsulinOverview.overviewState()
+            binding.siCard.visibility = View.VISIBLE
+            binding.siLayout.siMode.text = state.modeLine
+            binding.siLayout.siPb2.apply {
+                text = state.pb2Line
+                visibility = (state.pb2Line != null).toVisibility()
+            }
+            binding.siLayout.siLearning.text = state.learningState
+        } else {
+            binding.siCard.visibility = View.GONE
+        }
     }
 
     private fun updateNotification() {
