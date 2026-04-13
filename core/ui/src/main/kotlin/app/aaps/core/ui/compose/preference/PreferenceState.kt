@@ -474,9 +474,9 @@ class UnitDoublePreferenceState(
     fun updateDisplayValue(newValue: String) {
         _displayValue.value = newValue
         setSharedStringState(sharedStates, "unit_display:${key.key}", newValue)
-        // Convert from display units back to mg/dL for storage
+        // Convert from display units back to mg/dL for storage — deterministic, not heuristic
         val displayDouble = newValue.toDoubleOrNull() ?: return
-        val mgdlValue = profileUtil.convertToMgdlDetect(displayDouble)
+        val mgdlValue = profileUtil.convertToMgdl(displayDouble, profileUtil.units)
         preferences.put(key, mgdlValue)
     }
 }

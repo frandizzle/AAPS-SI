@@ -4,6 +4,7 @@ import app.aaps.core.data.time.T
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
@@ -182,12 +183,16 @@ class PreferencesImpl @Inject constructor(
         return doubleFlows.computeIfAbsent(composedKey) { MutableStateFlow(get(key, *arguments)) }
     }
 
-    override fun get(key: UnitDoublePreferenceKey): Double =
-        if (simpleMode && key.defaultedBySM) profileUtil.get().valueInCurrentUnitsDetect(key.defaultValue)
-        else profileUtil.get().valueInCurrentUnitsDetect(sp.getDouble(key.key, key.defaultValue))
+    override fun get(key: UnitDoublePreferenceKey): Double {
+        // Values are stored in mg/dL. Convert deterministically using current units —
+        // valueInCurrentUnitsDetect() is heuristic and fails for small values like 9 mg/dL.
+        val mgdl = if (simpleMode && key.defaultedBySM) key.defaultValue
+        else sp.getDouble(key.key, key.defaultValue)
+        return profileUtil.get().fromMgdlToUnits(mgdl)
+    }
 
     override fun getIfExists(key: UnitDoublePreferenceKey): Double? =
-        if (sp.contains(key.key)) profileUtil.get().valueInCurrentUnitsDetect(sp.getDouble(key.key, key.defaultValue)) else null
+        if (sp.contains(key.key)) profileUtil.get().fromMgdlToUnits(sp.getDouble(key.key, key.defaultValue)) else null
 
     override fun put(key: UnitDoublePreferenceKey, value: Double) {
         sp.putDouble(key.key, value)
