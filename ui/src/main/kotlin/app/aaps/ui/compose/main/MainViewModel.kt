@@ -29,6 +29,8 @@ import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.protection.ProtectionCheck
 import app.aaps.core.interfaces.protection.ProtectionResult
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
+import app.aaps.core.interfaces.pump.BolusProgressState
 import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.pump.defs.determineCorrectBolusStepSize
 import app.aaps.core.interfaces.queue.Callback
@@ -105,6 +107,7 @@ class MainViewModel @Inject constructor(
     val versionName: String get() = config.VERSION_NAME
     val appIcon: Int get() = iconsProvider.getIcon()
     val calcProgressFlow: StateFlow<Int> = overviewDataCache.calcProgressFlow
+    val siOverviewState: StateFlow<SmartInsulinOverview.OverviewState?> = activePlugin.smartInsulin?.overviewStateFlow ?: MutableStateFlow(null)
 
     // Ticker for time-based progress updates (every 30 seconds)
     private val progressTicker = flow {

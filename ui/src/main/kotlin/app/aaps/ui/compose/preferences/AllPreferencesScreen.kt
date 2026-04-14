@@ -114,6 +114,9 @@ fun AllPreferencesScreen(
         // 6. Sensitivity plugin
         getPreferenceContentIfEnabled(activePlugin.activeSensitivity as PluginBase)?.let { add(it) }
 
+        // 6.5 Smart Insulin plugin
+        (activePlugin.smartInsulin as? PluginBase)?.let { getPreferenceContentIfEnabled(it)?.let { pref -> add(pref) } }
+
         // 7. Pump plugin
         getPreferenceContentIfEnabled(activePlugin.activePumpInternal as PluginBase)?.let { add(it) }
 

@@ -64,6 +64,8 @@ import app.aaps.core.objects.extensions.plannedRemainingMinutes
 import app.aaps.core.objects.extensions.put
 import app.aaps.core.objects.extensions.store
 import app.aaps.core.objects.extensions.target
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
@@ -219,12 +221,20 @@ open class SmartInsulinPlugin @Inject constructor(
 
     // ── Cached Overview state ────────────────────────────────────────────────
     // Updated each invoke() so overviewState() can be called any time from UI threads.
-    @Volatile private var cachedOverviewState: app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState =
+    private val _overviewStateFlow = MutableStateFlow<app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState>(
         app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
             modeLine      = "Meal: Fasting",
             pb2Line       = null,
             learningState = "Learning"
         )
+    )
+
+    override val overviewStateFlow: StateFlow<app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState>
+        get() = _overviewStateFlow
+
+    private var cachedOverviewState: app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState
+        get() = _overviewStateFlow.value
+        set(value) { _overviewStateFlow.value = value }
 
     // ── Reset all learners ────────────────────────────────────────────────────
 

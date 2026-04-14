@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.overview.Overview
 
 import app.aaps.core.interfaces.pump.Pump
 import app.aaps.core.interfaces.pump.PumpWithConcentration
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smoothing.Smoothing
 import app.aaps.core.interfaces.source.BgSource
 import app.aaps.core.interfaces.sync.NsClient
@@ -86,6 +87,11 @@ interface ActivePlugin {
      */
     val firstActiveSync: Sync?
     val activeSyncs: ArrayList<Sync>
+
+    /**
+     * SmartInsulin plugin (optional)
+     */
+    val smartInsulin: SmartInsulinOverview?
 
     /**
      *  List of all registered plugins

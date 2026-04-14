@@ -25,4 +25,6 @@ interface SmartInsulinOverview {
     )
 
     fun overviewState(): OverviewState
+
+    val overviewStateFlow: kotlinx.coroutines.flow.StateFlow<OverviewState?>
 }

@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import androidx.core.content.ContextCompat
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.data.plugin.PluginType
 import app.aaps.core.interfaces.aps.APS
 import app.aaps.core.interfaces.aps.Sensitivity
@@ -276,6 +277,8 @@ class PluginStore @Inject constructor(
 
     override val activeIobCobCalculator: IobCobCalculator
         get() = getSpecificPluginsListByInterface(IobCobCalculator::class.java).first() as IobCobCalculator
+    override val smartInsulin: SmartInsulinOverview?
+        get() = activeAPS as? SmartInsulinOverview
     override val activeObjectives: Objectives?
         get() = getSpecificPluginsListByInterface(Objectives::class.java).firstOrNull() as Objectives?
     override val activeNsClient: NsClient?
