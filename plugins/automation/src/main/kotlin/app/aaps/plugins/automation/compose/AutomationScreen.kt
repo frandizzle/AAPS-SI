@@ -53,8 +53,8 @@ import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.icons.IcAutomation
 import app.aaps.plugins.automation.R
 import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.draggableHandle
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import sh.calvin.reorderable.reorderable
 
 @Composable
 fun AutomationScreen(
@@ -125,8 +125,7 @@ private fun EventsList(
     LazyColumn(
         state = lazyListState,
         modifier = modifier
-            .fillMaxSize()
-            .reorderable(reorderableState),
+            .fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
@@ -143,7 +142,7 @@ private fun EventsList(
                     event = event,
                     selectionMode = state.selectionMode,
                     elevation = elevation,
-                    dragModifier = Modifier.draggableHandle(onDragStopped = { onMoveFinished() }),
+                    dragModifier = Modifier.draggableHandle(),
                     onToggleEnabled = { checked -> onToggleEnabled(event.position, checked) },
                     onClick = { onClickEvent(event.position) },
                     onLongClick = onLongClickEvent,
