@@ -2,7 +2,6 @@ package app.aaps.wear.comm
 
 import app.aaps.wear.interaction.actions.WizardResultActivity
 import android.Manifest
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent

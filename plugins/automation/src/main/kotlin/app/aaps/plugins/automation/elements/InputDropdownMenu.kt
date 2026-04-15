@@ -8,7 +8,7 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import app.aaps.core.interfaces.resources.ResourceHelper
 
-class InputDropdownMenu(private val rh: ResourceHelper) : Element {
+class InputDropdownMenu(private val rh: ResourceHelper) {
 
     private var itemList: ArrayList<CharSequence> = ArrayList()
     var value: String = ""
@@ -22,7 +22,7 @@ class InputDropdownMenu(private val rh: ResourceHelper) : Element {
         value = another.value
     }
 
-    override fun addToLayout(root: LinearLayout) {
+    fun addToLayout(root: LinearLayout) {
         root.addView(
             Spinner(root.context).apply {
                 adapter = ArrayAdapter(root.context, app.aaps.core.ui.R.layout.spinner_centered, itemList).apply {
@@ -65,11 +65,11 @@ class InputDropdownMenuTyped<T>(
     private val items:   List<T>,
     private val labelFn: (T) -> String,
     initialValue:        T
-) : Element {
+) {
 
     var value: T = initialValue
 
-    override fun addToLayout(root: LinearLayout) {
+    fun addToLayout(root: LinearLayout) {
         val labels = items.map { labelFn(it) }
         root.addView(
             Spinner(root.context).apply {

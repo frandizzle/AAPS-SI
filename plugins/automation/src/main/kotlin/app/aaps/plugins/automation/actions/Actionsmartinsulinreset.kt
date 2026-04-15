@@ -15,11 +15,8 @@ class ActionSmartInsulinReset(injector: HasAndroidInjector) : Action(injector) {
 
     override fun friendlyName(): Int        = R.string.si_reset_action_name
     override fun shortDescription(): String = rh.gs(R.string.si_reset_action_short)
-    @DrawableRes override fun icon(): Int   = app.aaps.core.ui.R.drawable.ic_generic_icon
     override fun isValid(): Boolean         = true
     override fun hasDialog(): Boolean       = false
-
-    override fun generateDialog(root: LinearLayout) = Unit
 
     override suspend fun doAction(callback: Callback) {
         smartInsulinLearner.resetProfiles()
