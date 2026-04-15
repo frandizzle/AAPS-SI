@@ -109,13 +109,17 @@ fun AllPreferencesScreen(
         }
 
         // 5. APS plugin (enabled only if APS is configured)
-        (activePlugin.activeAPS as? PluginBase)?.let { getPreferenceContentIfEnabled(it, config.APS)?.let { pref -> add(pref) } }
+        val activeAPS = activePlugin.activeAPS as? PluginBase
+        activeAPS?.let { getPreferenceContentIfEnabled(it, config.APS)?.let { pref -> add(pref) } }
 
         // 6. Sensitivity plugin
         getPreferenceContentIfEnabled(activePlugin.activeSensitivity as PluginBase)?.let { add(it) }
 
-        // 6.5 Smart Insulin plugin
-        (activePlugin.smartInsulin as? PluginBase)?.let { getPreferenceContentIfEnabled(it)?.let { pref -> add(pref) } }
+        // 6.5 Smart Insulin plugin (only if not already added as active APS)
+        val smartInsulin = activePlugin.smartInsulin as? PluginBase
+        if (smartInsulin != null && smartInsulin != activeAPS) {
+            getPreferenceContentIfEnabled(smartInsulin)?.let { pref -> add(pref) }
+        }
 
         // 7. Pump plugin
         getPreferenceContentIfEnabled(activePlugin.activePumpInternal as PluginBase)?.let { add(it) }
