@@ -53,7 +53,6 @@ import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.icons.IcAutomation
 import app.aaps.plugins.automation.R
 import sh.calvin.reorderable.ReorderableItem
-import sh.calvin.reorderable.draggableHandle
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @Composable
@@ -133,10 +132,7 @@ private fun EventsList(
             items = state.events,
             key = { _, e -> "${e.position}_${e.title}" }
         ) { _, event ->
-            ReorderableItem(
-                reorderableState,
-                key = "${event.position}_${event.title}"
-            ) { isDragging ->
+            ReorderableItem(reorderableState, key = "${event.position}_${event.title}") { isDragging ->
                 val elevation = if (isDragging) 8.dp else 1.dp
                 AutomationEventCard(
                     event = event,
