@@ -35,7 +35,6 @@ import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 import app.aaps.ui.compose.overview.chips.ProfileChip
 import app.aaps.ui.compose.overview.chips.RunningModeChip
 import app.aaps.ui.compose.overview.chips.TempTargetChip
-import app.aaps.ui.compose.overview.graphs.CobUiState
 import app.aaps.ui.compose.overview.graphs.IobUiState
 import app.aaps.ui.compose.overview.graphs.TbrUiState
 
@@ -53,7 +52,6 @@ fun OverviewChipsColumn(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     iobUiState: IobUiState,
-    cobUiState: CobUiState,
     tbrUiState: TbrUiState,
     onNavigate: (NavigationRequest) -> Unit,
     modifier: Modifier = Modifier,
@@ -116,7 +114,6 @@ fun OverviewChipsColumn(
         }
         IobCobChipsRow(
             iobUiState = iobUiState,
-            cobUiState = cobUiState,
             tbrUiState = tbrUiState
         )
         siOverviewState?.let { SmartInsulinStatusChip(state = it) }
