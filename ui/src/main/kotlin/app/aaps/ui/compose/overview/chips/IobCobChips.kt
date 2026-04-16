@@ -15,7 +15,6 @@ import app.aaps.ui.compose.overview.graphs.TbrArrow
 @Composable
 fun IobCobChipsRow(
     iobUiState: IobUiState,
-    cobUiState: CobUiState,
     tbrUiState: TbrUiState,
     modifier: Modifier = Modifier
 ) {
@@ -24,12 +23,11 @@ fun IobCobChipsRow(
         modifier = modifier.fillMaxWidth()
     ) { constraints ->
         val spacingPx = spacingDp.roundToPx()
-        val availableWidth = constraints.maxWidth - (spacingPx * 2)
+        val availableWidth = constraints.maxWidth - spacingPx
 
         // First pass: measure intrinsic widths with icons
         val withIcons = subcompose("withIcons") {
             IobChip(state = iobUiState, showIcon = true)
-            CobChip(state = cobUiState, showIcon = true)
             TbrChip(state = tbrUiState, showIcon = true)
         }
         val intrinsicsWithIcons = withIcons.map { it.minIntrinsicWidth(constraints.maxHeight) }
@@ -43,7 +41,6 @@ fun IobCobChipsRow(
         } else {
             subcompose("withoutIcons") {
                 IobChip(state = iobUiState, showIcon = false)
-                CobChip(state = cobUiState, showIcon = false)
                 TbrChip(state = tbrUiState, showIcon = false)
             }
         }
@@ -77,7 +74,6 @@ private fun IobCobChipsRowPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            cobUiState = CobUiState(text = "24g", cobValue = 24.0),
             tbrUiState = TbrUiState(rate = 1.0, profileBasal = 1.0, arrow = TbrArrow.FLAT)
         )
     }
@@ -89,7 +85,6 @@ private fun IobCobChipsRowCarbsReqPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            cobUiState = CobUiState(text = "12g\n45 required", carbsReq = 45, cobValue = 12.0),
             tbrUiState = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP)
         )
     }
