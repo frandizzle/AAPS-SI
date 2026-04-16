@@ -123,6 +123,11 @@ data class TbrUiState(
     val arrow: TbrArrow = TbrArrow.FLAT
 )
 
+data class SmbUiState(
+    val text: String = "",
+    val hasData: Boolean = false
+)
+
 enum class TbrArrow(val icon: ImageVector) {
     UP(IcArrowFortyfiveUp),
     DOWN(IcArrowFortyfiveDown),
@@ -298,6 +303,24 @@ class GraphViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = SensitivityUiState()
+    )
+
+    val smbUiState: StateFlow<SmbUiState> = ticker30s.map {
+        val lastSMB = loop.lastRun?.smbSetByPump
+        val lastSMBTime = loop.lastRun?.lastSMBEnact ?: 0L
+        if (lastSMB != null && lastSMB.success && lastSMB.bolusDelivered > 0 && lastSMBTime > 0) {
+            val minsAgo = (dateUtil.now() - lastSMBTime) / 60000
+            SmbUiState(
+                text = "SMB: ${decimalFormatter.to2Decimal(lastSMB.bolusDelivered)}U ${minsAgo}m ago",
+                hasData = true
+            )
+        } else {
+            SmbUiState(hasData = false)
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = SmbUiState()
     )
 
     val tbrUiState: StateFlow<TbrUiState> = combine(ticker30s, nowTimestamp) { _, now ->

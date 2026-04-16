@@ -16,6 +16,7 @@ import app.aaps.ui.compose.overview.graphs.TbrArrow
 fun IobCobChipsRow(
     iobUiState: IobUiState,
     tbrUiState: TbrUiState,
+    smbUiState: SmbUiState,
     modifier: Modifier = Modifier
 ) {
     val spacingDp = AapsSpacing.small
@@ -23,12 +24,13 @@ fun IobCobChipsRow(
         modifier = modifier.fillMaxWidth()
     ) { constraints ->
         val spacingPx = spacingDp.roundToPx()
-        val availableWidth = constraints.maxWidth - spacingPx
+        val availableWidth = constraints.maxWidth - (spacingPx * 2)
 
         // First pass: measure intrinsic widths with icons
         val withIcons = subcompose("withIcons") {
             IobChip(state = iobUiState, showIcon = true)
             TbrChip(state = tbrUiState, showIcon = true)
+            SmbChip(state = smbUiState, showIcon = true)
         }
         val intrinsicsWithIcons = withIcons.map { it.minIntrinsicWidth(constraints.maxHeight) }
         val totalWithIcons = intrinsicsWithIcons.sum()
@@ -42,6 +44,7 @@ fun IobCobChipsRow(
             subcompose("withoutIcons") {
                 IobChip(state = iobUiState, showIcon = false)
                 TbrChip(state = tbrUiState, showIcon = false)
+                SmbChip(state = smbUiState, showIcon = false)
             }
         }
 
@@ -74,7 +77,8 @@ private fun IobCobChipsRowPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            tbrUiState = TbrUiState(rate = 1.0, profileBasal = 1.0, arrow = TbrArrow.FLAT)
+            tbrUiState = TbrUiState(rate = 1.0, profileBasal = 1.0, arrow = TbrArrow.FLAT),
+            smbUiState = SmbUiState(text = "1.0U 5m ago", hasData = true)
         )
     }
 }
@@ -85,7 +89,8 @@ private fun IobCobChipsRowCarbsReqPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            tbrUiState = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP)
+            tbrUiState = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP),
+            smbUiState = SmbUiState(text = "0.5U 2m ago", hasData = true)
         )
     }
 }
