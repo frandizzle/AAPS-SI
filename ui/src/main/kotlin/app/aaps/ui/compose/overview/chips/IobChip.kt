@@ -48,6 +48,7 @@ internal fun IobChip(
             Text(
                 text = state.text,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = if (showIcon) AapsSpacing.medium else 0.dp)
             )
         }

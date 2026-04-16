@@ -307,12 +307,11 @@ class GraphViewModel @Inject constructor(
     )
 
     val smbUiState: StateFlow<SmbUiState> = ticker30s.map {
-        val lastSMB = loop.lastRun?.smbSetByPump
-        val lastSMBTime = loop.lastRun?.lastSMBEnact ?: 0L
-        if (lastSMB != null && lastSMB.success && lastSMB.bolusDelivered > 0 && lastSMBTime > 0) {
-            val minsAgo = (dateUtil.now() - lastSMBTime) / 60000
+        val lastSmbBolus = persistenceLayer.getNewestBolusOfType(app.aaps.core.data.model.BS.Type.SMB)
+        if (lastSmbBolus != null) {
+            val minsAgo = (dateUtil.now() - lastSmbBolus.timestamp) / 60000
             SmbUiState(
-                text = "SMB: ${decimalFormatter.to2Decimal(lastSMB.bolusDelivered)}U ${minsAgo}m ago",
+                text = "SMB: ${decimalFormatter.to2Decimal(lastSmbBolus.amount)}U ${minsAgo}m ago",
                 hasData = true
             )
         } else {
