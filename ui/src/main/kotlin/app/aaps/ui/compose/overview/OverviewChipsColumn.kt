@@ -23,6 +23,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
@@ -36,6 +37,7 @@ import app.aaps.ui.compose.overview.chips.RunningModeChip
 import app.aaps.ui.compose.overview.chips.TempTargetChip
 import app.aaps.ui.compose.overview.graphs.CobUiState
 import app.aaps.ui.compose.overview.graphs.IobUiState
+import app.aaps.ui.compose.overview.graphs.TbrUiState
 
 @Composable
 fun OverviewChipsColumn(
@@ -52,6 +54,7 @@ fun OverviewChipsColumn(
     tempTargetReason: TT.Reason?,
     iobUiState: IobUiState,
     cobUiState: CobUiState,
+    tbrUiState: TbrUiState,
     onNavigate: (NavigationRequest) -> Unit,
     modifier: Modifier = Modifier,
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
@@ -84,6 +87,7 @@ fun OverviewChipsColumn(
                             tempTargetState = tempTargetState,
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
+                            tbrUiState = tbrUiState,
                             onNavigate = onNavigate
                         )
                     }
@@ -106,12 +110,14 @@ fun OverviewChipsColumn(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
+                tbrUiState = tbrUiState,
                 onNavigate = onNavigate
             )
         }
         IobCobChipsRow(
             iobUiState = iobUiState,
-            cobUiState = cobUiState
+            cobUiState = cobUiState,
+            tbrUiState = tbrUiState
         )
         siOverviewState?.let { SmartInsulinStatusChip(state = it) }
     }
@@ -217,6 +223,7 @@ private fun NarrowChips(
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
+    tbrUiState: TbrUiState,
     onNavigate: (NavigationRequest) -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {

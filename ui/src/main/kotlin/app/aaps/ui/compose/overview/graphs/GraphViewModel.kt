@@ -29,6 +29,12 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.extensions.displayText
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.ui.R
+import app.aaps.core.data.model.TB
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
+import app.aaps.core.ui.compose.icons.IcArrowFlat
+import app.aaps.core.ui.compose.icons.IcArrowFortyfiveDown
+import app.aaps.core.ui.compose.icons.IcArrowFortyfiveUp
+import androidx.compose.ui.graphics.vector.ImageVector
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,6 +112,23 @@ data class SensitivityUiState(
     val hasData: Boolean = false
 )
 
+/**
+ * UI state for TBR display
+ */
+@Immutable
+data class TbrUiState(
+    val rate: Double = 0.0,
+    val profileBasal: Double = 0.0,
+    val isAbsolute: Boolean = true,
+    val arrow: TbrArrow = TbrArrow.FLAT
+)
+
+enum class TbrArrow(val icon: ImageVector) {
+    UP(IcArrowFortyfiveUp),
+    DOWN(IcArrowFortyfiveDown),
+    FLAT(IcArrowFlat)
+}
+
 @HiltViewModel
 @Stable
 class GraphViewModel @Inject constructor(
@@ -124,7 +147,8 @@ class GraphViewModel @Inject constructor(
     private val profileFunction: ProfileFunction,
     private val processedDeviceStatusData: ProcessedDeviceStatusData,
     private val profileUtil: ProfileUtil,
-    private val activePlugin: ActivePlugin
+    private val activePlugin: ActivePlugin,
+    private val processedTbrEbData: ProcessedTbrEbData
 ) : ViewModel() {
 
     // Chart config - updates when high/low mark preferences change
@@ -274,6 +298,43 @@ class GraphViewModel @Inject constructor(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = SensitivityUiState()
+    )
+
+    val tbrUiState: StateFlow<TbrUiState> = combine(ticker30s, nowTimestamp) { _, now ->
+        val currentTbr = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
+        val profileBasal = profileFunction.getProfile()?.getBasal(now) ?: 0.0
+
+        if (currentTbr == null) {
+            TbrUiState(
+                rate = profileBasal,
+                profileBasal = profileBasal,
+                isAbsolute = true,
+                arrow = TbrArrow.FLAT
+            )
+        } else {
+            val currentRate = if (currentTbr.isAbsolute) {
+                currentTbr.rate
+            } else {
+                profileBasal * (currentTbr.rate / 100.0)
+            }
+
+            val arrow = when {
+                currentRate > profileBasal + 0.001 -> TbrArrow.UP
+                currentRate < profileBasal - 0.001 -> TbrArrow.DOWN
+                else -> TbrArrow.FLAT
+            }
+
+            TbrUiState(
+                rate = currentRate,
+                profileBasal = profileBasal,
+                isAbsolute = currentTbr.isAbsolute,
+                arrow = arrow
+            )
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = TbrUiState()
     )
 
     private suspend fun buildSensitivityUiState(): SensitivityUiState {

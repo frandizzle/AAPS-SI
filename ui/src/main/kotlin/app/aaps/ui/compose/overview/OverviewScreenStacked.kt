@@ -61,6 +61,7 @@ fun OverviewScreenStacked(
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
     val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
+    val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(false) }
@@ -109,6 +110,7 @@ fun OverviewScreenStacked(
                 tempTargetReason = tempTargetReason,
                 iobUiState = iobUiState,
                 cobUiState = cobUiState,
+                tbrUiState = tbrUiState,
                 onNavigate = onNavigate,
                 modifier = Modifier
                     .weight(1f)
