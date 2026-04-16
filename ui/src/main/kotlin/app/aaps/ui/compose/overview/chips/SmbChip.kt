@@ -36,21 +36,21 @@ internal fun SmbChip(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = AapsSpacing.medium, vertical = AapsSpacing.small)
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = AapsSpacing.small)
         ) {
             if (showIcon) {
                 Icon(
                     imageVector = IcSmb,
                     contentDescription = null,
                     tint = ElementType.INSULIN.color(),
-                    modifier = Modifier.size(AapsSpacing.chipIconSize)
+                    modifier = Modifier.size(20.dp)
                 )
             }
             Text(
                 text = state.text,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(start = if (showIcon) AapsSpacing.medium else 0.dp)
+                modifier = Modifier.padding(start = if (showIcon) 4.dp else 0.dp)
             )
         }
     }

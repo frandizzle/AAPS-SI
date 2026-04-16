@@ -36,21 +36,21 @@ internal fun TbrChip(
         val chipStyle = MaterialTheme.typography.bodySmall // Adjust to match Iob/Cob chips
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = AapsSpacing.medium, vertical = AapsSpacing.small)
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = AapsSpacing.small)
         ) {
             if (showIcon) {
                 Icon(
                     imageVector = state.arrow.icon,
                     contentDescription = null,
                     tint = ElementType.INSULIN.color(),
-                    modifier = Modifier.size(AapsSpacing.chipIconSize)
+                    modifier = Modifier.size(20.dp)
                 )
             }
             Text(
                 text = String.format(Locale.getDefault(), "%.2f U/h", state.rate),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = chipStyle,
-                modifier = Modifier.padding(start = if (showIcon) AapsSpacing.medium else 0.dp)
+                modifier = Modifier.padding(start = if (showIcon) 4.dp else 0.dp)
             )
         }
     }
