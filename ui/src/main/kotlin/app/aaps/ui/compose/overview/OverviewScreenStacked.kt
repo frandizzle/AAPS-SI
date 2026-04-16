@@ -60,7 +60,6 @@ fun OverviewScreenStacked(
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
-    val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
     val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
@@ -109,7 +108,6 @@ fun OverviewScreenStacked(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 iobUiState = iobUiState,
-                cobUiState = cobUiState,
                 tbrUiState = tbrUiState,
                 onNavigate = onNavigate,
                 modifier = Modifier
