@@ -13,7 +13,6 @@ import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
 import app.aaps.plugins.aps.smartInsulin.ProfileLearner
 import app.aaps.plugins.aps.openAPSSMB.OpenAPSSMBPlugin
 import app.aaps.plugins.automation.AutomationPlugin
-import app.aaps.plugins.configuration.configBuilder.ConfigBuilderPlugin
 import app.aaps.plugins.constraints.bgQualityCheck.BgQualityCheckPlugin
 import app.aaps.plugins.constraints.dstHelper.DstHelperPlugin
 import app.aaps.plugins.constraints.objectives.ObjectivesPlugin
@@ -348,12 +347,6 @@ abstract class PluginsListModule {
     @IntoMap
     @IntKey(479)
     abstract fun bindRandomBgPlugin(plugin: RandomBgPlugin): PluginBase
-
-    @Binds
-    @AllConfigs
-    @IntoMap
-    @IntKey(490)
-    abstract fun bindConfigBuilderPlugin(plugin: ConfigBuilderPlugin): PluginBase
 
     @Binds
     @AllConfigs

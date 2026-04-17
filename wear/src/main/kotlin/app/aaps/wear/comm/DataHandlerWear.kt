@@ -37,6 +37,7 @@ import app.aaps.wear.complications.BrCobIobComplicationExt2
 import app.aaps.wear.complications.BrComplication
 import app.aaps.wear.complications.BrIobComplication
 import app.aaps.wear.complications.BrTtComplication
+import app.aaps.wear.complications.TargetComplication
 import app.aaps.wear.complications.CobDetailedComplication
 import app.aaps.wear.complications.CobIconComplication
 import app.aaps.wear.complications.CobIobComplication
@@ -497,6 +498,7 @@ class DataHandlerWear @Inject constructor(
             BrComplication::class.java,
             BrIobComplication::class.java,
             BrTtComplication::class.java,
+            TargetComplication::class.java,
             BrCobIobComplication::class.java,
             BrCobIobComplicationExt1::class.java,
             BrCobIobComplicationExt2::class.java,

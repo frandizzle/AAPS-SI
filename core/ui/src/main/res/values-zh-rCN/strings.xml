@@ -285,10 +285,6 @@
     <string name="current_insulin">当前已激活</string>
     <string name="change_insulin">更改</string>
     <string name="select_insulin_description">选择您要注入泵中的胰岛素。激活/启动后，将应用配置切换。</string>
-    <string name="bolus_delivered">%1$.2fU / %2$.2fU</string>
-    <string name="bolus_delivered_CU">%1$.2fCU / %2$.2fCU</string>
-    <string name="pump_insulin_cu">%1$.2f CU</string>
-    <string name="pump_insulin_cu1">%1$.1f CU</string>
     <string name="selected_insulin">已选择的胰岛素：%1$s</string>
     <string name="record_insulin_hint">如果使用笔注射胰岛素，请从下方选择正确的胰岛素类型。剂量始终以国际单位表示。</string>
     <!--    ProfileSwitch-->
@@ -418,6 +414,7 @@
     <string name="arrow_center">中心</string>
     <!--    Command-->
     <string name="connectiontimedout">连接超时</string>
+    <string name="pump_not_configured">泵没有配置</string>
     <!--    PumpEnactResult-->
     <string name="enacted">设定</string>
     <string name="comment">评论</string>
@@ -1019,6 +1016,8 @@
     <string name="graph_edit">编辑图表</string>
     <string name="graph_number">图表 %1$d</string>
     <string name="graph_bg">血糖图表</string>
+    <string name="graph_height">图表高度 [dp]</string>
+    <string name="predictions_shortname" comment="Short label for Predictions graph series">预测</string>
     <string name="basal_shortname" comment="Short label for Basal, used in graph labels">BAS</string>
     <!-- Graph series short names (used as graph labels, keep very short) -->
     <string name="deviation_shortname" comment="Short label for Deviations graph series">DEV</string>

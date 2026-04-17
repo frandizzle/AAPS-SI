@@ -18,6 +18,7 @@ import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -38,11 +39,11 @@ class LoopActionViewModel @Inject constructor(
     private val activePlugin: ActivePlugin,
     private val profileFunction: ProfileFunction,
     private val rh: ResourceHelper,
-    private val rxBus: RxBus
+    rxBus: RxBus
 ) : ViewModel() {
 
-    val uiState: StateFlow<LoopActionUiState>
-        field = MutableStateFlow(LoopActionUiState())
+    private val _uiState = MutableStateFlow(LoopActionUiState())
+    val uiState: StateFlow<LoopActionUiState> = _uiState.asStateFlow()
 
     init {
         rxBus.toFlow(EventLoopUpdateGui::class.java)
@@ -75,11 +76,11 @@ class LoopActionViewModel @Inject constructor(
             loop.runningMode == RM.Mode.OPEN_LOOP &&
             (loop as PluginBase).isEnabled()
 
-        uiState.update {
+        _uiState.update {
             if (available) {
                 LoopActionUiState(
                     actionAvailable = true,
-                    request = lastRun?.constraintsProcessed?.resultAsString().orEmpty(),
+                    request = lastRun.constraintsProcessed?.resultAsString().orEmpty(),
                     reason = rh.gs(app.aaps.ui.R.string.loop_accept_set_basal_question)
                 )
             } else {
