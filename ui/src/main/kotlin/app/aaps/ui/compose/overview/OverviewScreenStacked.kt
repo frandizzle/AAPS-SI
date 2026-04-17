@@ -32,6 +32,7 @@ import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
+import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 
 @Composable
 fun OverviewScreenStacked(
@@ -108,14 +109,25 @@ fun OverviewScreenStacked(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
-                iobUiState = iobUiState,
-                tbrUiState = tbrUiState,
-                smbUiState = smbUiState,
                 onNavigate = onNavigate,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 8.dp),
-                siOverviewState = siOverviewState
+                    .padding(start = 8.dp)
+            )
+        }
+
+        IobCobChipsRow(
+            iobUiState = iobUiState,
+            tbrUiState = tbrUiState,
+            smbUiState = smbUiState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+        )
+        siOverviewState?.let {
+            SmartInsulinStatusChip(
+                state = it,
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
 
