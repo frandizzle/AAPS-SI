@@ -482,7 +482,7 @@ fun SmartInsulinScreen(
                             val isfNote = if (isfRaised) " — less insulin per BG gap at this hour" else ""
                             val basNote = if (basalTrimmed) " — trimmed by learner" else ""
 
-                            nudgeHeadline = "Running lighter than profile for this hour"
+                            nudgeHeadline = "Running less insulin than profile for this hour"
                             nudgeDetail   = "Learned values are pulling back insulin delivery:\n" +
                                 "• ISF: $curIsf (profile $profIsf)$isfNote\n" +
                                 "• Basal: $curBas (profile $profBas)$basNote\n\n" +
@@ -490,8 +490,8 @@ fun SmartInsulinScreen(
                         }
                         // Structurally delivering more insulin than profile (ISF reduced)
                         isfReduced -> {
-                            nudgeHeadline = "Running tighter than profile for this hour"
-                            nudgeDetail   = "This hour has learned a stricter ISF:\n" +
+                            nudgeHeadline = "Running more insulin than profile for this hour"
+                            nudgeDetail   = "This hour has learned a lower ISF:\n" +
                                 "• ISF: $curIsf (profile $profIsf) — more insulin per BG gap\n" +
                                 "• Basal: $curBas (profile $profBas)\n\n" +
                                 "Pattern detected — BG typically needs more correction at this hour."
