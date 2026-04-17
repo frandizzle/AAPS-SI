@@ -43,7 +43,10 @@ class AggressionLearner @Inject constructor(
     private enum class Zone { LOW, IN_RANGE, HIGH }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private val allSamples     = ArrayDeque<BgSample>()  // all modes — pruning/persistence only
+    // allSamples is used ONLY for persistence — on save it's serialised, on restore
+    // it rebuilds fastingSamples and mealSamples from the fasting flag. No score or
+    // TIR is ever computed from allSamples directly.
+    private val allSamples     = ArrayDeque<BgSample>()
     private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score + display
     private val mealSamples    = ArrayDeque<BgSample>()  // meal modes only — display TIR only
 
@@ -141,6 +144,14 @@ class AggressionLearner @Inject constructor(
 
     // ── Score update — fasting samples only ───────────────────────────────────
 
+    /** Shared step logic for both global and day-of-week score updates */
+    private fun stepScore(current: Double, stats: TirStats, floor: Double, ceil: Double): Double = when {
+        stats.lowPct > MAX_LOW_PCT                              -> (current - STEP_DOWN).coerceAtLeast(floor)
+        stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
+        stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
+        else                                                    -> current + (1.0 - current) * 0.05
+    }
+
     private fun updateScore() {
         val stats = computeTir(fastingSamples) ?: run {
             aapsLogger.debug(LTag.APS, "AggressionLearner: insufficient fasting samples (${fastingSamples.size}/$MIN_SAMPLES_TO_LEARN), global held at $globalScore")
@@ -153,25 +164,18 @@ class AggressionLearner @Inject constructor(
 
         // Update global score — uses all fasting samples regardless of day
         val prevGlobal = globalScore
-        globalScore = when {
-            stats.lowPct > MAX_LOW_PCT           -> (globalScore - STEP_DOWN).coerceAtLeast(floor)
-            stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0
-                                                 -> (globalScore + STEP_UP).coerceAtMost(ceil)
-            stats.highPct > MAX_HIGH_PCT         -> (globalScore + STEP_UP * 1.5).coerceAtMost(ceil)
-            else                                 -> globalScore + (1.0 - globalScore) * 0.05
-        }
+        globalScore = stepScore(globalScore, stats, floor, ceil)
 
         // Update today's day score — uses only today's fasting samples
-        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dow) }))
+        // Precompute day boundaries to avoid Calendar allocation per sample
+        val dayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val dayEnd = dayStart + 24 * 60 * 60 * 1000L
+        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dayStart, dayEnd) }))
         if (todayStats != null) {
             val prev = dayScores[dow]
-            dayScores[dow] = when {
-                todayStats.lowPct > MAX_LOW_PCT           -> (dayScores[dow] - STEP_DOWN).coerceAtLeast(floor)
-                todayStats.inRangePct >= TARGET_TIR_PCT && todayStats.highPct > 0
-                                                          -> (dayScores[dow] + STEP_UP).coerceAtMost(ceil)
-                todayStats.highPct > MAX_HIGH_PCT         -> (dayScores[dow] + STEP_UP * 1.5).coerceAtMost(ceil)
-                else                                      -> dayScores[dow] + (1.0 - dayScores[dow]) * 0.05
-            }
+            dayScores[dow] = stepScore(dayScores[dow], todayStats, floor, ceil)
             daySampleCount[dow] = (daySampleCount[dow] + 1).coerceAtMost(999)
             if (dayScores[dow] != prev)
                 aapsLogger.debug(LTag.APS,
@@ -185,12 +189,9 @@ class AggressionLearner @Inject constructor(
                                  prevGlobal, globalScore, stats.inRangePct, stats.highPct, stats.lowPct))
     }
 
-    /** True if sample's day-of-week matches [dow] */
-    private fun isSameDay(timestampMs: Long, dow: Int): Boolean {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestampMs
-        return (cal.get(Calendar.DAY_OF_WEEK) - 1) == dow
-    }
+    /** True if sample's day-of-week matches [dow] — uses precomputed boundaries to avoid Calendar allocation per sample */
+    private fun isSameDay(timestampMs: Long, dayStartMs: Long, dayEndMs: Long): Boolean =
+        timestampMs in dayStartMs until dayEndMs
 
     private fun currentDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
 

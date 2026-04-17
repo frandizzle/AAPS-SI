@@ -62,7 +62,6 @@ class UamController @Inject constructor(
     private var lastUamMode:    MealMode? = null
     private var lastUamTimeMs:  Long      = 0L
     private var lastUamTriggerCount       = 0
-    private var previousMealMode: MealMode?  = null  // for expiry transition detection
     private var lastResolvedMode: MealMode? = null  // for window-change streak reset
 
     // Stuck-high state for UAM_PROTEIN_FAT detection
@@ -176,7 +175,6 @@ class UamController @Inject constructor(
         softLandingBypass:  Boolean = false,
         bgTimestampMs:      Long    = 0L
     ) {
-        previousMealMode           = currentMealMode
         currentlyInPostMealLockout = inPostMealLockout
         currentlyCgmWarmup         = cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock)
         currentlyHighTempTarget    = highTempTarget
