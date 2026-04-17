@@ -77,6 +77,15 @@ class UamController @Inject constructor(
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
+    // Rebound window transition tracking — prevents post-low counter-regulatory hyperglycemia
+    // from triggering UAM/P/F in the first hour after recovery ends. When BG crashes low,
+    // the liver releases glucagon → BG rebounds high → can get stuck above target for up to
+    // an hour. Without this lockout, that physiological rebound looks like an unannounced
+    // meal or P/F tail, causing spurious correction boluses that drive another low.
+    // NOT persisted across app restarts — worst case reverts to pre-fix behaviour (rare
+    // and only if app restarts in the exact lockout window).
+    private var wasInReboundWindow         = false
+    private var reboundExpiredMs           = 0L
 
     init {
         // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts.
@@ -108,6 +117,12 @@ class UamController @Inject constructor(
     companion object {
         // How long after a real low to block UAM
         private const val LOW_BLOCK_MINS            = 90L
+        // How long to block UAM/P/F after the rebound recovery window itself expires.
+        // Covers cases where the rebound window extends past LOW_BLOCK_MINS (rollercoaster
+        // extension, or user-configured longer window) — counter-regulatory hyperglycemia
+        // can keep BG stuck above target for up to ~60 min post-rebound, and P/F would
+        // misread that as a fat/protein tail. Blocks both regular UAM and P/F triggering.
+        private const val POST_REBOUND_LOCKOUT_MINS = 60L
         // shortAvgDelta must be at least this fraction of riseMinDelta
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
         // Wobble tolerance: how far below trigger threshold a single reading can dip
@@ -205,6 +220,17 @@ class UamController @Inject constructor(
             aapsLogger.debug(LTag.APS, "UAM: meal mode ended — P/F armed for fat/protein tail (persisted)")
         }
 
+        // Track when rebound recovery window expires — starts a post-rebound lockout that
+        // blocks UAM/P/F for POST_REBOUND_LOCKOUT_MINS to prevent counter-regulatory
+        // hyperglycemia (post-low liver glucagon rebound) from triggering false corrections.
+        if (wasInReboundWindow && !inReboundWindow) {
+            reboundExpiredMs = System.currentTimeMillis()
+            aapsLogger.debug(LTag.APS,
+                             "UAM: rebound window expired — P/F and UAM locked out for ${POST_REBOUND_LOCKOUT_MINS}min " +
+                                 "to avoid counter-regulatory rebound triggering false corrections")
+        }
+        wasInReboundWindow = inReboundWindow
+
         if (!preferences.get(BooleanKey.ApsSmartInsulinUamEnabled)) {
             resetStreak()
             stuckHighReadings = 0
@@ -269,15 +295,19 @@ class UamController @Inject constructor(
             aapsLogger.debug(LTag.APS, "UAM: soft landing bypass active — detection allowed during rebound")
         }
 
-        // ── Safety block: recent low / rebound ───────────────────────────────
+        // ── Safety block: recent low / rebound / post-rebound lockout ────────
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
-        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) && !softLandingBypass
+        val msSincePostRebound = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
+        val postReboundLockoutMs = POST_REBOUND_LOCKOUT_MINS * 60_000L
+        val inPostReboundLockout = msSincePostRebound < postReboundLockoutMs
+        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || inPostReboundLockout) && !softLandingBypass
         if (blockedByLow) {
             if (consecutiveRiseReadings > 0) {
                 val reason = when {
                     inReboundWindow         -> "rebound window active"
                     bgWentLow               -> "recent low (bgWentLow)"
+                    inPostReboundLockout    -> "post-rebound lockout ${msSincePostRebound / 60_000}min < ${POST_REBOUND_LOCKOUT_MINS}min"
                     else                    -> "low ${msSinceLow / 60_000}min ago < ${LOW_BLOCK_MINS}min block"
                 }
                 aapsLogger.debug(LTag.APS, "UAM: blocked — $reason, streak reset")
@@ -437,7 +467,18 @@ class UamController @Inject constructor(
 
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
-        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs) {
+        val msSincePostRebound = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
+        val postReboundLockoutMs = POST_REBOUND_LOCKOUT_MINS * 60_000L
+        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || msSincePostRebound < postReboundLockoutMs) {
+            if (stuckHighReadings > 0) {
+                val reason = when {
+                    inReboundWindow                             -> "rebound window active"
+                    bgWentLow                                   -> "recent low"
+                    msSincePostRebound < postReboundLockoutMs   -> "post-rebound lockout ${msSincePostRebound / 60_000}min < ${POST_REBOUND_LOCKOUT_MINS}min"
+                    else                                        -> "low ${msSinceLow / 60_000}min ago < ${LOW_BLOCK_MINS}min"
+                }
+                aapsLogger.debug(LTag.APS, "UAM_PROTEIN_FAT: streak reset — $reason")
+            }
             stuckHighReadings = 0
             return
         }
@@ -527,6 +568,10 @@ class UamController @Inject constructor(
                         appendLine("  P/F stuck: off (meal mode active — will arm after expiry)")
                     lastMealEndedMs == 0L ->
                         appendLine("  P/F stuck: off (waiting for first meal today)")
+                    reboundExpiredMs > 0L && (System.currentTimeMillis() - reboundExpiredMs) < POST_REBOUND_LOCKOUT_MINS * 60_000L -> {
+                        val leftMins = POST_REBOUND_LOCKOUT_MINS - (System.currentTimeMillis() - reboundExpiredMs) / 60_000L
+                        appendLine("  P/F stuck: off (post-rebound lockout — ${leftMins}min left)")
+                    }
                     else -> {
                         val avgStr   = fmtDelta(lastStuckAvgDelta)
                         val bgStr    = fmtBg(lastStuckBgMmol)
@@ -556,6 +601,11 @@ class UamController @Inject constructor(
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
+            reboundExpiredMs > 0L && (System.currentTimeMillis() - reboundExpiredMs) < POST_REBOUND_LOCKOUT_MINS * 60_000L &&
+                consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0 -> {
+                val leftMins = POST_REBOUND_LOCKOUT_MINS - (System.currentTimeMillis() - reboundExpiredMs) / 60_000L
+                "UAM: off (post-rebound lockout — ${leftMins}min left)"
+            }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
                 val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
