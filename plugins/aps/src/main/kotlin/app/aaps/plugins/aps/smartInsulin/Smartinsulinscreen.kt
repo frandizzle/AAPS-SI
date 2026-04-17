@@ -476,15 +476,16 @@ fun SmartInsulinScreen(
                                 "• ISF: $curIsf (profile $profIsf)\n" +
                                 "• Signal: ${d.lastBasalSignal}"
                         }
-                        // Structurally delivering less insulin than profile (basal below, or ISF raised)
+// Structurally delivering less insulin than profile (basal below, or ISF raised)
                         basalTrimmed || isfRaised -> {
-                            val notes = buildList {
-                                if (isfRaised)    add("ISF raised to $curIsf (profile $profIsf) — less insulin per BG gap at this hour")
-                                if (basalTrimmed) add("Basal trimmed to $curBas (profile $profBas)")
-                            }
+                            // Add helpful context tags if the value is actually the one doing the trimming
+                            val isfNote = if (isfRaised) " — less insulin per BG gap at this hour" else ""
+                            val basNote = if (basalTrimmed) " — trimmed by learner" else ""
+
                             nudgeHeadline = "Running lighter than profile for this hour"
                             nudgeDetail   = "Learned values are pulling back insulin delivery:\n" +
-                                notes.joinToString("\n") { "• $it" } + "\n\n" +
+                                "• ISF: $curIsf (profile $profIsf)$isfNote\n" +
+                                "• Basal: $curBas (profile $profBas)$basNote\n\n" +
                                 "Aggression learner neutral — delivery has matched this hour's long-term pattern."
                         }
                         // Structurally delivering more insulin than profile (ISF reduced)
