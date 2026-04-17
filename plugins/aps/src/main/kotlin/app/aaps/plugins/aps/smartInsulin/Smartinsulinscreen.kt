@@ -139,7 +139,7 @@ fun SmartInsulinScreen(
                 "Current hour used for circadian adjustments"
             )
             val modeColor = if (d.mealMode == "Fasting") MaterialTheme.colorScheme.onSurface
-            else Color(0xFF64B5F6)
+            else StatusInfo
             SiRow("Mode: ${d.mealMode}",
                   d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                   primaryColor = modeColor)
@@ -157,12 +157,12 @@ fun SmartInsulinScreen(
             // Pre-bolus 1 delivered
             if (d.mealMode != "Fasting" && (d.activeDoseU ?: 0.0) > 0.0)
                 SiRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U", null,
-                      primaryColor = Color(0xFF43A047))
+                      primaryColor = StatusGood)
 
             // Pre-bolus 2 delivered / pending gates
             if (d.mealMode != "Fasting" && (d.activePb2DoseU ?: 0.0) > 0.0)
                 SiRow("Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
-                      "Second bolus delivered as scheduled.", primaryColor = Color(0xFF43A047))
+                      "Second bolus delivered as scheduled.", primaryColor = StatusGood)
 
             if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
                 val gate = d.pb2GateData
@@ -176,7 +176,7 @@ fun SmartInsulinScreen(
                     gate != null -> "Pre-bolus 2 — waiting for safety gates"
                     else         -> "Pre-bolus 2"
                 }
-                SiRow(pb2Primary, null, primaryColor = if (isActive) Color(0xFF43A047) else Color(0xFF64B5F6))
+                SiRow(pb2Primary, null, primaryColor = if (isActive) StatusGood else StatusInfo)
 
                 if (gate != null) {
                     val isMmolG = gate.isMmol
@@ -190,16 +190,16 @@ fun SmartInsulinScreen(
                     val shortOk = gate.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
                     SiRow("${if (bgOk) "✓" else "✗"} BG: ${fmtBg(gate.bgMgdl)} (${if (bgOk) "above target ✓" else "${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting"})",
                           "Must be above profile target ${fmtBg(gate.profileTargetMgdl)}",
-                          primaryColor = if (bgOk) Color(0xFF43A047) else Color(0xFFE53935))
+                          primaryColor = if (bgOk) StatusGood else StatusBad)
                     SiRow("${if (iobOk) "✓" else "✗"} IOB: ${"%.2f".format(gate.iobU)}U / ${"%.2f".format(gate.maxIobU)}U (${if (iobOk) "${"%.2f".format(maxAllowedIob - gate.iobU)}U headroom" else "IOB too high — waiting"})",
                           "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${"%.2f".format(maxAllowedIob)}U)",
-                          primaryColor = if (iobOk) Color(0xFF43A047) else Color(0xFFE53935))
+                          primaryColor = if (iobOk) StatusGood else StatusBad)
                     SiRow("${if (deltaOk) "✓" else "✗"} Delta: ${fmtDelta(gate.deltaMgdl)} (${if (deltaOk) "not falling fast" else "falling — waiting"})",
                           "Blocked below ${fmtDelta(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}",
-                          primaryColor = if (deltaOk) Color(0xFF43A047) else Color(0xFFE53935))
+                          primaryColor = if (deltaOk) StatusGood else StatusBad)
                     SiRow("${if (shortOk) "✓" else "✗"} 15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)} (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
                           "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}",
-                          primaryColor = if (shortOk) Color(0xFF43A047) else Color(0xFFE53935))
+                          primaryColor = if (shortOk) StatusGood else StatusBad)
                 }
             }
 
@@ -216,7 +216,7 @@ fun SmartInsulinScreen(
 
         // ── Rebound card ───────────────────────────────────────────────
         if (d.inReboundWindow || d.bgWentLow) {
-            SiCard(title = "Low Recovery", titleColor = Color(0xFFFB8C00)) {
+            SiCard(title = "Low Recovery", titleColor = StatusWarn) {
                 if (d.inReboundWindow) {
                     val elapsedMins = d.reboundMins.toDouble()
                     val windowMins  = d.totalReboundWindowMins.toDouble()
@@ -231,33 +231,33 @@ fun SmartInsulinScreen(
                         "⚠ Recovery in progress — ${elapsedInt}min of ${windowMins.toInt()}min"
                     else
                         "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
-                    SiRow(headline, null, primaryColor = Color(0xFFFB8C00))
+                    SiRow(headline, null, primaryColor = StatusWarn)
                     SiRow("TBR capped at ${tbrPct}% of normal",
                           "Starts at 30% and ramps back to 100% over ${windowMins.toInt()} minutes.\nPrevents insulin stacking after a low.")
                     if (smbUnlockIn > 0) {
                         SiRow("SMBs blocked — unlocks in ~${smbUnlockIn}min",
                               "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
-                              primaryColor = Color(0xFFE53935))
+                              primaryColor = StatusBad)
                     } else {
                         SiRow("SMBs restored ✓",
                               "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
-                              primaryColor = Color(0xFF43A047))
+                              primaryColor = StatusGood)
                     }
                     if (d.consecutiveRollercoasters >= 1) {
                         val extMins = (windowMins - baseMins).toInt()
                         SiRow("Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min",
                               "Base: ${baseMins.toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\nExtension grows with each consecutive rollercoaster (max +45min).\nResets after 2h with no further rollercoasters.",
-                              primaryColor = Color(0xFFFB8C00))
+                              primaryColor = StatusWarn)
                     }
                     if (d.mealMode != "Fasting") {
                         SiRow("Meal mode active — low recovery bypassed until window finishes",
                               "Recovery protection (TBR taper, SMB gate) continues in background.\nMeal mode ISF and dosing applied on top. Recovery ends in ${minsLeft}min.",
-                              primaryColor = Color(0xFF64B5F6))
+                              primaryColor = StatusInfo)
                     }
                     if (d.softLandingBypass) {
                         SiRow("Soft landing — meal detection still active",
                               "The low was borderline (not a crash). UAM can still fire during recovery in case you eat.",
-                              primaryColor = Color(0xFF64B5F6))
+                              primaryColor = StatusInfo)
                     }
                     if (d.minBgDuringLow < Double.MAX_VALUE) {
                         val lowStr = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol" else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
@@ -271,11 +271,11 @@ fun SmartInsulinScreen(
                     } else ""
                     SiRow("⚠ BG is below low guard — waiting for recovery",
                           "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically.$extNote",
-                          primaryColor = Color(0xFFE53935))
+                          primaryColor = StatusBad)
                     if (d.mealMode != "Fasting") {
                         SiRow("✓ Low recovery bypassed — meal mode active (${d.mealMode})",
                               "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
-                              primaryColor = Color(0xFF43A047))
+                              primaryColor = StatusGood)
                     }
                     if (d.minBgDuringLow < Double.MAX_VALUE) {
                         val lowStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol" else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
@@ -299,9 +299,9 @@ fun SmartInsulinScreen(
                 else "${"%.0f".format(d.avgBgMgdl24h)} mg/dL"
                 val windowNote = if (d.bgWindowHours < 24) " (${d.bgWindowHours}h data)" else ""
                 val hba1cColor = when {
-                    d.estimatedHba1c < 6.5 -> Color(0xFF43A047)
-                    d.estimatedHba1c < 7.5 -> Color(0xFFFB8C00)
-                    else -> Color(0xFFE53935)
+                    d.estimatedHba1c < 6.5 -> StatusGood
+                    d.estimatedHba1c < 7.5 -> StatusWarn
+                    else -> StatusBad
                 }
                 Spacer(Modifier.height(8.dp))
                 Text("Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  avg: $avgStr$windowNote",
@@ -317,22 +317,22 @@ fun SmartInsulinScreen(
             Spacer(Modifier.height(8.dp))
             val (learningPrimary, learningColor) = when {
                 d.learningState.startsWith("off") ->
-                    "Learning paused — ${d.learningState.removePrefix("off: ").trim()}" to Color(0xFFFB8C00)
+                    "Learning paused — ${d.learningState.removePrefix("off: ").trim()}" to StatusWarn
                 d.learningState == "limited" ->
-                    "Limited — meal mode active, only learning Peak/DIA" to Color(0xFFFB8C00)
-                else -> "Learning active" to Color(0xFF43A047)
+                    "Limited — meal mode active, only learning Peak/DIA" to StatusWarn
+                else -> "Learning active" to StatusGood
             }
             SiRow(learningPrimary,
                   "SmartInsulin continuously refines your insulin timing, basal rate, and aggressiveness.\nState: ${d.learningState}",
                   primaryColor = learningColor)
             if (d.postMealLockoutMins > 0 && d.mealMode == "Fasting")
                 SiRow("Post-meal pause: ${d.postMealLockoutMins}min remaining",
-                      "BG data after meals is excluded from basal/ISF learning.", primaryColor = Color(0xFFFB8C00))
+                      "BG data after meals is excluded from basal/ISF learning.", primaryColor = StatusWarn)
             SiRow("Activity: ${d.activityLevel}",
                   "HR: ${d.avgHrBpm} bpm avg  •  Steps: ${d.steps5min}/5min")
             if (d.cgmWarmup)
                 SiRow("New sensor — learning paused for first 24h",
-                      "Resumes automatically after 24h.", primaryColor = Color(0xFFFB8C00))
+                      "Resumes automatically after 24h.", primaryColor = StatusWarn)
 
             // Aggression nudge — full detail matching old fragment
             val nudgeParts      = d.lastAggrNudgeStatus.split("|")
@@ -345,12 +345,12 @@ fun SmartInsulinScreen(
             val trimDirection   = nudgeParts.getOrNull(1) ?: ""
             val trimPct         = nudgeParts.getOrNull(2) ?: "0%"
             val nudgeColor = when {
-                nudgeActiveHigh                              -> Color(0xFF4CAF50)
-                nudgeActiveLow                               -> Color(0xFFFB8C00)
-                nudgePaused                                  -> Color(0xFF64B5F6)
-                nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color(0xFF4CAF50)
-                nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color(0xFFFB8C00)
-                d.inReboundWindow || d.bgWentLow             -> Color(0xFFFB8C00)
+                nudgeActiveHigh                              -> StatusGood
+                nudgeActiveLow                               -> StatusWarn
+                nudgePaused                                  -> StatusInfo
+                nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> StatusGood
+                nudgeTrim && trimDirection == "ACTIVE_LOW"   -> StatusWarn
+                d.inReboundWindow || d.bgWentLow             -> StatusWarn
                 else                                         -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val nudgeHeadline: String
@@ -488,7 +488,7 @@ fun SmartInsulinScreen(
             }
         }
 
-         // ── UAM card ───────────────────────────────────────────────────
+        // ── UAM card ───────────────────────────────────────────────────
         SiCard(title = "UAM Auto-Detection") {
             val uamLine = d.uamStatusLine ?: ""
             val uamPart = uamLine.substringBefore(" | P/F:").trim()
@@ -534,10 +534,10 @@ fun SmartInsulinScreen(
             val (pfPrimary, pfColor) = when {
                 pfPart == null                                        -> "P/F detection disabled" to MaterialTheme.colorScheme.onSurfaceVariant
                 pfPart.contains("off")                               -> "P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}" to MaterialTheme.colorScheme.onSurfaceVariant
-                pfPart.contains("armed")                             -> "Armed — will activate after meal expires" to Color(0xFF43A047)
+                pfPart.contains("armed")                             -> "Armed — will activate after meal expires" to StatusGood
                 pfPart.contains("/") && pfPart.contains("stuck")     -> {
                     val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
-                    "BG stuck high — counting readings ($count)" to Color(0xFFFB8C00)
+                    "BG stuck high — counting readings ($count)" to StatusWarn
                 }
                 else                                                  -> "P/F: $pfPart" to MaterialTheme.colorScheme.onSurface
             }
@@ -549,7 +549,7 @@ fun SmartInsulinScreen(
             if (d.stftActive && d.stftStatus != null) {
                 SiRow("Active — gently nudging the loop to correct",
                       d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
-                      primaryColor = Color(0xFFFB8C00))
+                      primaryColor = StatusWarn)
             } else {
                 val inactiveReason = when {
                     d.stftStatus?.contains("high temp target") == true -> "Inactive — high temp target set"
@@ -579,7 +579,7 @@ fun SmartInsulinScreen(
                         onClick = { selectedDow = d2 },
                         modifier = Modifier.weight(1f).height(32.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
+                            containerColor = if (selected) StatusGood else MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
                         ),
                         contentPadding = PaddingValues(0.dp)
@@ -625,9 +625,9 @@ fun SmartInsulinScreen(
                 val isfStr  = if (d.isMmol) "%.2f".format(finalIsf / 18.0f) else "%.1f".format(finalIsf)
                 val basStr  = "%.3f".format(finalBasal)
                 // Color: lower ISF = more sensitive = blue, higher = less sensitive = orange
-                fun isfColor(mult: Float) = when { mult < 0.95f -> Color(0xFF64B5F6); mult > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) }
-                fun basColor(mult: Float) = when { mult < 0.95f -> Color(0xFF64B5F6); mult > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) }
-                fun confColor(p: Int) = when { p >= 60 -> Color(0xFF43A047); p >= 30 -> Color(0xFFFB8C00); else -> Color(0xFFE53935) }
+                fun isfColor(mult: Float) = when { mult < 0.95f -> StatusInfo; mult > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) }
+                fun basColor(mult: Float) = when { mult < 0.95f -> StatusInfo; mult > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) }
+                fun confColor(p: Int) = when { p >= 60 -> StatusGood; p >= 30 -> StatusWarn; else -> StatusBad }
                 val isCur  = selectedDow == todayDow && hr == currentHr
                 val rowBg  = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 Row(modifier = Modifier.fillMaxWidth().background(rowBg).padding(vertical = 1.dp)) {
@@ -637,7 +637,7 @@ fun SmartInsulinScreen(
                     Text(isfStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = isfColor(isfMult))
                     Text(basStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = basColor(basMult))
                     Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp,
-                         color = when { ceil < 0.95f -> Color(0xFF64B5F6); ceil > 1.05f -> Color(0xFFFB8C00); else -> Color(0xFFAAAAAA) })
+                         color = when { ceil < 0.95f -> StatusInfo; ceil > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) })
                     Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(modifier = Modifier.width(40.dp).height(6.dp)
@@ -665,7 +665,7 @@ fun SmartInsulinScreen(
                 val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val col = when { n >= 5 -> Color(0xFF43A047); n >= 1 -> Color(0xFFFB8C00); else -> Color(0xFF888888) }
+                val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
                 // Highlight the active insulin profile — match mode label against profile name
                 // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
                 val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
@@ -789,16 +789,16 @@ private fun TirSection(label: String, tirRaw: String, prefix: String) {
         ) {
             val totalWidth = maxWidth
             Row(modifier = Modifier.fillMaxSize()) {
-                if (lowPct  > 0f) Box(Modifier.width(totalWidth * (lowPct  / total)).fillMaxHeight().background(Color(0xFFE53935)))
-                if (inPct   > 0f) Box(Modifier.width(totalWidth * (inPct   / total)).fillMaxHeight().background(Color(0xFF43A047)))
-                if (highPct > 0f) Box(Modifier.width(totalWidth * (highPct / total)).fillMaxHeight().background(Color(0xFFFB8C00)))
+                if (lowPct  > 0f) Box(Modifier.width(totalWidth * (lowPct  / total)).fillMaxHeight().background(StatusBad))
+                if (inPct   > 0f) Box(Modifier.width(totalWidth * (inPct   / total)).fillMaxHeight().background(StatusGood))
+                if (highPct > 0f) Box(Modifier.width(totalWidth * (highPct / total)).fillMaxHeight().background(StatusWarn))
             }
         }
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (inPct   > 0f) Text("${inPct.toInt()}% in range",  fontSize = 11.sp, color = Color(0xFF43A047))
-            if (highPct > 0f) Text("${highPct.toInt()}% high",    fontSize = 11.sp, color = Color(0xFFFB8C00))
-            if (lowPct  > 0f) Text("${lowPct.toInt()}% low",      fontSize = 11.sp, color = Color(0xFFE53935))
+            if (inPct   > 0f) Text("${inPct.toInt()}% in range",  fontSize = 11.sp, color = StatusGood)
+            if (highPct > 0f) Text("${highPct.toInt()}% high",    fontSize = 11.sp, color = StatusWarn)
+            if (lowPct  > 0f) Text("${lowPct.toInt()}% low",      fontSize = 11.sp, color = StatusBad)
         }
     } else {
         Box(modifier = Modifier.fillMaxWidth().height(14.dp)
@@ -820,8 +820,8 @@ private fun aggrDesc(a: Double) = when {
 
 @Composable
 private fun aggrColor(a: Double): Color = when {
-    a > 1.05 -> Color(0xFFFB8C00)
-    a < 0.95 -> Color(0xFF64B5F6)
+    a > 1.05 -> StatusWarn
+    a < 0.95 -> StatusInfo
     else     -> MaterialTheme.colorScheme.onSurface
 }
 
