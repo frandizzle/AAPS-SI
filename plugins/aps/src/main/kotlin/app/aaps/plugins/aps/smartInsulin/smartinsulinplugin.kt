@@ -76,7 +76,7 @@ import kotlin.math.floor
 open class SmartInsulinPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
-    val rxBus: RxBus,
+    private val rxBus: RxBus,
     private val config: Config,
     private val profileFunction: ProfileFunction,
     private val profileUtil: ProfileUtil,
@@ -155,9 +155,14 @@ open class SmartInsulinPlugin @Inject constructor(
     var uamEntrySmbsDelivered: Int = 0             // SMBs delivered since current UAM mode activated
     var uamEntryModeStartMs: Long = 0L             // timestamp when current UAM mode started
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
-    // Session-start snapshots for nudge "was" display — captured when hour changes
-    // Uses full composite values so "was" matches what the loop was actually delivering
-    private var nudgeDisplaySessionHour: Int = -1
+    // Session-start snapshots for nudge "was" display — captured on transition from
+    // INACTIVE/PAUSED → any active state (ACTIVE_HIGH, ACTIVE_LOW, TRIM). Captures the
+    // pre-nudge baseline so "was" reflects what the loop was delivering BEFORE the
+    // current nudge started applying corrections. Uses full composite values so "was"
+    // matches what the loop was actually delivering.
+    // Previous implementation keyed on hour change, which clobbered the baseline at
+    // hour boundaries during long-running nudges — producing stale/misleading "was" values.
+    private var lastSeenNudgeState: String = "INACTIVE"
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0   // full profileISF / isfMult at session start
     private var nudgeDisplaySessionBasalU: Double = 0.0    // full profileBasal * basalMult at session start
     // Cached profile values — updated each invoke() so fragmentData() can read without runBlocking
@@ -471,13 +476,34 @@ open class SmartInsulinPlugin @Inject constructor(
         val rawFinalBasal     = profileBasal * basalMult
         val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
 
-        // Capture full composite session-start values when hour changes
-        // These are used as "was" in the learning card — includes ALL multipliers
-        if (nudgeDisplaySessionHour != hour) {
-            nudgeDisplaySessionHour   = hour
+        // Capture full composite "was" baseline on nudge state transitions.
+        // Fires when: idle → active, or when active direction flips (ACTIVE_HIGH ↔ ACTIVE_LOW).
+        // Does NOT fire on magnitude changes within the same direction (e.g. TRIM pct updates)
+        // or on hour boundaries during a continuous nudge. This means "was" reliably reflects
+        // the pre-nudge ISF/basal the loop was delivering immediately before the current nudge
+        // session began — not a stale mid-nudge snapshot.
+        val rawNudgeStatus  = circadianLearner.lastAggrNudgeStatus
+        val nudgePrimary    = rawNudgeStatus.substringBefore("|").trim()
+        // Derive a "canonical active direction" — abstracts over TRIM|ACTIVE_HIGH vs ACTIVE_HIGH
+        val currentDirection: String? = when (nudgePrimary) {
+            "ACTIVE_HIGH", "ACTIVE_LOW" -> nudgePrimary
+            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()  // TRIM|ACTIVE_HIGH|... or TRIM|ACTIVE_LOW|...
+            else -> null  // INACTIVE, PAUSED, or anything else → no active direction
+        }
+        val lastDirection: String? = when (lastSeenNudgeState.substringBefore("|").trim()) {
+            "ACTIVE_HIGH", "ACTIVE_LOW" -> lastSeenNudgeState.substringBefore("|").trim()
+            "TRIM" -> lastSeenNudgeState.split("|").getOrNull(1)?.trim()
+            else -> null
+        }
+        val shouldCaptureBaseline = currentDirection != null && currentDirection != lastDirection
+        if (shouldCaptureBaseline) {
             nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
             nudgeDisplaySessionBasalU  = roundedFinalBasal
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
+                                 "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
         }
+        lastSeenNudgeState = rawNudgeStatus
 
         val circRaw = buildString {
             for (h in 0..23) {
@@ -685,24 +711,18 @@ open class SmartInsulinPlugin @Inject constructor(
         val dayEnd     = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayEndHour)
         val nightStart = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightStartHour)
         val nightEnd   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightEndHour)
-        val overStart  = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour)
-        val overEnd    = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour)
-
         // Inclusive end hour — dayEnd=17 means 17:xx is still in the day window.
         // Supports midnight crossing (start > end).
-        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart..dayEnd   else hour >= dayStart   || hour <= dayEnd
-        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd else hour >= nightStart || hour <= nightEnd
-        val inOver  = if (overStart  <= overEnd)  hour in overStart..overEnd   else hour >= overStart  || hour <= overEnd
-
+        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart..dayEnd
+        else hour >= dayStart   || hour <= dayEnd
+        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd
+        else hour >= nightStart || hour <= nightEnd
         val dayIsf   = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key,   UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
         val nightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
-        val overIsf  = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
         val fallback = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key,      UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
-
         return when {
             inDay   && dayIsf   > 0.0 -> dayIsf
             inNight && nightIsf > 0.0 -> nightIsf
-            inOver  && overIsf  > 0.0 -> overIsf
             else                      -> fallback
         }
     }
@@ -1836,10 +1856,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
                     IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
-                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
-                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
-                    IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
-                    IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour
+                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour
                 )
             )
         ),
