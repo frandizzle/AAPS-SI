@@ -563,17 +563,18 @@ fun SmartInsulinScreen(
         // ── UAM card ───────────────────────────────────────────────────
         SiCard(title = "UAM Auto-Detection") {
             val uamLine = d.uamStatusLine ?: ""
-            val uamPart = uamLine.substringBefore(" | P/F:").trim()
 
-            // Remove the optional "[dirty] " prefix so we can strictly check the first word
-            val cleanUamPart = uamPart.removePrefix("[dirty] ").trim()
+            // Strip the "UAM:" prefix right away so our startsWith checks actually work!
+            val uamPart = uamLine.substringBefore(" | P/F:").removePrefix("UAM:").trim()
+
+            // Remove the optional "[dirty]" prefix
+            val cleanUamPart = uamPart.removePrefix("[dirty]").trim()
 
             val (uamPrimary, uamColor) = when {
                 cleanUamPart.startsWith("watching") -> "BG rising — building confirmation streak ↑" to StatusWarn
                 cleanUamPart.startsWith("last")     -> "Meal auto-detected recently" to StatusInfo
                 cleanUamPart.startsWith("armed")    -> "Watching for unannounced meals" to StatusGood
                 cleanUamPart.startsWith("off")      -> {
-                    // Extract the specific reason it's off (e.g., "outside hours" or "new sensor")
                     val reason = cleanUamPart.substringAfter("off").removePrefix(" (").removeSuffix(")").trim()
                     "Auto-detection off — $reason" to MaterialTheme.colorScheme.onSurfaceVariant
                 }
