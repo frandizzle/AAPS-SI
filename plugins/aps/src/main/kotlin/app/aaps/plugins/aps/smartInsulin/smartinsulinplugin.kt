@@ -420,6 +420,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalMultiplier:    Double,
         val profileBasalU:      Double,
         val finalBasalU:        Double,
+        val currentBgMgdl:      Double,    // current BG in mg/dL — for UI defensive-state detection
+        val profileTargetMgdl:  Double,    // current profile target in mg/dL — for UI defensive-state detection
         val lastBasalSignal:    String,
         val lastAggrNudgeStatus: String,
         val lastAccelDebug:     String,
@@ -549,6 +551,11 @@ open class SmartInsulinPlugin @Inject constructor(
             basalMultiplier    = basalMult,
             profileBasalU      = profileBasal,
             finalBasalU        = roundedFinalBasal,
+            // Current BG and target — read from glucose provider at render time, not cached,
+            // so the UI always sees the latest reading. Falls back to 0.0 if CGM offline,
+            // which the UI treats as "data unavailable, skip defensive-state detection".
+            currentBgMgdl      = glucoseStatusProvider.glucoseStatusData?.glucose ?: 0.0,
+            profileTargetMgdl  = cachedProfileTarget,
             lastBasalSignal    = circadianLearner.lastBasalSignal,
             lastAggrNudgeStatus = circadianLearner.lastAggrNudgeStatus,
             lastAccelDebug     = circadianLearner.lastAccelDebug,

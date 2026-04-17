@@ -344,6 +344,20 @@ fun SmartInsulinScreen(
             val nudgeTrim       = nudgeState == "TRIM"
             val trimDirection   = nudgeParts.getOrNull(1) ?: ""
             val trimPct         = nudgeParts.getOrNull(2) ?: "0%"
+            // Defensive-state detection — used below by both color and fallback text.
+            // Fires when the aggression nudge is neutral/silent but the system IS actively
+            // reducing insulin via PredTrim, learned-up ISF, or trimmed basal.
+            val bgBelowTarget   = d.currentBgMgdl > 0.0 && d.profileTargetMgdl > 0.0 &&
+                d.currentBgMgdl < d.profileTargetMgdl
+            val basalTrimmed    = d.finalBasalU > 0.0 && d.profileBasalU > 0.0 &&
+                d.finalBasalU < d.profileBasalU * 0.98
+            val isfRelaxed      = d.isfMultiplier > 1.03
+            val predTrimActive  = d.lastBasalSignal.contains("PredTrim") &&
+                d.lastBasalSignal.contains("proj=-")
+            val showingDefensive = !nudgeActive && !nudgePaused && !nudgeTrim &&
+                !(d.inReboundWindow || d.bgWentLow) &&
+                (predTrimActive || basalTrimmed || isfRelaxed)
+
             val nudgeColor = when {
                 nudgeActiveHigh                              -> StatusGood
                 nudgeActiveLow                               -> StatusWarn
@@ -351,6 +365,7 @@ fun SmartInsulinScreen(
                 nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> StatusGood
                 nudgeTrim && trimDirection == "ACTIVE_LOW"   -> StatusWarn
                 d.inReboundWindow || d.bgWentLow             -> StatusWarn
+                showingDefensive                             -> StatusWarn  // acting defensively (PredTrim / ISF / basal)
                 else                                         -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             val nudgeHeadline: String
@@ -431,8 +446,44 @@ fun SmartInsulinScreen(
                     nudgeDetail    = "BG is below the low guard threshold. Insulin delivery limited.\nShort term: insulin being held back until BG recovers above low guard$hardLow1$hardLow2"
                 }
                 else -> {
-                    nudgeHeadline  = "Insulin levels look right for this hour"
-                    nudgeDetail    = "No consistent over- or under-delivery detected.\nISF and basal learning running on observed BG patterns."
+                    // Defensive-state booleans (bgBelowTarget, basalTrimmed, isfRelaxed,
+                    // predTrimActive) were computed once above and are still in scope here.
+                    when {
+                        // Most informative case: PredTrim firing right now AND BG confirms the concern
+                        predTrimActive && bgBelowTarget -> {
+                            val basalPct = (d.basalMultiplier * 100).toInt()
+                            val isfNote  = if (isfRelaxed) "\n• ISF already less aggressive at this hour (${"%.3f".format(d.isfMultiplier)}×)" else ""
+                            nudgeHeadline = "⬇ Reducing insulin — BG below target"
+                            nudgeDetail   = "Immediate defensive action is active:\n" +
+                                "• Basal trimmed to ${basalPct}% (PredTrim)$isfNote\n" +
+                                "• Signal: ${d.lastBasalSignal}\n\n" +
+                                "Long-term aggression learner is neutral for this hour (${"%.3f".format(d.aggressiveness)}) " +
+                                "— it tracks 24h patterns, not single readings. Short-term trim is handling the current dip."
+                        }
+                        // PredTrim active but BG hasn't dropped below target yet (anticipatory)
+                        predTrimActive -> {
+                            val basalPct = (d.basalMultiplier * 100).toInt()
+                            nudgeHeadline = "⬇ Pre-emptive trim — projected drop detected"
+                            nudgeDetail   = "PredTrim is reducing basal to ${basalPct}% based on projected BG trend.\n" +
+                                "Signal: ${d.lastBasalSignal}\n\n" +
+                                "Long-term aggression neutral for this hour."
+                        }
+                        // No PredTrim but ISF and/or basal are structurally less aggressive
+                        basalTrimmed || isfRelaxed -> {
+                            val notes = buildList {
+                                if (isfRelaxed)   add("ISF ${"%.3f".format(d.isfMultiplier)}× (less aggressive)")
+                                if (basalTrimmed) add("basal ${"%.3f".format(d.basalMultiplier)}×")
+                            }
+                            nudgeHeadline = "Running defensive for this hour"
+                            nudgeDetail   = "Learned values are already conservative: ${notes.joinToString(" • ")}\n" +
+                                "Aggression learner neutral — delivery has matched this hour's long-term pattern."
+                        }
+                        // True "nothing doing" case — everything at baseline
+                        else -> {
+                            nudgeHeadline = "Insulin levels look right for this hour"
+                            nudgeDetail   = "No consistent over- or under-delivery detected.\nISF and basal learning running on observed BG patterns."
+                        }
+                    }
                 }
             }
             SiRow(nudgeHeadline, nudgeDetail, primaryColor = nudgeColor)
