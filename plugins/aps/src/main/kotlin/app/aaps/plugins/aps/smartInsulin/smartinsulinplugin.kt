@@ -76,7 +76,7 @@ import kotlin.math.floor
 open class SmartInsulinPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
-    private val rxBus: RxBus,
+    val rxBus: RxBus,
     private val config: Config,
     private val profileFunction: ProfileFunction,
     private val profileUtil: ProfileUtil,
