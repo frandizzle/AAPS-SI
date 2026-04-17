@@ -1836,7 +1836,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
                     IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
-                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour
+                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour
                 )
             )
         ),
