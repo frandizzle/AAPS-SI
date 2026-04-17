@@ -8,7 +8,6 @@ import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import java.util.Locale
-import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -72,9 +71,11 @@ class ProfileLearner @Inject constructor(
 
     /** Seed default from actual profile DIA and peak so first-run values are meaningful. */
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        val profile  = runBlocking { profileFunction.getProfile() }
+        // profileFunction.getProfile() is synchronous despite the AAPS naming —
+        // no runBlocking needed. Wrapping it risks deadlock if called from a coroutine.
+        val profile  = profileFunction.getProfile()
         val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = profile?.iCfg?.peak?.toDouble() ?: 75.0
+        val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
         return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
     }
 
@@ -116,13 +117,19 @@ class ProfileLearner @Inject constructor(
 
         val current = getProfile(mode)
 
-        // Effective learning rate blends base rate with mode's signal quality weight
-        val alpha = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
+        // Effective learning rate blends base rate with mode's signal quality weight.
+        // Then attenuated by confidence — mature profiles (many samples) drift more slowly,
+        // making them robust to occasional bad observations. At full confidence (30+ samples)
+        // the effective alpha drops to 50% of the nominal rate.
+        val baseAlpha      = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
+        val confAttenuation = 1.0 - (current.normalizedConfidence * 0.5)  // 1.0 → 0.5 as confidence fills
+        val alpha          = baseAlpha * confAttenuation
 
         // EWMA update for peak
         val newPeak = ewma(current.peakMinutes, clampedPeak, alpha)
 
-        // EWMA update for DIA — suppressed for EXTENDED mode
+        // EWMA update for DIA — suppressed for EXTENDED mode (flag lives on MealMode enum).
+        // Carb tail on extended meals distorts apparent insulin duration.
         val newDia = if (mode.diaLearningEnabled) {
             ewma(current.diaMinutes, clampedDia, alpha)
         } else {
@@ -147,7 +154,8 @@ class ProfileLearner @Inject constructor(
             "ProfileLearner updated ${mode.label}: " +
                 "peak ${fmtChange(current.peakMinutes, newPeak)} " +
                 "dia ${fmtChange(current.diaMinutes, newDia)} " +
-                "α=${"%.3f".format(Locale.US, alpha)} n=$newSampleCount conf=$confPct%"
+                "α=${"%.3f".format(Locale.US, alpha)} (base=${"%.3f".format(Locale.US, baseAlpha)} × conf=${"%.2f".format(Locale.US, confAttenuation)}) " +
+                "n=$newSampleCount conf=$confPct%"
         )
     }
 
@@ -226,9 +234,9 @@ class ProfileLearner @Inject constructor(
      * Call this after changing insulin type or if learned values have drifted badly.
      */
     override fun resetProfiles() {
-        val profile  = runBlocking { profileFunction.getProfile() }
+        val profile  = profileFunction.getProfile()
         val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = profile?.iCfg?.peak?.toDouble() ?: 75.0
+        val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
         aapsLogger.debug(LTag.APS,
                          "ProfileLearner: resetting all modes — seeding peak=${peakMins}m dia=${diaMins}m from current profile/insulin")
         MealMode.entries.forEach { mode ->

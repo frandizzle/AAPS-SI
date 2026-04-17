@@ -83,16 +83,19 @@ data class LearnedInsulinProfile(
 
         /**
          * Deserialise from JSON stored in SharedPreferences.
-         * Returns the default profile for [mode] if JSON is missing or malformed.
+         * Uses opt* with defaults so a partially-written or partially-corrupted JSON
+         * still preserves whatever fields are intact — e.g. an app-killed-mid-write
+         * that loses sampleCount but keeps peak/dia won't wipe out learned values.
+         * The caller's try-catch still handles total corruption (malformed JSON).
          */
         fun fromJson(json: JSONObject, mode: MealMode): LearnedInsulinProfile =
             LearnedInsulinProfile(
                 mode          = mode,  // trust the caller — pref key already identifies the slot
-                peakMinutes   = json.getDouble("peakMinutes"),
-                diaMinutes    = json.getDouble("diaMinutes"),
+                peakMinutes   = json.optDouble("peakMinutes",   FALLBACK_PEAK_MINS),
+                diaMinutes    = json.optDouble("diaMinutes",    FALLBACK_DIA_MINS),
                 // "confidence" key intentionally ignored — now derived from sampleCount
-                sampleCount   = json.getInt("sampleCount"),
-                lastUpdatedMs = json.getLong("lastUpdatedMs")
+                sampleCount   = json.optInt("sampleCount",      0),
+                lastUpdatedMs = json.optLong("lastUpdatedMs",   0L)
             )
     }
 }
