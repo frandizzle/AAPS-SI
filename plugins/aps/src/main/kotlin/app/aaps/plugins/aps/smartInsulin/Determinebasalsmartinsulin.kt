@@ -13,6 +13,7 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -51,7 +52,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
                               profile.current_basal_safety_multiplier * profile.current_basal))
         val r = rate.coerceIn(0.0, maxSafe)
-        if (profile.skip_neutral_temps && r == profile.current_basal) {
+        // Epsilon comparison — exact double equality is fragile against any upstream arithmetic
+        // drift (e.g. rate=1.0000000001 would silently bypass neutral-temp skip, causing
+        // redundant TBR commands to the pump).
+        if (profile.skip_neutral_temps && abs(r - profile.current_basal) < NEUTRAL_TEMP_EPSILON) {
             if (currentTemp.duration > 0) { rT.duration = 0; rT.rate = 0.0 }
             return
         }
@@ -98,7 +102,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
     ): APSResult {
 
         val result = apsResultProvider.get()
-        var rT = RT(
+        val rT = RT(
             algorithm = APSResult.Algorithm.SMB,
             runningDynamicIsf = false,
             timestamp = currentTime,
@@ -235,7 +239,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         fun suspendDurationMins(worstBgMgdl: Double): Int {
             val bgUndershoot    = targetBg - worstBgMgdl  // how far below target worst case goes
             val insulinReqU     = bgUndershoot / dosingIsfMgdl
-            val durationHours   = insulinReqU / profileBasal
+            // Defensive floor on profileBasal — prevents Inf/NaN from profileBasal=0
+            // (pump-off, misconfigured profile, or near-zero basalMultiplier).
+            // 0.01 U/hr is well below any realistic basal rate but non-zero.
+            val effectiveBasal  = profileBasal.coerceAtLeast(0.01)
+            val durationHours   = insulinReqU / effectiveBasal
             val durationMins    = (durationHours * 60.0).coerceIn(30.0, 90.0)
             return (Math.round(durationMins / 30.0) * 30).toInt().coerceIn(30, 90)
         }
@@ -416,11 +424,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     companion object {
         private const val MMOL_TO_MGDL           = 18.0
-        private const val SMB_DELIVERY_FRACTION  = 0.5
         private const val TBR_WINDOW_HOURS       = 0.5
-        private const val REBOUND_WINDOW_MINS_DEFAULT = 60.0   // default, overridden by user setting
         private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
+        private const val NEUTRAL_TEMP_EPSILON       = 1e-6  // floating-point tolerance for neutral-temp detection
     }
 }

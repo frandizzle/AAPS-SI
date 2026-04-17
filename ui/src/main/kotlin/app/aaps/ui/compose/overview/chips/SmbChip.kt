@@ -60,6 +60,6 @@ internal fun SmbChip(
 @Composable
 private fun SmbChipPreview() {
     MaterialTheme {
-        SmbChip(state = SmbUiState(text = "1.0U 5m ago", hasData = true))
+        SmbChip(state = SmbUiState(text = "1.0U 5m", hasData = true))
     }
 }

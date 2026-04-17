@@ -311,7 +311,7 @@ class GraphViewModel @Inject constructor(
         if (lastSmbBolus != null) {
             val minsAgo = (dateUtil.now() - lastSmbBolus.timestamp) / 60000
             SmbUiState(
-                text = "SMB: ${decimalFormatter.to2Decimal(lastSmbBolus.amount)}U ${minsAgo}m ago",
+                text = "SMB: ${decimalFormatter.to2Decimal(lastSmbBolus.amount)}U ${minsAgo}m",
                 hasData = true
             )
         } else {
