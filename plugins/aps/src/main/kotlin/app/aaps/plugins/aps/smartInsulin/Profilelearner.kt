@@ -8,6 +8,7 @@ import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import java.util.Locale
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,9 +72,7 @@ class ProfileLearner @Inject constructor(
 
     /** Seed default from actual profile DIA and peak so first-run values are meaningful. */
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        // profileFunction.getProfile() is synchronous despite the AAPS naming —
-        // no runBlocking needed. Wrapping it risks deadlock if called from a coroutine.
-        val profile  = profileFunction.getProfile()
+        val profile  = runBlocking { profileFunction.getProfile() }
         val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
         val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
         return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
@@ -234,7 +233,7 @@ class ProfileLearner @Inject constructor(
      * Call this after changing insulin type or if learned values have drifted badly.
      */
     override fun resetProfiles() {
-        val profile  = profileFunction.getProfile()
+        val profile  = runBlocking { profileFunction.getProfile() }
         val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
         val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
         aapsLogger.debug(LTag.APS,
