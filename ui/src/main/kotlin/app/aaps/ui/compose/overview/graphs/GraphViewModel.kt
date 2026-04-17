@@ -32,8 +32,8 @@ import app.aaps.core.ui.R
 import app.aaps.core.data.model.TB
 import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.ui.compose.icons.IcArrowFlat
-import app.aaps.core.ui.compose.icons.IcArrowFortyfiveDown
-import app.aaps.core.ui.compose.icons.IcArrowFortyfiveUp
+import app.aaps.core.ui.compose.icons.IcArrowSimpleDown
+import app.aaps.core.ui.compose.icons.IcArrowSimpleUp
 import androidx.compose.ui.graphics.vector.ImageVector
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -130,8 +130,8 @@ data class SmbUiState(
 )
 
 enum class TbrArrow(val icon: ImageVector) {
-    UP(IcArrowFortyfiveUp),
-    DOWN(IcArrowFortyfiveDown),
+    UP(IcArrowSimpleUp),
+    DOWN(IcArrowSimpleDown),
     FLAT(IcArrowFlat)
 }
 
