@@ -76,7 +76,7 @@ import kotlin.math.floor
 open class SmartInsulinPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
-    private val rxBus: RxBus,
+    val rxBus: RxBus,
     private val config: Config,
     private val profileFunction: ProfileFunction,
     private val profileUtil: ProfileUtil,
@@ -701,6 +701,26 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
+    /**
+     * Resolves per-mode ISF override in mg/dL.
+     * Returns 0.0 for FASTING (caller uses profile ISF / circadian multiplier).
+     * ISF values stored as mg/dL by sp.putDouble — do NOT use spMgdl() here.
+     */
+    private fun modeIsfMgdl(mode: MealMode, hour: Int): Double = when (mode) {
+        MealMode.BREAKFAST       -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
+        MealMode.LUNCH           -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
+        MealMode.DINNER          -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
+        MealMode.LOW_CARB        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
+        MealMode.EXTENDED        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
+        MealMode.UAM_BREAKFAST   -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
+        MealMode.UAM_LUNCH       -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
+        MealMode.UAM_DINNER      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
+        MealMode.UAM_SNACK       -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
+        MealMode.UAM_AFTERNOON   -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
+        MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(hour)
+        MealMode.FASTING         -> 0.0
+    }
+
     override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
         val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
@@ -729,7 +749,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 cachedHba1cEstimate    = 0.0
                 cachedHba1cWindowHours = 0
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: HbA1c query failed: ${e.message}")
+        }
         if (!isEnabled()) {
             rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_disabled)))
             return
@@ -752,6 +774,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val inputConstraints = ConstraintObject(0.0, aapsLogger)
 
         val now = dateUtil.now()
+        // Single Calendar allocation for the whole invoke() — reused by all 4 hour-of-day sites below.
+        // Based on `now` (dateUtil.now()) so all time-based decisions use the same instant.
+        val currentHour = java.util.Calendar.getInstance().also { it.timeInMillis = now }.get(java.util.Calendar.HOUR_OF_DAY)
         val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
         val currentTemp = CurrentTemp(
             duration       = tb?.plannedRemainingMinutes ?: 0,
@@ -857,23 +882,8 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
-        // ISF overrides: correctly stored as mg/dL by sp.putDouble — use sp.getDouble directly.
-        // Do NOT use spMgdl() here — ISF values are already in mg/dL (e.g. 12.6), not mmol.
-        // spMgdl would incorrectly multiply by 18 since 12.6 < 36.
-        val modeIsfMgdl = when (mealMode) {
-            MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
-            MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
-            MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
-            MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
-            MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
-            MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
-            MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
-            MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
-            MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
-            MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-            MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY))
-            MealMode.FASTING       -> 0.0
-        }
+        // ISF overrides: resolved by modeIsfMgdl() — stored as mg/dL, do NOT use spMgdl().
+        val modeIsfMgdl = modeIsfMgdl(mealMode, currentHour)
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
         // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
         val circIsfMult   = circadianLearner.isfMultiplier()
@@ -946,7 +956,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Only fires in FASTING mode within configured time windows.
         // Expiry detection is handled internally by UamController via previousMealMode tracking.
         // Safety inputs (bgWentLow, inReboundWindow) prevent false triggers from rebound rises.
-        val uamCurrentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val uamCurrentHour = currentHour
         // Use reboundWindowStartMs as proxy for lastLowTimeMs — it's set when BG recovers above
         // lowGuard, so it slightly underestimates time since low (conservative = safe).
         val uamLastLowTimeMs = if (bgWentLow) reboundWindowStartMs else 0L
@@ -981,23 +991,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val justFiredMode = uamController.justFiredThisCycle
         val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
         if (latestMealMode != mealMode) {
-            val latestModeIsfMgdl = run {
-                val unitVal = when (latestMealMode) {
-                    MealMode.BREAKFAST     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key,     UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
-                    MealMode.LUNCH         -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key,         UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
-                    MealMode.DINNER        -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key,        UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
-                    MealMode.LOW_CARB      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key,       UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
-                    MealMode.EXTENDED      -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key,      UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
-                    MealMode.UAM_BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.key,  UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf.defaultValue)
-                    MealMode.UAM_LUNCH     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamLunchIsf.key,      UnitDoubleKey.ApsSmartInsulinUamLunchIsf.defaultValue)
-                    MealMode.UAM_DINNER    -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.key,     UnitDoubleKey.ApsSmartInsulinUamDinnerIsf.defaultValue)
-                    MealMode.UAM_SNACK     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamSnackIsf.key,      UnitDoubleKey.ApsSmartInsulinUamSnackIsf.defaultValue)
-                    MealMode.UAM_AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.key,  UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf.defaultValue)
-                    MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(uamCurrentHour)
-                    MealMode.FASTING       -> 0.0
-                }
-                if (unitVal == 0.0) 0.0 else unitVal
-            }
+            val latestModeIsfMgdl = modeIsfMgdl(latestMealMode, uamCurrentHour)
             mealMode = latestMealMode
             if (latestModeIsfMgdl > 0.0) {
                 dosingIsfMgdl = latestModeIsfMgdl
@@ -1252,8 +1246,20 @@ open class SmartInsulinPlugin @Inject constructor(
         } else {
             aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
         }
-        // Blend flat BasalLearner with circadian per-hour learning
-        // Circadian takes over proportionally as its confidence grows
+        // Blend flat BasalLearner with circadian per-hour learning.
+        // Circadian takes over proportionally as its confidence grows.
+        //
+        // SAFETY NOTE on multiplicative stacking:
+        //   flatBasalMult is clamped to [0.5, 1.5] by BasalLearner (MIN/MAX_MULTIPLIER)
+        //   circBasalMult is clamped to [0.5, 1.5] by CircadianLearner (BASAL_MULT_MIN/MAX)
+        //   Worst case: 1.5 * 1.5 = 2.25x profile basal.
+        // This is acceptable because the final TBR rate is independently capped downstream by:
+        //   - oapsProfile.max_basal (preferences.ApsMaxBasal)
+        //   - max_daily_safety_multiplier * max_daily_basal
+        //   - current_basal_safety_multiplier * current_basal
+        // These caps are applied in DetermineBasalSmartInsulin.setTempBasal() before any
+        // TBR is issued to the pump. So even a compounded 2.25x learner multiplier cannot
+        // exceed the user's configured max_basal ceiling.
         val flatBasalMult  = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
         val basalMultiplier = flatBasalMult * circBasalMult
 
@@ -1369,7 +1375,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
         val lowGuardMmol = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
         val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
-        val bypassHour               = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val bypassHour               = currentHour
         val bypassDayStart           = preferences.get(IntKey.ApsSmartInsulinUamDayStartHour)
         val bypassNightCutoff        = preferences.get(IntKey.ApsSmartInsulinUamNightCutoffHour)
         val inMealHoursForBypass     = if (bypassNightCutoff > bypassDayStart)
@@ -1538,7 +1544,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Append per-cycle learner summary to reason — visible in Loop tab
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
-        val circHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val circHour = currentHour
         // Activity status for Loop tab reason string
         // Always show HR and steps so data flow is visible even when sedentary
         val activitySuffix = when (activityMonitor.level) {

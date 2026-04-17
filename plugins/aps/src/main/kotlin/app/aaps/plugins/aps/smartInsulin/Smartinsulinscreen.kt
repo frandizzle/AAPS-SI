@@ -1,36 +1,39 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.ui.platform.LocalContext
-import app.aaps.core.ui.compose.ToolbarConfig
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.foundation.clickable
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,11 +45,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
-import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
-import kotlin.math.roundToInt
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventLoopUpdateGui
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.ui.compose.ToolbarConfig
+import io.reactivex.rxjava3.disposables.Disposable
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 
 /**
@@ -64,16 +75,26 @@ fun SmartInsulinScreen(
     var data by remember { mutableStateOf<SmartInsulinPlugin.FragmentData?>(null) }
     var selectedDow by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1) }
 
-    // Refresh every 10s
-    LaunchedEffect(Unit) {
-        while (true) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(lifecycleOwner, plugin) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            // 1. INSTANT UPDATE: Fires the millisecond you open the tab
             data = plugin.fragmentData()
-            delay(10_000)
+
+            // 2. EVENT-DRIVEN UPDATE: Native Flow collection
+            // Note: This assumes your SmartInsulinPlugin class has the injected RxBus
+            // exposed as a public property.
+            plugin.rxBus.toFlow(EventLoopUpdateGui::class.java)
+                .collect {
+                    // The loop just finished! Grab the freshest data.
+                    data = plugin.fragmentData()
+                }
         }
     }
 
     // Use the provided onSettings callback to navigate to plugin preferences.
-    androidx.compose.runtime.LaunchedEffect(Unit) {
+    LaunchedEffect(Unit) {
         setToolbarConfig?.invoke(
             ToolbarConfig(
                 title = plugin.name,
@@ -390,16 +411,22 @@ fun SmartInsulinScreen(
                     val taperPct   = ((0.3 + 0.7 * (d.reboundMins.toDouble() / d.totalReboundWindowMins)) * 100).roundToInt()
                     val smbUnlock  = ((d.totalReboundWindowMins * 0.75) - d.reboundMins).coerceAtLeast(0.0).roundToInt()
                     val hardLow1   = if (d.hardLowPenaltyActive) "\nShort term: aggressiveness ceiling cut by 20% — resets as BG stabilises near target." else ""
-                    val hardLow2   = if (d.hardLowPenaltyActive) "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
-                    else "\nLong term: learning paused during recovery — resumes when window expires ($minsLeft min left)."
+                    val hardLow2 = if (d.hardLowPenaltyActive) {
+                        "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
+                    } else {
+                        "\nLong term: learning paused during recovery — resumes when window expires ($minsLeft min left)."
+                    }
                     val rollerN    = if (d.consecutiveRollercoasters >= 1) { val ext = d.totalReboundWindowMins - d.reboundWindowMins; "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${ext}min." } else ""
                     nudgeHeadline  = "⚠ BG is below low guard — reducing insulin"
                     nudgeDetail    = "BG crossed below low guard — holding back to avoid stacking.\nShort term: TBR at ${taperPct}% of normal — ramps up over ${d.totalReboundWindowMins}min window\nShort term: SMBs ${if (smbUnlock > 0) "blocked for ~${smbUnlock}min more" else "restored ✓"}$hardLow1$hardLow2$rollerN"
                 }
                 d.bgWentLow -> {
                     val hardLow1   = if (d.hardLowPenaltyActive) "\nShort term: aggressiveness ceiling cut by 20% — resets as BG stabilises near target." else ""
-                    val hardLow2   = if (d.hardLowPenaltyActive) "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
-                    else "\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
+                    val hardLow2 = if (d.hardLowPenaltyActive) {
+                        "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
+                    } else {
+                        "\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
+                    }
                     nudgeHeadline  = "⚠ BG is below low guard — waiting for recovery"
                     nudgeDetail    = "BG is below the low guard threshold. Insulin delivery limited.\nShort term: insulin being held back until BG recovers above low guard$hardLow1$hardLow2"
                 }
@@ -413,7 +440,7 @@ fun SmartInsulinScreen(
 // ── Feed-forward debug section ────────────────────────────
             var showFfDebug by rememberSaveable { mutableStateOf(false) }
 
-            androidx.compose.material3.TextButton(
+            TextButton(
                 onClick = { showFfDebug = !showFfDebug },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -424,7 +451,7 @@ fun SmartInsulinScreen(
                 )
             }
             if (showFfDebug) {
-                androidx.compose.foundation.layout.Column(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(
@@ -439,7 +466,7 @@ fun SmartInsulinScreen(
                          color = MaterialTheme.colorScheme.primary)
                     Text(d.lastAccelDebug,
                          style = MaterialTheme.typography.bodySmall,
-                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
                     Text("Predictive Basal Trim (60min projection)",
@@ -447,7 +474,7 @@ fun SmartInsulinScreen(
                          color = MaterialTheme.colorScheme.primary)
                     Text(d.lastPredTrimDebug,
                          style = MaterialTheme.typography.bodySmall,
-                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
                     Text("Last basal signal",
@@ -455,7 +482,7 @@ fun SmartInsulinScreen(
                          color = MaterialTheme.colorScheme.primary)
                     Text(d.lastBasalSignal,
                          style = MaterialTheme.typography.bodySmall,
-                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -532,7 +559,9 @@ fun SmartInsulinScreen(
             // Day selector
             val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
             val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0)
-            val todayDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+
+            val todayDow = remember(data) { java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1 }
+
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                 displayOrder.forEach { d2 ->
                     val label = if (d2 == todayDow) "Today" else dayLabels[d2]
@@ -544,7 +573,7 @@ fun SmartInsulinScreen(
                             containerColor = if (selected) Color(0xFF43A047) else MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = if (selected) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
                         ),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                        contentPadding = PaddingValues(0.dp)
                     ) {
                         Text(label, fontSize = 10.sp, maxLines = 1)
                     }
@@ -569,7 +598,7 @@ fun SmartInsulinScreen(
             }
             HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
             val raw = plugin.circadianDataForDay(selectedDow)
-            val currentHr = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val currentHr = remember(data) { java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY) }
             // Compute profile values for conversion: finalISF = profileISF / isfMult, finalBasal = profileBasal * basMult
             val profileIsfMgdl = d.profileIsfMgdl.toFloat()
             val profileBasalU  = d.profileBasalU.toFloat()
@@ -603,11 +632,11 @@ fun SmartInsulinScreen(
                     Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(modifier = Modifier.width(40.dp).height(6.dp)
-                            .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                            .clip(RoundedCornerShape(3.dp))
                             .background(Color(0xFF333333))) {
                             Box(modifier = Modifier.fillMaxHeight()
                                 .width(40.dp * (conf / 100f))
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(3.dp))
+                                .clip(RoundedCornerShape(3.dp))
                                 .background(confColor(conf)))
                         }
                         Text("$conf%", fontSize = 10.sp, color = confColor(conf),
@@ -645,7 +674,7 @@ fun SmartInsulinScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                        .clip(RoundedCornerShape(4.dp))
                         .background(rowBg)
                         .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
@@ -713,6 +742,15 @@ private fun SiRow(primary: String, detail: String?, primaryColor: Color = Color.
 @Composable
 private fun ResetRow(label: String, onClick: () -> Unit) {
     var confirmed by remember { mutableStateOf(false) }
+
+    // Auto-clear confirm state after 5 seconds to prevent accidental taps later
+    if (confirmed) {
+        LaunchedEffect(Unit) {
+            delay(5_000)
+            confirmed = false
+        }
+    }
+
     Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), fontSize = 16.sp,
@@ -736,9 +774,9 @@ private fun TirSection(label: String, tirRaw: String, prefix: String) {
     val total = lowPct + inPct + highPct
     if (total > 0f) {
         // Stacked bar — use fillMaxWidth with proportional widths via BoxWithConstraints
-        androidx.compose.foundation.layout.BoxWithConstraints(
+        BoxWithConstraints(
             modifier = Modifier.fillMaxWidth().height(14.dp)
-                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(4.dp))
         ) {
             val totalWidth = maxWidth
             Row(modifier = Modifier.fillMaxSize()) {
@@ -755,7 +793,7 @@ private fun TirSection(label: String, tirRaw: String, prefix: String) {
         }
     } else {
         Box(modifier = Modifier.fillMaxWidth().height(14.dp)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp))
+            .clip(RoundedCornerShape(4.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant))
         Spacer(Modifier.height(4.dp))
         Text("Not enough data yet — needs ~2 hours of ${label.lowercase()} readings",
