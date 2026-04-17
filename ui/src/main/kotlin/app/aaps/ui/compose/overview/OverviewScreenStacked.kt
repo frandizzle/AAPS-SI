@@ -110,6 +110,7 @@ fun OverviewScreenStacked(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 onNavigate = onNavigate,
+                siOverviewState = siOverviewState,
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 8.dp)
@@ -124,12 +125,6 @@ fun OverviewScreenStacked(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp)
         )
-        siOverviewState?.let {
-            SmartInsulinStatusChip(
-                state = it,
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
-        }
 
         OverviewStatusSection(
             sensorStatus = statusState.sensorStatus,

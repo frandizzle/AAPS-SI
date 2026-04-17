@@ -35,16 +35,6 @@ import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.width
 
 @Composable
 fun OverviewScreenSplit(
@@ -134,6 +124,7 @@ fun OverviewScreenSplit(
                         tempTargetProgress = tempTargetProgress,
                         tempTargetReason = tempTargetReason,
                         onNavigate = onNavigate,
+                        siOverviewState = siOverviewState,
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 8.dp),
@@ -152,12 +143,6 @@ fun OverviewScreenSplit(
                     smbUiState = smbUiState,
                     modifier = Modifier.fillMaxWidth()
                 )
-                siOverviewState?.let {
-                    SmartInsulinStatusChip(
-                        state = it,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
 
                 OverviewStatusSection(
                     sensorStatus = statusState.sensorStatus,
@@ -201,44 +186,4 @@ fun OverviewScreenSplit(
     }
 }
 
-@Composable
-fun SmartInsulinStatusChip(
-    state: SmartInsulinOverview.OverviewState,
-    modifier: Modifier = Modifier
-) {
-    Row(
-        modifier = modifier
-            .padding(top = 4.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        val color = when {
-            state.modeLine.contains("Recovery", ignoreCase = true) -> Color(0xFFFB8C00)
-            state.learningState.contains("off", ignoreCase = true) -> Color(0xFFFB8C00)
-            state.learningState.contains("active", ignoreCase = true) -> Color(0xFF4CAF50)
-            else -> MaterialTheme.colorScheme.onSurfaceVariant
-        }
-        Text(
-            text = "SI",
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = color
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = state.modeLine,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        state.pb2Line?.let {
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = it,
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF64B5F6)
-            )
-        }
-    }
-}
+
