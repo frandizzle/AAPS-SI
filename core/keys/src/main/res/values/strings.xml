@@ -572,8 +572,8 @@
     <string name="pref_title_si_uam_proteinfat_day_end">P/F Day window end hour</string>
     <string name="pref_title_si_uam_proteinfat_night_start">P/F Night window start hour</string>
     <string name="pref_title_si_uam_proteinfat_night_end">P/F Night window end hour</string>
-    <string name="pref_title_si_uam_proteinfat_overnight_start">P/F OverNight window start hour</string>
-    <string name="pref_title_si_uam_proteinfat_overnight_end">P/F OverNight window end hour</string>
+    <string name="pref_title_si_uam_proteinfat_overnight_start">P/F Overnight window start hour</string>
+    <string name="pref_title_si_uam_proteinfat_overnight_end">P/F Overnight window end hour</string>
 
     <!-- IntentKey preferences -->
     <string name="pref_title_link_to_docs">Algorithm documentation</string>
