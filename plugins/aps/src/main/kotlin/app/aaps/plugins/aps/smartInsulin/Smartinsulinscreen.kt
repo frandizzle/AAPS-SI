@@ -488,17 +488,26 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── UAM card ───────────────────────────────────────────────────
+         // ── UAM card ───────────────────────────────────────────────────
         SiCard(title = "UAM Auto-Detection") {
             val uamLine = d.uamStatusLine ?: ""
             val uamPart = uamLine.substringBefore(" | P/F:").trim()
+
+            // Remove the optional "[dirty] " prefix so we can strictly check the first word
+            val cleanUamPart = uamPart.removePrefix("[dirty] ").trim()
+
             val (uamPrimary, uamColor) = when {
-                uamPart.contains("watching") -> "BG rising — building confirmation streak ↑" to Color(0xFFFB8C00)
-                uamPart.contains("last")     -> "Meal auto-detected recently" to Color(0xFF64B5F6)
-                uamPart.contains("armed")    -> "Watching for unannounced meals" to Color(0xFF43A047)
-                uamPart.contains("off")      -> "Auto-detection off — outside hours" to MaterialTheme.colorScheme.onSurfaceVariant
-                else                         -> "UAM status" to MaterialTheme.colorScheme.onSurface
+                cleanUamPart.startsWith("watching") -> "BG rising — building confirmation streak ↑" to StatusWarn
+                cleanUamPart.startsWith("last")     -> "Meal auto-detected recently" to StatusInfo
+                cleanUamPart.startsWith("armed")    -> "Watching for unannounced meals" to StatusGood
+                cleanUamPart.startsWith("off")      -> {
+                    // Extract the specific reason it's off (e.g., "outside hours" or "new sensor")
+                    val reason = cleanUamPart.substringAfter("off").removePrefix(" (").removeSuffix(")").trim()
+                    "Auto-detection off — $reason" to MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                else -> "UAM status" to MaterialTheme.colorScheme.onSurface
             }
+
             SiRow(uamPrimary, uamPart.ifEmpty { null }, primaryColor = uamColor)
 
             val pfPart = if (uamLine.contains("P/F:")) uamLine.substringAfter("P/F:").trim() else null
@@ -815,3 +824,14 @@ private fun aggrColor(a: Double): Color = when {
     a < 0.95 -> Color(0xFF64B5F6)
     else     -> MaterialTheme.colorScheme.onSurface
 }
+
+// ── Global UI Constants & Helpers ──────────────────────────────────────────────
+
+private val StatusGood   = Color(0xFF43A047)  // success, learning healthy, armed
+private val StatusWarn   = Color(0xFFFB8C00)  // attention needed, recovery, building streak
+private val StatusBad    = Color(0xFFE53935)  // blocked, failed, low
+private val StatusInfo   = Color(0xFF64B5F6)  // informational, meal mode, recent UAM
+
+private const val MMOL_TO_MGDL = 18.0
+private fun Double.mgdlToMmol() = this / MMOL_TO_MGDL
+private fun Double.mmolToMgdl() = this * MMOL_TO_MGDL

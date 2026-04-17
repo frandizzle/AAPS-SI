@@ -24,7 +24,20 @@ data class CircadianState(
         return CircadianState(newValues, newConf)
     }
 
+    // --- ADD THESE OVERRIDES ---
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is CircadianState) return false
+        return values.contentEquals(other.values) && confidence.contentEquals(other.confidence)
+    }
+
+    override fun hashCode(): Int = 31 * values.contentHashCode() + confidence.contentHashCode()
+    // ---------------------------
+
     companion object {
-        const val CONF_ALPHA = 0.10   // confidence grows at double rate — ~7 observations (~35 min) to reach 0.5
+        // Confidence EWMA alpha — ~7 observations (~35 min @ 5-min cycle) to reach 0.5.
+        // Separate from (and faster than) the ISF/basal value alphas: we want to know
+        // "have we seen this hour enough times" independent of how fast values converge.
+        const val CONF_ALPHA = 0.10
     }
 }
