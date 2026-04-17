@@ -685,18 +685,24 @@ open class SmartInsulinPlugin @Inject constructor(
         val dayEnd     = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayEndHour)
         val nightStart = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightStartHour)
         val nightEnd   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightEndHour)
+        val overStart  = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour)
+        val overEnd    = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour)
+
         // Inclusive end hour — dayEnd=17 means 17:xx is still in the day window.
         // Supports midnight crossing (start > end).
-        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart..dayEnd
-        else hour >= dayStart   || hour <= dayEnd
-        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd
-        else hour >= nightStart || hour <= nightEnd
+        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart..dayEnd   else hour >= dayStart   || hour <= dayEnd
+        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd else hour >= nightStart || hour <= nightEnd
+        val inOver  = if (overStart  <= overEnd)  hour in overStart..overEnd   else hour >= overStart  || hour <= overEnd
+
         val dayIsf   = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key,   UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
         val nightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
+        val overIsf  = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
         val fallback = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key,      UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+
         return when {
             inDay   && dayIsf   > 0.0 -> dayIsf
             inNight && nightIsf > 0.0 -> nightIsf
+            inOver  && overIsf  > 0.0 -> overIsf
             else                      -> fallback
         }
     }
