@@ -76,7 +76,7 @@ import kotlin.math.floor
 open class SmartInsulinPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
-    private val rxBus: RxBus,
+    val rxBus: RxBus,
     private val config: Config,
     private val profileFunction: ProfileFunction,
     private val profileUtil: ProfileUtil,
@@ -1051,7 +1051,6 @@ open class SmartInsulinPlugin @Inject constructor(
             profileTargetMgdl = profileTargetMgdl,
             currentBgMgdl     = glucoseStatus.glucose,
             delta             = glucoseStatus.delta,
-            shortAvgDeltaMgdl = glucoseStatus.shortAvgDelta,
             mealMode          = mealMode,
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
@@ -1864,8 +1863,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
                     IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
-                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour
-                )
+                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour                )
             )
         ),
         icon = pluginDescription.icon
