@@ -46,7 +46,6 @@ import app.aaps.plugins.automation.actions.ActionRunAutotune
 import app.aaps.plugins.automation.actions.ActionSMBChange
 import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
-import app.aaps.plugins.automation.actions.ActionSmartInsulinReset
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
 import app.aaps.plugins.automation.actions.ActionStopProcessing
 import app.aaps.plugins.automation.actions.ActionStopTempTarget
@@ -461,7 +460,6 @@ class AutomationPlugin @Inject constructor(
             ActionStopProcessing(injector),
             ActionStartTempTarget(injector),
             ActionStopTempTarget(injector),
-            ActionSmartInsulinReset(injector),
             ActionNotification(injector),
             ActionAlarm(injector),
             ActionSettingsExport(injector),
