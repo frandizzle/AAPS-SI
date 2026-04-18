@@ -1051,6 +1051,7 @@ open class SmartInsulinPlugin @Inject constructor(
             profileTargetMgdl = profileTargetMgdl,
             currentBgMgdl     = glucoseStatus.glucose,
             delta             = glucoseStatus.delta,
+            shortAvgDeltaMgdl = glucoseStatus.shortAvgDelta,
             mealMode          = mealMode,
             isTempTarget      = isTempTarget,
             bgWentLow         = bgWentLow,
