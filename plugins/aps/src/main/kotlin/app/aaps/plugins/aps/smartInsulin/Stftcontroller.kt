@@ -72,30 +72,34 @@ class StftController @Inject constructor(
         profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     private fun fmtBg(mgdl: Double): String =
-        if (isMmol) String.format("%.1f", mgdl / MMOL_TO_MGDL) else String.format("%.0f", mgdl)
+        if (isMmol) String.format(java.util.Locale.US, "%.1f", mgdl / MMOL_TO_MGDL) else String.format(java.util.Locale.US, "%.0f", mgdl)
     private fun fmtDelta(mgdl: Double): String =
-        if (isMmol) String.format("%.2f", mgdl / MMOL_TO_MGDL) else String.format("%.1f", mgdl)
+        if (isMmol) String.format(java.util.Locale.US, "%.2f", mgdl / MMOL_TO_MGDL) else String.format(java.util.Locale.US, "%.1f", mgdl)
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /**
      * Call once per loop cycle. Returns the adjusted target in mg/dL.
      *
-     * @param profileTargetMgdl  The profile/temp target — STFT adjusts relative to this
-     * @param currentBgMgdl      Current BG reading
-     * @param delta              Current 5-min delta (mg/dL)
-     * @param mealMode           Current meal mode — STFT only active in FASTING
+     * @param profileTargetMgdl   The profile/temp target — STFT adjusts relative to this
+     * @param currentBgMgdl       Current BG reading
+     * @param delta               Current 5-min delta (mg/dL) — retained for future use
+     * @param shortAvgDeltaMgdl   15-min smoothed delta (mg/dL) — used for reset detection.
+     *                            Immune to single-tick CGM noise (e.g. 145→144→145→144 won't
+     *                            falsely kill STFT — shortAvg stays ~0 while raw delta wobbles).
+     * @param mealMode            Current meal mode — STFT only active in FASTING
      */
     fun onLoopCycle(
-        profileTargetMgdl: Double,
-        currentBgMgdl:     Double,
-        delta:             Double,
-        mealMode:          MealMode,
-        isTempTarget:      Boolean,
-        bgWentLow:         Boolean,
-        inReboundWindow:   Boolean,
-        cgmInWarmup:       Boolean,
-        bgTimestampMs:     Long = 0L
+        profileTargetMgdl:   Double,
+        currentBgMgdl:       Double,
+        delta:               Double,
+        shortAvgDeltaMgdl:   Double,
+        mealMode:            MealMode,
+        isTempTarget:        Boolean,
+        bgWentLow:           Boolean,
+        inReboundWindow:     Boolean,
+        cgmInWarmup:         Boolean,
+        bgTimestampMs:       Long = 0L
     ): Double {
 
         // STFT only runs in fasting — reset immediately if meal mode activates
@@ -138,12 +142,16 @@ class StftController @Inject constructor(
             return profileTargetMgdl
         }
 
-        // Track negative delta streak for reset detection
-        if (delta < 0.0) {
+        // Track negative-shortAvgDelta streak for reset detection.
+        // Using shortAvgDelta (15-min smoothed) instead of raw 5-min delta prevents
+        // single-tick CGM noise from killing an active STFT: if BG hovers at 145 and
+        // wobbles 145→144→145, raw delta would give two negative ticks and reset STFT
+        // even though BG hasn't meaningfully recovered. shortAvgDelta stays near zero.
+        if (shortAvgDeltaMgdl < 0.0) {
             negDeltaStreak++
             if (negDeltaStreak >= NEG_DELTA_RESET_COUNT && stftActive) {
                 aapsLogger.debug(LTag.APS,
-                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative deltas (delta=${fmtDelta(delta)}$unitLabel)")
+                                 "STFT: reset — $NEG_DELTA_RESET_COUNT consecutive negative short-avg deltas (shortAvgΔ=${fmtDelta(shortAvgDeltaMgdl)}$unitLabel)")
                 reset()
                 return profileTargetMgdl
             }
@@ -159,40 +167,44 @@ class StftController @Inject constructor(
             return profileTargetMgdl
         }
 
-        // Count consecutive readings above trigger threshold.
-        // Only count if delta is non-negative — don't activate on BG falling through threshold
-        // (e.g. post-meal descent from 10→6). STFT is for stuck-high, not falling BG.
-        if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL && delta >= 0.0) {
-            if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs) return if (stftActive) {
+        // Single duplicate-timestamp guard — skip all counter/step mutations on a
+        // repeated CGM reading. Return the appropriate target (reduced if active,
+        // profile if not) without advancing any state.
+        if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs) {
+            return if (stftActive) {
                 val reduction = stepsApplied * STEP_MGDL
                 (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
             } else profileTargetMgdl
+        }
+
+        // Count consecutive readings above trigger threshold.
+        // Activation is driven purely by absolute BG — not delta. Rationale: BG
+        // drifting DOWN but still stuck above target is the exact scenario STFT
+        // should handle (e.g. 6.8 → 6.7 → 6.6 at fasting — all above trigger, but
+        // a delta-gated check would miss this because shortAvgDelta is negative).
+        // The reset logic (shortAvgDelta < 0 × 2 while STFT active) handles
+        // turning STFT off when a genuine recovery establishes.
+        if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL) {
             lastCountedTimestampMs = bgTimestampMs
             consecutiveAbove++
         } else {
-            if (consecutiveAbove > 0 && delta < 0.0)
-                aapsLogger.debug(LTag.APS, "STFT: streak reset — BG falling (delta=${fmtDelta(delta)}$unitLabel)")
             consecutiveAbove = 0
             if (!stftActive) return profileTargetMgdl
+            lastCountedTimestampMs = bgTimestampMs
         }
 
         // Activate once trigger threshold is met
         if (!stftActive && consecutiveAbove >= TRIGGER_READINGS) {
             stftActive = true
             aapsLogger.debug(LTag.APS,
-                             "STFT: activated — BG above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel for $TRIGGER_READINGS readings (non-negative delta)")
+                             "STFT: activated — BG above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel for $TRIGGER_READINGS readings")
         }
 
         if (!stftActive) return profileTargetMgdl
 
-        // Apply one step per loop cycle — only once per CGM reading
-        if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs && stepsApplied > 0) {
-            val reduction = stepsApplied * STEP_MGDL
-            return (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
-        }
-        lastCountedTimestampMs = bgTimestampMs
+        // Apply one step per loop cycle (dup-timestamp already guarded above)
         stepsApplied++
-        val reduction    = (stepsApplied * STEP_MGDL)
+        val reduction      = stepsApplied * STEP_MGDL
         val adjustedTarget = (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
 
         aapsLogger.debug(LTag.APS,
@@ -208,9 +220,9 @@ class StftController @Inject constructor(
             val actualTarget      = theoreticalTarget.coerceAtLeast(TARGET_FLOOR_MGDL)
             val actualReductionMgdl = profileTargetMgdl - actualTarget
             val reductionStr = if (isMmol)
-                "${"%.1f".format(actualReductionMgdl / MMOL_TO_MGDL)}mmol"
+                "${"%.1f".format(java.util.Locale.US, actualReductionMgdl / MMOL_TO_MGDL)}mmol"
             else
-                "${"%.0f".format(actualReductionMgdl)}mg/dL"
+                "${"%.0f".format(java.util.Locale.US, actualReductionMgdl)}mg/dL"
             return "STFT: -$reductionStr target (${stepsApplied * 5}min above target)"
         }
         if (currentlyHighTempTarget) return "STFT: inactive (high temp target set)"
