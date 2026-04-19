@@ -21,12 +21,10 @@
     <!--    Buttons-->
     <color name="buttonBackground">#555555</color>
     <color name="okButtonText">@color/colorAccent</color>
-    <color name="okButtonSelected">#33969696</color>
 
     <!--    Fragments-->
 
     <!--    Dialogs-->
-    <color name="dialog_title_background">#303030</color>
     <color name="examinedProfile">#FFFF5555</color>
     <color name="defaultText">#BBBBBB</color>
 
@@ -63,7 +61,6 @@
     <!-- Green Colors -->
 
     <!-- Black and White transparent - glass effect-->
-
 
 
     <!-- Import/Export -->
