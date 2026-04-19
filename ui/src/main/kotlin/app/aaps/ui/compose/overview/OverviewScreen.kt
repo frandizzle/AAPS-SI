@@ -131,6 +131,15 @@ fun OverviewScreen(
             }
         }
 
+        SmartInsulinFab(
+            visible = siOverviewState != null,
+            onClick = { onNavigate(NavigationRequest.Plugin("SmartInsulinPlugin")) },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(paddingValues)
+                .padding(end = 16.dp, bottom = 184.dp + fabBottomOffset)
+        )
+
         PumpActivityFab(
             visible = showPumpFab,
             bolusState = bolusState,

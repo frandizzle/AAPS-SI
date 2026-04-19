@@ -18,40 +18,8 @@ interface UiInteraction {
     /** The main activity of the application. */
     val mainActivity: Class<*>
 
-    /** The activity for browsing history. */
-    val historyBrowseActivity: Class<*>
-
     /** The activity for displaying error information. */
     val errorHelperActivity: Class<*>
-
-    /** A generic activity that can host a single fragment. */
-    val singleFragmentActivity: Class<*>
-
-    /** The main preferences activity. */
-    val preferencesActivity: Class<*>
-
-    /** The fragment for "My Preferences". */
-    val myPreferenceFragment: Class<*>
-
-    companion object {
-
-        /** Key for passing a plugin name in an Intent extra. */
-        const val PLUGIN_NAME = "PluginName"
-
-        /**
-         * Key for identifying a preference from [Preferences].
-         */
-        const val PREFERENCE = "Preference"
-    }
-
-    /**
-     * Enum for specific preference screens.
-     */
-    enum class Preferences {
-
-        /** The protection preference screen. */
-        PROTECTION
-    }
 
     /**
      * Display names for units preferences.

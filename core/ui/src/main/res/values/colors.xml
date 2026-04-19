@@ -101,9 +101,6 @@
     <color name="sens">#008585</color>
 
     <color name="ribbonDefault">#8C8C8C</color>
-    <color name="daySelected">#D000FF00</color>
-    <color name="weekdayOutline">#1ea3e5</color>
-    <color name="weekendOutline">#1e88e5</color>
 
     <!-- Notification-->
     <color name="notificationAnnouncement">#FF8C00</color>
@@ -178,7 +175,6 @@
     <color name="action">#ffffbb33</color>
     <color name="alarm">#ffff4444</color>
 
-    <color name="colorAcceptTempButton">#E19701</color>
     <color name="colorTreatmentButton">#006493</color>
     <color name="colorInsulinButton">#67dfe8</color>
     <color name="colorCarbsButton">#E19701</color>

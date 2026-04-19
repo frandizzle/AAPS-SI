@@ -24,6 +24,7 @@ import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.objects.wizard.QuickWizard
 import app.aaps.core.objects.wizard.QuickWizardEntry
 import app.aaps.core.objects.wizard.QuickWizardMode
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.R
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.ui.compose.main.QuickWizardItem
@@ -96,6 +97,7 @@ class TreatmentViewModel @Inject constructor(
             val showInsulin = preferences.get(BooleanKey.OverviewShowInsulinButton)
             val showCarbs = preferences.get(BooleanKey.OverviewShowCarbsButton)
             val showCalculator = preferences.get(BooleanKey.OverviewShowWizardButton)
+            val showSmartMeal = activePlugin.activeAPS is SmartInsulinOverview
 
             val showSettingsIcon = !preferences.simpleMode
 
@@ -107,6 +109,7 @@ class TreatmentViewModel @Inject constructor(
                     showInsulin = showInsulin,
                     showCarbs = showCarbs,
                     showCalculator = showCalculator,
+                    showSmartMeal = showSmartMeal,
                     isDexcomSource = isDexcomSource,
                     quickWizardItems = quickWizardItems,
                     showSettingsIcon = showSettingsIcon

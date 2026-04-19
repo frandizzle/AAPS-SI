@@ -68,6 +68,7 @@ import app.aaps.ui.compose.careDialog.CareDialogScreen
 import app.aaps.ui.compose.configuration.ConfigurationViewModel
 import app.aaps.ui.compose.extendedBolusDialog.ExtendedBolusDialogScreen
 import app.aaps.ui.compose.fillDialog.FillDialogScreen
+import app.aaps.ui.compose.history.HistoryScreen
 import app.aaps.ui.compose.insulinDialog.InsulinDialogScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
@@ -104,6 +105,7 @@ import app.aaps.ui.compose.treatments.viewmodels.TreatmentsViewModel
 import app.aaps.ui.compose.wizardDialog.WizardDialogScreen
 import app.aaps.ui.search.BuiltInSearchables
 import kotlinx.coroutines.launch
+import app.aaps.plugins.main.R as PluginsMainR
 
 /**
  * Safe popBackStack that prevents double-navigation during transitions.
@@ -465,6 +467,13 @@ fun NavGraphBuilder.appNavGraph(
         ProfileHelperScreen(
             viewModel = profileHelperViewModel,
             onBackClick = { navController.safePopBackStack() }
+        )
+    }
+
+    composable(AppRoute.HistoryBrowser.route) {
+        HistoryScreen(
+            title = stringResource(PluginsMainR.string.nav_history_browser),
+            onNavigateBack = { navController.safePopBackStack() }
         )
     }
 

@@ -22,8 +22,6 @@
     <attr name="setExtendedButtonColor" format="reference|color" />
     <!-- Carbs Button -->
     <attr name="carbsButtonColor" format="reference|color" />
-    <!-- Temp Button Button -->
-    <attr name="acceptTempButtonColor" format="reference|color" />
     <!---Treatment -->
     <attr name="treatmentButton" format="reference|color" />
     <attr name="activeColor" format="reference|color" />
@@ -67,9 +65,6 @@
     <!---Toast  -->
     <attr name="toastBaseTextColor" format="reference|color" />
     <attr name="toastBackgroundColor" format="reference|color" />
-    <declare-styleable name="NumberPicker">
-        <attr name="customContentDescription" format="string" />
-    </declare-styleable>
     <!---Notification -->
     <attr name="notificationUrgent" format="reference|color" />
     <attr name="notificationNormal" format="reference|color" />
@@ -174,7 +169,6 @@
     <attr name="announcementColor" format="reference|color" />
     <attr name="questionColor" format="reference|color" />
     <attr name="pumpHistoryColor" format="reference|color" />
-    <attr name="userOptionColor" format="reference|color" />
     <attr name="sensColor" format="reference|color" />
     <!---Glucose Value Color-->
     <attr name="cobColor" format="reference|color" />
@@ -224,6 +218,4 @@
     <!---Icons in Loop area -->
     <attr name="profileColor" format="reference|color" />
     <attr name="crossTargetColor" format="reference|color" />
-    <!---Custom button -->
-    <attr name="customBtnStyle" format="reference" />
 </resources>

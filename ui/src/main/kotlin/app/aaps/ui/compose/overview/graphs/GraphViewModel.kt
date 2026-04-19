@@ -35,7 +35,9 @@ import app.aaps.core.ui.compose.icons.IcArrowFlat
 import app.aaps.core.ui.compose.icons.IcArrowSimpleDown
 import app.aaps.core.ui.compose.icons.IcArrowSimpleUp
 import androidx.compose.ui.graphics.vector.ImageVector
-import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -50,7 +52,6 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import java.util.Locale
-import javax.inject.Inject
 
 /**
  * ViewModel for Overview graphs (Compose/Vico version).
@@ -135,11 +136,9 @@ enum class TbrArrow(val icon: ImageVector) {
     DOWN(IcArrowSimpleDown),
     FLAT(IcArrowFlat)
 }
-
-@HiltViewModel
 @Stable
-class GraphViewModel @Inject constructor(
-    cache: OverviewDataCache,
+class GraphViewModel @AssistedInject constructor(
+    @Assisted cache: OverviewDataCache,
     private val graphConfigRepository: GraphConfigRepository,
     private val aapsLogger: AAPSLogger,
     private val preferences: Preferences,
@@ -157,6 +156,12 @@ class GraphViewModel @Inject constructor(
     private val activePlugin: ActivePlugin,
     private val processedTbrEbData: ProcessedTbrEbData
 ) : ViewModel() {
+
+    @AssistedFactory
+    interface Factory {
+
+        fun create(cache: OverviewDataCache): GraphViewModel
+    }
 
     // Chart config - updates when high/low mark preferences change
     private val _chartConfigFlow = MutableStateFlow(
