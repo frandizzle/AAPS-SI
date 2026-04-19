@@ -28,7 +28,6 @@ import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.core.ui.compose.icons.IcPluginInsulin
-import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinScreen
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.ToolbarConfig
@@ -110,14 +109,13 @@ open class SmartInsulinPlugin @Inject constructor(
 ) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.APS)
-        .fragmentClass(SmartInsulinFragment::class.java.name)
         .icon(IcPluginInsulin)
         .pluginName(R.string.smart_insulin)
         .shortName(R.string.smart_insulin_short)
         .preferencesVisibleInSimpleMode(false)
         .showInList { config.APS }
         .description(R.string.smart_insulin_description)
-        .composeContent { plugin ->
+        .composeContent { plugin: app.aaps.core.interfaces.plugin.PluginBase ->
             object : ComposablePluginContent {
                 @Composable
                 override fun Render(
