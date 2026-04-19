@@ -27,6 +27,7 @@ import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.interfaces.Preferences
+import dagger.Lazy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,7 +50,7 @@ class NotificationManagerImpl @Inject constructor(
     private val preferences: Preferences,
     private val iconsProvider: IconsProvider,
     private val notificationHolder: NotificationHolder,
-    private val uiInteraction: UiInteraction
+    private val uiInteraction: Lazy<UiInteraction>
 ) : NotificationManager {
 
     private val _notifications = MutableStateFlow<List<AapsNotification>>(emptyList())
@@ -156,7 +157,7 @@ class NotificationManagerImpl @Inject constructor(
             instanceKey = id.legacyId
             // Stop alarm for replaced notification if it had sound
             current.filter { it.id == id }.forEach { old ->
-                if (old.soundRes != null) uiInteraction.stopAlarm("Replaced ${old.text}")
+                if (old.soundRes != null) uiInteraction.get().stopAlarm("Replaced ${old.text}")
             }
             current.removeAll { it.id == id }
         }
@@ -179,7 +180,7 @@ class NotificationManagerImpl @Inject constructor(
 
         // Start alarm if sound specified
         if (soundRes != null && soundRes != 0) {
-            uiInteraction.startAlarm(soundRes, text)
+            uiInteraction.get().startAlarm(soundRes, text)
         }
 
         // Raise Android system notification if pref enabled and no action buttons
@@ -220,7 +221,7 @@ class NotificationManagerImpl @Inject constructor(
         val filtered = current.filter { it.id != id }
         if (filtered.size != current.size) {
             dismissed.forEach { n ->
-                if (n.soundRes != null) uiInteraction.stopAlarm("Dismissed ${n.text}")
+                if (n.soundRes != null) uiInteraction.get().stopAlarm("Dismissed ${n.text}")
             }
             _notifications.value = filtered
             aapsLogger.debug(LTag.NOTIFICATION, "Notification dismissed: ${id.name}")
@@ -234,7 +235,7 @@ class NotificationManagerImpl @Inject constructor(
         val filtered = current.filter { it.instanceKey != handle.instanceKey }
         if (filtered.size != current.size) {
             dismissed.forEach { n ->
-                if (n.soundRes != null) uiInteraction.stopAlarm("Dismissed ${n.text}")
+                if (n.soundRes != null) uiInteraction.get().stopAlarm("Dismissed ${n.text}")
             }
             _notifications.value = filtered
             aapsLogger.debug(LTag.NOTIFICATION, "Notification dismissed by handle: ${handle.instanceKey}")
@@ -249,7 +250,7 @@ class NotificationManagerImpl @Inject constructor(
         }
         if (expired.isNotEmpty()) {
             expired.forEach { n ->
-                if (n.soundRes != null) uiInteraction.stopAlarm("Expired ${n.text}")
+                if (n.soundRes != null) uiInteraction.get().stopAlarm("Expired ${n.text}")
                 aapsLogger.debug(LTag.NOTIFICATION, "Notification expired: ${n.text}")
             }
             _notifications.value = current - expired.toSet()

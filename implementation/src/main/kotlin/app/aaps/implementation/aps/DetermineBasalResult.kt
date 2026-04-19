@@ -32,6 +32,7 @@ import app.aaps.core.objects.extensions.convertedToAbsolute
 import app.aaps.core.objects.extensions.convertedToPercent
 import app.aaps.core.ui.R
 import app.aaps.core.utils.HtmlHelper
+import dagger.Lazy
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import javax.inject.Inject
@@ -45,7 +46,7 @@ class DetermineBasalResult @Inject constructor(
     private val preferences: Preferences,
     private val activePlugin: ActivePlugin,
     private val processedTbrEbData: ProcessedTbrEbData,
-    private val profileFunction: ProfileFunction,
+    private val profileFunction: Lazy<ProfileFunction>,
     private val rh: ResourceHelper,
     private val decimalFormatter: DecimalFormatter,
     private val dateUtil: DateUtil,
@@ -276,7 +277,7 @@ class DetermineBasalResult @Inject constructor(
             val now = System.currentTimeMillis()
             val activeTemp = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
             val pump = activePlugin.activePump
-            val profile = runBlocking { profileFunction.getProfile() }
+            val profile = runBlocking { profileFunction.get().getProfile() }
             if (profile == null) {
                 aapsLogger.error("FALSE: No Profile")
                 return false

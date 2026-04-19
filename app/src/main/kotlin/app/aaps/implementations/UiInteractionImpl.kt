@@ -16,6 +16,7 @@ import app.aaps.ui.dialogs.AlertDialogs
 import app.aaps.ui.services.AlarmSoundService
 import app.aaps.ui.services.AlarmSoundServiceHelper
 import app.aaps.core.interfaces.widget.WidgetUpdater
+import dagger.Lazy
 import dagger.Reusable
 import javax.inject.Inject
 
@@ -26,7 +27,7 @@ class UiInteractionImpl @Inject constructor(
     rxBus: RxBus,
     private val alarmSoundServiceHelper: AlarmSoundServiceHelper,
     preferences: Preferences,
-    private val widgetUpdater: WidgetUpdater
+    private val widgetUpdater: Lazy<WidgetUpdater>
 ) : UiInteraction {
 
     private val alertDialogs: AlertDialogs = AlertDialogs(preferences, rxBus)
@@ -47,7 +48,7 @@ class UiInteractionImpl @Inject constructor(
     }
 
     override fun updateWidget(context: Context, from: String) {
-        widgetUpdater.update(from)
+        widgetUpdater.get().update(from)
     }
 
     override fun runProfileSwitchDialog(
