@@ -25,7 +25,7 @@ class InputDropdownMenu(private val rh: ResourceHelper) {
     fun addToLayout(root: LinearLayout) {
         root.addView(
             Spinner(root.context).apply {
-                adapter = ArrayAdapter(root.context, app.aaps.core.ui.R.layout.spinner_centered, itemList).apply {
+                adapter = ArrayAdapter(root.context, android.R.layout.simple_spinner_item, itemList).apply {
                     setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 }
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
@@ -73,7 +73,7 @@ class InputDropdownMenuTyped<T>(
         val labels = items.map { labelFn(it) }
         root.addView(
             Spinner(root.context).apply {
-                adapter = ArrayAdapter(root.context, app.aaps.core.ui.R.layout.spinner_centered, labels).apply {
+                adapter = ArrayAdapter(root.context, android.R.layout.simple_spinner_item, labels).apply {
                     setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
                 }
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
