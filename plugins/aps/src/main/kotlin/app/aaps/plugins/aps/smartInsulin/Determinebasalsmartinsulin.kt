@@ -205,7 +205,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // TBR correction — independent of smbAllowed. When SMBs are capped,
                 // TBR picks up the slack by running a high temp basal. The remaining
                 // undelivered correction is spread over TBR_WINDOW_HOURS (30 min).
-                val tbrCorrectionU = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                // IOB guard: mirrors SMB's iobHeadroom — TBR is scaled proportionally
+                // as IOB approaches max_iob, not just cut off at the boundary.
+                // This prevents a large TBR firing right at max_iob, then slamming to
+                // zero one cycle later.
+                val iobHeadroomFraction = if (oapsProfile.max_iob > 0.0)
+                    (iobHeadroom / oapsProfile.max_iob).coerceIn(0.0, 1.0)
+                else 0.0
+                val tbrCorrectionU = if (iobOk && insulinReq > 0.0)
+                    insulinReq * aggressiveness * iobHeadroomFraction
+                else 0.0
                 val remainingU     = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
