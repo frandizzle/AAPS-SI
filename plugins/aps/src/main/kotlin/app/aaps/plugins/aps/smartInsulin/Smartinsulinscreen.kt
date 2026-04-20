@@ -834,7 +834,7 @@ fun SmartInsulinScreen(
                 val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
                 
                 val isActive = if (name.contains("Insulin")) d.mealMode == "Fasting"
-                else d.mealMode != "Fasting" && d.mealMode.contains(name.substringBefore(":"), ignoreCase = true)
+                else d.mealMode == name
                 
                 val prefix = if (isActive) "► " else "  "
                 val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
