@@ -258,35 +258,47 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Predict forward for the duration of insulin action
         val ticks = kinetics.diaMinutes.toInt() / 5
 
-        // ── Insulin tail model (used when iobArray runs out) ──
-        // iobArray from AAPS typically projects 3-4 hours of IOB activity. Beyond that,
-        // we model the insulin tail from current IOB + learned DIA: an exponential
-        // decay calibrated so total activity over the remaining DIA matches the IOB
-        // remaining. This is more accurate than the raw exponential-from-last-value
-        // approach which over-decays the tail and causes prediction flatlining.
+        // ── Insulin activity model ──────────────────────────────────────────
+        // Rather than relying on iobArray's activity values (which may decay to zero
+        // mid-prediction even when real insulin is still clearing), model insulin
+        // activity explicitly across the full DIA window using learned kinetics.
+        //
+        // Shape: triangular, peaking at kinetics.peakMinutes, decaying to 0 at DIA.
+        // Scaled so the integral (total activity × 5 summed) equals currentIob.
+        // This guarantees insulin clearance continues across the full prediction.
+        //
+        // AAPS's iobArray is used for the first few ticks where it's most accurate
+        // (near-term). Past that, we use the modeled activity. This gives accurate
+        // immediate response while ensuring the tail actually brings BG back down.
         val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
-        val iobArraySize = iobArray.size
-        // Estimate IOB remaining at end of iobArray (sum of activity × 5 across the array)
-        // Then the tail must clear that remaining IOB over (DIA - iobArray.size * 5) minutes
-        val iobConsumedByArray = iobArray.sumOf { it.activity * 5.0 }
-        val iobRemainingForTail = (currentIob - iobConsumedByArray).coerceAtLeast(0.0)
-        val tailMinutes = (kinetics.diaMinutes - iobArraySize * 5.0).coerceAtLeast(60.0)
-        // For exponential decay: average activity over tail = iobRemaining / tailMinutes
-        // Use that as the approximate tail activity (per minute)
-        val tailActivityPerMin = iobRemainingForTail / tailMinutes
+        val peakMins = kinetics.peakMinutes.coerceIn(30.0, kinetics.diaMinutes * 0.4)
+        val diaMins  = kinetics.diaMinutes
+        // Area under a triangle peaking at peakMins, decaying to 0 at diaMins, with peak height h:
+        // A = 0.5 × diaMins × h (the triangle has base = diaMins, height = h)
+        // We want A = currentIob (in U) = integral of activity × 5 over all ticks
+        // Discretised: sum(activity[tick] × 5) = currentIob
+        // So peak activity height = 2 × currentIob / diaMins
+        val peakActivityPerMin = if (diaMins > 0) 2.0 * currentIob / diaMins else 0.0
+        // When to transition from iobArray to modeled activity: use iobArray for first
+        // MODELED_TAIL_START_TICKS ticks (most accurate near-term), then switch to model.
+        val useArrayUntilTick = minOf(iobArray.size, MODELED_TAIL_START_TICKS)
 
         for (tick in 1..ticks) {
             val minutes = tick * 5
 
             // ---------- INSULIN ACTIVITY ----------
-            val activity = if (tick - 1 < iobArraySize) {
+            val activity = if (tick - 1 < useArrayUntilTick) {
+                // Near-term: use AAPS's iobArray for most accurate current-insulin tracking
                 iobArray[tick - 1].activity
             } else {
-                // Past iobArray's projection window — use modeled tail.
-                // Apply mild decay across the tail so it doesn't stay constant.
-                val ticksIntoTail = (tick - 1) - iobArraySize + 1
-                val decayFactor = (1.0 - (ticksIntoTail * 5.0 / tailMinutes)).coerceAtLeast(0.0)
-                tailActivityPerMin * decayFactor
+                // Past the near-term window: use modeled triangular activity curve
+                // Rises from 0 to peak at peakMins, then declines to 0 at diaMins
+                val shapeFraction = when {
+                    minutes >= diaMins  -> 0.0
+                    minutes <= peakMins -> minutes / peakMins
+                    else                -> (diaMins - minutes) / (diaMins - peakMins)
+                }
+                peakActivityPerMin * shapeFraction
             }
             val iobDelta = -(activity * isfMgdl * 5.0)
 
@@ -363,5 +375,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** Default peak-to-duration ratio when sample count is too low to trust learned peak.
          *  0.33 matches the default peak (60) / duration (180). */
         private const val CARB_PEAK_DEFAULT_FRAC = 0.33
+        /** After this many ticks, switch from AAPS's iobArray to the modeled triangular
+         *  activity curve. iobArray is most accurate near-term; past this point, the
+         *  modeled curve (triangle peaking at kinetics.peakMinutes) provides a proper
+         *  tail that ensures insulin clearance continues across the full DIA window.
+         *  12 ticks = 60 min — enough to let SMB activity curves dominate early, then
+         *  transition to the learned kinetics for the long tail. */
+        private const val MODELED_TAIL_START_TICKS = 12
     }
 }
