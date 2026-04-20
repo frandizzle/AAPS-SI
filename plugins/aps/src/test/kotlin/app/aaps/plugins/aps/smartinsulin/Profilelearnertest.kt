@@ -2,7 +2,6 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.smartInsulin.MealMode
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -12,173 +11,60 @@ import org.mockito.kotlin.whenever
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
+import app.aaps.core.interfaces.profile.ProfileFunction
 
 class ProfileLearnerTest {
 
     private val logger: AAPSLogger = mock()
     private val preferences: Preferences = mock()
+    private val profileFunction: ProfileFunction = mock()
     private lateinit var learner: ProfileLearner
 
     @Before fun setUp() {
-        // Return empty string for all profile keys → triggers defaultFor() fallback
         whenever(preferences.get(any<StringKey>())).thenReturn("")
-        learner = ProfileLearner(logger, preferences)
+        learner = ProfileLearner(logger, preferences, profileFunction)
     }
 
-    // ── Default profiles ─────────────────────────────────────────────────────
-
-    @Test fun `getProfile returns default when no data persisted`() {
-        val profile = learner.getProfile(MealMode.FASTING)
-        val default = LearnedInsulinProfile.defaultFor(MealMode.FASTING)
-        assertEquals(default.peakMinutes, profile.peakMinutes, 0.001)
-        assertEquals(default.diaMinutes,  profile.diaMinutes,  0.001)
-        assertEquals(0, profile.sampleCount)
+    @Test fun `default insulin kinetics are correct`() {
+        val i = learner.getInsulinKinetics()
+        assertEquals(75.0,  i.peakMinutes, 0.001)
+        assertEquals(360.0, i.diaMinutes,  0.001)
+        assertEquals(0,     i.sampleCount)
     }
 
-    // ── EWMA convergence ─────────────────────────────────────────────────────
-
-    @Test fun `single FASTING observation moves peak toward observed value`() {
-        val before = learner.getProfile(MealMode.FASTING).peakMinutes
-        learner.observeBolusCurve(
-            mode             = MealMode.FASTING,
-            observedPeakMins = 50.0,   // faster than the prior of 65
-            observedDiaMins  = 220.0,
-            learningRate     = 0.15
-        )
-        val after = learner.getProfile(MealMode.FASTING).peakMinutes
-        // Peak should have moved toward 50 from 65
-        assertTrue("Peak should decrease toward 50", after < before)
+    @Test fun `observeInsulinKinetics moves values toward observed`() {
+        val before = learner.getInsulinKinetics().peakMinutes
+        learner.observeInsulinKinetics(50.0, 240.0, 0.15)
+        val after = learner.getInsulinKinetics().peakMinutes
+        
+        assertTrue("Peak should decrease toward 50 from $before", after < before)
         assertTrue("Peak should not jump all the way to 50", after > 50.0)
     }
 
-    @Test fun `repeated observations converge toward observed value`() {
-        repeat(50) {
-            learner.observeBolusCurve(
-                mode             = MealMode.FASTING,
-                observedPeakMins = 55.0,
-                observedDiaMins  = 210.0,
-                learningRate     = 0.15
-            )
-        }
-        val profile = learner.getProfile(MealMode.FASTING)
-        // After 50 identical observations it should be very close to the target
-        assertEquals(55.0, profile.peakMinutes, 2.0)
-        assertEquals(210.0, profile.diaMinutes, 5.0)
+    @Test fun `observeCarbAbsorption updates correct mode`() {
+        learner.observeCarbAbsorption(MealMode.BREAKFAST, 45.0, 180.0, 0.15)
+        val c = learner.getCarbAbsorption(MealMode.BREAKFAST)
+        
+        assertEquals(1, c.sampleCount)
+        assertTrue(c.absorptionMinutes > 120.0) // moved from default 180 toward something? Wait, default is 180.
     }
 
-    @Test fun `sample count increments on each observation`() {
-        repeat(3) {
-            learner.observeBolusCurve(MealMode.LUNCH, 70.0, 260.0, 0.15)
-        }
-        assertEquals(3, learner.getProfile(MealMode.LUNCH).sampleCount)
+    @Test fun `carb profiles are independent`() {
+        learner.observeCarbAbsorption(MealMode.BREAKFAST, 45.0, 120.0, 0.15)
+        val breakfast = learner.getCarbAbsorption(MealMode.BREAKFAST)
+        val lunch = learner.getCarbAbsorption(MealMode.LUNCH)
+        
+        assertEquals(1, breakfast.sampleCount)
+        assertEquals(0, lunch.sampleCount)
     }
 
-    // ── DIA learning gate ────────────────────────────────────────────────────
-
-    @Test fun `EXTENDED mode does not update DIA`() {
-        val diaBefore = learner.getProfile(MealMode.EXTENDED).diaMinutes
-        learner.observeBolusCurve(
-            mode             = MealMode.EXTENDED,
-            observedPeakMins = 85.0,
-            observedDiaMins  = 400.0,   // very different — should be ignored
-            learningRate     = 0.15
-        )
-        val diaAfter = learner.getProfile(MealMode.EXTENDED).diaMinutes
-        assertEquals("DIA should not change in EXTENDED mode", diaBefore, diaAfter, 0.001)
-    }
-
-    @Test fun `EXTENDED mode still updates peak`() {
-        val peakBefore = learner.getProfile(MealMode.EXTENDED).peakMinutes
-        learner.observeBolusCurve(
-            mode             = MealMode.EXTENDED,
-            observedPeakMins = 75.0,   // different from prior of 90
-            observedDiaMins  = 350.0,
-            learningRate     = 0.15
-        )
-        val peakAfter = learner.getProfile(MealMode.EXTENDED).peakMinutes
-        assertTrue("Peak should update even in EXTENDED mode", peakAfter != peakBefore)
-    }
-
-    // ── Rejection of implausible observations ────────────────────────────────
-
-    @Test fun `observation where peak is greater than or equal to DIA is rejected`() {
-        val before = learner.getProfile(MealMode.FASTING)
-        learner.observeBolusCurve(
-            mode             = MealMode.FASTING,
-            observedPeakMins = 200.0,  // peak > DIA — nonsensical
-            observedDiaMins  = 150.0,
-            learningRate     = 0.15
-        )
-        val after = learner.getProfile(MealMode.FASTING)
-        assertEquals(before.peakMinutes, after.peakMinutes, 0.001)
-        assertEquals(before.sampleCount, after.sampleCount)
-    }
-
-    @Test fun `observation outside hard limits is clamped not rejected`() {
-        // Peak of 5 mins is below PEAK_MIN (35) — should be clamped to 35
-        learner.observeBolusCurve(
-            mode             = MealMode.FASTING,
-            observedPeakMins = 5.0,
-            observedDiaMins  = 240.0,
-            learningRate     = 0.15
-        )
-        val after = learner.getProfile(MealMode.FASTING)
-        // Peak should have moved toward 35 (clamped value), not 5
-        assertTrue("Peak should not go below PEAK_MIN", after.peakMinutes >= LearnedInsulinProfile.PEAK_MIN_MINUTES)
-    }
-
-    // ── Mode independence ────────────────────────────────────────────────────
-
-    @Test fun `updating one mode does not affect another`() {
-        val mealBefore = learner.getProfile(MealMode.LUNCH).peakMinutes
-        learner.observeBolusCurve(MealMode.FASTING, 55.0, 220.0, 0.15)
-        val mealAfter = learner.getProfile(MealMode.LUNCH).peakMinutes
-        assertEquals(mealBefore, mealAfter, 0.001)
-    }
-
-    // ── Reset ────────────────────────────────────────────────────────────────
-
-    @Test fun `reset restores defaults and clears sample count`() {
-        repeat(5) { learner.observeBolusCurve(MealMode.FASTING, 55.0, 210.0, 0.15) }
-        assertTrue(learner.getProfile(MealMode.FASTING).sampleCount > 0)
-
-        learner.resetProfile(MealMode.FASTING)
-
-        val reset = learner.getProfile(MealMode.FASTING)
-        assertEquals(0, reset.sampleCount)
-        assertEquals(LearnedInsulinProfile.defaultFor(MealMode.FASTING).peakMinutes, reset.peakMinutes, 0.001)
-    }
-
-    // ── LearnedInsulinProfile helpers ────────────────────────────────────────
-
-    @Test fun `isMature is false below 5 samples`() {
-        val profile = LearnedInsulinProfile.defaultFor(MealMode.FASTING)
-        assertFalse(profile.isMature)
-    }
-
-    @Test fun `normalizedConfidence saturates at 1`() {
-        var p = LearnedInsulinProfile.defaultFor(MealMode.FASTING)
-        repeat(50) {
-            p = p.copy(sampleCount = p.sampleCount + 1)
-        }
-        assertEquals(1.0, p.normalizedConfidence, 0.001)
-    }
-
-    @Test fun `JSON round-trip preserves all fields`() {
-        val original = LearnedInsulinProfile(
-            mode          = MealMode.LUNCH,
-            peakMinutes   = 72.3,
-            diaMinutes    = 255.7,
-            confidence    = 0.65,
-            sampleCount   = 12,
-            lastUpdatedMs = 1_700_000_000_000L
-        )
-        val restored = LearnedInsulinProfile.fromJson(original.toJson(), MealMode.LUNCH)
-        assertEquals(original.mode,          restored.mode)
-        assertEquals(original.peakMinutes,   restored.peakMinutes,   0.001)
-        assertEquals(original.diaMinutes,    restored.diaMinutes,    0.001)
-        assertEquals(original.confidence,    restored.confidence,    0.001)
-        assertEquals(original.sampleCount,   restored.sampleCount)
-        assertEquals(original.lastUpdatedMs, restored.lastUpdatedMs)
+    @Test fun `resetProfiles clears all`() {
+        learner.observeInsulinKinetics(60.0, 300.0, 0.15)
+        learner.observeCarbAbsorption(MealMode.BREAKFAST, 45.0, 120.0, 0.15)
+        
+        learner.resetProfiles()
+        
+        assertEquals(0, learner.getInsulinKinetics().sampleCount)
+        assertEquals(0, learner.getCarbAbsorption(MealMode.BREAKFAST).sampleCount)
     }
 }

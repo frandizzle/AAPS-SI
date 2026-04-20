@@ -28,7 +28,6 @@ import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.core.ui.compose.icons.IcPluginInsulin
-import app.aaps.plugins.aps.smartInsulin.SmartInsulinScreen
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.ToolbarConfig
 import androidx.compose.runtime.Composable
@@ -101,7 +100,6 @@ open class SmartInsulinPlugin @Inject constructor(
     private val circadianLearner: CircadianLearner,
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
-    private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
     private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData,
@@ -394,11 +392,15 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             appendLine()
 
-            // ── Profiles ──────────────────────────────────────────────────────
-            appendLine("── Insulin Profiles ──────────────────")
+            // ── Learned Curves ──────────────────────────────────────────────
+            val i = profileLearner.getInsulinKinetics()
+            appendLine("── Insulin Kinetics ──────────────────")
+            appendLine("  Peak: ${i.peakMinutes.toInt()}m  DIA: ${i.diaMinutes.toInt()}m  n=${i.sampleCount}")
+            appendLine("── Carb Absorption ──────────────────")
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
-                appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
+                if (mode == MealMode.FASTING) return@forEach
+                val c = profileLearner.getCarbAbsorption(mode)
+                appendLine("  ${mode.label.padEnd(12)}: dur=${c.absorptionMinutes.toInt()}m  n=${c.sampleCount}")
             }
         }.trimEnd()
     }
@@ -790,7 +792,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
-        val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
         lastAPSResult = null
 
         val profile = profileFunction.getProfile() ?: run {
@@ -1161,19 +1162,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
 
-        // UAM modes share peak/DIA learning with their parent mode — they accumulate
-        // separate observations but start from the same profile. This means UAM_LUNCH
-        // uses LUNCH's learned peak/DIA until it has its own samples.
-        val learnedProfileMode = when (mealMode) {
-            MealMode.UAM_BREAKFAST -> MealMode.BREAKFAST
-            MealMode.UAM_LUNCH     -> MealMode.LUNCH
-            MealMode.UAM_DINNER    -> MealMode.DINNER
-            MealMode.UAM_SNACK     -> MealMode.DINNER   // closest equivalent
-            MealMode.UAM_PROTEIN_FAT  -> MealMode.LOW_CARB
-            else                   -> mealMode
-        }
-        val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
-
         // ── Activity monitor — recompute from fed HR/steps data ─────────────
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
@@ -1374,7 +1362,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel kinetics=${kinetics.peakMinutes.toInt()}m/${kinetics.diaMinutes.toInt()}m")
 
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
@@ -1614,7 +1602,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 inPostMealLockout        = inPostMealLockout,
                 aggressiveness           = circAggrCeil,
                 suppressAdaptiveLearning = suppressCircadianLearning,
-                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
+                fastingPeakMins          = profileLearner.getInsulinKinetics().peakMinutes
             )
             // If nudge is suppressed within update() (activity/CGM warmup), mark paused
             if (suppressCircadianLearning) {
