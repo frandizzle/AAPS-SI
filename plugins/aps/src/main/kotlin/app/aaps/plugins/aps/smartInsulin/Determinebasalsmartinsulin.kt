@@ -258,17 +258,35 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Predict forward for the duration of insulin action
         val ticks = kinetics.diaMinutes.toInt() / 5
 
+        // ── Insulin tail model (used when iobArray runs out) ──
+        // iobArray from AAPS typically projects 3-4 hours of IOB activity. Beyond that,
+        // we model the insulin tail from current IOB + learned DIA: an exponential
+        // decay calibrated so total activity over the remaining DIA matches the IOB
+        // remaining. This is more accurate than the raw exponential-from-last-value
+        // approach which over-decays the tail and causes prediction flatlining.
+        val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
+        val iobArraySize = iobArray.size
+        // Estimate IOB remaining at end of iobArray (sum of activity × 5 across the array)
+        // Then the tail must clear that remaining IOB over (DIA - iobArray.size * 5) minutes
+        val iobConsumedByArray = iobArray.sumOf { it.activity * 5.0 }
+        val iobRemainingForTail = (currentIob - iobConsumedByArray).coerceAtLeast(0.0)
+        val tailMinutes = (kinetics.diaMinutes - iobArraySize * 5.0).coerceAtLeast(60.0)
+        // For exponential decay: average activity over tail = iobRemaining / tailMinutes
+        // Use that as the approximate tail activity (per minute)
+        val tailActivityPerMin = iobRemainingForTail / tailMinutes
+
         for (tick in 1..ticks) {
             val minutes = tick * 5
 
-            // ---------- INSULIN ACTIVITY (with exponential tail) ----------
-            val activity = if (tick - 1 < iobArray.size) {
+            // ---------- INSULIN ACTIVITY ----------
+            val activity = if (tick - 1 < iobArraySize) {
                 iobArray[tick - 1].activity
             } else {
-                // Fallback: exponential decay beyond the iobArray
-                val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
-                val extraTicks = (tick - 1) - iobArray.size + 1
-                max(0.0, lastActivity * Math.exp(-extraTicks * 0.05))
+                // Past iobArray's projection window — use modeled tail.
+                // Apply mild decay across the tail so it doesn't stay constant.
+                val ticksIntoTail = (tick - 1) - iobArraySize + 1
+                val decayFactor = (1.0 - (ticksIntoTail * 5.0 / tailMinutes)).coerceAtLeast(0.0)
+                tailActivityPerMin * decayFactor
             }
             val iobDelta = -(activity * isfMgdl * 5.0)
 
