@@ -165,6 +165,16 @@ fun SmartMealDialogScreen(
                                 Text("Cancel Pre-bolus 2")
                             }
                         }
+                        if (uiState.pb3Pending) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(uiState.pb3StatusText,
+                                 style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.onErrorContainer)
+                            OutlinedButton(onClick = { viewModel.cancelPb3() },
+                                           modifier = Modifier.fillMaxWidth()) {
+                                Text("Cancel Pre-bolus 3")
+                            }
+                        }
                     }
                 }
             }
@@ -413,6 +423,104 @@ fun SmartMealDialogScreen(
                                 "Gates are checked every 5min until all pass or mode expires.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+
+            // ── Pre-bolus 3 card ───────────────────────────────────────────
+            Card(modifier = Modifier.fillMaxWidth(),
+                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Pre-bolus 3 (late-meal)", style = MaterialTheme.typography.titleMedium)
+                            Text("Auto-fires delay-minutes AFTER pre-bolus 2 fires. Cancels if PB2 cancels.",
+                                 style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = uiState.preBolus3Enabled,
+                               onCheckedChange = { viewModel.setPreBolus3Enabled(it) },
+                               enabled = uiState.preBolus2Enabled)  // PB3 requires PB2
+                    }
+                    if (uiState.preBolus3Enabled && uiState.preBolus2Enabled) {
+                        HorizontalDivider()
+                        var pb3Text by rememberSaveable { mutableStateOf(if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else "") }
+                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus3U) {
+                            pb3Text = if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = pb3Text,
+                                onValueChange = { v ->
+                                    pb3Text = v
+                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                        ?.let { viewModel.setPreBolus3U(it) }
+                                },
+                                suffix = { Text("U") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                singleLine = true,
+                                modifier = Modifier.width(100.dp)
+                            )
+                        }
+                        Slider(
+                            value = uiState.preBolus3U.toFloat(),
+                            onValueChange = { v ->
+                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                viewModel.setPreBolus3U(snapped)
+                                pb3Text = "%.2f".format(snapped)
+                            },
+                            valueRange = 0f..uiState.maxPreBolus.toFloat(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        var pb3DelayText by rememberSaveable { mutableStateOf(uiState.preBolus3DelayMins.toString()) }
+                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus3DelayMins) {
+                            pb3DelayText = uiState.preBolus3DelayMins.toString()
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Delay after PB2", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = pb3DelayText,
+                                onValueChange = { v ->
+                                    pb3DelayText = v
+                                    v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus3DelayMins(it) }
+                                },
+                                suffix = { Text("min") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(100.dp)
+                            )
+                        }
+                        Slider(
+                            value = uiState.preBolus3DelayMins.toFloat(),
+                            onValueChange = { v ->
+                                viewModel.setPreBolus3DelayMins(v.toInt())
+                                pb3DelayText = v.toInt().toString()
+                            },
+                            valueRange = 15f..120f,
+                            steps = ((120 - 15) / 15) - 1,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "Pre-bolus 3 timer starts when PB2 delivers successfully. Same safety gates as PB2:\n" +
+                                "• BG above profile target (not falling)\n" +
+                                "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
+                                "• 15min avg delta not in sustained fall\n" +
+                                "• IOB below 75% of max IOB\n" +
+                                "Cancels automatically if PB2 is cancelled, fails, or the meal ends.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (uiState.preBolus3Enabled && !uiState.preBolus2Enabled) {
+                        Text(
+                            "Pre-bolus 3 requires pre-bolus 2 to be enabled — its timer starts when PB2 fires.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error)
                     }
                 }
             }

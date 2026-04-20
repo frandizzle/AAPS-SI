@@ -42,12 +42,17 @@ data class SmartMealUiState(
     val preBolus2Enabled: Boolean = false,
     val preBolus2U: Double = 0.0,
     val preBolus2DelayMins: Int = 60,
+    val preBolus3Enabled: Boolean = false,
+    val preBolus3U: Double = 0.0,
+    val preBolus3DelayMins: Int = 30,    // delay AFTER PB2 fires
     val isMmol: Boolean = true,
     val maxPreBolus: Double = 3.0,
     val bolusStep: Double = 0.05,
     val activeModeName: String? = null,
     val pb2Pending: Boolean = false,
-    val pb2StatusText: String = ""
+    val pb2StatusText: String = "",
+    val pb3Pending: Boolean = false,
+    val pb3StatusText: String = ""
 )
 
 @HiltViewModel
@@ -104,6 +109,8 @@ class SmartMealDialogViewModel @Inject constructor(
                 activeModeName = activeMode?.label,
                 pb2Pending = mealOverrideManager.preBolus2Pending,
                 pb2StatusText = mealOverrideManager.preBolus2StatusText,
+                pb3Pending = mealOverrideManager.preBolus3Pending,
+                pb3StatusText = mealOverrideManager.preBolus3StatusText,
                 isfValue = defaultIsf
             )
         }
@@ -125,9 +132,13 @@ class SmartMealDialogViewModel @Inject constructor(
     fun setPreBolus2Enabled(v: Boolean) = _uiState.update { it.copy(preBolus2Enabled = v) }
     fun setPreBolus2U(v: Double) = _uiState.update { it.copy(preBolus2U = v) }
     fun setPreBolus2DelayMins(v: Int) = _uiState.update { it.copy(preBolus2DelayMins = v) }
+    fun setPreBolus3Enabled(v: Boolean) = _uiState.update { it.copy(preBolus3Enabled = v) }
+    fun setPreBolus3U(v: Double) = _uiState.update { it.copy(preBolus3U = v) }
+    fun setPreBolus3DelayMins(v: Int) = _uiState.update { it.copy(preBolus3DelayMins = v) }
 
     fun cancelMode() { mealOverrideManager.cancelOverride(); refresh() }
     fun cancelPb2() { mealOverrideManager.cancelPreBolus2(); refresh() }
+    fun cancelPb3() { mealOverrideManager.cancelPreBolus3(); refresh() }
 
     fun confirmAndActivate(onDeliveryError: (String) -> Unit, onDone: () -> Unit) {
         val s = _uiState.value
@@ -173,13 +184,16 @@ class SmartMealDialogViewModel @Inject constructor(
         val maxPb = s.maxPreBolus
         val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
         val pb2 = if (s.preBolus2Enabled) s.preBolus2U.coerceAtMost(maxPb) else 0.0
+        val pb3 = if (s.preBolus3Enabled) s.preBolus3U.coerceAtMost(maxPb) else 0.0
         mealOverrideManager.activateOverride(
             mode = mode,
             doseU = if (pb1 > 0.0) pb1 else null,
             carbsG = 0,
             modeWindowMs = TimeUnit.MINUTES.toMillis(s.durationMins.toLong()),
             preBolus2U = pb2,
-            preBolus2DelayMs = if (s.preBolus2Enabled && pb2 > 0.0) TimeUnit.MINUTES.toMillis(s.preBolus2DelayMins.toLong()) else 0L
+            preBolus2DelayMs = if (s.preBolus2Enabled && pb2 > 0.0) TimeUnit.MINUTES.toMillis(s.preBolus2DelayMins.toLong()) else 0L,
+            preBolus3U = pb3,
+            preBolus3DelayMs = if (s.preBolus3Enabled && pb3 > 0.0) TimeUnit.MINUTES.toMillis(s.preBolus3DelayMins.toLong()) else 0L
         )
     }
 
@@ -193,6 +207,7 @@ class SmartMealDialogViewModel @Inject constructor(
             appendLine("ISF: $isfStr")
             if (s.preBolus1Enabled && s.preBolus1U > 0.0) appendLine("Pre-bolus 1: ${"%.2f".format(s.preBolus1U)}U (now)")
             if (s.preBolus2Enabled && s.preBolus2U > 0.0) appendLine("Pre-bolus 2: ${"%.2f".format(s.preBolus2U)}U in ${s.preBolus2DelayMins}min")
+            if (s.preBolus3Enabled && s.preBolus3U > 0.0) appendLine("Pre-bolus 3: ${"%.2f".format(s.preBolus3U)}U ${s.preBolus3DelayMins}min after PB2")
         }.trim()
     }
 

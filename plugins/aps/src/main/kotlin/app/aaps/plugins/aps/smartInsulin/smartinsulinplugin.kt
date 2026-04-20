@@ -189,6 +189,13 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb2LastIobU:              Double = 0.0
     @Volatile var pb2LastMaxIobU:           Double = 0.0
     @Volatile var pb2ProfileTargetMgdl:     Double = 0.0
+    // ── PB3 gate snapshot — identical fields, updated separately each invoke() ─
+    @Volatile var pb3LastBgMgdl:            Double = 0.0
+    @Volatile var pb3LastDeltaMgdl:         Double = 0.0
+    @Volatile var pb3LastShortAvgDeltaMgdl: Double = 0.0
+    @Volatile var pb3LastIobU:              Double = 0.0
+    @Volatile var pb3LastMaxIobU:           Double = 0.0
+    @Volatile var pb3ProfileTargetMgdl:     Double = 0.0
 
     // ── HbA1c estimation — computed fresh each fragmentData() call from DB ───
     // Formula: (mean_mgdl + 46.7) / 28.7
@@ -228,6 +235,7 @@ open class SmartInsulinPlugin @Inject constructor(
         app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
             modeLine      = "Meal: Fasting",
             pb2Line       = null,
+            pb3Line       = null,
             learningState = "Learning"
         )
     )
@@ -318,6 +326,10 @@ open class SmartInsulinPlugin @Inject constructor(
             if (pb2Status.isNotEmpty()) {
                 appendLine("  ${pb2Status.replace("PB2 waiting:", "PB2:").replace("PB2 active:", "PB2:")}")
             }
+            val pb3Status = mealOverrideManager.preBolus3StatusText
+            if (pb3Status.isNotEmpty()) {
+                appendLine("  ${pb3Status.replace("PB3 waiting:", "PB3:").replace("PB3 active:", "PB3:")}")
+            }
 
             // ── STFT / UAM debug ──────────────────────────────────────────────
             appendLine()
@@ -403,6 +415,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMmol:            Boolean
     )
 
+    data class Pb3GateData(
+        val bgMgdl:            Double,
+        val deltaMgdl:         Double,
+        val shortAvgDeltaMgdl: Double,
+        val iobU:              Double,
+        val maxIobU:           Double,
+        val profileTargetMgdl: Double,
+        val isMmol:            Boolean
+    )
+
     data class FragmentData(
         val hour:               Int,
         val dayLabel:           String,
@@ -455,8 +477,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val estimatedHba1c:     Double,
         val bgWindowHours:      Int,
         val pb2GateData:        Pb2GateData?,
+        val pb3GateData:        Pb3GateData?,
         val activeDoseU:        Double?,
-        val activePb2DoseU:     Double?
+        val activePb2DoseU:     Double?,
+        val activePb3DoseU:     Double?,
+        val pb3Status:          String
     )
 
     fun fragmentData(): FragmentData {
@@ -598,8 +623,19 @@ open class SmartInsulinPlugin @Inject constructor(
                 profileTargetMgdl = pb2ProfileTargetMgdl,
                 isMmol            = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
             ) else null,
+            pb3GateData        = if (mealOverrideManager.preBolus3Pending) Pb3GateData(
+                bgMgdl            = pb3LastBgMgdl,
+                deltaMgdl         = pb3LastDeltaMgdl,
+                shortAvgDeltaMgdl = pb3LastShortAvgDeltaMgdl,
+                iobU              = pb3LastIobU,
+                maxIobU           = pb3LastMaxIobU,
+                profileTargetMgdl = pb3ProfileTargetMgdl,
+                isMmol            = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
+            ) else null,
             activeDoseU        = mealOverrideManager.activeDoseU,
-            activePb2DoseU     = mealOverrideManager.activePb2DoseU
+            activePb2DoseU     = mealOverrideManager.activePb2DoseU,
+            activePb3DoseU     = mealOverrideManager.activePb3DoseU,
+            pb3Status          = cachedOverviewState.pb3Line ?: ""
         )
     }
 
@@ -937,12 +973,22 @@ open class SmartInsulinPlugin @Inject constructor(
             iobArray      = iobArray,
             maxIobU       = pb2MaxIob
         )
+        // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
+        // post-fire UI still shows what the gate state was on the last tick.
         pb2LastBgMgdl            = glucoseStatus.glucose
         pb2LastDeltaMgdl         = glucoseStatus.delta
         pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
         pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
         pb2LastMaxIobU           = pb2MaxIob
         pb2ProfileTargetMgdl     = profile.getTargetMgdl()
+        // PB3 cache — same values, identical gates. Refreshed every cycle so UI reflects
+        // current state accurately while PB3 is waiting on PB2 or on its own delay.
+        pb3LastBgMgdl            = glucoseStatus.glucose
+        pb3LastDeltaMgdl         = glucoseStatus.delta
+        pb3LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
+        pb3LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
+        pb3LastMaxIobU           = pb2MaxIob
+        pb3ProfileTargetMgdl     = profile.getTargetMgdl()
 
         // ── STFT: short-term target reduction for stuck-high fasting BG ──────
         // Only runs in fasting, never overrides a deliberate temp target.
@@ -1257,9 +1303,33 @@ open class SmartInsulinPlugin @Inject constructor(
                 }
             }
         } else null
+        val pb3LineStr = if (mealOverrideManager.preBolus3Pending) {
+            val msRem = mealOverrideManager.preBolus3SecondsRemaining
+            when {
+                // PB2 not yet fired — PB3 timer hasn't started
+                msRem == null -> "PB3: waiting for PB2"
+                // Counting down
+                msRem > 0 -> "PB3 active: ${msRem / 60_000}m"
+                // Delay elapsed — show the blocking gate
+                else -> {
+                    val bgOk    = pb3LastBgMgdl > pb3ProfileTargetMgdl
+                    val iobOk   = pb3LastIobU < pb3LastMaxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                    val deltaOk = pb3LastDeltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+                    val shortOk = pb3LastShortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+                    when {
+                        !bgOk    -> "PB3: Below target"
+                        !iobOk   -> "PB3: IOB too high"
+                        !deltaOk -> "PB3: BG falling"
+                        !shortOk -> "PB3: Trend falling"
+                        else     -> "PB3: Waiting"
+                    }
+                }
+            }
+        } else null
         cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
             modeLine      = modeLineStr,
             pb2Line       = pb2LineStr,
+            pb3Line       = pb3LineStr,
             learningState = learningStateStr
         )
 

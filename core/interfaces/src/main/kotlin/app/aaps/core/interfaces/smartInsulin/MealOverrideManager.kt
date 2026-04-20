@@ -17,6 +17,8 @@ interface MealOverrideManager {
     val activeDoseU: Double?
     /** Non-null and > 0 when PB2 has been delivered this session — shows the delivered amount */
     val activePb2DoseU: Double?
+    /** Non-null and > 0 when PB3 has been delivered this session — shows the delivered amount */
+    val activePb3DoseU: Double?
 
     /** ISF multiplier for current loop cycle — 1.0 if no override active */
     val activeIsfMultiplier: Double
@@ -31,13 +33,27 @@ interface MealOverrideManager {
     /** True if pre-bolus 2 is pending delivery (scheduled but not yet fired) */
     val preBolus2Pending: Boolean
 
+    /** True if pre-bolus 3 is pending delivery (scheduled but not yet fired).
+     *  PB3 remains pending while PB2 is still counting down or waiting on gates — it can only
+     *  begin its own countdown once PB2 fires successfully. */
+    val preBolus3Pending: Boolean
+
     /** Human-readable status of pre-bolus 2 for display in dialog and tab UI.
      *  Examples: "PB2: 18min", "PB2: waiting — BG below target (5.1 <= 5.5mmol)",
      *            "PB2: delivered 14:32", "PB2: cancelled", "" if not scheduled */
     val preBolus2StatusText: String
 
+    /** Human-readable status of pre-bolus 3 for display in dialog and tab UI.
+     *  Examples: "PB3: waiting for PB2", "PB3: 18min", "PB3: waiting — BG falling",
+     *            "PB3: delivered 15:02", "PB3: cancelled", "" if not scheduled */
+    val preBolus3StatusText: String
+
     /** Seconds until pre-bolus 2 fire time (negative = overdue, waiting on safety checks) */
     val preBolus2SecondsRemaining: Long?
+
+    /** Seconds until pre-bolus 3 fire time (negative = overdue, waiting on safety checks).
+     *  null if PB3 not scheduled, or if PB2 hasn't fired yet (PB3 timer hasn't started). */
+    val preBolus3SecondsRemaining: Long?
 
     fun activateOverride(
         mode:             MealMode,
@@ -45,16 +61,26 @@ interface MealOverrideManager {
         carbsG:           Int,
         modeWindowMs:     Long   = DEFAULT_MODE_WINDOW_MS,
         preBolus2U:       Double = 0.0,
-        preBolus2DelayMs: Long   = 0L
+        preBolus2DelayMs: Long   = 0L,
+        preBolus3U:       Double = 0.0,
+        preBolus3DelayMs: Long   = 0L
     )
 
     fun cancelOverride()
 
     /**
      * Cancel a pending pre-bolus 2 without cancelling the meal mode itself.
+     * Also cancels PB3 if scheduled — PB3's timing reference (PB2 fire time) will never exist
+     * if PB2 is cancelled before firing, so PB3 must be cancelled as a consequence.
      * No-op if PB2 has already fired or was never scheduled.
      */
     fun cancelPreBolus2()
+
+    /**
+     * Cancel a pending pre-bolus 3 without cancelling the meal mode or PB2.
+     * No-op if PB3 has already fired or was never scheduled.
+     */
+    fun cancelPreBolus3()
 
     /**
      * Called every loop cycle from SmartInsulinPlugin.invoke().

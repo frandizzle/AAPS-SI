@@ -203,6 +203,55 @@ fun SmartInsulinScreen(
                 }
             }
 
+            // Pre-bolus 3 delivered / pending gates
+            if (d.mealMode != "Fasting" && (d.activePb3DoseU ?: 0.0) > 0.0)
+                SiRow("Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
+                      "Third bolus delivered as scheduled (late-meal cover).", primaryColor = StatusGood)
+
+            if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
+                val gate3 = d.pb3GateData
+                val isActive3 = d.pb3Status.contains("active")
+                val pb3Primary = when {
+                    d.pb3Status.contains("waiting for PB2") -> "Pre-bolus 3 — waiting for PB2 to fire"
+                    d.pb3Status.contains("due")             -> "Pre-bolus 3 — ready to deliver now"
+                    Regex("""(\d+)m""").containsMatchIn(d.pb3Status) -> {
+                        val mins = Regex("""(\d+)m""").find(d.pb3Status)?.groupValues?.get(1)
+                        "Pre-bolus 3 — delivers in ${mins}m"
+                    }
+                    gate3 != null -> "Pre-bolus 3 — waiting for safety gates"
+                    else          -> "Pre-bolus 3"
+                }
+                SiRow(pb3Primary,
+                      if (d.pb3Status.contains("waiting for PB2"))
+                          "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
+                      else null,
+                      primaryColor = if (isActive3) StatusGood else StatusInfo)
+
+                if (gate3 != null) {
+                    val isMmolG3 = gate3.isMmol
+                    fun fmtBg3(mgdl: Double)    = if (isMmolG3) "${"%.1f".format(mgdl / 18.0)} mmol" else "${"%.0f".format(mgdl)} mg/dL"
+                    fun fmtDelta3(mgdl: Double) = if (isMmolG3) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
+                    val effectiveMin3 = maxOf(MealOverrideManager.MIN_BG_FOR_PB2_MGDL, gate3.profileTargetMgdl)
+                    val bgOk3  = gate3.bgMgdl > effectiveMin3
+                    val iobOk3 = gate3.iobU < gate3.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                    val maxAllowedIob3 = gate3.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                    val deltaOk3 = gate3.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+                    val shortOk3 = gate3.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+                    SiRow("${if (bgOk3) "✓" else "✗"} BG: ${fmtBg3(gate3.bgMgdl)} (${if (bgOk3) "above target ✓" else "${fmtBg3(effectiveMin3 - gate3.bgMgdl)} below target — waiting"})",
+                          "Must be above profile target ${fmtBg3(gate3.profileTargetMgdl)}",
+                          primaryColor = if (bgOk3) StatusGood else StatusBad)
+                    SiRow("${if (iobOk3) "✓" else "✗"} IOB: ${"%.2f".format(gate3.iobU)}U / ${"%.2f".format(gate3.maxIobU)}U (${if (iobOk3) "${"%.2f".format(maxAllowedIob3 - gate3.iobU)}U headroom" else "IOB too high — waiting"})",
+                          "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${"%.2f".format(maxAllowedIob3)}U)",
+                          primaryColor = if (iobOk3) StatusGood else StatusBad)
+                    SiRow("${if (deltaOk3) "✓" else "✗"} Delta: ${fmtDelta3(gate3.deltaMgdl)} (${if (deltaOk3) "not falling fast" else "falling — waiting"})",
+                          "Blocked below ${fmtDelta3(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}",
+                          primaryColor = if (deltaOk3) StatusGood else StatusBad)
+                    SiRow("${if (shortOk3) "✓" else "✗"} 15min avg: ${fmtDelta3(gate3.shortAvgDeltaMgdl)} (${if (shortOk3) "trend stable" else "sustained fall — waiting"})",
+                          "Blocked below ${fmtDelta3(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}",
+                          primaryColor = if (shortOk3) StatusGood else StatusBad)
+                }
+            }
+
             val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
             val pfIsf = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
             val fIsf  = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl

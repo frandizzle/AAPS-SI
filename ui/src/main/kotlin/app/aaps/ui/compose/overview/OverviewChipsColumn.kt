@@ -182,6 +182,9 @@ private fun SmartInsulinStatusBlock(state: SmartInsulinOverview.OverviewState) {
         state.pb2Line?.let { pb2 ->
             Text(text = pb2, fontSize = 13.sp, color = Color(0xFF64B5F6), maxLines = 1)
         }
+        state.pb3Line?.let { pb3 ->
+            Text(text = pb3, fontSize = 13.sp, color = Color(0xFF64B5F6), maxLines = 1)
+        }
         BasicText(
             text = buildAnnotatedString {
                 withStyle(SpanStyle(color = whiteColor)) {
