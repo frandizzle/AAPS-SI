@@ -273,23 +273,26 @@ class DetermineBasalSmartInsulin @Inject constructor(
             val iobDelta = -(activity * isfMgdl * 5.0)
 
             // ---------- CARB IMPACT (right-triangle with learned peak) ----------
-            // Model glucose release as a triangle anchored at carbAbs.peakMinutes:
-            //   - Ramps linearly from 0 → peakVelocity between t=0 and peak
-            //   - Ramps linearly from peakVelocity → 0 between peak and duration
-            // Total AUC = 0.5 × peakVelocity × duration, preserved vs the original
-            // 60-min flat-triangle (AUC = 30 × ci) by setting peakVelocity = 60·ci/duration.
+            // ci = currently observed carb impact rate (mg/dL per 5-min tick).
+            // It's measured from THIS cycle's actual rise. To project forward, we model
+            // how that rate will evolve as carb absorption progresses.
             //
-            // Rationale: real glucose absorption builds to a peak (15-90 min in) then tails.
-            // A flat triangle starting at t=0 overestimates early-phase carb impact, which
-            // causes the loop to delay insulin when it's most needed. For plateau-style
-            // meals (high protein/fat) the learned peak might be 90+ min, making this
-            // model substantially more accurate than the flat approximation.
+            // Shape model: a triangle anchored at carbAbs.peakMinutes
+            //   - From t=0 (now) to peak: rate stays at ci (we're somewhere in the rising
+            //     or peak phase — the loop can't tell exactly where)
+            //   - From peak to duration: rate declines linearly from ci → 0
+            //
+            // Why not use AUC preservation? `ci` is already a rate, not an integral. Dividing
+            // it by `(60/duration)` (as a previous version did) artificially shrinks the
+            // current observed rate to "spread it over a longer window" — but the rate IS
+            // the rate. If you're actively rising at +15 mg/dL/5min right now, that's the
+            // current rate; how long it persists is a question of the curve shape, not its
+            // height. Shrinking it would predict a flat BG curve while you're actively rising,
+            // which is wrong.
             //
             // ── Safety mitigations (gate learned peak against mis-learned values) ──
             // 1. Require minimum sample count before trusting learned peak
             // 2. Clamp peak to a sensible fraction of duration (0.15 .. 0.5)
-            // 3. Floor early-phase carb velocity at 20% of peak velocity (prevents
-            //    over-dosing in the first 5-10 min if peak is mislearned too late)
             val carbDuration = if (mealMode == MealMode.FASTING) 60.0 else carbAbs.absorptionMinutes
             val carbPeakRaw  = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
             val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
@@ -298,22 +301,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
             } else {
                 carbDuration * CARB_PEAK_DEFAULT_FRAC  // safe default if learning not yet trusted
             }
-            val peakVelocity = ci * (60.0 / carbDuration)  // AUC preservation vs 60-min baseline
 
-            val carbFade = when {
+            // Shape factor: 1.0 from now until peak, then tapers linearly to 0 at duration.
+            // ci itself supplies the magnitude — shape only governs how it evolves over time.
+            val shapeFactor = when {
                 minutes >= carbDuration -> 0.0
-                minutes <= safePeak     -> {
-                    // Ramp up: 0 → 1. Floor at CARB_EARLY_FLOOR to prevent over-dose on mis-learned peak
-                    val rampFrac = (minutes / safePeak).coerceAtLeast(CARB_EARLY_FLOOR)
-                    rampFrac
-                }
+                minutes <= safePeak     -> 1.0   // sustained at current observed rate through peak
                 else -> {
-                    // Ramp down: 1 → 0 over the interval [safePeak, carbDuration]
-                    val declineFrac = (carbDuration - minutes) / (carbDuration - safePeak)
-                    declineFrac.coerceAtLeast(0.0)
+                    // Linear taper from 1.0 at safePeak to 0.0 at carbDuration
+                    ((carbDuration - minutes) / (carbDuration - safePeak)).coerceAtLeast(0.0)
                 }
             }
-            val carbDelta = peakVelocity * carbFade
+            val carbDelta = ci * shapeFactor
 
             bg += iobDelta + carbDelta
             predictions.add(bg)
@@ -346,9 +345,5 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** Default peak-to-duration ratio when sample count is too low to trust learned peak.
          *  0.33 matches the default peak (60) / duration (180). */
         private const val CARB_PEAK_DEFAULT_FRAC = 0.33
-        /** Minimum carb velocity during the ramp-up phase, as a fraction of peak velocity.
-         *  Prevents 'zero carb' predictions in the first 5-10 min of a meal which would cause
-         *  over-dosing if peakMinutes is mis-learned too far out. 0.2 = 20% of peak velocity. */
-        private const val CARB_EARLY_FLOOR      = 0.2
     }
 }
