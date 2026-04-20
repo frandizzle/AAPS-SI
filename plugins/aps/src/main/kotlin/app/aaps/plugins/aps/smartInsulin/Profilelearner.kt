@@ -81,7 +81,9 @@ class ProfileLearner @Inject constructor(
         val current = getCarbAbsorption(mode)
         val alpha = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
 
-        val newAbs = ewma(current.absorptionMinutes, observedTotalMins.coerceIn(LearnedCarbAbsorption.ABS_MIN, LearnedCarbAbsorption.ABS_MAX), alpha)
+        val clampedTotal = observedTotalMins.coerceAtLeast(observedPeakMins + 15.0)
+            .coerceIn(LearnedCarbAbsorption.ABS_MIN, LearnedCarbAbsorption.ABS_MAX)
+        val newAbs = ewma(current.absorptionMinutes, clampedTotal, alpha)
         val newPeak = ewma(current.peakMinutes,       observedPeakMins.coerceIn(30.0, 180.0), alpha)
 
         val updated = current.copy(

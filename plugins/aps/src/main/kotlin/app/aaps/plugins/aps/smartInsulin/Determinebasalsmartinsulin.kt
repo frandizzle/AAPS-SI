@@ -214,14 +214,25 @@ class DetermineBasalSmartInsulin @Inject constructor(
         
         for (tick in 1..ticks) {
             val minutes = tick * 5
-            val activity = if (tick - 1 < iobArray.size) iobArray[tick - 1].activity else 0.0
+            
+            // ---------- INSULIN ACTIVITY (with exponential tail) ----------
+            val activity = if (tick - 1 < iobArray.size) {
+                iobArray[tick - 1].activity
+            } else {
+                // Fallback: exponential decay beyond the iobArray
+                val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
+                val extraTicks = (tick - 1) - iobArray.size + 1
+                max(0.0, lastActivity * Math.exp(-extraTicks * 0.05))
+            }
             val iobDelta = -(activity * isfMgdl * 5.0)
 
-            // Carb Impact Decay: 
-            // If in meal mode, use the learned carb absorption duration to fade CI.
+            // ---------- CARB IMPACT (area-under-curve preservation) ----------
             val carbDuration = if (mealMode == MealMode.FASTING) 60.0 else carbAbs.absorptionMinutes
+            // Stretch the initial velocity (ci) so the total area matches the original 60-min window
+            val stretchedCi = ci * (60.0 / carbDuration)
+            
             val carbFade = (1.0 - (minutes / carbDuration)).coerceAtLeast(0.0)
-            val carbDelta = ci * carbFade
+            val carbDelta = stretchedCi * carbFade
 
             bg += iobDelta + carbDelta
             predictions.add(bg)
