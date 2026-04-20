@@ -352,12 +352,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
             val activity = when {
                 tick - 1 < iobArraySize -> iobArray[tick - 1].activity
                 else -> {
-                    // Past iobArray window: gentle linear decay to zero over the remaining DIA
+                    // Past iobArray window: exponential decay calibrated to remaining DIA window.
+                    // Rate chosen so activity reaches ~5% of lastKnownActivity at the end of DIA.
+                    // exp(-3.0 / remainingTicks × ticksPastArray) → exp(-3.0) ≈ 0.05 at window end.
+                    // More physiologically accurate than linear — real insulin activity decays
+                    // exponentially, and this adapts to whatever DIA window remains.
                     val ticksPastArray = (tick - 1) - iobArraySize + 1
-                    val remainingTicks = ticks - iobArraySize
-                    if (remainingTicks > 0)
-                        (lastKnownActivity * (1.0 - ticksPastArray.toDouble() / remainingTicks)).coerceAtLeast(0.0)
-                    else 0.0
+                    val remainingTicks = (ticks - iobArraySize).coerceAtLeast(1)
+                    val decayRate = 3.0 / remainingTicks
+                    max(0.0, lastKnownActivity * Math.exp(-decayRate * ticksPastArray))
                 }
             }
             val iobDelta = -(activity * isfMgdl * 5.0)

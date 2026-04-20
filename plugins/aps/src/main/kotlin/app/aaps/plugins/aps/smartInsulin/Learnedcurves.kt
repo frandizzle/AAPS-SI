@@ -64,11 +64,21 @@ data class LearnedCarbAbsorption(
         fun fromJson(json: JSONObject, mode: MealMode): LearnedCarbAbsorption =
             LearnedCarbAbsorption(
                 mode              = mode,
-                absorptionMinutes = json.optDouble("absorptionMinutes", 300.0),
-                peakMinutes       = json.optDouble("peakMinutes",       90.0),
+                absorptionMinutes = json.optDouble("absorptionMinutes", 180.0),
+                peakMinutes       = json.optDouble("peakMinutes",       60.0),
                 sampleCount       = json.optInt("sampleCount",          0),
                 lastUpdatedMs     = json.optLong("lastUpdatedMs",       0L)
             )
 
-        fun defaultFor(mode: MealMode) = LearnedCarbAbsorption(mode, 300.0, 90.0, 0, 0L)    }
+        fun defaultFor(mode: MealMode) = when (mode) {
+            // Breakfast and lunch tend to be faster-absorbing (more carb-forward)
+            MealMode.BREAKFAST, MealMode.UAM_BREAKFAST,
+            MealMode.LUNCH,     MealMode.UAM_LUNCH,
+            MealMode.UAM_SNACK, MealMode.UAM_AFTERNOON ->
+                LearnedCarbAbsorption(mode, 180.0, 60.0, 0, 0L)
+            // Dinner, protein/fat, low-carb, extended: slower absorption, later peak
+            else ->
+                LearnedCarbAbsorption(mode, 300.0, 90.0, 0, 0L)
+        }
+    }
 }

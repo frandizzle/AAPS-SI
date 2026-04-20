@@ -220,17 +220,31 @@ class BolusCurveTracker @Inject constructor(
             saveState()
         }
 
-        // Logic: Nadir is the Peak Action. Insulin Peak is ~45m prior.
+        // BG nadir = insulin peak action time. Recovery (BG rising back above nadir + threshold)
+        // = insulin DIA reached. Measure both directly from the curve rather than using heuristics.
+        //
+        // observedPeakActionMins: time from bolus to BG nadir (insulin peak effect)
+        // observedDiaMins: time from bolus to BG recovery (insulin fully cleared)
+        //
+        // The old code subtracted 45 min from nadir time (assuming nadir lags peak by 45 min),
+        // then multiplied by 4 for DIA. Both assumptions are dropped — EWMA learns the real values.
         if (!curveConfirmed && (nowMs - nadirTimeMs) > MIN_CONFIRM_DELAY_MS &&
             currentBg > bgNadir + RECOVERY_MGDL && bgNadir < bgAtStart - MIN_BG_DROP_MGDL) {
 
             curveConfirmed = true
             val observedPeakActionMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
-            val learnedPeak = (observedPeakActionMins - 45.0).coerceAtLeast(35.0)
-            val learnedDia  = learnedPeak * 4.0
+            val observedDiaMins        = (nowMs - trackStartMs).toDouble() / 60_000.0
 
-            profileLearner.observeInsulinKinetics(learnedPeak, learnedDia, PROFILE_LEARNING_RATE)
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: Insulin Kinetics complete. Peak=${learnedPeak.toInt()}m DIA=${learnedDia.toInt()}m")
+            profileLearner.observeInsulinKinetics(
+                observedPeakMins = observedPeakActionMins.coerceIn(
+                    LearnedInsulinKinetics.PEAK_MIN, LearnedInsulinKinetics.PEAK_MAX),
+                observedDiaMins  = observedDiaMins.coerceIn(
+                    LearnedInsulinKinetics.DIA_MIN, LearnedInsulinKinetics.DIA_MAX),
+                learningRate     = PROFILE_LEARNING_RATE
+            )
+            aapsLogger.debug(LTag.APS,
+                             "BolusCurveTracker: Insulin Kinetics complete. " +
+                                 "Peak=${observedPeakActionMins.toInt()}m DIA=${observedDiaMins.toInt()}m")
             reset()
         }
     }
