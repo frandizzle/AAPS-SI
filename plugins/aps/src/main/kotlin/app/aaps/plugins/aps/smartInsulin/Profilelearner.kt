@@ -25,7 +25,7 @@ import javax.inject.Singleton
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
     private val preferences:     Preferences,
-    private val profileFunction: ProfileFunction
+    private val profileFunction: ProfileFunction,
 ) : SmartInsulinLearner {
 
     private var insulinKinetics: LearnedInsulinKinetics = LearnedInsulinKinetics.default()
@@ -65,8 +65,10 @@ class ProfileLearner @Inject constructor(
         )
         saveInsulinKinetics()
 
-        aapsLogger.debug(LTag.APS, "ProfileLearner: global insulin kinetics updated " +
-            "peak ${fmtChange(current.peakMinutes, newPeak)} dia ${fmtChange(current.diaMinutes, newDia)} n=${insulinKinetics.sampleCount}")
+        aapsLogger.debug(
+            LTag.APS, "ProfileLearner: global insulin kinetics updated " +
+            "peak ${fmtChange(current.peakMinutes, newPeak)} dia ${fmtChange(current.diaMinutes, newDia)} n=${insulinKinetics.sampleCount}"
+        )
     }
 
     /**
@@ -100,16 +102,35 @@ class ProfileLearner @Inject constructor(
     }
 
     override fun resetProfiles() {
-        insulinKinetics = LearnedInsulinKinetics.default()
+        val profile  = runBlocking { profileFunction.getProfile() }
+
+        // 1. Seed Global Insulin Kinetics directly from the AAPS pump profile
+        val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: 360.0
+        val peakMins = profile?.iCfg?.peak?.toDouble() ?: 75.0
+
+        insulinKinetics = LearnedInsulinKinetics(
+            peakMinutes   = peakMins,
+            diaMinutes    = diaMins,
+            sampleCount   = 0,
+            lastUpdatedMs = System.currentTimeMillis()
+        )
         saveInsulinKinetics()
+
+        aapsLogger.debug(LTag.APS, "ProfileLearner: Seeded Insulin Kinetics with Peak=${peakMins}m DIA=${diaMins}m from profile")
+
+        // 2. Reset Meal Modes to the 180m default (since profiles don't have food duration)
         carbProfiles.clear()
-        MealMode.entries.forEach { if (it != MealMode.FASTING) resetCarbProfile(it) }
+        MealMode.entries.forEach { mode ->
+            if (mode != MealMode.FASTING) {
+                resetCarbProfile(mode)
+            }
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
     private fun ewma(old: Double, observed: Double, alpha: Double): Double =
-        (1.0 - alpha) * old + alpha * observed
+        ((1.0 - alpha) * old) + (alpha * observed)
 
     private fun restore() {
         try {
