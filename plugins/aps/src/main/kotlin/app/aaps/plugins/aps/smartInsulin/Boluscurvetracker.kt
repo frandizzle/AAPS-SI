@@ -72,7 +72,7 @@ class BolusCurveTracker @Inject constructor(
         /** Stable-flat scoring: minimum time BG must stay near nadir before scoring
          *  a "perfect correction" that never rebounded. 45 min ensures we're not
          *  scoring mid-correction flats caused by temporary basal action. */
-        private const val STABLE_CONFIRM_MS      = 45 * 60 * 1000L
+        private const val STABLE_CONFIRM_MS      = 60 * 60 * 1000L
         /** Stable-flat scoring: BG must stay within this many mg/dL above nadir.
          *  6 mg/dL ≈ 0.33 mmol — tight enough to exclude active descent, wide enough
          *  to tolerate normal CGM jitter. */
