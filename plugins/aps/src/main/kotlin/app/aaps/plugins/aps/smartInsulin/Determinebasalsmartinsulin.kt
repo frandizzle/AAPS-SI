@@ -197,36 +197,57 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val clampedSmb     = (Math.ceil(correctionUnits / bolusStep) * bolusStep).coerceAtMost(minOf(maxSmbU, iobHeadroom))
+                val rawSmb         = if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
+                val smbCap         = minOf(maxSmbU, iobHeadroom)
+                val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
 
-                val reducedBasal = if (predictedMin < targetBg) {
-                    (profileBasal - (targetBg - predictedMin) / dosingIsfMgdl / 0.5).coerceIn(0.0, profileBasal)
-                } else profileBasal
+                // TBR correction — independent of smbAllowed. When SMBs are capped,
+                // TBR picks up the slack by running a high temp basal. The remaining
+                // undelivered correction is spread over TBR_WINDOW_HOURS (30 min).
+                val tbrCorrectionU = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                val remainingU     = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
-                val tbrRate = reducedBasal * reboundTaperFraction
+                val tbrRateRaw = when {
+                    !iobOk           -> 0.0
+                    remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
+                        .coerceAtMost(oapsProfile.max_basal)
+                        .coerceAtMost(maxTbrU)
+                    // Target respect: reduce basal when pred_min is below target
+                    predictedMin < targetBg &&
+                        (targetRespectEnabled || targetBg > (6.0 * MMOL_TO_MGDL)) -> {
+                        val missingBgMgdl   = targetBg - predictedMin
+                        val missingInsulinU = missingBgMgdl / dosingIsfMgdl
+                        val reducedBasal    = profileBasal - (missingInsulinU / TBR_WINDOW_HOURS)
+                        reducedBasal.coerceIn(0.0, profileBasal)
+                    }
+                    else -> profileBasal
+                }
+
+                val tbrRate = tbrRateRaw * reboundTaperFraction
                 val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
-                smbOut = if (reboundSmbAllowed) constrainedSmb else 0.0
+                val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
+                smbOut = finalSmb
 
-                // Build trigger string describing why this SMB was (or wasn't) sized as it was
                 val trigger = when {
                     !smbAllowed && isTempTarget        -> "tempTarget"
                     !smbAllowed && !microBolusAllowed  -> "SMB disabled"
                     !smbAllowed && bgAboveGuard <= 0.0 -> "bg<=lowGuard"
                     !smbAllowed && insulinReq <= 0.0   -> "noInsulinReq"
+                    !iobOk -> "maxIOB(${"%.2f".format(Locale.US, currentIob)}/${"%.2f".format(Locale.US, oapsProfile.max_iob)})"
                     else -> "predMinGap(${fmt(predictedMin, isMmol)}->${fmt(targetBg, isMmol)})"
                 }
-                val smbCapNote = if (correctionUnits > 0.0 && smbOut < correctionUnits && reboundSmbAllowed)
-                    " (wanted ${"%.2f".format(Locale.US, correctionUnits)}U, capped at ${"%.2f".format(Locale.US, smbOut)}U)"
-                else if (correctionUnits > 0.0 && smbOut == 0.0 && !reboundSmbAllowed)
-                    " (wanted ${"%.2f".format(Locale.US, correctionUnits)}U, blocked: rebound)"
+                val smbCapNote = if (rawSmb > finalSmb && finalSmb > 0.0)
+                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, capped at ${"%.2f".format(Locale.US, smbCap)}U)"
+                else if (rawSmb > 0.0 && finalSmb == 0.0 && !reboundSmbAllowed)
+                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, blocked: rebound)"
                 else ""
 
                 sb.append(" | NORMAL")
                 sb.append(" | targetBG=${fmt(targetBg, isMmol)}")
                 sb.append(" | microBolus=$microBolusAllowed")
                 sb.append(" | trigger=$trigger")
-                sb.append(" | SMB final: ${"%.2f".format(Locale.US, smbOut)}U$smbCapNote")
+                sb.append(" | SMB final: ${"%.2f".format(Locale.US, finalSmb)}U$smbCapNote")
                 sb.append(" | tbr=${"%.3f".format(Locale.US, tbrRate)}")
 
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
@@ -351,36 +372,35 @@ class DetermineBasalSmartInsulin @Inject constructor(
     }
 
     companion object {
-        private const val MMOL_TO_MGDL           = 18.0
-        private const val REBOUND_SMB_GATE       = 0.825
+        private const val MMOL_TO_MGDL               = 18.0
+        private const val REBOUND_SMB_GATE           = 0.825
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
-        private const val NEUTRAL_TEMP_EPSILON       = 1e-6
+        private const val NEUTRAL_TEMP_EPSILON        = 1e-6
+        /** TBR window in hours — remaining correction is spread over this window as extra basal.
+         *  0.5 = 30 min, matching the TBR duration set by setTempBasal(). */
+        private const val TBR_WINDOW_HOURS            = 0.5
 
         /** Insulin kinetics sample count below which the label in the debug string reads "Peak"
          *  (i.e. still running on profile defaults); at/above, reads "Learned pk". Purely cosmetic. */
         private const val PK_LEARNING_MIN_SAMPLES = 3
 
-        // ── Right-triangle carb absorption model constants ──
-        // Peak-at-t=0 flat triangle was replaced with a right-triangle anchored at
-        // carbAbs.peakMinutes. These constants gate the learned peak against mis-learned values.
-        /** Minimum sample count in LearnedCarbAbsorption before using learned peakMinutes.
-         *  Below this, fall back to CARB_PEAK_DEFAULT_FRAC of duration. */
-        private const val CARB_PEAK_MIN_SAMPLES = 3
-        /** Clamp learned peak to at least this fraction of absorptionMinutes (prevents
-         *  peak-too-early which would cause early-phase insulin stacking). */
-        private const val CARB_PEAK_MIN_FRAC    = 0.15
-        /** Clamp learned peak to at most this fraction of absorptionMinutes (prevents
-         *  peak-too-late which would make the model too similar to a flat distribution). */
-        private const val CARB_PEAK_MAX_FRAC    = 0.50
-        /** Default peak-to-duration ratio when sample count is too low to trust learned peak.
-         *  0.33 matches the default peak (60) / duration (180). */
-        private const val CARB_PEAK_DEFAULT_FRAC = 0.33
+        // ── Trapezoid carb absorption model constants ──
+        // These define the "plateau" shape: ci stays at 100% from t=0 until safePeak,
+        // then tapers linearly to 0 at carbDuration.
+        // A higher CARB_PEAK_DEFAULT_FRAC = longer plateau before taper starts.
+        // For protein/fat-heavy meals (4-6h absorption): plateau should hold for ~65% of duration
+        // before tapering, matching the physiology of slow gastric emptying.
+        /** Minimum sample count in LearnedCarbAbsorption before using learned peakMinutes. */
+        private const val CARB_PEAK_MIN_SAMPLES     = 3
+        /** Clamp learned peak to at least this fraction of absorptionMinutes. */
+        private const val CARB_PEAK_MIN_FRAC         = 0.25
+        /** Clamp learned peak to at most this fraction of absorptionMinutes. */
+        private const val CARB_PEAK_MAX_FRAC         = 0.80
+        /** Default peak-to-duration ratio — 0.65 means plateau for 65% of duration,
+         *  then taper. For 300m duration: plateau holds to 195m, tapers to 0 at 300m. */
+        private const val CARB_PEAK_DEFAULT_FRAC     = 0.65
         /** After this many ticks, switch from AAPS's iobArray to the modeled triangular
-         *  activity curve. iobArray is most accurate near-term; past this point, the
-         *  modeled curve (triangle peaking at kinetics.peakMinutes) provides a proper
-         *  tail that ensures insulin clearance continues across the full DIA window.
-         *  12 ticks = 60 min — enough to let SMB activity curves dominate early, then
-         *  transition to the learned kinetics for the long tail. */
-        private const val MODELED_TAIL_START_TICKS = 12
+         *  activity curve for insulin tail. 12 ticks = 60 min. */
+        private const val MODELED_TAIL_START_TICKS   = 12
     }
 }
