@@ -151,10 +151,31 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val insulinReq     = predMinGapMgdl / dosingIsfMgdl
 
         val sb = StringBuilder()
-        sb.append("SI mode=${mealMode.label} | BG=${fmt(currentBg, isMmol)} | IOB=${"%.2f".format(currentIob)}")
-        sb.append(" | kinetics=${kinetics.peakMinutes.toInt()}m/${kinetics.diaMinutes.toInt()}m")
+        // Pipe-separated compact format — each key piece separated by " | "
+        sb.append("SI mode=${mealMode.label}")
+        sb.append(" | BG=${fmt(currentBg, isMmol)}")
+        sb.append(" | d=${fmt(delta, isMmol)}")
+        sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
+        sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
+        sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
+        sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
+        // PK label — "Peak" while still using profile defaults, "Learned pk" once enough samples accumulated
+        val pkLabel = if (kinetics.sampleCount < PK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
+        sb.append(" | ${pkLabel}=${kinetics.peakMinutes.toInt()}m DIA=${kinetics.diaMinutes.toInt()}m")
         if (mealMode != MealMode.FASTING) sb.append(" | food_abs=${carbAbsorption.absorptionMinutes.toInt()}m")
-        sb.append(" | aggr=${"%.2f".format(aggressiveness)} | $tirSummary")
+        sb.append(" | aggr=${"%.2f".format(Locale.US, aggressiveness)}")
+        if (inDawnWindow) sb.append(" | dawn(-${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
+        if (inReboundWindow) {
+            val reboundMinsLeft = (reboundWindowMins - reboundMins).coerceAtLeast(0.0)
+            sb.append(" | rebound(${reboundMins.toInt()}min left=${reboundMinsLeft.toInt()}min taper=${"%.2f".format(Locale.US, reboundTaperFraction)})")
+        } else if (bgWentLow) {
+            sb.append(" | rebound=watching")
+        }
+        if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
+            sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(Locale.US, activityTargetOffsetMmol) else "%.0f".format(Locale.US, activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
+        if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
+        sb.append(" | $tirSummary")
 
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
@@ -162,9 +183,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         var smbOut = 0.0
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
+                sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg, isMmol)} < lgs=${fmt(lgsThresholdMgdl, isMmol)}")
                 setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
             predictedMinSafety < lowGuardMgdl -> {
+                sb.append(" | LOW_SUSPEND | pred_min=${fmt(predictedMinSafety, isMmol)} < low=${fmt(lowGuardMgdl, isMmol)}")
                 setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
             }
             else -> {
@@ -180,9 +203,32 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val reducedBasal = if (predictedMin < targetBg) {
                     (profileBasal - (targetBg - predictedMin) / dosingIsfMgdl / 0.5).coerceIn(0.0, profileBasal)
                 } else profileBasal
-                
+
                 val tbrRate = reducedBasal * reboundTaperFraction
-                smbOut = if (reboundTaperFraction >= REBOUND_SMB_GATE) constrainedSmb else 0.0
+                val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
+                smbOut = if (reboundSmbAllowed) constrainedSmb else 0.0
+
+                // Build trigger string describing why this SMB was (or wasn't) sized as it was
+                val trigger = when {
+                    !smbAllowed && isTempTarget        -> "tempTarget"
+                    !smbAllowed && !microBolusAllowed  -> "SMB disabled"
+                    !smbAllowed && bgAboveGuard <= 0.0 -> "bg<=lowGuard"
+                    !smbAllowed && insulinReq <= 0.0   -> "noInsulinReq"
+                    else -> "predMinGap(${fmt(predictedMin, isMmol)}->${fmt(targetBg, isMmol)})"
+                }
+                val smbCapNote = if (correctionUnits > 0.0 && smbOut < correctionUnits && reboundSmbAllowed)
+                    " (wanted ${"%.2f".format(Locale.US, correctionUnits)}U, capped at ${"%.2f".format(Locale.US, smbOut)}U)"
+                else if (correctionUnits > 0.0 && smbOut == 0.0 && !reboundSmbAllowed)
+                    " (wanted ${"%.2f".format(Locale.US, correctionUnits)}U, blocked: rebound)"
+                else ""
+
+                sb.append(" | NORMAL")
+                sb.append(" | targetBG=${fmt(targetBg, isMmol)}")
+                sb.append(" | microBolus=$microBolusAllowed")
+                sb.append(" | trigger=$trigger")
+                sb.append(" | SMB final: ${"%.2f".format(Locale.US, smbOut)}U$smbCapNote")
+                sb.append(" | tbr=${"%.3f".format(Locale.US, tbrRate)}")
+
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }
         }
@@ -211,10 +257,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictions  = mutableListOf<Double>()
         // Predict forward for the duration of insulin action
         val ticks = kinetics.diaMinutes.toInt() / 5
-        
+
         for (tick in 1..ticks) {
             val minutes = tick * 5
-            
+
             // ---------- INSULIN ACTIVITY (with exponential tail) ----------
             val activity = if (tick - 1 < iobArray.size) {
                 iobArray[tick - 1].activity
@@ -226,13 +272,48 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
             val iobDelta = -(activity * isfMgdl * 5.0)
 
-            // ---------- CARB IMPACT (area-under-curve preservation) ----------
+            // ---------- CARB IMPACT (right-triangle with learned peak) ----------
+            // Model glucose release as a triangle anchored at carbAbs.peakMinutes:
+            //   - Ramps linearly from 0 → peakVelocity between t=0 and peak
+            //   - Ramps linearly from peakVelocity → 0 between peak and duration
+            // Total AUC = 0.5 × peakVelocity × duration, preserved vs the original
+            // 60-min flat-triangle (AUC = 30 × ci) by setting peakVelocity = 60·ci/duration.
+            //
+            // Rationale: real glucose absorption builds to a peak (15-90 min in) then tails.
+            // A flat triangle starting at t=0 overestimates early-phase carb impact, which
+            // causes the loop to delay insulin when it's most needed. For plateau-style
+            // meals (high protein/fat) the learned peak might be 90+ min, making this
+            // model substantially more accurate than the flat approximation.
+            //
+            // ── Safety mitigations (gate learned peak against mis-learned values) ──
+            // 1. Require minimum sample count before trusting learned peak
+            // 2. Clamp peak to a sensible fraction of duration (0.15 .. 0.5)
+            // 3. Floor early-phase carb velocity at 20% of peak velocity (prevents
+            //    over-dosing in the first 5-10 min if peak is mislearned too late)
             val carbDuration = if (mealMode == MealMode.FASTING) 60.0 else carbAbs.absorptionMinutes
-            // Stretch the initial velocity (ci) so the total area matches the original 60-min window
-            val stretchedCi = ci * (60.0 / carbDuration)
-            
-            val carbFade = (1.0 - (minutes / carbDuration)).coerceAtLeast(0.0)
-            val carbDelta = stretchedCi * carbFade
+            val carbPeakRaw  = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
+            val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
+            val safePeak = if (useLearnedPeak) {
+                carbPeakRaw.coerceIn(carbDuration * CARB_PEAK_MIN_FRAC, carbDuration * CARB_PEAK_MAX_FRAC)
+            } else {
+                carbDuration * CARB_PEAK_DEFAULT_FRAC  // safe default if learning not yet trusted
+            }
+            val peakVelocity = ci * (60.0 / carbDuration)  // AUC preservation vs 60-min baseline
+
+            val carbFade = when {
+                minutes >= carbDuration -> 0.0
+                minutes <= safePeak     -> {
+                    // Ramp up: 0 → 1. Floor at CARB_EARLY_FLOOR to prevent over-dose on mis-learned peak
+                    val rampFrac = (minutes / safePeak).coerceAtLeast(CARB_EARLY_FLOOR)
+                    rampFrac
+                }
+                else -> {
+                    // Ramp down: 1 → 0 over the interval [safePeak, carbDuration]
+                    val declineFrac = (carbDuration - minutes) / (carbDuration - safePeak)
+                    declineFrac.coerceAtLeast(0.0)
+                }
+            }
+            val carbDelta = peakVelocity * carbFade
 
             bg += iobDelta + carbDelta
             predictions.add(bg)
@@ -245,5 +326,29 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val REBOUND_SMB_GATE       = 0.825
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
         private const val NEUTRAL_TEMP_EPSILON       = 1e-6
+
+        /** Insulin kinetics sample count below which the label in the debug string reads "Peak"
+         *  (i.e. still running on profile defaults); at/above, reads "Learned pk". Purely cosmetic. */
+        private const val PK_LEARNING_MIN_SAMPLES = 3
+
+        // ── Right-triangle carb absorption model constants ──
+        // Peak-at-t=0 flat triangle was replaced with a right-triangle anchored at
+        // carbAbs.peakMinutes. These constants gate the learned peak against mis-learned values.
+        /** Minimum sample count in LearnedCarbAbsorption before using learned peakMinutes.
+         *  Below this, fall back to CARB_PEAK_DEFAULT_FRAC of duration. */
+        private const val CARB_PEAK_MIN_SAMPLES = 3
+        /** Clamp learned peak to at least this fraction of absorptionMinutes (prevents
+         *  peak-too-early which would cause early-phase insulin stacking). */
+        private const val CARB_PEAK_MIN_FRAC    = 0.15
+        /** Clamp learned peak to at most this fraction of absorptionMinutes (prevents
+         *  peak-too-late which would make the model too similar to a flat distribution). */
+        private const val CARB_PEAK_MAX_FRAC    = 0.50
+        /** Default peak-to-duration ratio when sample count is too low to trust learned peak.
+         *  0.33 matches the default peak (60) / duration (180). */
+        private const val CARB_PEAK_DEFAULT_FRAC = 0.33
+        /** Minimum carb velocity during the ramp-up phase, as a fraction of peak velocity.
+         *  Prevents 'zero carb' predictions in the first 5-10 min of a meal which would cause
+         *  over-dosing if peakMinutes is mis-learned too far out. 0.2 = 20% of peak velocity. */
+        private const val CARB_EARLY_FLOOR      = 0.2
     }
 }
