@@ -69,6 +69,18 @@ class BolusCurveTracker @Inject constructor(
          *  by then, the curve is abandoned — something else (correction, food, etc) is
          *  confounding the signal. */
         private const val MAX_TAIL_DURATION_MS   = 3 * 60 * 60 * 1000L
+        /** Stable-flat scoring: minimum time BG must stay near nadir before scoring
+         *  a "perfect correction" that never rebounded. 45 min ensures we're not
+         *  scoring mid-correction flats caused by temporary basal action. */
+        private const val STABLE_CONFIRM_MS      = 45 * 60 * 1000L
+        /** Stable-flat scoring: BG must stay within this many mg/dL above nadir.
+         *  6 mg/dL ≈ 0.33 mmol — tight enough to exclude active descent, wide enough
+         *  to tolerate normal CGM jitter. */
+        private const val STABLE_BAND_MGDL       = 6.0
+        /** Stable-flat scoring: nadir must be above this floor to qualify.
+         *  72 mg/dL = 4.0 mmol — prevents learning from near-low corrections where
+         *  the basal is just holding you at a dangerous level, not a clean end-of-action. */
+        private const val STABLE_MIN_BG_MGDL     = 72.0
 
         // JSON keys
         private const val K_TRACKING         = "tracking"
@@ -124,8 +136,13 @@ class BolusCurveTracker @Inject constructor(
         val bgNadirMmol = if (bgNadir == Double.MAX_VALUE) null
         else if (isMmol) bgNadir / 18.0 else bgNadir
         val lastEvent = when {
-            trackMode == MealMode.FASTING && bgNadir < Double.MAX_VALUE ->
-                "Nadir ${String.format(Locale.US, "%.1f", bgNadirMmol)} at +${((nadirTimeMs - trackStartMs)/60_000).toInt()}min — waiting for recovery"
+            trackMode == MealMode.FASTING && bgNadir < Double.MAX_VALUE -> {
+                val timeSinceNadir = System.currentTimeMillis() - nadirTimeMs
+                val stableProgress = (timeSinceNadir / (STABLE_CONFIRM_MS.toDouble()) * 100).toInt().coerceAtMost(100)
+                val stableStr = if (timeSinceNadir < STABLE_CONFIRM_MS)
+                    " — stable ${stableProgress}%" else " — stable window met ✓"
+                "Nadir ${String.format(Locale.US, "%.1f", bgNadirMmol)} at +${((nadirTimeMs - trackStartMs)/60_000).toInt()}min$stableStr"
+            }
             trackMode == MealMode.FASTING ->
                 "Watching for BG nadir (IOB decline ${if (iobDeclineSeen) "seen ✓" else "not yet"})"
             inTailMode ->
@@ -272,16 +289,33 @@ class BolusCurveTracker @Inject constructor(
             saveState()
         }
 
-        // BG nadir = insulin peak action time. Recovery (BG rising back above nadir + threshold)
-        // = insulin DIA reached. Measure both directly from the curve rather than using heuristics.
+        if (curveConfirmed) return
+
+        val timeSinceNadir = nowMs - nadirTimeMs
+
+        // ── Scoring condition 1: Classic recovery ────────────────────────────
+        // BG has risen ≥ RECOVERY_MGDL above nadir → insulin effect clearly over.
+        val recoveryMet = currentBg > bgNadir + RECOVERY_MGDL
+
+        // ── Scoring condition 2: Stable flat ────────────────────────────────
+        // BG has been hovering just above (or at) the nadir for 45+ min, which
+        // means basal is now holding the line and the correction bolus is done.
+        // This captures "perfect" corrections where BG drops to target and stays
+        // there — previously these were ignored because there was no rebound rise.
         //
-        // observedPeakActionMins: time from bolus to BG nadir (insulin peak effect)
-        // observedDiaMins: time from bolus to BG recovery (insulin fully cleared)
-        //
-        // The old code subtracted 45 min from nadir time (assuming nadir lags peak by 45 min),
-        // then multiplied by 4 for DIA. Both assumptions are dropped — EWMA learns the real values.
-        if (!curveConfirmed && (nowMs - nadirTimeMs) > MIN_CONFIRM_DELAY_MS &&
-            currentBg > bgNadir + RECOVERY_MGDL && bgNadir < bgAtStart - MIN_BG_DROP_MGDL) {
+        // Guards:
+        //   currentBg >= bgNadir: still falling → not stable yet (Gemini's tweak)
+        //   (currentBg - bgNadir) <= STABLE_BAND_MGDL: genuinely flat, not rising
+        //   bgNadir > STABLE_MIN_BG_MGDL: don't learn from corrections that bottomed
+        //     near a low — basal holding at 3.8 mmol isn't a clean signal
+        val isStable = timeSinceNadir > STABLE_CONFIRM_MS &&
+            currentBg >= bgNadir &&
+            (currentBg - bgNadir) <= STABLE_BAND_MGDL &&
+            bgNadir > STABLE_MIN_BG_MGDL
+
+        if (timeSinceNadir > MIN_CONFIRM_DELAY_MS &&
+            (recoveryMet || isStable) &&
+            bgNadir < bgAtStart - MIN_BG_DROP_MGDL) {
 
             curveConfirmed = true
             val observedPeakActionMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
@@ -296,7 +330,8 @@ class BolusCurveTracker @Inject constructor(
             )
             aapsLogger.debug(LTag.APS,
                              "BolusCurveTracker: Insulin Kinetics complete. " +
-                                 "Peak=${observedPeakActionMins.toInt()}m DIA=${observedDiaMins.toInt()}m")
+                                 "Peak=${observedPeakActionMins.toInt()}m DIA=${observedDiaMins.toInt()}m " +
+                                 "(scored via ${if (isStable) "stable-flat" else "recovery"})")
             reset()
         }
     }
