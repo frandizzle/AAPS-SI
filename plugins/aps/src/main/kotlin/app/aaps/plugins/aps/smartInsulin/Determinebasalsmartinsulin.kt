@@ -278,19 +278,37 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictions  = mutableListOf<Double>()
         val ticks        = kinetics.diaMinutes.toInt() / 5
 
-        // ── Bi-Phasic Carb Model ─────────────────────────────────────────────
-        // In FASTING mode: ci is an artefact of high IOB counteracting residual glucose.
-        // Don't project it forward — pure insulin-driven descent is the correct fasting
-        // prediction. Any ci in fasting is noise, not genuine carb absorption.
+        // ── Carb model — mode-specific shape ────────────────────────────────
         //
-        // In MEAL modes: ci is a real signal. Split into:
-        //   1. Transient spike: the raw ci decayed over 60 min (acute carb absorption)
-        //   2. Sustained plateau: ci scaled down by (60/duration) (slow protein/fat release)
-        // Also clamped to CI_MAX_MGDL_PER_TICK to prevent IOB-inflation moonshots.
-        val carbDuration = if (mealMode == MealMode.FASTING) 0.0 else carbAbs.absorptionMinutes
-        val carbPeakRaw  = if (mealMode == MealMode.FASTING) 0.0 else carbAbs.peakMinutes
-        val ciClamped    = if (mealMode == MealMode.FASTING) 0.0
+        // Three shapes depending on meal type:
+        //
+        // FASTING: zero carb contribution. ci is noise (IOB counteracting residual
+        //   glucose) — don't project it forward. Pure insulin-driven descent.
+        //
+        // PROTEIN/FAT, LOW_CARB, EXTENDED (tabletop): plateau only, no transient spike.
+        //   These meals don't have an initial 60-min fast-carb rush. Projecting a
+        //   transient spike would predict a rise that won't come, causing over-bolusing.
+        //   ci is sustained at plateau level from t=0, then tapers at end of duration.
+        //
+        // ALL OTHER MEAL MODES (camel hump): transient spike (first 60 min) + sustained
+        //   plateau. The transient represents fast carb absorption; the plateau represents
+        //   the slower protein/fat tail that follows.
+        //
+        // ci is clamped to CI_MAX_MGDL_PER_TICK in all meal modes to prevent
+        // IOB-inflation moonshots (high IOB makes BGI large negative → ci inflates).
+
+        val isPureTabletop = mealMode == MealMode.UAM_PROTEIN_FAT ||
+            mealMode == MealMode.LOW_CARB ||
+            mealMode == MealMode.EXTENDED
+
+        val carbDuration = when {
+            mealMode == MealMode.FASTING -> 0.0
+            else                         -> carbAbs.absorptionMinutes
+        }
+        val carbPeakRaw = if (mealMode == MealMode.FASTING) 0.0 else carbAbs.peakMinutes
+        val ciClamped   = if (mealMode == MealMode.FASTING) 0.0
         else ci.coerceIn(-CI_MAX_MGDL_PER_TICK, CI_MAX_MGDL_PER_TICK)
+
         val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
         val safePeak = if (carbDuration > 0.0) {
             if (useLearnedPeak)
@@ -298,8 +316,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
             else
                 carbDuration * CARB_PEAK_DEFAULT_FRAC
         } else 0.0
-        val plateauCi   = if (carbDuration > 0.0) ciClamped * (60.0 / carbDuration).coerceAtMost(1.0) else 0.0
-        val transientCi = ciClamped - plateauCi
+
+        // Split ci into transient (fast spike) and plateau (slow sustained) components.
+        // For tabletop modes: transient = 0, plateau = 100% of ci (no spike, flat from t=0).
+        // For camel-hump modes: plateau = ci × (60/duration), transient = remainder.
+        val plateauCi = when {
+            carbDuration <= 0.0 -> 0.0
+            isPureTabletop      -> ciClamped  // 100% plateau, no transient
+            else                -> ciClamped * (60.0 / carbDuration).coerceAtMost(1.0)
+        }
+        val transientCi = if (isPureTabletop) 0.0 else ciClamped - plateauCi
 
         // ── Insulin activity ─────────────────────────────────────────────────
         // Use iobArray directly — it correctly accounts for all active insulin.
