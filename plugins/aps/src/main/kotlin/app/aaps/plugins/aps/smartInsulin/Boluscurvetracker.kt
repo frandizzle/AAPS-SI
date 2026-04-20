@@ -44,6 +44,12 @@ class BolusCurveTracker @Inject constructor(
     private var prevIob         = 0.0
     private var seededPrevIob   = false
 
+    // Tail tracking — when meal mode ends before BG recovers, the tracker enters
+    // "tail mode": it keeps watching for recovery without requiring mealMode to match.
+    // mealModeEndedMs records when meal mode expired so we can enforce MAX_TAIL_DURATION_MS.
+    private var inTailMode         = false
+    private var mealModeEndedMs    = 0L
+
     init {
         restoreState()
     }
@@ -58,6 +64,11 @@ class BolusCurveTracker @Inject constructor(
         private const val MIN_CONFIRM_DELAY_MS   = 30 * 60 * 1000L
         private const val IOB_DECLINE_FRACTION   = 0.05
         private const val PROFILE_LEARNING_RATE  = 0.15
+        /** Max time after meal mode ends to keep watching for BG recovery in tail mode.
+         *  3 hours covers even the slowest protein/fat tail. If BG hasn't recovered
+         *  by then, the curve is abandoned — something else (correction, food, etc) is
+         *  confounding the signal. */
+        private const val MAX_TAIL_DURATION_MS   = 3 * 60 * 60 * 1000L
 
         // JSON keys
         private const val K_TRACKING         = "tracking"
@@ -73,6 +84,8 @@ class BolusCurveTracker @Inject constructor(
         private const val K_PEAK_TIME_MS     = "peakTimeMs"
         private const val K_CONFIRMED        = "curveConfirmed"
         private const val K_PREV_IOB         = "prevIob"
+        private const val K_IN_TAIL_MODE     = "inTailMode"
+        private const val K_MEAL_MODE_ENDED  = "mealModeEndedMs"
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -82,12 +95,13 @@ class BolusCurveTracker @Inject constructor(
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
         val modeStr = if (currentMode == null || currentMode == trackMode)
             trackMode.label else "${trackMode.label}(hist)"
+        val tailStr = if (inTailMode) " [tail ${(System.currentTimeMillis() - mealModeEndedMs)/60_000}m]" else ""
 
         return if (trackMode == MealMode.FASTING) {
             val nadirStr = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
             "tracker=kinetics mode=$modeStr nadir=$nadirStr elapsed=%.0fm".format(Locale.US, elapsedMin)
         } else {
-            "tracker=absorption mode=$modeStr bgPeak=%.1f elapsed=%.0fm".format(Locale.US, bgPeak, elapsedMin)
+            "tracker=absorption mode=$modeStr$tailStr bgPeak=%.1f elapsed=%.0fm".format(Locale.US, bgPeak, elapsedMin)
         }
     }
 
@@ -146,7 +160,32 @@ class BolusCurveTracker @Inject constructor(
             iobDeclineSeen = false
             stateDirty     = true
             // Fall through to the normal BG-update logic below — do NOT run the abandon check.
-        } else if (mealMode != trackMode || (nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
+        } else if (mealMode != trackMode) {
+            // Meal mode ended while a meal track is in progress. Rather than abandoning,
+            // enter "tail mode" — keep watching for BG recovery without requiring mode match.
+            // This lets the tracker observe the full absorption including the protein/fat tail
+            // that extends beyond the meal mode window.
+            // Exception: if trackMode is FASTING, a mode change is a genuine disruption → abandon.
+            if (trackMode == MealMode.FASTING) {
+                reset(); return
+            }
+            if (!inTailMode) {
+                inTailMode      = true
+                mealModeEndedMs = nowMs
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: meal mode ended, entering tail observation for ${trackMode.label}")
+                stateDirty = true
+            }
+            // Abandon if tail observation window exceeded
+            if (nowMs - mealModeEndedMs > MAX_TAIL_DURATION_MS) {
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: tail observation window exceeded for ${trackMode.label}, abandoning")
+                reset(); return
+            }
+            // Abandon if unexpected IOB spike during tail (manual correction etc)
+            if (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB spike during tail, abandoning ${trackMode.label}")
+                reset(); return
+            }
+        } else if ((nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
             iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
             reset(); return
         }
@@ -235,6 +274,8 @@ class BolusCurveTracker @Inject constructor(
                 put(K_PEAK_TIME_MS,     bgPeakTimeMs)
                 put(K_CONFIRMED,        curveConfirmed)
                 put(K_PREV_IOB,         prevIob)
+                put(K_IN_TAIL_MODE,     inTailMode)
+                put(K_MEAL_MODE_ENDED,  mealModeEndedMs)
             }
             preferences.put(StringKey.ApsSmartInsulinTrackerState, json.toString())
         } catch (_: Exception) {}
@@ -260,6 +301,8 @@ class BolusCurveTracker @Inject constructor(
             bgPeakTimeMs    = json.optLong(K_PEAK_TIME_MS, trackStartMs)
             curveConfirmed  = json.optBoolean(K_CONFIRMED, false)
             prevIob         = json.optDouble(K_PREV_IOB, 0.0)
+            inTailMode      = json.optBoolean(K_IN_TAIL_MODE, false)
+            mealModeEndedMs = json.optLong(K_MEAL_MODE_ENDED, 0L)
             seededPrevIob   = true
         } catch (_: Exception) { reset() }
     }
@@ -268,6 +311,8 @@ class BolusCurveTracker @Inject constructor(
         tracking        = false
         trackStartMs    = 0L
         curveConfirmed  = false
+        inTailMode      = false
+        mealModeEndedMs = 0L
         try { preferences.put(StringKey.ApsSmartInsulinTrackerState, "") } catch (_: Exception) {}
     }
 }
