@@ -64,12 +64,11 @@ data class LearnedCarbAbsorption(
         fun fromJson(json: JSONObject, mode: MealMode): LearnedCarbAbsorption =
             LearnedCarbAbsorption(
                 mode              = mode,
-                absorptionMinutes = json.optDouble("absorptionMinutes", 180.0),
-                peakMinutes       = json.optDouble("peakMinutes",       60.0),
+                absorptionMinutes = json.optDouble("absorptionMinutes", 300.0),
+                peakMinutes       = json.optDouble("peakMinutes",       90.0),
                 sampleCount       = json.optInt("sampleCount",          0),
                 lastUpdatedMs     = json.optLong("lastUpdatedMs",       0L)
             )
 
-        fun defaultFor(mode: MealMode) = LearnedCarbAbsorption(mode, 180.0, 60.0, 0, 0L)
-    }
+        fun defaultFor(mode: MealMode) = LearnedCarbAbsorption(mode, 300.0, 90.0, 0, 0L)    }
 }
