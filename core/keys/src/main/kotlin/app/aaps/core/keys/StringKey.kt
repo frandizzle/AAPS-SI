@@ -222,6 +222,15 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable = true
     ),
+    ApsSmartInsulinProfileInsulin(
+        key = "si_profile_insulin",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
+        showInPumpControlMode = false,
+        exportable = true
+    ),
     ApsSmartInsulinProfileLowCarb(
         key = "si_profile_low_carb",
         defaultValue = "",

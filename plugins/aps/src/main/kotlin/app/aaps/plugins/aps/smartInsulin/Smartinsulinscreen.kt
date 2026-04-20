@@ -814,30 +814,29 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── Insulin profiles card ──────────────────────────────────────
-        SiCard(title = "Insulin Profiles") {
-            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
+        // ── Learned curves card ──────────────────────────────────────
+        SiCard(title = "Learned Curves (Insulin & Carbs)") {
+            Text("Insulin Kinetics (Global) and Carb Absorption (Per-mode).",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
+                if (line.startsWith("──")) {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text(line.replace("──", "").trim(), 
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.primary)
+                    return@forEach
+                }
                 val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
-                // Highlight the active insulin profile — match mode label against profile name
-                // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
-                val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
-                    name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name.substringBefore(" ("), ignoreCase = true)
-                } else {
-                    !name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name, ignoreCase = true)
-                }
+                
+                val isActive = if (name.contains("Insulin")) d.mealMode == "Fasting"
+                else d.mealMode != "Fasting" && d.mealMode.contains(name.substringBefore(":"), ignoreCase = true)
+                
                 val prefix = if (isActive) "► " else "  "
-                val note = when {
-                    n == 0 -> "  (using profile values — not enough data yet)"
-                    n < 5  -> "  (still learning)"
-                    else   -> ""
-                }
                 val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 Column(
                     modifier = Modifier
@@ -847,7 +846,7 @@ fun SmartInsulinScreen(
                         .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
                     Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                    Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(2.dp))

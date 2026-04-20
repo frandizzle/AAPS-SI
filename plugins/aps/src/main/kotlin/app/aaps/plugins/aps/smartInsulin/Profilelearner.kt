@@ -14,34 +14,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Learns and persists per-[MealMode] insulin activity profiles using
- * Exponential Weighted Moving Average (EWMA) updates.
+ * Learns and persists insulin kinetics (drug properties) and carb absorption
+ * (food properties) using EWMA updates.
  *
- * ## How learning works
- *
- * After each bolus, [BolusCurveTracker] calls [observeBolusCurve] with:
- * - The observed time-to-peak BG drop (minutes)
- * - The observed duration until BG returned to pre-bolus level (minutes)
- * - The [MealMode] active during that bolus
- *
- * The EWMA update blends the new observation into the existing profile:
- *
- *   new_value = (1 - α) * old_value + α * observed_value
- *
- * where α = learningRate * [MealMode.learningWeight]
- *
- * This means FASTING corrections update the profile faster than MEAL boluses,
- * since FASTING has a cleaner signal (no carb absorption competing with insulin).
- *
- * ## DIA learning gate
- *
- * DIA learning is suppressed for [MealMode.EXTENDED] since the carb tail
- * distorts the apparent insulin duration. Peak learning still occurs.
- *
- * ## Persistence
- *
- * Profiles are serialised as JSON and stored in SharedPreferences under
- * per-mode string keys. On app restart, profiles are restored automatically.
+ * Strategy:
+ * 1. Global Insulin Kinetics: Learned ONLY during FASTING corrections.
+ * 2. Carb Absorption Profiles: Learned during MEAL modes per MealMode.
  */
 @Singleton
 class ProfileLearner @Inject constructor(
@@ -50,209 +28,130 @@ class ProfileLearner @Inject constructor(
     private val profileFunction: ProfileFunction
 ) : SmartInsulinLearner {
 
-    // ── In-memory cache of learned profiles ──────────────────────────────────
-    private val profiles: MutableMap<MealMode, LearnedInsulinProfile> = mutableMapOf()
+    private var insulinKinetics: LearnedInsulinKinetics = LearnedInsulinKinetics.default()
+    private val carbProfiles:    MutableMap<MealMode, LearnedCarbAbsorption> = mutableMapOf()
 
     init {
-        // Load persisted profiles for all modes on construction
-        MealMode.entries.forEach { mode ->
-            profiles[mode] = loadProfile(mode)
-        }
-        aapsLogger.debug(LTag.APS, "ProfileLearner initialised: ${profiles.values.joinToString { it.toString() }}")
+        restore()
+        aapsLogger.debug(LTag.APS, "ProfileLearner initialised: insulinKinetics=$insulinKinetics")
     }
 
     // ── Public API ───────────────────────────────────────────────────────────
 
-    /**
-     * Returns the current learned profile for [mode].
-     * Falls back to [LearnedInsulinProfile.defaultFor] if nothing persisted yet.
-     */
-    fun getProfile(mode: MealMode): LearnedInsulinProfile =
-        profiles[mode] ?: profileSeededDefault(mode)
+    fun getInsulinKinetics(): LearnedInsulinKinetics = insulinKinetics
 
-    /** Seed default from actual profile DIA and peak so first-run values are meaningful. */
-    private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        val profile  = runBlocking { profileFunction.getProfile() }
-        val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
-        return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
-    }
+    fun getCarbAbsorption(mode: MealMode): LearnedCarbAbsorption =
+        carbProfiles[mode] ?: LearnedCarbAbsorption.defaultFor(mode)
 
     /**
-     * Update the learned profile for [mode] from a completed bolus observation.
-     *
-     * Called by [BolusCurveTracker] once it has fitted a peak and DIA estimate
-     * from the post-bolus CGM curve.
-     *
-     * @param mode              The [MealMode] active during this bolus
-     * @param observedPeakMins  Time from bolus to maximum insulin effect (minutes)
-     * @param observedDiaMins   Time from bolus until BG returned to baseline (minutes)
-     * @param learningRate      User-configured base learning rate (0.05–0.5)
+     * Update global insulin kinetics from a pure fasting correction signal.
      */
-    fun observeBolusCurve(
-        mode:             MealMode,
+    fun observeInsulinKinetics(
         observedPeakMins: Double,
         observedDiaMins:  Double,
         learningRate:     Double
     ) {
-        // Clamp observations to physiological hard limits before accepting them
-        val clampedPeak = observedPeakMins.coerceIn(
-            LearnedInsulinProfile.PEAK_MIN_MINUTES,
-            LearnedInsulinProfile.PEAK_MAX_MINUTES
-        )
-        val clampedDia = observedDiaMins.coerceIn(
-            LearnedInsulinProfile.DIA_MIN_MINUTES,
-            LearnedInsulinProfile.DIA_MAX_MINUTES
-        )
+        val current = insulinKinetics
+        val alpha = learningRate.coerceIn(0.01, 0.5)
 
-        // Reject implausible observations — peak must be less than DIA
-        if (clampedPeak >= clampedDia) {
-            aapsLogger.debug(
-                LTag.APS,
-                "ProfileLearner: rejecting observation peak=$clampedPeak >= dia=$clampedDia for $mode"
-            )
-            return
-        }
+        val newPeak = ewma(current.peakMinutes, observedPeakMins.coerceIn(LearnedInsulinKinetics.PEAK_MIN, LearnedInsulinKinetics.PEAK_MAX), alpha)
+        val newDia  = ewma(current.diaMinutes,  observedDiaMins.coerceIn(LearnedInsulinKinetics.DIA_MIN,  LearnedInsulinKinetics.DIA_MAX),  alpha)
 
-        val current = getProfile(mode)
-
-        // Effective learning rate blends base rate with mode's signal quality weight.
-        // Then attenuated by confidence — mature profiles (many samples) drift more slowly,
-        // making them robust to occasional bad observations. At full confidence (30+ samples)
-        // the effective alpha drops to 50% of the nominal rate.
-        val baseAlpha      = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
-        val confAttenuation = 1.0 - (current.normalizedConfidence * 0.5)  // 1.0 → 0.5 as confidence fills
-        val alpha          = baseAlpha * confAttenuation
-
-        // EWMA update for peak
-        val newPeak = ewma(current.peakMinutes, clampedPeak, alpha)
-
-        // EWMA update for DIA — suppressed for EXTENDED mode (flag lives on MealMode enum).
-        // Carb tail on extended meals distorts apparent insulin duration.
-        val newDia = if (mode.diaLearningEnabled) {
-            ewma(current.diaMinutes, clampedDia, alpha)
-        } else {
-            current.diaMinutes  // hold DIA at current value
-        }
-
-        val newSampleCount = current.sampleCount + 1
-
-        val updated = current.copy(
+        insulinKinetics = current.copy(
             peakMinutes   = newPeak,
             diaMinutes    = newDia,
-            sampleCount   = newSampleCount,
+            sampleCount   = current.sampleCount + 1,
             lastUpdatedMs = System.currentTimeMillis()
         )
+        saveInsulinKinetics()
 
-        profiles[mode] = updated
-        saveProfile(updated)
+        aapsLogger.debug(LTag.APS, "ProfileLearner: global insulin kinetics updated " +
+            "peak ${fmtChange(current.peakMinutes, newPeak)} dia ${fmtChange(current.diaMinutes, newDia)} n=${insulinKinetics.sampleCount}")
+    }
 
-        val confPct = (updated.normalizedConfidence * 100.0).toInt()
-        aapsLogger.debug(
-            LTag.APS,
-            "ProfileLearner updated ${mode.label}: " +
-                "peak ${fmtChange(current.peakMinutes, newPeak)} " +
-                "dia ${fmtChange(current.diaMinutes, newDia)} " +
-                "α=${"%.3f".format(Locale.US, alpha)} (base=${"%.3f".format(Locale.US, baseAlpha)} × conf=${"%.2f".format(Locale.US, confAttenuation)}) " +
-                "n=$newSampleCount conf=$confPct%"
+    /**
+     * Update per-mode carb absorption duration.
+     */
+    fun observeCarbAbsorption(
+        mode:              MealMode,
+        observedPeakMins:  Double,
+        observedTotalMins: Double,
+        learningRate:      Double
+    ) {
+        val current = getCarbAbsorption(mode)
+        val alpha = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
+
+        val newAbs = ewma(current.absorptionMinutes, observedTotalMins.coerceIn(LearnedCarbAbsorption.ABS_MIN, LearnedCarbAbsorption.ABS_MAX), alpha)
+        val newPeak = ewma(current.peakMinutes,       observedPeakMins.coerceIn(30.0, 180.0), alpha)
+
+        val updated = current.copy(
+            absorptionMinutes = newAbs,
+            peakMinutes       = newPeak,
+            sampleCount       = current.sampleCount + 1,
+            lastUpdatedMs     = System.currentTimeMillis()
         )
+        carbProfiles[mode] = updated
+        saveCarbProfile(updated)
+
+        aapsLogger.debug(LTag.APS, "ProfileLearner: ${mode.label} carb absorption updated " +
+            "duration ${fmtChange(current.absorptionMinutes, newAbs)} n=${updated.sampleCount}")
     }
 
-    /**
-     * Reset the learned profile for [mode] back to its default prior.
-     * Useful if the user changes insulin type or suspects corrupt data.
-     */
-    fun resetProfile(mode: MealMode) {
-        val default = profileSeededDefault(mode)
-        profiles[mode] = default
-        saveProfile(default)
-        aapsLogger.debug(LTag.APS, "ProfileLearner: reset $mode to defaults")
-    }
-
-    /**
-     * Reset ALL learned profiles back to defaults.
-     */
-    fun resetAll() {
-        MealMode.entries.forEach { resetProfile(it) }
+    override fun resetProfiles() {
+        insulinKinetics = LearnedInsulinKinetics.default()
+        saveInsulinKinetics()
+        carbProfiles.clear()
+        MealMode.entries.forEach { if (it != MealMode.FASTING) resetCarbProfile(it) }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    /** Standard EWMA: new = (1 - α) * old + α * observed */
     private fun ewma(old: Double, observed: Double, alpha: Double): Double =
         (1.0 - alpha) * old + alpha * observed
 
-    private fun prefKeyFor(mode: MealMode): StringKey =
-        when (mode) {
-            MealMode.FASTING       -> StringKey.ApsSmartInsulinProfileFasting
-            MealMode.LOW_CARB      -> StringKey.ApsSmartInsulinProfileLowCarb
-            MealMode.BREAKFAST     -> StringKey.ApsSmartInsulinProfileBreakfast
-            MealMode.LUNCH         -> StringKey.ApsSmartInsulinProfileLunch
-            MealMode.DINNER        -> StringKey.ApsSmartInsulinProfileDinner
-            MealMode.EXTENDED      -> StringKey.ApsSmartInsulinProfileExtended
-            // UAM modes — separate profile learning from manual meal modes
-            MealMode.UAM_BREAKFAST -> StringKey.ApsSmartInsulinProfileUamBreakfast
-            MealMode.UAM_LUNCH     -> StringKey.ApsSmartInsulinProfileUamLunch
-            MealMode.UAM_DINNER    -> StringKey.ApsSmartInsulinProfileUamDinner
-            MealMode.UAM_SNACK     -> StringKey.ApsSmartInsulinProfileUamSnack
-            MealMode.UAM_AFTERNOON    -> StringKey.ApsSmartInsulinProfileUamAfternoon
-            MealMode.UAM_PROTEIN_FAT  -> StringKey.ApsSmartInsulinProfileUamProteinFat
-        }
-
-    private fun loadProfile(mode: MealMode): LearnedInsulinProfile {
-        return try {
-            val json = preferences.get(prefKeyFor(mode))
-            if (json.isBlank()) return safeSeededDefault(mode)
-            LearnedInsulinProfile.fromJson(JSONObject(json), mode)
-        } catch (_: Exception) {
-            safeSeededDefault(mode)
-        }
-    }
-
-    /**
-     * Safe default that won't crash during Dagger init.
-     * profileFunction.getProfile() requires APS to be selected — not safe at construction time.
-     * Falls back to hardcoded constants if the profile/APS isn't ready yet.
-     */
-    private fun safeSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        return try {
-            profileSeededDefault(mode)
-        } catch (_: Exception) {
-            // APS not yet selected (app startup) — use hardcoded fallback.
-            // getProfile() will be called on first actual use via getProfile(mode).
-            LearnedInsulinProfile.defaultFor(
-                mode,
-                55.0,  // conservative rapid-acting peak default
-                LearnedInsulinProfile.FALLBACK_DIA_MINS
-            )
-        }
-    }
-
-    /**
-     * Clears all learned profiles and re-seeds from the current profile DIA and insulin peak.
-     * Call this after changing insulin type or if learned values have drifted badly.
-     */
-    override fun resetProfiles() {
-        val profile  = runBlocking { profileFunction.getProfile() }
-        val diaMins  = profile?.iCfg?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = profile?.iCfg?.peak?.toDouble() ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS
-        aapsLogger.debug(LTag.APS,
-                         "ProfileLearner: resetting all modes — seeding peak=${peakMins}m dia=${diaMins}m from current profile/insulin")
-        MealMode.entries.forEach { mode ->
-            val seeded = LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
-            profiles[mode] = seeded
-            saveProfile(seeded)
-        }
-    }
-
-    private fun saveProfile(profile: LearnedInsulinProfile) {
+    private fun restore() {
         try {
-            preferences.put(prefKeyFor(profile.mode), profile.toJson().toString())
+            val iJson = preferences.get(StringKey.ApsSmartInsulinProfileInsulin)
+            if (iJson.isNotBlank()) insulinKinetics = LearnedInsulinKinetics.fromJson(JSONObject(iJson))
+
+            MealMode.entries.forEach { mode ->
+                if (mode == MealMode.FASTING) return@forEach
+                val cJson = preferences.get(carbPrefKeyFor(mode))
+                if (cJson.isNotBlank()) carbProfiles[mode] = LearnedCarbAbsorption.fromJson(JSONObject(cJson), mode)
+            }
         } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "ProfileLearner: failed to save ${profile.mode}: ${e.message}")
+            aapsLogger.error(LTag.APS, "ProfileLearner: restore failed", e)
         }
     }
 
-    private fun fmtChange(old: Double, new: Double): String =
-        "%.1f→%.1f".format(Locale.US, old, new)
+    private fun saveInsulinKinetics() {
+        preferences.put(StringKey.ApsSmartInsulinProfileInsulin, insulinKinetics.toJson().toString())
+    }
+
+    private fun saveCarbProfile(profile: LearnedCarbAbsorption) {
+        preferences.put(carbPrefKeyFor(profile.mode), profile.toJson().toString())
+    }
+
+    private fun resetCarbProfile(mode: MealMode) {
+        val default = LearnedCarbAbsorption.defaultFor(mode)
+        carbProfiles[mode] = default
+        saveCarbProfile(default)
+    }
+
+    private fun carbPrefKeyFor(mode: MealMode): StringKey = when (mode) {
+        MealMode.LOW_CARB      -> StringKey.ApsSmartInsulinProfileLowCarb
+        MealMode.BREAKFAST     -> StringKey.ApsSmartInsulinProfileBreakfast
+        MealMode.LUNCH         -> StringKey.ApsSmartInsulinProfileLunch
+        MealMode.DINNER        -> StringKey.ApsSmartInsulinProfileDinner
+        MealMode.EXTENDED      -> StringKey.ApsSmartInsulinProfileExtended
+        MealMode.UAM_BREAKFAST -> StringKey.ApsSmartInsulinProfileUamBreakfast
+        MealMode.UAM_LUNCH     -> StringKey.ApsSmartInsulinProfileUamLunch
+        MealMode.UAM_DINNER    -> StringKey.ApsSmartInsulinProfileUamDinner
+        MealMode.UAM_SNACK     -> StringKey.ApsSmartInsulinProfileUamSnack
+        MealMode.UAM_AFTERNOON -> StringKey.ApsSmartInsulinProfileUamAfternoon
+        MealMode.UAM_PROTEIN_FAT -> StringKey.ApsSmartInsulinProfileUamProteinFat
+        else -> StringKey.ApsSmartInsulinProfileFasting // should not happen for carb profiles
+    }
+
+    private fun fmtChange(old: Double, new: Double): String = "%.1f→%.1f".format(Locale.US, old, new)
 }

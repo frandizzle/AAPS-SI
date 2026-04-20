@@ -13,17 +13,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
- *
- * State is persisted to SharedPreferences on every cycle so AAPS restarts
- * mid-track do not lose the baseline BG/IOB reference.
- *
- * Strategy:
- *   1. Detect when IOB starts declining from its peak
- *   2. Track BG nadir from that point
- *   3. Once BG recovers [RECOVERY_MGDL] above nadir, the bolus is "complete"
- *   4. Derive observedPeakMins (start→nadir) and observedDiaMins (start→recovery)
- *   5. Feed to ProfileLearner
+ * Tracks post-bolus CGM curves to estimate:
+ * 1. Global Insulin Kinetics (during FASTING)
+ * 2. Per-mode Carb Absorption (during MEAL modes)
  */
 @Singleton
 class BolusCurveTracker @Inject constructor(
@@ -39,13 +31,17 @@ class BolusCurveTracker @Inject constructor(
     private var bgAtStart       = 0.0
     private var iobPeak         = 0.0
     private var iobDeclineSeen  = false
+
+    // Fasting-specific (Insulin Kinetics)
     private var bgNadir         = Double.MAX_VALUE
     private var nadirTimeMs     = 0L
-    private var nadirConfirmed  = false
-    private var prevIob         = 0.0   // tracks IOB from last cycle to detect new bolus spikes
-    // Not persisted — set true after first onLoopCycle call or successful restoreState.
-    // Prevents a false-positive bolus spike on the first cycle after app start when the user
-    // has pre-existing IOB (prevIob=0.0 vs currentIob=2.0 would look like a fresh 2U bolus).
+
+    // Meal-specific (Carb Absorption)
+    private var bgPeak          = 0.0
+    private var bgPeakTimeMs    = 0L
+
+    private var curveConfirmed  = false
+    private var prevIob         = 0.0
     private var seededPrevIob   = false
 
     init {
@@ -54,20 +50,13 @@ class BolusCurveTracker @Inject constructor(
 
     companion object {
         private const val MIN_TRACK_IOB_U        = 0.6
-        private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
-        private const val ABANDON_SPIKE_U        = 0.8   // IOB must rise ≥0.8U in one cycle while tracking to abandon (ignores SMBs)
-        private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
-        private const val MIN_BG_DROP_MGDL       = 10.0  // ~0.5 mmol minimum drop below start (for Fasting)
-        private const val MEAL_NADIR_HEADROOM    = 10.0  // Nadir can be up to 10mg/dL above start for meal modes
+        private const val MIN_BOLUS_SPIKE_U      = 0.3
+        private const val ABANDON_SPIKE_U        = 0.8
+        private const val RECOVERY_MGDL          = 12.0
+        private const val MIN_BG_DROP_MGDL       = 10.0
         private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
-        // Minimum time between nadir reading and confirmation. Prevents a single noisy
-        // reading upward from prematurely "recovering" the curve — the BG has to prove
-        // the recovery is real by sustaining it for at least this long after nadir.
-        private const val MIN_NADIR_DELAY_MS     = 30 * 60 * 1000L
+        private const val MIN_CONFIRM_DELAY_MS   = 30 * 60 * 1000L
         private const val IOB_DECLINE_FRACTION   = 0.05
-        // Learning rate passed to ProfileLearner.observeBolusCurve. Kept separate from
-        // ISF/basal learning alphas because peak/DIA learning operates on a different signal
-        // (bolus curve shape) with different noise characteristics.
         private const val PROFILE_LEARNING_RATE  = 0.15
 
         // JSON keys
@@ -80,32 +69,26 @@ class BolusCurveTracker @Inject constructor(
         private const val K_IOB_DECLINE_SEEN = "iobDeclineSeen"
         private const val K_BG_NADIR         = "bgNadir"
         private const val K_NADIR_TIME_MS    = "nadirTimeMs"
-        private const val K_NADIR_CONFIRMED  = "nadirConfirmed"
-        private const val K_PREV_IOB         = "prevIob"   // persisted to prevent false-positive spike on app restart
+        private const val K_BG_PEAK          = "bgPeak"
+        private const val K_PEAK_TIME_MS     = "peakTimeMs"
+        private const val K_CONFIRMED        = "curveConfirmed"
+        private const val K_PREV_IOB         = "prevIob"
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
-    /**
-     * Human-readable one-liner for logcat — shows tracking state each loop cycle.
-     * Example: "tracking=true mode=Fasting iobAtStart=3.2 iobPeak=3.8 declineSeen=true nadir=6.1 nadirConfirmed=false elapsed=42min"
-     */
     fun statusSummary(currentMode: MealMode? = null): String {
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
-        val nadirStr   = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
-        val phase = when {
-            !iobDeclineSeen -> "waiting_peak"
-            !nadirConfirmed -> "tracking_nadir"
-            else            -> "confirming"
-        }
-        // Only show tracked mode if it matches current mode — otherwise label as historical
         val modeStr = if (currentMode == null || currentMode == trackMode)
-            trackMode.label
-        else
-            "${trackMode.label}(historical)"
-        return "tracker=$phase mode=$modeStr " +
-            "peak=%.1fm nadir=$nadirStr elapsed=%.0fm".format(Locale.US, iobPeak, elapsedMin)
+            trackMode.label else "${trackMode.label}(hist)"
+
+        return if (trackMode == MealMode.FASTING) {
+            val nadirStr = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
+            "tracker=kinetics mode=$modeStr nadir=$nadirStr elapsed=%.0fm".format(Locale.US, elapsedMin)
+        } else {
+            "tracker=absorption mode=$modeStr bgPeak=%.1f elapsed=%.0fm".format(Locale.US, bgPeak, elapsedMin)
+        }
     }
 
     fun onLoopCycle(
@@ -116,24 +99,15 @@ class BolusCurveTracker @Inject constructor(
         val currentIob = iobArray.firstOrNull()?.iob ?: return
         val currentBg  = glucoseStatus.glucose
         val nowMs      = System.currentTimeMillis()
-
-        // Dirty flag — replaces the 4 scattered saveState() calls that used to run per
-        // cycle. We accumulate changes and persist once at the end of the cycle (if needed).
         var stateDirty = false
 
-        // First cycle after app start — seed prevIob from currentIob so subsequent
-        // spike detection compares against a real baseline, not 0.0. Only seeds when
-        // not already restored from persisted state (restoreState sets the flag).
         if (!seededPrevIob) {
             prevIob = currentIob
             seededPrevIob = true
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: seeded prevIob=$currentIob on first cycle")
             return
         }
 
         if (!tracking) {
-            // Only start on a meaningful IOB spike — new bolus delivered
-            // Require IOB to have risen by at least MIN_BOLUS_SPIKE_U since last cycle
             val iobSpike = currentIob - prevIob
             prevIob = currentIob
             if (iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U) {
@@ -144,102 +118,87 @@ class BolusCurveTracker @Inject constructor(
                 bgAtStart       = currentBg
                 iobPeak         = currentIob
                 iobDeclineSeen  = false
-                bgNadir         = Double.MAX_VALUE   // will update to first BG reading below bgAtStart
+                bgNadir         = currentBg
                 nadirTimeMs     = nowMs
-                nadirConfirmed  = false
+                bgPeak          = currentBg
+                bgPeakTimeMs    = nowMs
+                curveConfirmed  = false
                 stateDirty      = true
-                aapsLogger.debug(LTag.APS,
-                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg")
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking $trackMode")
             }
-            // prevIob already updated above — no else branch needed
             if (stateDirty) saveState()
             return
         }
-        // New bolus detected while tracking — abandon current curve and restart
-        // Compute spike FIRST using the previous cycle's IOB, THEN update prevIob
+
         val iobSpikeWhileTracking = currentIob - (prevIob.takeIf { it > 0.0 } ?: currentIob)
-        prevIob = currentIob  // update AFTER spike check so next cycle sees this cycle's value
+        prevIob = currentIob
 
-        val elapsedMs = nowMs - trackStartMs
-
-        // Abandon if meal mode changed mid-tracking — the observed curve would be attributed
-        // to the wrong profile (e.g. FASTING curve feeding into DINNER's learner after user
-        // activated dinner mode post-bolus). Corrupts per-mode peak/DIA learning.
-        if (mealMode != trackMode) {
-            aapsLogger.debug(LTag.APS,
-                             "BolusCurveTracker: abandoned (mode changed ${trackMode.label}→${mealMode.label})")
+        if (mealMode != trackMode || (nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
+            iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
             reset(); return
         }
 
-        // Abandon if tracking too long
-        if (elapsedMs > MAX_TRACK_DURATION_MS) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (timeout)")
-            reset(); return
-        }
-
-        if (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
-            reset(); return
-        }
-
-        // Track IOB peak and confirm decline
+        // Track IOB peak (drug concentration proxy)
         if (currentIob > iobPeak) {
             iobPeak = currentIob
             stateDirty = true
         } else if (!iobDeclineSeen && currentIob < iobPeak * (1.0 - IOB_DECLINE_FRACTION)) {
             iobDeclineSeen = true
             stateDirty = true
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB peak confirmed at $iobPeak")
         }
 
-        if (!iobDeclineSeen) {
-            if (stateDirty) saveState()
-            return
+        if (trackMode == MealMode.FASTING) {
+            updateFastingLogic(currentBg, nowMs)
+        } else {
+            updateMealLogic(currentBg, nowMs)
         }
 
-        // Update BG nadir
+        if (stateDirty) saveState()
+    }
+
+    private fun updateFastingLogic(currentBg: Double, nowMs: Long) {
+        if (!iobDeclineSeen) return
+
         if (currentBg < bgNadir) {
             bgNadir     = currentBg
             nadirTimeMs = nowMs
-            stateDirty  = true
+            saveState()
         }
 
-        // Check recovery
-        val dropTarget = if (trackMode == MealMode.FASTING)
-            bgAtStart - MIN_BG_DROP_MGDL
-        else
-            bgAtStart + MEAL_NADIR_HEADROOM
+        // Logic: Nadir is the Peak Action. Insulin Peak is ~45m prior.
+        if (!curveConfirmed && (nowMs - nadirTimeMs) > MIN_CONFIRM_DELAY_MS &&
+            currentBg > bgNadir + RECOVERY_MGDL && bgNadir < bgAtStart - MIN_BG_DROP_MGDL) {
 
-        if (!nadirConfirmed &&
-            (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
-            currentBg > bgNadir + RECOVERY_MGDL &&
-            bgNadir < dropTarget
-        ) {
-            nadirConfirmed = true
-            val observedPeakMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
-            val observedDiaMins  = elapsedMs.toDouble() / 60_000.0
+            curveConfirmed = true
+            val observedPeakActionMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
+            val learnedPeak = (observedPeakActionMins - 45.0).coerceAtLeast(35.0)
+            val learnedDia  = learnedPeak * 4.0
 
-            aapsLogger.debug(
-                LTag.APS,
-                "BolusCurveTracker: complete mode=${trackMode.label} " +
-                    "peak=%.1fmin dia=%.1fmin bgDrop=%.1f".format(
-                        Locale.US, observedPeakMins, observedDiaMins, bgAtStart - bgNadir
-                    )
-            )
-
-            profileLearner.observeBolusCurve(
-                mode             = trackMode,
-                observedPeakMins = observedPeakMins,
-                observedDiaMins  = observedDiaMins,
-                learningRate     = PROFILE_LEARNING_RATE
-            )
+            profileLearner.observeInsulinKinetics(learnedPeak, learnedDia, PROFILE_LEARNING_RATE)
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: Insulin Kinetics complete. Peak=${learnedPeak.toInt()}m DIA=${learnedDia.toInt()}m")
             reset()
-            return  // reset() already cleared persisted state; no need to saveState below
+        }
+    }
+
+    private fun updateMealLogic(currentBg: Double, nowMs: Long) {
+        if (currentBg > bgPeak) {
+            bgPeak     = currentBg
+            bgPeakTimeMs = nowMs
+            saveState()
         }
 
-        // Flush accumulated changes once per cycle, at end — replaces the previous
-        // pattern of 2-3 saveState() calls scattered through the decision tree.
-        if (stateDirty) saveState()
+        // Recovery for meals: BG returns to within 15 mg/dL of start, or starts falling after a peak
+        if (!curveConfirmed && (nowMs - bgPeakTimeMs) > MIN_CONFIRM_DELAY_MS &&
+            currentBg < bgPeak - RECOVERY_MGDL && currentBg < bgAtStart + 20.0) {
+
+            curveConfirmed = true
+            val observedCarbPeakMins = (bgPeakTimeMs - trackStartMs).toDouble() / 60_000.0
+            val observedDurationMins = (nowMs - trackStartMs).toDouble() / 60_000.0
+
+            profileLearner.observeCarbAbsorption(trackMode, observedCarbPeakMins, observedDurationMins, PROFILE_LEARNING_RATE)
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: Carb Absorption complete. Peak=${observedCarbPeakMins.toInt()}m Duration=${observedDurationMins.toInt()}m")
+            reset()
+        }
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -254,15 +213,15 @@ class BolusCurveTracker @Inject constructor(
                 put(K_BG_AT_START,      bgAtStart)
                 put(K_IOB_PEAK,         iobPeak)
                 put(K_IOB_DECLINE_SEEN, iobDeclineSeen)
-                put(K_BG_NADIR,         if (bgNadir == Double.MAX_VALUE) -1.0 else bgNadir)
+                put(K_BG_NADIR,         bgNadir)
                 put(K_NADIR_TIME_MS,    nadirTimeMs)
-                put(K_NADIR_CONFIRMED,  nadirConfirmed)
+                put(K_BG_PEAK,          bgPeak)
+                put(K_PEAK_TIME_MS,     bgPeakTimeMs)
+                put(K_CONFIRMED,        curveConfirmed)
                 put(K_PREV_IOB,         prevIob)
             }
             preferences.put(StringKey.ApsSmartInsulinTrackerState, json.toString())
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to save state: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
     private fun restoreState() {
@@ -272,56 +231,27 @@ class BolusCurveTracker @Inject constructor(
             val json = JSONObject(raw)
             if (!json.optBoolean(K_TRACKING, false)) return
 
-            // Validate restored state — abandon if start time is impossibly old
-            val restoredStartMs = json.getLong(K_START_MS)
-            if (System.currentTimeMillis() - restoredStartMs > MAX_TRACK_DURATION_MS) {
-                aapsLogger.debug(LTag.APS, "BolusCurveTracker: restored state expired, discarding")
-                preferences.put(StringKey.ApsSmartInsulinTrackerState, "")
-                return
-            }
-
             tracking        = true
-            trackStartMs    = restoredStartMs
+            trackStartMs    = json.getLong(K_START_MS)
             trackMode       = MealMode.valueOf(json.getString(K_MODE))
             iobAtStart      = json.getDouble(K_IOB_AT_START)
             bgAtStart       = json.getDouble(K_BG_AT_START)
             iobPeak         = json.getDouble(K_IOB_PEAK)
             iobDeclineSeen  = json.getBoolean(K_IOB_DECLINE_SEEN)
-            val nadirRaw    = json.getDouble(K_BG_NADIR)
-            bgNadir         = if (nadirRaw < 0) Double.MAX_VALUE else nadirRaw
-            nadirTimeMs     = json.getLong(K_NADIR_TIME_MS)
-            nadirConfirmed  = json.getBoolean(K_NADIR_CONFIRMED)
-            // prevIob may be missing from older saved state — optDouble falls back to 0.0,
-            // which is fine: the tracking branch's `takeIf { it > 0.0 } ?: currentIob` pattern
-            // handles the 0 case defensively by returning zero spike.
+            bgNadir         = json.optDouble(K_BG_NADIR, bgAtStart)
+            nadirTimeMs     = json.optLong(K_NADIR_TIME_MS, trackStartMs)
+            bgPeak          = json.optDouble(K_BG_PEAK, bgAtStart)
+            bgPeakTimeMs    = json.optLong(K_PEAK_TIME_MS, trackStartMs)
+            curveConfirmed  = json.optBoolean(K_CONFIRMED, false)
             prevIob         = json.optDouble(K_PREV_IOB, 0.0)
-            // Successful restore with tracking active — prevIob is set, skip the seed-on-first-cycle path
             seededPrevIob   = true
-
-            aapsLogger.debug(LTag.APS,
-                             "BolusCurveTracker: restored state mode=${trackMode.label} " +
-                                 "iobAtStart=$iobAtStart bgAtStart=$bgAtStart declineSeen=$iobDeclineSeen prevIob=$prevIob")
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to restore state: ${e.message}")
-            reset()
-        }
+        } catch (_: Exception) { reset() }
     }
 
     private fun reset() {
         tracking        = false
         trackStartMs    = 0L
-        iobAtStart      = 0.0
-        bgAtStart       = 0.0
-        iobPeak         = 0.0
-        iobDeclineSeen  = false
-        bgNadir         = Double.MAX_VALUE
-        nadirTimeMs     = 0L
-        nadirConfirmed  = false
-        // prevIob intentionally NOT reset — we still need continuity to detect next bolus spike
-        try {
-            preferences.put(StringKey.ApsSmartInsulinTrackerState, "")
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to clear persisted state: ${e.message}")
-        }
+        curveConfirmed  = false
+        try { preferences.put(StringKey.ApsSmartInsulinTrackerState, "") } catch (_: Exception) {}
     }
 }

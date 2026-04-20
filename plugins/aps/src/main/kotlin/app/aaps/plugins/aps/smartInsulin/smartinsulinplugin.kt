@@ -509,11 +509,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // session began — not a stale mid-nudge snapshot.
         val rawNudgeStatus  = circadianLearner.lastAggrNudgeStatus
         val nudgePrimary    = rawNudgeStatus.substringBefore("|").trim()
-        // Derive a "canonical active direction" — abstracts over TRIM|ACTIVE_HIGH vs ACTIVE_HIGH
         val currentDirection: String? = when (nudgePrimary) {
             "ACTIVE_HIGH", "ACTIVE_LOW" -> nudgePrimary
-            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()  // TRIM|ACTIVE_HIGH|... or TRIM|ACTIVE_LOW|...
-            else -> null  // INACTIVE, PAUSED, or anything else → no active direction
+            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()
+            else -> null
         }
         val lastDirection: String? = when (lastSeenNudgeState.substringBefore("|").trim()) {
             "ACTIVE_HIGH", "ACTIVE_LOW" -> lastSeenNudgeState.substringBefore("|").trim()
@@ -524,9 +523,6 @@ open class SmartInsulinPlugin @Inject constructor(
         if (shouldCaptureBaseline) {
             nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
             nudgeDisplaySessionBasalU  = roundedFinalBasal
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
-                                 "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
         }
         lastSeenNudgeState = rawNudgeStatus
 
@@ -542,9 +538,13 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val profRaw = buildString {
-            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
-                appendLine("${mode.label.padEnd(16)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
+            val i = profileLearner.getInsulinKinetics()
+            appendLine("Global Insulin: peak=${i.peakMinutes.toInt()}m dia=${i.diaMinutes.toInt()}m n=${i.sampleCount}")
+            appendLine("── Meal Carb Absorption ──")
+            MealMode.entries.forEach { mode ->
+                if (mode == MealMode.FASTING) return@forEach
+                val c = profileLearner.getCarbAbsorption(mode)
+                appendLine("${mode.label.padEnd(16)}: peak=${c.peakMinutes.toInt()}m duration=${c.absorptionMinutes.toInt()}m n=${c.sampleCount}")
             }
         }
 
@@ -1106,11 +1106,14 @@ open class SmartInsulinPlugin @Inject constructor(
         // STFT handles TT/low/meal internally and returns profileTargetMgdl when blocked.
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
+        val kinetics = profileLearner.getInsulinKinetics()
+        val carbAbs  = profileLearner.getCarbAbsorption(mealMode)
+
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
         val oapsProfile = OapsProfile(
-            dia                              = profile.iCfg.dia,
+            dia                              = kinetics.diaMinutes / 60.0,
             min_5m_carbimpact               = 0.0,
             max_iob                         = constraintsChecker.getMaxIOBAllowed().also { inputConstraints.copyReasons(it) }.value(),
             max_daily_basal                 = profile.getMaxDailyBasal(),
@@ -1157,6 +1160,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
+
         // UAM modes share peak/DIA learning with their parent mode — they accumulate
         // separate observations but start from the same profile. This means UAM_LUNCH
         // uses LUNCH's learned peak/DIA until it has its own samples.
@@ -1512,7 +1516,8 @@ open class SmartInsulinPlugin @Inject constructor(
             oapsProfile              = oapsProfile,
             mealData                 = mealData,
             profile                  = profile,
-            learnedProfile           = learnedProfile,
+            kinetics                 = kinetics,
+            carbAbsorption           = carbAbs,
             mealMode                 = mealMode,
             lowGuardMmol             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)  / 18.0,
             warnGuardMmol            = spMgdl(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0,
