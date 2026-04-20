@@ -894,7 +894,7 @@ fun SmartInsulinScreen(
                         if (snap.bgNadirMmol != null)
                             SiRow("BG nadir: ${"%.1f".format(snap.bgNadirMmol)} mmol",
                                   "Scores when: BG rises 0.67+ mmol above nadir (recovery), OR " +
-                                      "BG stays within 0.33 mmol of nadir for 45+ min (stable-flat).",
+                                      "BG stays within 0.33 mmol of nadir for 60+ min (stable-flat).",
                                   primaryColor = StatusWarn)
                         else
                             SiRow("No nadir yet",
