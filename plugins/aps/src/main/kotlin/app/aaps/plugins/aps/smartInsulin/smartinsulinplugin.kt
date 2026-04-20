@@ -195,12 +195,6 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb3LastMaxIobU:           Double = 0.0
     @Volatile var pb3ProfileTargetMgdl:     Double = 0.0
 
-    // Sticky flag: true for exactly one cycle AFTER a PB2/PB3 fire was triggered, because
-    // commandQueue.bolus is async and the pump's new IOB reading shows up in iobArray
-    // only on the next cycle. Used to whitelist the IOB spike in BolusCurveTracker so it
-    // doesn't abandon an active meal or fasting track when a scheduled pre-bolus fires.
-    @Volatile private var pendingScheduledBolusWhitelist: Boolean = false
-
     // ── HbA1c estimation — computed fresh each fragmentData() call from DB ───
     // Formula: (mean_mgdl + 46.7) / 28.7
     // Queries today's readings (midnight to now) via persistenceLayer.
@@ -489,7 +483,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeDoseU:        Double?,
         val activePb2DoseU:     Double?,
         val activePb3DoseU:     Double?,
-        val pb3Status:          String
+        val pb3Status:          String,
+        val trackerSnapshot:    BolusCurveTracker.TrackerSnapshot
     )
 
     fun fragmentData(): FragmentData {
@@ -546,26 +541,13 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val profRaw = buildString {
-            fun agoStr(ms: Long): String {
-                if (ms == 0L) return "never"
-                val mins = (nowMs - ms) / 60_000
-                if (mins < 60) return "${mins}m ago"
-                val hrs = mins / 60
-                val remMins = mins % 60
-                return if (hrs < 24) "${hrs}h ${remMins}m ago" else "${hrs / 24}d ago"
-            }
-
             val i = profileLearner.getInsulinKinetics()
-            appendLine("Global Insulin: peak=${i.peakMinutes.toInt()}m dia=${i.diaMinutes.toInt()}m n=${i.sampleCount} (learned ${agoStr(i.lastUpdatedMs)})")
+            appendLine("Global Insulin: peak=${i.peakMinutes.toInt()}m dia=${i.diaMinutes.toInt()}m n=${i.sampleCount}")
             appendLine("── Meal Carb Absorption ──")
             MealMode.entries.forEach { mode ->
                 if (mode == MealMode.FASTING) return@forEach
                 val c = profileLearner.getCarbAbsorption(mode)
-                if (c.sampleCount > 0) {
-                    appendLine("${mode.label.padEnd(16)}: peak=${c.peakMinutes.toInt()}m duration=${c.absorptionMinutes.toInt()}m n=${c.sampleCount} (learned ${agoStr(c.lastUpdatedMs)})")
-                } else {
-                    appendLine("${mode.label.padEnd(16)}: duration=${c.absorptionMinutes.toInt()}m (default, n=0)")
-                }
+                appendLine("${mode.label.padEnd(16)}: peak=${c.peakMinutes.toInt()}m duration=${c.absorptionMinutes.toInt()}m n=${c.sampleCount}")
             }
         }
 
@@ -656,7 +638,10 @@ open class SmartInsulinPlugin @Inject constructor(
             activeDoseU        = mealOverrideManager.activeDoseU,
             activePb2DoseU     = mealOverrideManager.activePb2DoseU,
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
-            pb3Status          = cachedOverviewState.pb3Line ?: ""
+            pb3Status          = cachedOverviewState.pb3Line ?: "",
+            trackerSnapshot    = bolusCurveTracker.snapshot(
+                isMmol = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
+            )
         )
     }
 
@@ -988,27 +973,11 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // ── Tick the override manager — fires queued bolus when safe ──────────
         val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
-        // Capture PB2/PB3 delivered state BEFORE the tick. If activePb*DoseU transitions
-        // from null to non-null during onLoopCycle, that scheduled bolus fired this cycle.
-        // Used downstream to tell BolusCurveTracker not to abandon a meal track when its
-        // IOB suddenly jumps from a scheduled pre-bolus. The flag must stay true across
-        // 2 cycles because commandQueue.bolus is async — the IOB impact doesn't show up
-        // in iobArray until the cycle AFTER the one where the fire was triggered.
-        val pb2DoseBefore = mealOverrideManager.activePb2DoseU
-        val pb3DoseBefore = mealOverrideManager.activePb3DoseU
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
             iobArray      = iobArray,
             maxIobU       = pb2MaxIob
         )
-        val pb2FiredThisCycle = pb2DoseBefore == null && mealOverrideManager.activePb2DoseU != null
-        val pb3FiredThisCycle = pb3DoseBefore == null && mealOverrideManager.activePb3DoseU != null
-        // Sticky: if a scheduled bolus fired THIS cycle OR was queued-but-pending LAST cycle,
-        // treat tracker spikes as whitelisted. The pending check handles the async delivery gap.
-        val scheduledBolusRecentlyFired = pb2FiredThisCycle || pb3FiredThisCycle ||
-            pendingScheduledBolusWhitelist
-        // Arm whitelist for next cycle if we fired this cycle (iobArray hasn't reflected it yet)
-        pendingScheduledBolusWhitelist = pb2FiredThisCycle || pb3FiredThisCycle
         // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
         // post-fire UI still shows what the gate state was on the last tick.
         pb2LastBgMgdl            = glucoseStatus.glucose
@@ -1608,12 +1577,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // This is intentionally NOT suppressed during high TT — a meal bolus during
         // a high TT is still a valid peak/DIA observation.
         if (learningEnabled) {
-            bolusCurveTracker.onLoopCycle(
-                glucoseStatus = glucoseStatus,
-                mealMode      = mealMode,
-                iobArray      = iobArray,
-                pb2OrPb3FiredThisCycle = scheduledBolusRecentlyFired
-            )
+            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
         }
 
         // ── Circadian learner — fasting + no high TT only ─────────────────────

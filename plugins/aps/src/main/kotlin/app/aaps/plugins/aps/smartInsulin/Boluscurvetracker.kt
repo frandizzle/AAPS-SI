@@ -90,6 +90,58 @@ class BolusCurveTracker @Inject constructor(
 
     // ── Public API ────────────────────────────────────────────────────────────
 
+    /** Rich snapshot of current tracker state for UI display. */
+    data class TrackerSnapshot(
+        val isTracking:       Boolean,
+        val trackMode:        String,          // mode label being tracked
+        val elapsedMins:      Int,             // minutes since tracking started
+        val phase:            String,          // "kinetics", "absorption", "tail", "idle"
+        val inTailMode:       Boolean,
+        val tailElapsedMins:  Int,             // minutes since meal mode ended (tail only)
+        val bgPeakMmol:       Double,          // meal: highest BG seen
+        val bgNadirMmol:      Double?,         // fasting: lowest BG seen (null if not seen yet)
+        val iobDeclineSeen:   Boolean,
+        val lastEventDesc:    String           // what happened most recently (for display)
+    )
+
+    fun snapshot(isMmol: Boolean = true): TrackerSnapshot {
+        val now = System.currentTimeMillis()
+        if (!tracking) return TrackerSnapshot(
+            isTracking = false, trackMode = "", elapsedMins = 0,
+            phase = "idle", inTailMode = false, tailElapsedMins = 0,
+            bgPeakMmol = 0.0, bgNadirMmol = null,
+            iobDeclineSeen = false, lastEventDesc = "Not tracking"
+        )
+        val elapsedMins = ((now - trackStartMs) / 60_000).toInt()
+        val phase = when {
+            trackMode == MealMode.FASTING -> "kinetics"
+            inTailMode                    -> "tail"
+            else                          -> "absorption"
+        }
+        val tailElapsed = if (inTailMode && mealModeEndedMs > 0L)
+            ((now - mealModeEndedMs) / 60_000).toInt() else 0
+        val bgPeakMmol = if (isMmol) bgPeak / 18.0 else bgPeak
+        val bgNadirMmol = if (bgNadir == Double.MAX_VALUE) null
+        else if (isMmol) bgNadir / 18.0 else bgNadir
+        val lastEvent = when {
+            trackMode == MealMode.FASTING && bgNadir < Double.MAX_VALUE ->
+                "Nadir ${String.format(Locale.US, "%.1f", bgNadirMmol)} at +${((nadirTimeMs - trackStartMs)/60_000).toInt()}min — waiting for recovery"
+            trackMode == MealMode.FASTING ->
+                "Watching for BG nadir (IOB decline ${if (iobDeclineSeen) "seen ✓" else "not yet"})"
+            inTailMode ->
+                "Meal mode ended ${tailElapsed}min ago — watching for recovery"
+            else ->
+                "BG peak ${String.format(Locale.US, "%.1f", bgPeakMmol)} at +${((bgPeakTimeMs - trackStartMs)/60_000).toInt()}min"
+        }
+        return TrackerSnapshot(
+            isTracking = true, trackMode = trackMode.label,
+            elapsedMins = elapsedMins, phase = phase,
+            inTailMode = inTailMode, tailElapsedMins = tailElapsed,
+            bgPeakMmol = bgPeakMmol, bgNadirMmol = bgNadirMmol,
+            iobDeclineSeen = iobDeclineSeen, lastEventDesc = lastEvent
+        )
+    }
+
     fun statusSummary(currentMode: MealMode? = null): String {
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0

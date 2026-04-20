@@ -823,7 +823,7 @@ fun SmartInsulinScreen(
             d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
                 if (line.startsWith("──")) {
                     HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text(line.replace("──", "").trim(), 
+                    Text(line.replace("──", "").trim(),
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
                     return@forEach
@@ -832,10 +832,14 @@ fun SmartInsulinScreen(
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
-                
-                val isActive = if (name.contains("Insulin")) d.mealMode == "Fasting"
-                else d.mealMode == name
-                
+
+                // Exact match only — prevents "Dinner" highlighting when mealMode is "Dinner (UAM)"
+                // and vice versa. Global Insulin row only highlights during Fasting.
+                val isActive = when (name) {
+                    "Global Insulin" -> d.mealMode == "Fasting"
+                    else             -> name == d.mealMode
+                }
+
                 val prefix = if (isActive) "► " else "  "
                 val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 Column(
@@ -850,6 +854,67 @@ fun SmartInsulinScreen(
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(2.dp))
+            }
+        }
+
+        // ── BolusCurveTracker debug card ───────────────────────────────
+        SiCard(title = "Curve Tracker (Learning Debug)") {
+            val snap = d.trackerSnapshot
+            if (!snap.isTracking) {
+                SiRow("Tracker idle",
+                      "Not currently observing a bolus curve. Tracking starts when IOB rises by ≥0.3U.",
+                      primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                // Phase label and colour
+                val (phaseLabel, phaseColor) = when (snap.phase) {
+                    "kinetics"    -> "Insulin kinetics" to StatusGood
+                    "absorption"  -> "Carb absorption" to MaterialTheme.colorScheme.primary
+                    "tail"        -> "Tail observation" to StatusWarn
+                    else          -> snap.phase to MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                SiRow("$phaseLabel — ${snap.trackMode}",
+                      "Elapsed: ${snap.elapsedMins}min" +
+                          if (snap.inTailMode) " | Meal mode ended ${snap.tailElapsedMins}min ago" else "",
+                      primaryColor = phaseColor)
+
+                // What the tracker is currently observing
+                SiRow("Observing", snap.lastEventDesc,
+                      primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // IOB state
+                val iobDeclineStr = if (snap.iobDeclineSeen) "✓ IOB decline confirmed — curve past peak"
+                else "⏳ Waiting for IOB to decline from peak"
+                SiRow(iobDeclineStr, null,
+                      primaryColor = if (snap.iobDeclineSeen) StatusGood
+                      else MaterialTheme.colorScheme.onSurfaceVariant)
+
+                // Phase-specific detail
+                when (snap.phase) {
+                    "kinetics" -> {
+                        if (snap.bgNadirMmol != null)
+                            SiRow("BG nadir: ${"%.1f".format(snap.bgNadirMmol)} mmol",
+                                  "When BG recovers ${0.67}+ mmol above nadir, kinetics will be scored.",
+                                  primaryColor = StatusWarn)
+                        else
+                            SiRow("No nadir yet",
+                                  "Waiting for BG to bottom out after fasting correction.",
+                                  primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    "absorption", "tail" -> {
+                        SiRow("BG peak: ${"%.1f".format(snap.bgPeakMmol)} mmol",
+                              "When BG drops 0.67+ mmol below peak with 30+ min elapsed, " +
+                                  "absorption curve will be scored and learning updated.",
+                              primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (snap.inTailMode) {
+                            val maxTailMins = 3 * 60
+                            val remainingMins = maxTailMins - snap.tailElapsedMins
+                            SiRow("Tail window: ${snap.tailElapsedMins}/${maxTailMins}min used",
+                                  "Tracker will abandon if BG doesn't recover within ${remainingMins}min more.",
+                                  primaryColor = if (snap.tailElapsedMins > maxTailMins * 0.75) StatusWarn
+                                  else MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
         }
 
