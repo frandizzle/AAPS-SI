@@ -94,7 +94,8 @@ class BolusCurveTracker @Inject constructor(
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
         mealMode:      MealMode,
-        iobArray:      Array<IobTotal>
+        iobArray:      Array<IobTotal>,
+        pb2OrPb3FiredThisCycle: Boolean = false
     ) {
         val currentIob = iobArray.firstOrNull()?.iob ?: return
         val currentBg  = glucoseStatus.glucose
@@ -130,21 +131,36 @@ class BolusCurveTracker @Inject constructor(
             return
         }
 
-        val iobSpikeWhileTracking = currentIob - (prevIob.takeIf { it > 0.0 } ?: currentIob)
+        val iobSpikeWhileTracking = currentIob - prevIob
         prevIob = currentIob
 
-        if (mealMode != trackMode || (nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
+        // PB2/PB3 whitelist: scheduled pre-boluses are part of the same meal intervention we're
+        // already tracking, not an unrelated correction. Instead of abandoning the track, treat
+        // the spike as a staged re-dose: refresh iobPeak baseline to the new IOB level and reset
+        // the "decline seen" flag so we'll watch for the new combined IOB to fall before scoring
+        // the curve. BG tracking (nadir/peak) is untouched — the physiology being measured is
+        // the same meal absorption or fasting correction.
+        if (pb2OrPb3FiredThisCycle && iobSpikeWhileTracking > 0.0) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: PB2/PB3 fired (spike=${"%.2f".format(Locale.US, iobSpikeWhileTracking)}U) — refreshing iobPeak baseline, keeping BG track")
+            iobPeak        = currentIob
+            iobDeclineSeen = false
+            stateDirty     = true
+            // Fall through to the normal BG-update logic below — do NOT run the abandon check.
+        } else if (mealMode != trackMode || (nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
             iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
             reset(); return
         }
 
-        // Track IOB peak (drug concentration proxy)
-        if (currentIob > iobPeak) {
-            iobPeak = currentIob
-            stateDirty = true
-        } else if (!iobDeclineSeen && currentIob < iobPeak * (1.0 - IOB_DECLINE_FRACTION)) {
-            iobDeclineSeen = true
-            stateDirty = true
+        // Track IOB peak (drug concentration proxy) — only when not in a PB2/PB3 refresh cycle
+        // (the refresh block above already handled peak/decline state).
+        if (!pb2OrPb3FiredThisCycle) {
+            if (currentIob > iobPeak) {
+                iobPeak = currentIob
+                stateDirty = true
+            } else if (!iobDeclineSeen && currentIob < iobPeak * (1.0 - IOB_DECLINE_FRACTION)) {
+                iobDeclineSeen = true
+                stateDirty = true
+            }
         }
 
         if (trackMode == MealMode.FASTING) {
