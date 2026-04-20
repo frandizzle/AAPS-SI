@@ -72,7 +72,7 @@ class BolusCurveTracker @Inject constructor(
         /** Stable-flat scoring: minimum time BG must stay near nadir before scoring
          *  a "perfect correction" that never rebounded. 45 min ensures we're not
          *  scoring mid-correction flats caused by temporary basal action. */
-        private const val STABLE_CONFIRM_MS      = 60 * 60 * 1000L
+        private const val STABLE_CONFIRM_MS      = 45 * 60 * 1000L
         /** Stable-flat scoring: BG must stay within this many mg/dL above nadir.
          *  6 mg/dL ≈ 0.33 mmol — tight enough to exclude active descent, wide enough
          *  to tolerate normal CGM jitter. */
@@ -104,16 +104,20 @@ class BolusCurveTracker @Inject constructor(
 
     /** Rich snapshot of current tracker state for UI display. */
     data class TrackerSnapshot(
-        val isTracking:       Boolean,
-        val trackMode:        String,          // mode label being tracked
-        val elapsedMins:      Int,             // minutes since tracking started
-        val phase:            String,          // "kinetics", "absorption", "tail", "idle"
-        val inTailMode:       Boolean,
-        val tailElapsedMins:  Int,             // minutes since meal mode ended (tail only)
-        val bgPeakMmol:       Double,          // meal: highest BG seen
-        val bgNadirMmol:      Double?,         // fasting: lowest BG seen (null if not seen yet)
-        val iobDeclineSeen:   Boolean,
-        val lastEventDesc:    String           // what happened most recently (for display)
+        val isTracking:          Boolean,
+        val trackMode:           String,
+        val elapsedMins:         Int,
+        val phase:               String,          // "kinetics", "absorption", "tail", "idle"
+        val inTailMode:          Boolean,
+        val tailElapsedMins:     Int,
+        val bgPeakMmol:          Double,
+        val bgNadirMmol:         Double?,
+        val iobDeclineSeen:      Boolean,
+        val lastEventDesc:       String,
+        // Learned carb curve parameters for the tracked mode — used for phase display
+        val learnedPeakMins:     Double,          // when plateau starts (safePeak)
+        val learnedDurationMins: Double,          // when tail ends (absorptionMinutes)
+        val transientWindowMins: Double = 60.0    // hardcoded spike window
     )
 
     fun snapshot(isMmol: Boolean = true): TrackerSnapshot {
@@ -122,7 +126,8 @@ class BolusCurveTracker @Inject constructor(
             isTracking = false, trackMode = "", elapsedMins = 0,
             phase = "idle", inTailMode = false, tailElapsedMins = 0,
             bgPeakMmol = 0.0, bgNadirMmol = null,
-            iobDeclineSeen = false, lastEventDesc = "Not tracking"
+            iobDeclineSeen = false, lastEventDesc = "Not tracking",
+            learnedPeakMins = 0.0, learnedDurationMins = 0.0
         )
         val elapsedMins = ((now - trackStartMs) / 60_000).toInt()
         val phase = when {
@@ -135,6 +140,15 @@ class BolusCurveTracker @Inject constructor(
         val bgPeakMmol = if (isMmol) bgPeak / 18.0 else bgPeak
         val bgNadirMmol = if (bgNadir == Double.MAX_VALUE) null
         else if (isMmol) bgNadir / 18.0 else bgNadir
+
+        // Compute learned carb phase boundaries for the tracked mode
+        val carbAbs = profileLearner.getCarbAbsorption(trackMode)
+        val carbDuration = carbAbs.absorptionMinutes
+        val carbPeakRaw  = carbAbs.peakMinutes
+        val safePeak = if (carbAbs.sampleCount >= 3)  // same threshold as DetermineBasalSmartInsulin
+            carbPeakRaw.coerceIn(carbDuration * 0.25, carbDuration * 0.80)
+        else
+            carbDuration * 0.65  // default fraction
         val lastEvent = when {
             trackMode == MealMode.FASTING && bgNadir < Double.MAX_VALUE -> {
                 val timeSinceNadir = System.currentTimeMillis() - nadirTimeMs
@@ -155,7 +169,9 @@ class BolusCurveTracker @Inject constructor(
             elapsedMins = elapsedMins, phase = phase,
             inTailMode = inTailMode, tailElapsedMins = tailElapsed,
             bgPeakMmol = bgPeakMmol, bgNadirMmol = bgNadirMmol,
-            iobDeclineSeen = iobDeclineSeen, lastEventDesc = lastEvent
+            iobDeclineSeen = iobDeclineSeen, lastEventDesc = lastEvent,
+            learnedPeakMins = safePeak,
+            learnedDurationMins = carbDuration
         )
     }
 

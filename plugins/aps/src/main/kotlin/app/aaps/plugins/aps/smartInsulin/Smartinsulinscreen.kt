@@ -894,7 +894,7 @@ fun SmartInsulinScreen(
                         if (snap.bgNadirMmol != null)
                             SiRow("BG nadir: ${"%.1f".format(snap.bgNadirMmol)} mmol",
                                   "Scores when: BG rises 0.67+ mmol above nadir (recovery), OR " +
-                                      "BG stays within 0.33 mmol of nadir for 60+ min (stable-flat).",
+                                      "BG stays within 0.33 mmol of nadir for 45+ min (stable-flat).",
                                   primaryColor = StatusWarn)
                         else
                             SiRow("No nadir yet",
@@ -902,10 +902,48 @@ fun SmartInsulinScreen(
                                   primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     "absorption", "tail" -> {
-                        SiRow("BG peak: ${"%.1f".format(snap.bgPeakMmol)} mmol",
-                              "When BG drops 0.67+ mmol below peak with 30+ min elapsed, " +
-                                  "absorption curve will be scored and learning updated.",
+                        // Determine which sub-phase the meal is currently in based on elapsed time
+                        // vs the learned carb curve boundaries for this mode.
+                        // Phases: Spike (0→60min) | Plateau (60min→safePeak) | Taper (safePeak→duration) | Tail (after duration)
+                        val transientEnd = snap.transientWindowMins.toInt()   // hardcoded 60 min
+                        val plateauEnd   = snap.learnedPeakMins.toInt()        // learned safePeak
+                        val taperEnd     = snap.learnedDurationMins.toInt()    // learned absorptionMins
+                        val elapsed      = snap.elapsedMins
+
+                        val (subPhaseLabel, subPhaseDesc, subPhaseColor) = when {
+                            snap.inTailMode || elapsed > taperEnd ->
+                                Triple("Tail phase",
+                                       "Carbs fully absorbed. Only insulin IOB driving BG down.",
+                                       StatusWarn)
+                            elapsed > plateauEnd ->
+                                Triple("Taper phase ($plateauEnd–${taperEnd}min)",
+                                       "Protein/fat release winding down. Carb force fading toward zero.",
+                                       Color(0xFFFB8C00))  // orange
+                            elapsed > transientEnd ->
+                                Triple("Plateau phase ($transientEnd–${plateauEnd}min)",
+                                       "Protein/fat holding BG elevated. Full carb force sustained.",
+                                       MaterialTheme.colorScheme.primary)
+                            else ->
+                                Triple("Spike phase (0–${transientEnd}min)",
+                                       "Fast carb transient — BG rising quickly. Tapering by ${transientEnd}min.",
+                                       StatusGood)
+                        }
+
+                        SiRow(subPhaseLabel, subPhaseDesc, primaryColor = subPhaseColor)
+
+                        // Show window boundaries so user can see if they match their experience
+                        SiRow("Phase windows",
+                              "Spike: 0–${transientEnd}m (fixed) | " +
+                                  "Plateau: ${transientEnd}–${plateauEnd}m | " +
+                                  "Taper: ${plateauEnd}–${taperEnd}m | " +
+                                  "Tail: ${taperEnd}m+",
                               primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                        // BG peak tracking
+                        SiRow("BG peak seen: ${"%.1f".format(snap.bgPeakMmol)} mmol",
+                              "Scores when BG drops 0.67+ mmol below peak with 30+ min elapsed.",
+                              primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
+
                         if (snap.inTailMode) {
                             val maxTailMins = 3 * 60
                             val remainingMins = maxTailMins - snap.tailElapsedMins
