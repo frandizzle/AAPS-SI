@@ -276,32 +276,44 @@ class DetermineBasalSmartInsulin @Inject constructor(
     ): List<Double> {
         var bg           = startBg
         val predictions  = mutableListOf<Double>()
-        // Predict forward for the duration of insulin action
-        val ticks = kinetics.diaMinutes.toInt() / 5
+        val ticks        = kinetics.diaMinutes.toInt() / 5
 
-        // ── Insulin activity model ──────────────────────────────────────────
-        // Rather than relying on iobArray's activity values (which may decay to zero
-        // mid-prediction even when real insulin is still clearing), model insulin
-        // activity explicitly across the full DIA window using learned kinetics.
+        // ── Bi-Phasic Carb Model ─────────────────────────────────────────────
+        // Problem: When IOB is very high (e.g. 14U), BGI is strongly negative.
+        // ci = delta - bgi = small_delta - (large_negative) = very_large_positive.
+        // Applying that large ci directly across hours causes "moonshot" predictions.
         //
-        // Shape: triangular, peaking at kinetics.peakMinutes, decaying to 0 at DIA.
-        // Scaled so the integral (total activity × 5 summed) equals currentIob.
-        // This guarantees insulin clearance continues across the full prediction.
+        // Solution: Split ci into two components:
+        //   1. Transient spike: the raw ci decayed over 60 min — represents the current
+        //      acute carb absorption signal. Fades quickly so it doesn't compound.
+        //   2. Sustained plateau: ci scaled DOWN by (60/duration) — represents the slow
+        //      ongoing glucose release from protein/fat. This is intentionally conservative
+        //      to prevent the IOB-inflated ci from projecting unrealistically far forward.
         //
-        // AAPS's iobArray is used for the first few ticks where it's most accurate
-        // (near-term). Past that, we use the modeled activity. This gives accurate
-        // immediate response while ensuring the tail actually brings BG back down.
-        val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
-        val peakMins = kinetics.peakMinutes.coerceIn(30.0, kinetics.diaMinutes * 0.4)
-        val diaMins  = kinetics.diaMinutes
-        // Area under a triangle peaking at peakMins, decaying to 0 at diaMins, with peak height h:
-        // A = 0.5 × diaMins × h (the triangle has base = diaMins, height = h)
-        // We want A = currentIob (in U) = integral of activity × 5 over all ticks
-        // Discretised: sum(activity[tick] × 5) = currentIob
-        // So peak activity height = 2 × currentIob / diaMins
+        // Safety: ci is also clamped to CI_MAX_MGDL_PER_TICK regardless, preventing
+        // sensor noise or extreme IOB-inflation from creating wild projections.
+        val carbDuration = if (mealMode == MealMode.FASTING) 60.0 else carbAbs.absorptionMinutes
+        val carbPeakRaw  = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
+        val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
+        val safePeak = if (useLearnedPeak) {
+            carbPeakRaw.coerceIn(carbDuration * CARB_PEAK_MIN_FRAC, carbDuration * CARB_PEAK_MAX_FRAC)
+        } else {
+            carbDuration * CARB_PEAK_DEFAULT_FRAC
+        }
+        // Clamp ci to a physiologically-plausible maximum before splitting.
+        // 5 mmol/5min = 90 mg/dL/5min is roughly the fastest observed gastric emptying.
+        val ciClamped    = ci.coerceIn(-CI_MAX_MGDL_PER_TICK, CI_MAX_MGDL_PER_TICK)
+        // Plateau component: scaled conservatively by time-stretch factor
+        val plateauCi    = ciClamped * (60.0 / carbDuration).coerceAtMost(1.0)
+        // Transient component: remainder — the "right now" signal, fades in 60 min
+        val transientCi  = ciClamped - plateauCi
+
+        // ── Insulin activity model ───────────────────────────────────────────
+        // Use iobArray for near-term (most accurate), then synthetic triangular tail.
+        val currentIob       = iobArray.firstOrNull()?.iob ?: 0.0
+        val peakMins         = kinetics.peakMinutes.coerceIn(30.0, kinetics.diaMinutes * 0.4)
+        val diaMins          = kinetics.diaMinutes
         val peakActivityPerMin = if (diaMins > 0) 2.0 * currentIob / diaMins else 0.0
-        // When to transition from iobArray to modeled activity: use iobArray for first
-        // MODELED_TAIL_START_TICKS ticks (most accurate near-term), then switch to model.
         val useArrayUntilTick = minOf(iobArray.size, MODELED_TAIL_START_TICKS)
 
         for (tick in 1..ticks) {
@@ -309,11 +321,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
             // ---------- INSULIN ACTIVITY ----------
             val activity = if (tick - 1 < useArrayUntilTick) {
-                // Near-term: use AAPS's iobArray for most accurate current-insulin tracking
                 iobArray[tick - 1].activity
             } else {
-                // Past the near-term window: use modeled triangular activity curve
-                // Rises from 0 to peak at peakMins, then declines to 0 at diaMins
                 val shapeFraction = when {
                     minutes >= diaMins  -> 0.0
                     minutes <= peakMins -> minutes / peakMins
@@ -323,47 +332,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
             val iobDelta = -(activity * isfMgdl * 5.0)
 
-            // ---------- CARB IMPACT (right-triangle with learned peak) ----------
-            // ci = currently observed carb impact rate (mg/dL per 5-min tick).
-            // It's measured from THIS cycle's actual rise. To project forward, we model
-            // how that rate will evolve as carb absorption progresses.
-            //
-            // Shape model: a triangle anchored at carbAbs.peakMinutes
-            //   - From t=0 (now) to peak: rate stays at ci (we're somewhere in the rising
-            //     or peak phase — the loop can't tell exactly where)
-            //   - From peak to duration: rate declines linearly from ci → 0
-            //
-            // Why not use AUC preservation? `ci` is already a rate, not an integral. Dividing
-            // it by `(60/duration)` (as a previous version did) artificially shrinks the
-            // current observed rate to "spread it over a longer window" — but the rate IS
-            // the rate. If you're actively rising at +15 mg/dL/5min right now, that's the
-            // current rate; how long it persists is a question of the curve shape, not its
-            // height. Shrinking it would predict a flat BG curve while you're actively rising,
-            // which is wrong.
-            //
-            // ── Safety mitigations (gate learned peak against mis-learned values) ──
-            // 1. Require minimum sample count before trusting learned peak
-            // 2. Clamp peak to a sensible fraction of duration (0.15 .. 0.5)
-            val carbDuration = if (mealMode == MealMode.FASTING) 60.0 else carbAbs.absorptionMinutes
-            val carbPeakRaw  = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
-            val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
-            val safePeak = if (useLearnedPeak) {
-                carbPeakRaw.coerceIn(carbDuration * CARB_PEAK_MIN_FRAC, carbDuration * CARB_PEAK_MAX_FRAC)
-            } else {
-                carbDuration * CARB_PEAK_DEFAULT_FRAC  // safe default if learning not yet trusted
+            // ---------- CARB IMPACT (bi-phasic) ----------
+            // Transient: decays completely by 60 min using shapeFactor
+            val transientFade  = when {
+                minutes >= carbDuration || minutes >= 60.0 -> 0.0
+                minutes <= safePeak.coerceAtMost(60.0) -> 1.0
+                else -> ((60.0 - minutes) / (60.0 - safePeak.coerceAtMost(60.0))).coerceAtLeast(0.0)
             }
-
-            // Shape factor: 1.0 from now until peak, then tapers linearly to 0 at duration.
-            // ci itself supplies the magnitude — shape only governs how it evolves over time.
-            val shapeFactor = when {
+            // Plateau: persists using full trapezoid shape across carbDuration
+            val plateauFade = when {
                 minutes >= carbDuration -> 0.0
-                minutes <= safePeak     -> 1.0   // sustained at current observed rate through peak
-                else -> {
-                    // Linear taper from 1.0 at safePeak to 0.0 at carbDuration
-                    ((carbDuration - minutes) / (carbDuration - safePeak)).coerceAtLeast(0.0)
-                }
+                minutes <= safePeak     -> 1.0
+                else -> ((carbDuration - minutes) / (carbDuration - safePeak)).coerceAtLeast(0.0)
             }
-            val carbDelta = ci * shapeFactor
+            val carbDelta = (transientCi * transientFade) + (plateauCi * plateauFade)
 
             bg += iobDelta + carbDelta
             predictions.add(bg)
@@ -402,5 +384,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** After this many ticks, switch from AAPS's iobArray to the modeled triangular
          *  activity curve for insulin tail. 12 ticks = 60 min. */
         private const val MODELED_TAIL_START_TICKS   = 12
+        /** Maximum ci per 5-min tick in mg/dL. Prevents high-IOB BGI inflation from creating
+         *  moonshot predictions. 90 mg/dL/tick = 5 mmol/tick — physiological upper bound
+         *  for fastest possible gastric emptying. */
+        private const val CI_MAX_MGDL_PER_TICK        = 90.0
     }
 }
