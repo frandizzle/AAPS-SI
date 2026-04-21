@@ -308,13 +308,17 @@ class BolusCurveTracker @Inject constructor(
                 aapsLogger.debug(LTag.APS, "BolusCurveTracker: tail observation window exceeded for ${trackMode.label}, abandoning")
                 reset(); return
             }
-            // Abandon if unexpected IOB spike during tail (manual correction etc)
-            if (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
-                aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB spike during tail, abandoning ${trackMode.label}")
+            // Abandon if unexpected IOB spike during tail — only if IOB doubles
+            // (genuine external correction), not from loop SMBs
+            if (currentIob > iobPeak * 2.0) {
+                aapsLogger.debug(LTag.APS, "BolusCurveTracker: IOB doubled during tail, abandoning ${trackMode.label}")
                 reset(); return
             }
         } else if ((nowMs - trackStartMs) > MAX_TRACK_DURATION_MS ||
-            iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
+            currentIob > iobPeak * 2.0) {
+            // Only abandon on duration exceeded or IOB doubling (external correction).
+            // Do NOT abandon on iobSpikeWhileTracking — the loop's own SMBs during a meal
+            // will regularly exceed ABANDON_SPIKE_U and falsely reset the tracker.
             reset(); return
         }
 
