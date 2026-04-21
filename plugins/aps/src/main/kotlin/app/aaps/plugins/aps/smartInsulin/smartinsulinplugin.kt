@@ -937,6 +937,15 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
                                      "(half of ${lockoutMins}min meal lockout)")
             }
+        } else if (previousMealModeForLockout == MealMode.FASTING && mealMode != MealMode.FASTING) {
+            // FASTING → meal mode transition: notify tracker so it starts immediately.
+            // This ensures tracking begins at meal activation even if PB1 was delivered
+            // before the tracker's prevIob was seeded (which causes the passive IOB-spike
+            // detection to miss the trigger).
+            val currentIobForTracker = iobArray.firstOrNull()?.iob ?: 0.0
+            if (preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)) {
+                bolusCurveTracker.notifyMealStarted(mealMode, currentIobForTracker, glucoseStatus.glucose)
+            }
         }
         previousMealModeForLockout = mealMode
         val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L

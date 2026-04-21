@@ -175,6 +175,35 @@ class BolusCurveTracker @Inject constructor(
         )
     }
 
+    /**
+     * Called by the plugin when a SmartMeal is activated (FASTING → meal mode transition).
+     * This guarantees tracking starts at meal activation even if the IOB spike from PB1
+     * was delivered before the tracker's prevIob was seeded, or happened in the same cycle.
+     */
+    fun notifyMealStarted(mealMode: MealMode, currentIob: Double, currentBg: Double) {
+        if (tracking) return  // already tracking — don't interrupt an active track
+        if (mealMode == MealMode.FASTING) return
+        val nowMs = System.currentTimeMillis()
+        tracking        = true
+        trackStartMs    = nowMs
+        trackMode       = mealMode
+        iobAtStart      = currentIob
+        bgAtStart       = currentBg
+        iobPeak         = currentIob
+        iobDeclineSeen  = false
+        bgNadir         = currentBg
+        nadirTimeMs     = nowMs
+        bgPeak          = currentBg
+        bgPeakTimeMs    = nowMs
+        curveConfirmed  = false
+        inTailMode      = false
+        mealModeEndedMs = 0L
+        prevIob         = currentIob
+        seededPrevIob   = true
+        saveState()
+        aapsLogger.debug(LTag.APS, "BolusCurveTracker: meal started — tracking ${mealMode.label} IOB=${"%.2f".format(Locale.US, currentIob)}")
+    }
+
     fun statusSummary(currentMode: MealMode? = null): String {
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
