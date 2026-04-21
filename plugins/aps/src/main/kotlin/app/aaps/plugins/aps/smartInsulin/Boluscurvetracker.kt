@@ -180,28 +180,36 @@ class BolusCurveTracker @Inject constructor(
      * This guarantees tracking starts at meal activation even if the IOB spike from PB1
      * was delivered before the tracker's prevIob was seeded, or happened in the same cycle.
      */
-    fun notifyMealStarted(mealMode: MealMode, currentIob: Double, currentBg: Double) {
-        if (tracking) return  // already tracking — don't interrupt an active track
-        if (mealMode == MealMode.FASTING) return
-        val nowMs = System.currentTimeMillis()
+    private fun startTracking(mode: MealMode, iob: Double, bg: Double, nowMs: Long) {
         tracking        = true
         trackStartMs    = nowMs
-        trackMode       = mealMode
-        iobAtStart      = currentIob
-        bgAtStart       = currentBg
-        iobPeak         = currentIob
+        trackMode       = mode
+        iobAtStart      = iob
+        bgAtStart       = bg
+        iobPeak         = iob
         iobDeclineSeen  = false
-        bgNadir         = currentBg
+        bgNadir         = bg
         nadirTimeMs     = nowMs
-        bgPeak          = currentBg
+        bgPeak          = bg
         bgPeakTimeMs    = nowMs
         curveConfirmed  = false
         inTailMode      = false
         mealModeEndedMs = 0L
-        prevIob         = currentIob
-        seededPrevIob   = true
         saveState()
-        aapsLogger.debug(LTag.APS, "BolusCurveTracker: meal started — tracking ${mealMode.label} IOB=${"%.2f".format(Locale.US, currentIob)}")
+        aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking ${mode.label} IOB=${"%.2f".format(Locale.US, iob)}")
+    }
+
+    /**
+     * Called by the plugin when a SmartMeal is activated (FASTING → meal mode transition).
+     * Kept as an explicit hook for instant activation at dialog confirmation, complementing
+     * the auto-start logic in onLoopCycle which catches any missed transitions within 5 min.
+     */
+    fun notifyMealStarted(mealMode: MealMode, currentIob: Double, currentBg: Double) {
+        if (tracking) return
+        if (mealMode == MealMode.FASTING) return
+        prevIob       = currentIob
+        seededPrevIob = true
+        startTracking(mealMode, currentIob, currentBg, System.currentTimeMillis())
     }
 
     fun statusSummary(currentMode: MealMode? = null): String {
@@ -239,22 +247,17 @@ class BolusCurveTracker @Inject constructor(
         if (!tracking) {
             val iobSpike = currentIob - prevIob
             prevIob = currentIob
-            if (iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U) {
-                tracking        = true
-                trackStartMs    = nowMs
-                trackMode       = mealMode
-                iobAtStart      = currentIob
-                bgAtStart       = currentBg
-                iobPeak         = currentIob
-                iobDeclineSeen  = false
-                bgNadir         = currentBg
-                nadirTimeMs     = nowMs
-                bgPeak          = currentBg
-                bgPeakTimeMs    = nowMs
-                curveConfirmed  = false
-                stateDirty      = true
-                aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking $trackMode")
+
+            val shouldStart = when {
+                // In meal mode: start immediately if IOB is meaningful — don't wait for a spike.
+                // This catches PB1 delivered before the tracker was seeded, app restarts mid-meal,
+                // and any other timing edge cases that caused the passive spike detection to miss.
+                mealMode != MealMode.FASTING && currentIob >= MIN_TRACK_IOB_U -> true
+                // In fasting: only start on a clear IOB spike (correction bolus or basal surge)
+                iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U -> true
+                else -> false
             }
+            if (shouldStart) startTracking(mealMode, currentIob, currentBg, nowMs)
             if (stateDirty) saveState()
             return
         }
