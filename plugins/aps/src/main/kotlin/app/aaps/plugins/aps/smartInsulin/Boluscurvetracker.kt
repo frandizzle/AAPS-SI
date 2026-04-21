@@ -195,6 +195,11 @@ class BolusCurveTracker @Inject constructor(
         curveConfirmed  = false
         inTailMode      = false
         mealModeEndedMs = 0L
+        // Critical: seed prevIob to current IOB so the first cycle after tracking starts
+        // doesn't compute a phantom iobSpikeWhileTracking from a stale prevIob value,
+        // which would trigger the ABANDON_SPIKE_U reset and kill the track immediately.
+        prevIob         = iob
+        seededPrevIob   = true
         saveState()
         aapsLogger.debug(LTag.APS, "BolusCurveTracker: started tracking ${mode.label} IOB=${"%.2f".format(Locale.US, iob)}")
     }
