@@ -396,16 +396,36 @@ class BolusCurveTracker @Inject constructor(
             saveState()
         }
 
-        // Recovery for meals: BG returns to within 15 mg/dL of start, or starts falling after a peak
-        if (!curveConfirmed && (nowMs - bgPeakTimeMs) > MIN_CONFIRM_DELAY_MS &&
-            currentBg < bgPeak - RECOVERY_MGDL && currentBg < bgAtStart + 20.0) {
+        if (curveConfirmed) return
+
+        val timeSincePeak = nowMs - bgPeakTimeMs
+        // ~1.0 mmol/L rise (18 mg/dL) = a "real" spike
+        val hadRealRise = bgPeak > (bgAtStart + 18.0)
+
+        // Tweak: More lenient drop requirement for flat meals (~0.33 mmol instead of ~0.67)
+        // This ensures flat meals can actually "finish" scoring.
+        val dropFromPeakMet = if (hadRealRise) {
+            currentBg < bgPeak - RECOVERY_MGDL
+        } else {
+            currentBg < bgPeak - 6.0
+        }
+
+        // Recovery condition:
+        // 1. Must be past the minimum 30m delay
+        // 2. The required drop from peak has happened
+        // 3. BG is back within ~0.55 mmol (10 mg/dL) of start (tightened gate)
+        // 4. EITHER it was a real spike, OR we've waited 90m for the flat meal to "prove" itself
+        if (timeSincePeak > MIN_CONFIRM_DELAY_MS &&
+            dropFromPeakMet &&
+            currentBg < bgAtStart + 10.0 &&
+            (hadRealRise || timeSincePeak > 90 * 60 * 1000L)) {
 
             curveConfirmed = true
             val observedCarbPeakMins = (bgPeakTimeMs - trackStartMs).toDouble() / 60_000.0
             val observedDurationMins = (nowMs - trackStartMs).toDouble() / 60_000.0
 
             profileLearner.observeCarbAbsorption(trackMode, observedCarbPeakMins, observedDurationMins, PROFILE_LEARNING_RATE)
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: Carb Absorption complete. Peak=${observedCarbPeakMins.toInt()}m Duration=${observedDurationMins.toInt()}m")
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: Carb Absorption complete. Peak=${observedCarbPeakMins.toInt()}m Duration=${observedDurationMins.toInt()}m (hadRealRise=$hadRealRise)")
             reset()
         }
     }

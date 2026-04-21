@@ -902,27 +902,30 @@ fun SmartInsulinScreen(
                                   primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     "absorption", "tail" -> {
-                        // Determine which sub-phase the meal is currently in based on elapsed time
-                        // vs the learned carb curve boundaries for this mode.
-                        // Phases: Spike (0→60min) | Plateau (60min→safePeak) | Taper (safePeak→duration) | Tail (after duration)
+                        // Determine which sub-phase the meal is currently in
                         val transientEnd = snap.transientWindowMins.toInt()   // hardcoded 60 min
                         val plateauEnd   = snap.learnedPeakMins.toInt()        // learned safePeak
                         val taperEnd     = snap.learnedDurationMins.toInt()    // learned absorptionMins
                         val elapsed      = snap.elapsedMins
+
+                        val hadRealRise = snap.bgPeakMmol > ( /* we don't have bgAtStart here, so approximate */ 1.0 )
 
                         val (subPhaseLabel, subPhaseDesc, subPhaseColor) = when {
                             snap.inTailMode || elapsed > taperEnd ->
                                 Triple("Tail phase",
                                        "Carbs fully absorbed. Only insulin IOB driving BG down.",
                                        StatusWarn)
+
                             elapsed > plateauEnd ->
                                 Triple("Taper phase ($plateauEnd–${taperEnd}min)",
                                        "Protein/fat release winding down. Carb force fading toward zero.",
                                        Color(0xFFFB8C00))  // orange
+
                             elapsed > transientEnd ->
                                 Triple("Plateau phase ($transientEnd–${plateauEnd}min)",
                                        "Protein/fat holding BG elevated. Full carb force sustained.",
                                        MaterialTheme.colorScheme.primary)
+
                             else ->
                                 Triple("Spike phase (0–${transientEnd}min)",
                                        "Fast carb transient — BG rising quickly. Tapering by ${transientEnd}min.",
@@ -931,7 +934,15 @@ fun SmartInsulinScreen(
 
                         SiRow(subPhaseLabel, subPhaseDesc, primaryColor = subPhaseColor)
 
-                        // Show window boundaries so user can see if they match their experience
+                        // Flat meal warning / progress
+                        if (!snap.inTailMode && !hadRealRise && elapsed < 90) {
+                            SiRow("Flat meal — waiting minimum 90 min before scoring",
+                                  "No significant spike detected. Tracker will wait at least 90 minutes before scoring " +
+                                      "to ensure we capture the full absorption curve.",
+                                  primaryColor = StatusWarn)
+                        }
+
+                        // Show window boundaries
                         SiRow("Phase windows",
                               "Spike: 0–${transientEnd}m (fixed) | " +
                                   "Plateau: ${transientEnd}–${plateauEnd}m | " +
