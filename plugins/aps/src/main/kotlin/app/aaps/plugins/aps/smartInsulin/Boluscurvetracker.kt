@@ -118,8 +118,8 @@ class BolusCurveTracker @Inject constructor(
         val learnedPeakMins:     Double,          // when plateau starts (safePeak)
         val learnedDurationMins: Double,          // when tail ends (absorptionMinutes)
         val transientWindowMins: Double = 60.0,    // hardcoded spike window
-        val hadRealRise: Boolean = false,
-        val bgAtStartMmol: Double = 0.0
+        val hadRealRise:         Boolean = false,
+        val bgAtStartMmol:       Double = 0.0
     )
 
     fun snapshot(isMmol: Boolean = true): TrackerSnapshot {
@@ -130,7 +130,7 @@ class BolusCurveTracker @Inject constructor(
             bgPeakMmol = 0.0, bgNadirMmol = null,
             iobDeclineSeen = false, lastEventDesc = "Not tracking",
             hadRealRise = bgPeak > (bgAtStart + 18.0),
-            bgAtStartMmol = bgAtStart / 18.0,
+            bgAtStartMmol = if (isMmol) bgAtStart / 18.0 else bgAtStart,
             learnedPeakMins = 0.0, learnedDurationMins = 0.0
         )
         val elapsedMins = ((now - trackStartMs) / 60_000).toInt()
