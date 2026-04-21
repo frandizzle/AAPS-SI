@@ -932,7 +932,7 @@ fun SmartInsulinScreen(
                         SiRow(subPhaseLabel, subPhaseDesc, primaryColor = subPhaseColor)
 
                         // Flat meal warning — very useful for your pre-bolus style
-                        if (!snap.inTailMode && !snap.hadRealRise && elapsed < 90) {
+                        if (!snap.inTailMode && !snap.hadRealRise && elapsed in 15..90) {
                             SiRow("Flat meal — waiting 90m gate",
                                   "No significant spike (+1.0 mmol) detected. Waiting until 90 minutes to ensure full absorption is captured before scoring.",
                                   primaryColor = StatusWarn)

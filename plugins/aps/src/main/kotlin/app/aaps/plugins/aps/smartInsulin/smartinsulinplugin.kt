@@ -1586,7 +1586,15 @@ open class SmartInsulinPlugin @Inject constructor(
         // This is intentionally NOT suppressed during high TT — a meal bolus during
         // a high TT is still a valid peak/DIA observation.
         if (learningEnabled) {
-            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
+            // pb2OrPb3FiredThisCycle: true if PB2 was recently delivered (within 10 min).
+            // This prevents the tracker from abandoning when PB2's IOB spike hits ABANDON_SPIKE_U.
+            // We detect "recently delivered" via the status text — it says "delivered HH:MM"
+            // after firing and stays that way, so we gate it with the IOB spike being > 0.
+            val iobSpike = (iobArray.firstOrNull()?.iob ?: 0.0) - pb2LastIobU
+            val pb2Delivered = mealOverrideManager.activePb2DoseU != null &&
+                !mealOverrideManager.preBolus2Pending
+            val pb2OrPb3FiredThisCycle = pb2Delivered && iobSpike >= 0.3
+            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray, pb2OrPb3FiredThisCycle)
         }
 
         // ── Circadian learner — fasting + no high TT only ─────────────────────
