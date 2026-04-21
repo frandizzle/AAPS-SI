@@ -136,7 +136,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         )
 
         val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
-        val predictedMin = predictedBg.minOrNull() ?: currentBg
+
+        // predictedMin for DOSING skips the first 30 min (6 ticks) of the prediction.
+        // Rationale: in the first 30 min after a bolus, IOB is still ramping up and
+        // carb impact hasn't yet counteracted it — the raw minimum can be a temporary
+        // trough that clears within 30 min. Using the full-window min causes the loop
+        // to reduce TBR during meals when it shouldn't. predictedMinSafety (full window)
+        // is still used for LOW_SUSPEND to maintain safety.
+        val skipTicks = if (mealMode != MealMode.FASTING) 6 else 0  // skip 30 min during meals
+        val predictedMin = predictedBg.drop(skipTicks).minOrNull() ?: predictedMinSafety
         val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
 
         // Populate prediction graph
