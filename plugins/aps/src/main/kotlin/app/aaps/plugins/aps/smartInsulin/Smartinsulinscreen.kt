@@ -75,6 +75,8 @@ fun SmartInsulinScreen(
     var data by remember { mutableStateOf<SmartInsulinPlugin.FragmentData?>(null) }
     var selectedDow by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1) }
 
+    var showProfileDebug by rememberSaveable { mutableStateOf(false) }
+
     val lifecycleOwner = LocalLifecycleOwner.current
 
     LaunchedEffect(lifecycleOwner, plugin) {
