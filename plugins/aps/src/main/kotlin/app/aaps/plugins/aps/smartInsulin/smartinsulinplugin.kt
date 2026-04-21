@@ -28,6 +28,7 @@ import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.core.ui.compose.icons.IcPluginInsulin
+import app.aaps.plugins.aps.smartInsulin.SmartInsulinScreen
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.ToolbarConfig
 import androidx.compose.runtime.Composable
@@ -100,6 +101,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val circadianLearner: CircadianLearner,
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
+    private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
     private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData,
@@ -392,15 +394,11 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             appendLine()
 
-            // ── Learned Curves ──────────────────────────────────────────────
-            val i = profileLearner.getInsulinKinetics()
-            appendLine("── Insulin Kinetics ──────────────────")
-            appendLine("  Peak: ${i.peakMinutes.toInt()}m  DIA: ${i.diaMinutes.toInt()}m  n=${i.sampleCount}")
-            appendLine("── Carb Absorption ──────────────────")
+            // ── Profiles ──────────────────────────────────────────────────────
+            appendLine("── Insulin Profiles ──────────────────")
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                if (mode == MealMode.FASTING) return@forEach
-                val c = profileLearner.getCarbAbsorption(mode)
-                appendLine("  ${mode.label.padEnd(12)}: dur=${c.absorptionMinutes.toInt()}m  n=${c.sampleCount}")
+                val p = profileLearner.getProfile(mode)
+                appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }.trimEnd()
     }
@@ -483,8 +481,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeDoseU:        Double?,
         val activePb2DoseU:     Double?,
         val activePb3DoseU:     Double?,
-        val pb3Status:          String,
-        val trackerSnapshot:    BolusCurveTracker.TrackerSnapshot
+        val pb3Status:          String
     )
 
     fun fragmentData(): FragmentData {
@@ -512,10 +509,11 @@ open class SmartInsulinPlugin @Inject constructor(
         // session began — not a stale mid-nudge snapshot.
         val rawNudgeStatus  = circadianLearner.lastAggrNudgeStatus
         val nudgePrimary    = rawNudgeStatus.substringBefore("|").trim()
+        // Derive a "canonical active direction" — abstracts over TRIM|ACTIVE_HIGH vs ACTIVE_HIGH
         val currentDirection: String? = when (nudgePrimary) {
             "ACTIVE_HIGH", "ACTIVE_LOW" -> nudgePrimary
-            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()
-            else -> null
+            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()  // TRIM|ACTIVE_HIGH|... or TRIM|ACTIVE_LOW|...
+            else -> null  // INACTIVE, PAUSED, or anything else → no active direction
         }
         val lastDirection: String? = when (lastSeenNudgeState.substringBefore("|").trim()) {
             "ACTIVE_HIGH", "ACTIVE_LOW" -> lastSeenNudgeState.substringBefore("|").trim()
@@ -526,6 +524,9 @@ open class SmartInsulinPlugin @Inject constructor(
         if (shouldCaptureBaseline) {
             nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
             nudgeDisplaySessionBasalU  = roundedFinalBasal
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
+                                 "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
         }
         lastSeenNudgeState = rawNudgeStatus
 
@@ -541,13 +542,9 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val profRaw = buildString {
-            val i = profileLearner.getInsulinKinetics()
-            appendLine("Global Insulin: peak=${i.peakMinutes.toInt()}m dia=${i.diaMinutes.toInt()}m n=${i.sampleCount}")
-            appendLine("── Meal Carb Absorption ──")
-            MealMode.entries.forEach { mode ->
-                if (mode == MealMode.FASTING) return@forEach
-                val c = profileLearner.getCarbAbsorption(mode)
-                appendLine("${mode.label.padEnd(16)}: peak=${c.peakMinutes.toInt()}m duration=${c.absorptionMinutes.toInt()}m n=${c.sampleCount}")
+            app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
+                val p = profileLearner.getProfile(mode)
+                appendLine("${mode.label.padEnd(16)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }
 
@@ -638,10 +635,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activeDoseU        = mealOverrideManager.activeDoseU,
             activePb2DoseU     = mealOverrideManager.activePb2DoseU,
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
-            pb3Status          = cachedOverviewState.pb3Line ?: "",
-            trackerSnapshot    = bolusCurveTracker.snapshot(
-                isMmol = profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
-            )
+            pb3Status          = cachedOverviewState.pb3Line ?: ""
         )
     }
 
@@ -796,6 +790,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         aapsLogger.debug(LTag.APS, "SmartInsulin invoke from $initiator")
+        val previousAPSResult = lastAPSResult   // save before nulling — used for rebound tracking
         lastAPSResult = null
 
         val profile = profileFunction.getProfile() ?: run {
@@ -936,15 +931,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
                                      "(half of ${lockoutMins}min meal lockout)")
-            }
-        } else if (previousMealModeForLockout == MealMode.FASTING && mealMode != MealMode.FASTING) {
-            // FASTING → meal mode transition: notify tracker so it starts immediately.
-            // This ensures tracking begins at meal activation even if PB1 was delivered
-            // before the tracker's prevIob was seeded (which causes the passive IOB-spike
-            // detection to miss the trigger).
-            val currentIobForTracker = iobArray.firstOrNull()?.iob ?: 0.0
-            if (preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)) {
-                bolusCurveTracker.notifyMealStarted(mealMode, currentIobForTracker, glucoseStatus.glucose)
             }
         }
         previousMealModeForLockout = mealMode
@@ -1120,14 +1106,11 @@ open class SmartInsulinPlugin @Inject constructor(
         // STFT handles TT/low/meal internally and returns profileTargetMgdl when blocked.
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
-        val kinetics = profileLearner.getInsulinKinetics()
-        val carbAbs  = profileLearner.getCarbAbsorption(mealMode)
-
         // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
         val oapsProfile = OapsProfile(
-            dia                              = kinetics.diaMinutes / 60.0,
+            dia                              = profile.iCfg.dia,
             min_5m_carbimpact               = 0.0,
             max_iob                         = constraintsChecker.getMaxIOBAllowed().also { inputConstraints.copyReasons(it) }.value(),
             max_daily_basal                 = profile.getMaxDailyBasal(),
@@ -1174,6 +1157,18 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
+        // UAM modes share peak/DIA learning with their parent mode — they accumulate
+        // separate observations but start from the same profile. This means UAM_LUNCH
+        // uses LUNCH's learned peak/DIA until it has its own samples.
+        val learnedProfileMode = when (mealMode) {
+            MealMode.UAM_BREAKFAST -> MealMode.BREAKFAST
+            MealMode.UAM_LUNCH     -> MealMode.LUNCH
+            MealMode.UAM_DINNER    -> MealMode.DINNER
+            MealMode.UAM_SNACK     -> MealMode.DINNER   // closest equivalent
+            MealMode.UAM_PROTEIN_FAT  -> MealMode.LOW_CARB
+            else                   -> mealMode
+        }
+        val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
 
         // ── Activity monitor — recompute from fed HR/steps data ─────────────
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
@@ -1375,7 +1370,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
 
-        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel kinetics=${kinetics.peakMinutes.toInt()}m/${kinetics.diaMinutes.toInt()}m")
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
 
         // ── Rebound protection tracking ───────────────────────────────────────
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
@@ -1517,8 +1512,7 @@ open class SmartInsulinPlugin @Inject constructor(
             oapsProfile              = oapsProfile,
             mealData                 = mealData,
             profile                  = profile,
-            kinetics                 = kinetics,
-            carbAbsorption           = carbAbs,
+            learnedProfile           = learnedProfile,
             mealMode                 = mealMode,
             lowGuardMmol             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)  / 18.0,
             warnGuardMmol            = spMgdl(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0,
@@ -1586,15 +1580,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // This is intentionally NOT suppressed during high TT — a meal bolus during
         // a high TT is still a valid peak/DIA observation.
         if (learningEnabled) {
-            // pb2OrPb3FiredThisCycle: true if PB2 was recently delivered (within 10 min).
-            // This prevents the tracker from abandoning when PB2's IOB spike hits ABANDON_SPIKE_U.
-            // We detect "recently delivered" via the status text — it says "delivered HH:MM"
-            // after firing and stays that way, so we gate it with the IOB spike being > 0.
-            val iobSpike = (iobArray.firstOrNull()?.iob ?: 0.0) - pb2LastIobU
-            val pb2Delivered = mealOverrideManager.activePb2DoseU != null &&
-                !mealOverrideManager.preBolus2Pending
-            val pb2OrPb3FiredThisCycle = pb2Delivered && iobSpike >= 0.3
-            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray, pb2OrPb3FiredThisCycle)
+            bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
         }
 
         // ── Circadian learner — fasting + no high TT only ─────────────────────
@@ -1623,7 +1609,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 inPostMealLockout        = inPostMealLockout,
                 aggressiveness           = circAggrCeil,
                 suppressAdaptiveLearning = suppressCircadianLearning,
-                fastingPeakMins          = profileLearner.getInsulinKinetics().peakMinutes
+                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
             )
             // If nudge is suppressed within update() (activity/CGM warmup), mark paused
             if (suppressCircadianLearning) {
