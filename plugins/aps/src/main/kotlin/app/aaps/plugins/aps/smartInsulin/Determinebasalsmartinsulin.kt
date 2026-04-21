@@ -315,34 +315,33 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // ── Carb model — mode-specific shape ────────────────────────────────
         //
-        // Three shapes depending on meal type:
-        //
-        // FASTING: zero carb contribution. ci is noise (IOB counteracting residual
-        //   glucose) — don't project it forward. Pure insulin-driven descent.
+        // FASTING: ci is clamped tightly and projected over a short 60-min window.
+        //   In fasting with low IOB, ci genuinely reflects BG momentum (dawn phenomenon,
+        //   liver glucose dump). Zeroing it causes the prediction to ignore a real rise.
+        //   The tight clamp (FASTING_CI_MAX = 2 mmol = 36 mg/dL) prevents IOB-inflation
+        //   moonshots while still capturing real fasting glucose momentum.
         //
         // PROTEIN/FAT, LOW_CARB, EXTENDED (tabletop): plateau only, no transient spike.
-        //   These meals don't have an initial 60-min fast-carb rush. Projecting a
-        //   transient spike would predict a rise that won't come, causing over-bolusing.
-        //   ci is sustained at plateau level from t=0, then tapers at end of duration.
         //
-        // ALL OTHER MEAL MODES (camel hump): transient spike (first 60 min) + sustained
-        //   plateau. The transient represents fast carb absorption; the plateau represents
-        //   the slower protein/fat tail that follows.
+        // ALL OTHER MEAL MODES (camel hump): transient spike (60 min) + sustained plateau.
         //
-        // ci is clamped to CI_MAX_MGDL_PER_TICK in all meal modes to prevent
-        // IOB-inflation moonshots (high IOB makes BGI large negative → ci inflates).
+        // ci is clamped to CI_MAX_MGDL_PER_TICK in meal modes to prevent moonshots.
 
         val isPureTabletop = mealMode == MealMode.UAM_PROTEIN_FAT ||
             mealMode == MealMode.LOW_CARB ||
             mealMode == MealMode.EXTENDED
 
         val carbDuration = when {
-            mealMode == MealMode.FASTING -> 0.0
+            mealMode == MealMode.FASTING -> 60.0   // short window for fasting glucose momentum
             else                         -> carbAbs.absorptionMinutes
         }
-        val carbPeakRaw = if (mealMode == MealMode.FASTING) 0.0 else carbAbs.peakMinutes
-        val ciClamped   = if (mealMode == MealMode.FASTING) 0.0
-        else ci.coerceIn(-CI_MAX_MGDL_PER_TICK, CI_MAX_MGDL_PER_TICK)
+        val carbPeakRaw = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
+        // Fasting: clamp ci tightly — only real momentum gets through, not IOB inflation
+        // Meal modes: standard clamp
+        val ciClamped = when {
+            mealMode == MealMode.FASTING -> ci.coerceIn(-FASTING_CI_MAX_MGDL, FASTING_CI_MAX_MGDL)
+            else                         -> ci.coerceIn(-CI_MAX_MGDL_PER_TICK, CI_MAX_MGDL_PER_TICK)
+        }
 
         val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
         val safePeak = if (carbDuration > 0.0) {
@@ -444,9 +443,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** Default peak-to-duration ratio — 0.65 means plateau for 65% of duration,
          *  then taper. For 300m duration: plateau holds to 195m, tapers to 0 at 300m. */
         private const val CARB_PEAK_DEFAULT_FRAC     = 0.65
-        /** Maximum ci per 5-min tick in mg/dL. Prevents high-IOB BGI inflation from creating
-         *  moonshot predictions. 90 mg/dL/tick = 5 mmol/tick — physiological upper bound
-         *  for fastest possible gastric emptying. */
+        /** Maximum ci per 5-min tick in mg/dL for MEAL modes. Prevents high-IOB BGI
+         *  inflation from creating moonshot predictions. 90 mg/dL = 5 mmol — upper bound. */
         private const val CI_MAX_MGDL_PER_TICK        = 90.0
+        /** Maximum ci per 5-min tick in fasting mode. Tighter than meal mode — blocks
+         *  IOB-inflation moonshots (high meal IOB makes ci huge) while still allowing
+         *  real fasting glucose momentum (dawn phenomenon, liver dump) through.
+         *  36 mg/dL = 2.0 mmol per 5-min tick — roughly +24 mmol/hr max fasting rise. */
+        private const val FASTING_CI_MAX_MGDL         = 36.0
     }
 }
