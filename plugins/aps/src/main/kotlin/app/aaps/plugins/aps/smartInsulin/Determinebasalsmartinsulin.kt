@@ -122,7 +122,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // ci = carb impact (delta above predicted BGI)
         val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
-        val ci  = min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
+        // For tabletop modes (P/F, Low-carb, Extended): if delta is flat or falling,
+        // zero ci before passing to prediction. A flat BG with IOB means insulin is
+        // already matching protein release — projecting positive ci (inflated by BGI)
+        // would predict a rise that won't happen and cause the loop to over-dose.
+        // 0.1 mmol/5min threshold separates real rise from sensor noise.
+        val FLAT_DELTA_MMOL = 0.1 * 18.0  // mg/dL
+        val isPureTabletopMode = mealMode == MealMode.UAM_PROTEIN_FAT ||
+            mealMode == MealMode.LOW_CARB || mealMode == MealMode.EXTENDED
+        val ci = if (isPureTabletopMode && glucoseStatus.delta < FLAT_DELTA_MMOL)
+            0.0  // flat/falling in P/F: trust IOB, don't project fake rise
+        else
+            min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
 
         // Prediction: Use global kinetics for insulin, and learned carb absorption for meals
         val predictedBg = predictBgCurve(
@@ -338,8 +349,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val carbPeakRaw = if (mealMode == MealMode.FASTING) 10.0 else carbAbs.peakMinutes
 
         // Tabletop modes (P/F, Low-carb, Extended): protein converts to glucose very slowly.
-        // ci is inflated by large BGI when ISF is sensitive — clamp tightly.
-        // Max 0.5 mmol/tick = 9 mg/dL/tick for tabletop. Meal modes use full clamp.
+        // ci is inflated by large BGI when IOB is active — clamp tightly.
+        // CRITICAL GATE: if delta is near-flat (≤ 0.1 mmol/5min), don't project ci forward.
+        // A flat BG with IOB means insulin is already matching the protein release — projecting
+        // positive ci would predict a rise that won't happen and cause the loop to over-dose.
         val ciClampMgdl = when {
             mealMode == MealMode.FASTING -> FASTING_CI_MAX_MGDL
             isPureTabletop               -> TABLETOP_CI_MAX_MGDL
