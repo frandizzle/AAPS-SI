@@ -814,33 +814,30 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── Learned curves card ──────────────────────────────────────
-        SiCard(title = "Learned Curves (Insulin & Carbs)") {
-            Text("Insulin Kinetics (Global) and Carb Absorption (Per-mode).",
+        // ── Insulin profiles card ──────────────────────────────────────
+        SiCard(title = "Insulin Profiles") {
+            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
-                if (line.startsWith("──")) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text(line.replace("──", "").trim(),
-                         style = MaterialTheme.typography.labelMedium,
-                         color = MaterialTheme.colorScheme.primary)
-                    return@forEach
-                }
                 val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
                 val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
                 val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
-
-                // Exact match only — prevents "Dinner" highlighting when mealMode is "Dinner (UAM)"
-                // and vice versa. Global Insulin row only highlights during Fasting.
-                val isActive = when (name) {
-                    "Global Insulin" -> d.mealMode == "Fasting"
-                    else             -> name == d.mealMode
+                // Highlight the active insulin profile — match mode label against profile name
+                // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
+                val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
+                    name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name.substringBefore(" ("), ignoreCase = true)
+                } else {
+                    !name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name, ignoreCase = true)
                 }
-
                 val prefix = if (isActive) "► " else "  "
+                val note = when {
+                    n == 0 -> "  (using profile values — not enough data yet)"
+                    n < 5  -> "  (still learning)"
+                    else   -> ""
+                }
                 val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 Column(
                     modifier = Modifier
@@ -850,115 +847,10 @@ fun SmartInsulinScreen(
                         .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
                     Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                    Text(info, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(2.dp))
-            }
-        }
-
-        // ── BolusCurveTracker debug card ───────────────────────────────
-        SiCard(title = "Curve Tracker (Learning Debug)") {
-            val snap = d.trackerSnapshot
-            if (!snap.isTracking) {
-                SiRow("Tracker idle",
-                      "Not currently observing a bolus curve. Tracking starts when IOB rises by ≥0.3U.",
-                      primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                // Phase label and colour
-                val (phaseLabel, phaseColor) = when (snap.phase) {
-                    "kinetics"    -> "Insulin kinetics" to StatusGood
-                    "absorption"  -> "Carb absorption" to MaterialTheme.colorScheme.primary
-                    "tail"        -> "Tail observation" to StatusWarn
-                    else          -> snap.phase to MaterialTheme.colorScheme.onSurfaceVariant
-                }
-                SiRow("$phaseLabel — ${snap.trackMode}",
-                      "Elapsed: ${snap.elapsedMins}min" +
-                          if (snap.inTailMode) " | Meal mode ended ${snap.tailElapsedMins}min ago" else "",
-                      primaryColor = phaseColor)
-
-                // What the tracker is currently observing
-                SiRow("Observing", snap.lastEventDesc,
-                      primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                // IOB state
-                val iobDeclineStr = if (snap.iobDeclineSeen) "✓ IOB decline confirmed — curve past peak"
-                else "⏳ Waiting for IOB to decline from peak"
-                SiRow(iobDeclineStr, null,
-                      primaryColor = if (snap.iobDeclineSeen) StatusGood
-                      else MaterialTheme.colorScheme.onSurfaceVariant)
-
-                // Phase-specific detail
-                when (snap.phase) {
-                    "kinetics" -> {
-                        if (snap.bgNadirMmol != null)
-                            SiRow("BG nadir: ${"%.1f".format(snap.bgNadirMmol)} mmol",
-                                  "Scores when: BG rises 0.67+ mmol above nadir (recovery), OR " +
-                                      "BG stays within 0.33 mmol of nadir for 45+ min (stable-flat).",
-                                  primaryColor = StatusWarn)
-                        else
-                            SiRow("No nadir yet",
-                                  "Waiting for BG to bottom out after fasting correction.",
-                                  primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    "absorption", "tail" -> {
-                        val transientEnd = snap.transientWindowMins.toInt()
-                        val plateauEnd   = snap.learnedPeakMins.toInt()
-                        val taperEnd     = snap.learnedDurationMins.toInt()
-                        val elapsed      = snap.elapsedMins
-
-                        val (subPhaseLabel, subPhaseDesc, subPhaseColor) = when {
-                            snap.inTailMode || elapsed > taperEnd ->
-                                Triple("Tail phase",
-                                       "Carbs fully absorbed. Only insulin IOB driving BG down.",
-                                       StatusWarn)
-
-                            elapsed > plateauEnd ->
-                                Triple("Taper phase ($plateauEnd–${taperEnd}min)",
-                                       "Protein/fat release winding down. Carb force fading toward zero.",
-                                       Color(0xFFFB8C00))
-
-                            elapsed > transientEnd ->
-                                Triple("Plateau phase ($transientEnd–${plateauEnd}min)",
-                                       "Protein/fat holding BG elevated. Full carb force sustained.",
-                                       MaterialTheme.colorScheme.primary)
-
-                            else ->
-                                Triple("Spike phase (0–${transientEnd}min)",
-                                       "Fast carb transient — BG rising quickly. Tapering by ${transientEnd}min.",
-                                       StatusGood)
-                        }
-
-                        SiRow(subPhaseLabel, subPhaseDesc, primaryColor = subPhaseColor)
-
-                        // Flat meal warning — very useful for your pre-bolus style
-                        if (!snap.inTailMode && !snap.hadRealRise && elapsed in 15..90) {
-                            SiRow("Flat meal — waiting 90m gate",
-                                  "No significant spike (+1.0 mmol) detected. Waiting until 90 minutes to ensure full absorption is captured before scoring.",
-                                  primaryColor = StatusWarn)
-                        }
-
-                        // Helpful debug info
-                        SiRow("Peak: ${"%.1f".format(snap.bgPeakMmol)} mmol (Start: ${"%.1f".format(snap.bgAtStartMmol)} mmol)",
-                              "hadRealRise = ${snap.hadRealRise}",
-                              primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        // Phase windows for reference
-                        SiRow("Phase windows",
-                              "Spike: 0–${transientEnd}m | Plateau: ${transientEnd}–${plateauEnd}m | " +
-                                  "Taper: ${plateauEnd}–${taperEnd}m | Tail: ${taperEnd}m+",
-                              primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        if (snap.inTailMode) {
-                            val maxTailMins = 3 * 60
-                            val remainingMins = maxTailMins - snap.tailElapsedMins
-                            SiRow("Tail window: ${snap.tailElapsedMins}/${maxTailMins}min used",
-                                  "Will abandon if no recovery in ${remainingMins}min more.",
-                                  primaryColor = if (snap.tailElapsedMins > maxTailMins * 0.75) StatusWarn
-                                  else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
             }
         }
 
