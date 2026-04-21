@@ -137,11 +137,23 @@ class ProfileLearner @Inject constructor(
 
         val newSampleCount = current.sampleCount + 1
 
+        val oldPeak = current.peakMinutes
+        val oldDia  = current.diaMinutes
+
+        // Calculate the exact shift for the UI
+        val shiftPeak = newPeak - oldPeak
+        val shiftDia  = newDia - oldDia
+
         val updated = current.copy(
             peakMinutes   = newPeak,
             diaMinutes    = newDia,
-            sampleCount   = newSampleCount,
-            lastUpdatedMs = System.currentTimeMillis()
+            sampleCount   = current.sampleCount + 1,
+            lastUpdatedMs = System.currentTimeMillis(),
+            lastShiftPeak = shiftPeak,
+            lastShiftDia  = shiftDia,
+            lastObservedPeak = observedPeakMins,
+            lastObservedDia  = observedDiaMins,
+            lastWeight    = alpha
         )
 
         profiles[mode] = updated

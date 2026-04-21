@@ -814,43 +814,56 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── Insulin profiles card ──────────────────────────────────────
-        SiCard(title = "Insulin Profiles") {
-            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
-                 style = MaterialTheme.typography.bodySmall,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(8.dp))
-            d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
-                val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
-                val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
-                val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-                val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
-                // Highlight the active insulin profile — match mode label against profile name
-                // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
-                val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
-                    name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name.substringBefore(" ("), ignoreCase = true)
-                } else {
-                    !name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name, ignoreCase = true)
-                }
-                val prefix = if (isActive) "► " else "  "
-                val note = when {
-                    n == 0 -> "  (using profile values — not enough data yet)"
-                    n < 5  -> "  (still learning)"
-                    else   -> ""
-                }
-                val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
+        // ── Insulin Profile Learning Debug (expandable) ───────────────────────
+        SiCard(title = "Insulin Profile Learning Debug") {
+            TextButton(
+                onClick = { showProfileDebug = !showProfileDebug },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    text = if (showProfileDebug) "▲ Hide profile learning debug"
+                    else "▼ Show last update details (Peak/DIA shifts)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (showProfileDebug) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(rowBg)
-                        .padding(vertical = 4.dp, horizontal = 4.dp)
+                        .background(
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = MaterialTheme.shapes.small
+                        )
+                        .padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
-                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
-                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    d.profilesRawStatus.lines().filter { it.isNotBlank() && !it.startsWith("──") }.forEach { line ->
+                        val parts = line.trim().split(":")
+                        if (parts.size < 2) return@forEach
+                        val name = parts[0].trim()
+                        val info = parts.drop(1).joinToString(":").trim()
+
+                        // Extract debug fields if they were added to the raw status string
+                        val shiftPeak = Regex("""shiftPeak=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+                        val shiftDia  = Regex("""shiftDia=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+                        val obsPeak   = Regex("""obsPeak=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+                        val obsDia    = Regex("""obsDia=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+                        val weight    = Regex("""weight=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+
+                        Text("$name", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            "Last shift: Peak ${shiftPeak}m  |  DIA ${shiftDia}m\n" +
+                                "Observed: Peak ${obsPeak}m  |  DIA ${obsDia}m\n" +
+                                "Weight (alpha): ${weight}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    }
                 }
-                Spacer(Modifier.height(2.dp))
             }
         }
 

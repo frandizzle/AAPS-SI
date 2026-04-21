@@ -21,7 +21,12 @@ data class LearnedInsulinProfile(
     val peakMinutes:    Double,
     val diaMinutes:     Double,
     val sampleCount:    Int,
-    val lastUpdatedMs:  Long
+    val lastUpdatedMs:  Long,
+    val lastShiftPeak:  Double = 0.0,
+    val lastShiftDia:   Double = 0.0,
+    val lastObservedPeak: Double = 0.0,
+    val lastObservedDia:  Double = 0.0,
+    val lastWeight:     Double = 0.0
 ) {
     // Silently clamp to physiological bounds on construction — prevents corrupt
     // JSON or learner math errors from producing dangerous out-of-range values.
@@ -36,6 +41,11 @@ data class LearnedInsulinProfile(
         put("diaMinutes",    diaMinutes)
         put("sampleCount",   sampleCount)
         put("lastUpdatedMs", lastUpdatedMs)
+        put("lastShiftPeak", lastShiftPeak)
+        put("lastShiftDia",  lastShiftDia)
+        put("lastObservedPeak", lastObservedPeak)
+        put("lastObservedDia",  lastObservedDia)
+        put("lastWeight",    lastWeight)
     }
 
     // ── Derived helpers ──────────────────────────────────────────────────────
@@ -92,7 +102,12 @@ data class LearnedInsulinProfile(
                 diaMinutes    = json.getDouble("diaMinutes"),
                 // "confidence" key intentionally ignored — now derived from sampleCount
                 sampleCount   = json.getInt("sampleCount"),
-                lastUpdatedMs = json.getLong("lastUpdatedMs")
+                lastUpdatedMs = json.getLong("lastUpdatedMs"),
+                lastShiftPeak = json.optDouble("lastShiftPeak", 0.0),
+                lastShiftDia  = json.optDouble("lastShiftDia", 0.0),
+                lastObservedPeak = json.optDouble("lastObservedPeak", 0.0),
+                lastObservedDia  = json.optDouble("lastObservedDia", 0.0),
+                lastWeight    = json.optDouble("lastWeight", 0.0)
             )
     }
 }
