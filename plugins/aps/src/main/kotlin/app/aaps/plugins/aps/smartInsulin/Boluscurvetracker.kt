@@ -175,8 +175,8 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        if (iobSpikeWhileTracking >= MIN_BOLUS_SPIKE_U || currentIob > iobPeak * 1.3) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
+        if (currentIob > iobPeak * 2.0) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (massive IOB jump, current=$currentIob, peak=$iobPeak)")
             reset(); return
         }
 
