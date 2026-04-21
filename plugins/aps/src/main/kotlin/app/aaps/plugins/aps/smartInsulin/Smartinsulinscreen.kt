@@ -902,67 +902,43 @@ fun SmartInsulinScreen(
                                   primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     "absorption", "tail" -> {
-                        // Determine which sub-phase the meal is currently in
-                        val transientEnd = snap.transientWindowMins.toInt()   // hardcoded 60 min
-                        val plateauEnd   = snap.learnedPeakMins.toInt()        // learned safePeak
-                        val taperEnd     = snap.learnedDurationMins.toInt()    // learned absorptionMins
+                        val transientEnd = snap.transientWindowMins.toInt()
+                        val plateauEnd   = snap.learnedPeakMins.toInt()
+                        val taperEnd     = snap.learnedDurationMins.toInt()
                         val elapsed      = snap.elapsedMins
 
-                        val hadRealRise = snap.bgPeakMmol > ( /* we don't have bgAtStart here, so approximate */ 1.0 )
+                        // Use the boolean directly from the tracker snapshot
+                        val hadRealRise = snap.hadRealRise
 
                         val (subPhaseLabel, subPhaseDesc, subPhaseColor) = when {
                             snap.inTailMode || elapsed > taperEnd ->
-                                Triple("Tail phase",
-                                       "Carbs fully absorbed. Only insulin IOB driving BG down.",
-                                       StatusWarn)
+                                Triple("Tail phase", "Carbs fully absorbed. Only insulin IOB driving BG down.", StatusWarn)
 
                             elapsed > plateauEnd ->
-                                Triple("Taper phase ($plateauEnd–${taperEnd}min)",
-                                       "Protein/fat release winding down. Carb force fading toward zero.",
-                                       Color(0xFFFB8C00))  // orange
+                                Triple("Taper phase ($plateauEnd–${taperEnd}min)", "Protein/fat release winding down. Carb force fading.", Color(0xFFFB8C00))
 
                             elapsed > transientEnd ->
-                                Triple("Plateau phase ($transientEnd–${plateauEnd}min)",
-                                       "Protein/fat holding BG elevated. Full carb force sustained.",
-                                       MaterialTheme.colorScheme.primary)
+                                Triple("Plateau phase ($transientEnd–${plateauEnd}min)", "Protein/fat holding BG elevated. Full carb force sustained.", MaterialTheme.colorScheme.primary)
 
                             else ->
-                                Triple("Spike phase (0–${transientEnd}min)",
-                                       "Fast carb transient — BG rising quickly. Tapering by ${transientEnd}min.",
-                                       StatusGood)
+                                Triple("Spike phase (0–${transientEnd}min)", "Fast carb transient — BG rising quickly.", StatusGood)
                         }
 
                         SiRow(subPhaseLabel, subPhaseDesc, primaryColor = subPhaseColor)
 
-                        // Flat meal warning / progress
+                        // Flat meal warning - specific to your pre-bolus success
                         if (!snap.inTailMode && !hadRealRise && elapsed < 90) {
-                            SiRow("Flat meal — waiting minimum 90 min before scoring",
-                                  "No significant spike detected. Tracker will wait at least 90 minutes before scoring " +
-                                      "to ensure we capture the full absorption curve.",
+                            SiRow("Flat meal — waiting 90m gate",
+                                  "No significant spike (+1.0 mmol) detected. Tracker is waiting for the 90-minute mark to ensure full absorption is captured.",
                                   primaryColor = StatusWarn)
                         }
 
-                        // Show window boundaries
-                        SiRow("Phase windows",
-                              "Spike: 0–${transientEnd}m (fixed) | " +
-                                  "Plateau: ${transientEnd}–${plateauEnd}m | " +
-                                  "Taper: ${plateauEnd}–${taperEnd}m | " +
-                                  "Tail: ${taperEnd}m+",
+                        // BG peak and logic debug
+                        val dropReq = if (hadRealRise) "0.67" else "0.33"
+                        SiRow("Peak: ${"%.1f".format(snap.bgPeakMmol)} (Start: ${"%.1f".format(snap.bgAtStartMmol)})",
+                              "Needs drop of ${dropReq} mmol to score. Current: ${"%.1f".format(snap.bgPeakMmol - snap.currentBgMmol)} mmol drop.",
                               primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        // BG peak tracking
-                        SiRow("BG peak seen: ${"%.1f".format(snap.bgPeakMmol)} mmol",
-                              "Scores when BG drops 0.67+ mmol below peak with 30+ min elapsed.",
-                              primaryColor = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                        if (snap.inTailMode) {
-                            val maxTailMins = 3 * 60
-                            val remainingMins = maxTailMins - snap.tailElapsedMins
-                            SiRow("Tail window: ${snap.tailElapsedMins}/${maxTailMins}min used",
-                                  "Tracker will abandon if BG doesn't recover within ${remainingMins}min more.",
-                                  primaryColor = if (snap.tailElapsedMins > maxTailMins * 0.75) StatusWarn
-                                  else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                    }
                     }
                 }
             }

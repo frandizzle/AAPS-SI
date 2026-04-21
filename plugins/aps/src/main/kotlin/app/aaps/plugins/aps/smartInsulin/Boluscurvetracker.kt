@@ -117,7 +117,9 @@ class BolusCurveTracker @Inject constructor(
         // Learned carb curve parameters for the tracked mode — used for phase display
         val learnedPeakMins:     Double,          // when plateau starts (safePeak)
         val learnedDurationMins: Double,          // when tail ends (absorptionMinutes)
-        val transientWindowMins: Double = 60.0    // hardcoded spike window
+        val transientWindowMins: Double = 60.0,    // hardcoded spike window
+        val hadRealRise: Boolean = false,
+        val bgAtStartMmol: Double = 0.0
     )
 
     fun snapshot(isMmol: Boolean = true): TrackerSnapshot {
@@ -127,6 +129,8 @@ class BolusCurveTracker @Inject constructor(
             phase = "idle", inTailMode = false, tailElapsedMins = 0,
             bgPeakMmol = 0.0, bgNadirMmol = null,
             iobDeclineSeen = false, lastEventDesc = "Not tracking",
+            hadRealRise = bgPeak > (bgAtStart + 18.0),
+            bgAtStartMmol = bgAtStart / 18.0,
             learnedPeakMins = 0.0, learnedDurationMins = 0.0
         )
         val elapsedMins = ((now - trackStartMs) / 60_000).toInt()
