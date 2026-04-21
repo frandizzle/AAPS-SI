@@ -137,14 +137,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
 
-        // predictedMin for DOSING skips the first 30 min (6 ticks) of the prediction.
-        // Rationale: in the first 30 min after a bolus, IOB is still ramping up and
-        // carb impact hasn't yet counteracted it — the raw minimum can be a temporary
-        // trough that clears within 30 min. Using the full-window min causes the loop
-        // to reduce TBR during meals when it shouldn't. predictedMinSafety (full window)
-        // is still used for LOW_SUSPEND to maintain safety.
-        val skipTicks = if (mealMode != MealMode.FASTING) 6 else 0  // skip 30 min during meals
-        val predictedMin = predictedBg.drop(skipTicks).minOrNull() ?: predictedMinSafety
+        // For DOSING decisions, use the predicted BG at 60 min (tick 12) rather than
+        // the full-window minimum. Using the full-window min means a late dip below target
+        // (e.g. hour 4-5 as IOB clears) zeros out insulinReq even when BG is currently high
+        // and rising — killing TBR when it's needed most. The 60-min horizon gives a
+        // near-term view that correctly reflects the current meal phase.
+        // predictedMinSafety (full window) is still used for LOW_SUSPEND only.
+        val predictedMin = if (predictedBg.size > 12) predictedBg[11] else predictedBg.lastOrNull() ?: predictedMinSafety
         val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
 
         // Populate prediction graph
@@ -226,7 +225,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val remainingU     = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
-                    !iobOk           -> 0.0
+                    !iobOk           -> profileBasal  // at max_iob: hold profile basal, don't zero out
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
