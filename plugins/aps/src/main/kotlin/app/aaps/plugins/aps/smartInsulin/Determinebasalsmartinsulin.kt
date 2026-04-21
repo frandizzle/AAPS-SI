@@ -353,11 +353,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // CRITICAL GATE: if delta is near-flat (≤ 0.1 mmol/5min), don't project ci forward.
         // A flat BG with IOB means insulin is already matching the protein release — projecting
         // positive ci would predict a rise that won't happen and cause the loop to over-dose.
+        // 1. Determine the correct clamp limit based on mode
         val ciClampMgdl = when {
-            mealMode == MealMode.FASTING -> FASTING_CI_MAX_MGDL
-            isPureTabletop               -> TABLETOP_CI_MAX_MGDL
-            else                         -> CI_MAX_MGDL_PER_TICK
+            mealMode == MealMode.FASTING         -> FASTING_CI_MAX_MGDL
+            mealMode == MealMode.UAM_PROTEIN_FAT -> PF_CI_MAX_MGDL       // Intercept P/F for the 3.6 clamp
+            isPureTabletop                       -> TABLETOP_CI_MAX_MGDL // Catches Low-Carb and Extended
+            else                                 -> CI_MAX_MGDL_PER_TICK
         }
+
+        // 2. Apply the clamp
         val ciClamped = ci.coerceIn(-ciClampMgdl, ciClampMgdl)
 
         val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
@@ -470,5 +474,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
          *  BGI inflates ci even at delta=0. Tight clamp prevents prediction moonshots.
          *  9 mg/dL = 0.5 mmol per tick. */
         private const val TABLETOP_CI_MAX_MGDL        = 9.0
+        private const val PF_CI_MAX_MGDL              = 3.6
     }
 }
