@@ -137,13 +137,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
 
-        // For DOSING decisions, use the predicted BG at 60 min (tick 12) rather than
-        // the full-window minimum. Using the full-window min means a late dip below target
-        // (e.g. hour 4-5 as IOB clears) zeros out insulinReq even when BG is currently high
-        // and rising — killing TBR when it's needed most. The 60-min horizon gives a
-        // near-term view that correctly reflects the current meal phase.
-        // predictedMinSafety (full window) is still used for LOW_SUSPEND only.
-        val predictedMin = if (predictedBg.size > 12) predictedBg[11] else predictedBg.lastOrNull() ?: predictedMinSafety
+        // predictedMin: skip ticks up to insulin peak + 10 min buffer to avoid
+        // suspending on the early trough while insulin is still peaking.
+        val insulinPeakTicks = run {
+            val ticks = (kinetics.peakMinutes / 5.0).toInt() + 2  // +2 ticks = +10 min buffer
+            if (kinetics.sampleCount < PK_LEARNING_MIN_SAMPLES)
+                ticks.coerceIn(10, 18)   // default peak range until learning is trusted
+            else
+                ticks.coerceIn(10, 24)   // hard rails once learned
+        }
+        val predictedMin = if (predictedBg.size > insulinPeakTicks)
+            predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
+        else
+            predictedBg.minOrNull() ?: currentBg
+
+        val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
         val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
 
         // Populate prediction graph
@@ -186,16 +194,40 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
+        val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
+
+        // Dynamic suspend duration — how long should a zero temp run if loop goes offline?
+        fun suspendDurationMins(worstBgMgdl: Double): Int {
+            val bgUndershoot   = targetBg - worstBgMgdl
+            val insulinReqU    = bgUndershoot / dosingIsfMgdl
+            val effectiveBasal = profileBasal.coerceAtLeast(0.01)
+            val durationHours  = insulinReqU / effectiveBasal
+            val durationMins   = (durationHours * 60.0).coerceIn(30.0, 90.0)
+            return (Math.round(durationMins / 30.0) * 30).toInt().coerceIn(30, 90)
+        }
 
         var smbOut = 0.0
         when {
             lgsThresholdMgdl > 0 && currentBg < lgsThresholdMgdl -> {
                 sb.append(" | LGS_SUSPEND | BG=${fmt(currentBg, isMmol)} < lgs=${fmt(lgsThresholdMgdl, isMmol)}")
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(0.0, suspendDurationMins(currentBg), oapsProfile, rT, currentTemp)
             }
-            predictedMinSafety < lowGuardMgdl -> {
-                sb.append(" | LOW_SUSPEND | pred_min=${fmt(predictedMinSafety, isMmol)} < low=${fmt(lowGuardMgdl, isMmol)}")
-                setTempBasal(0.0, 30, oapsProfile, rT, currentTemp)
+            predictedMinSafety < lowGuardMgdl || fallingIntoLow -> {
+                val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
+                val suspendMins = suspendDurationMins(worstBg)
+                val reason = when {
+                    fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < lowGuard=${fmt(lowGuardMgdl, isMmol)} dur=${suspendMins}m"
+                }
+                sb.append(" | $reason")
+                setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
+            }
+            predictedMinSafety < warnGuardMgdl -> {
+                val guardGap   = warnGuardMgdl - predictedMinSafety
+                val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
+                val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(warnGuardMgdl, isMmol)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
             }
             else -> {
                 val smbAllowed = microBolusAllowed && !isTempTarget && bgAboveGuard > 0.0 && insulinReq > 0.0
@@ -209,27 +241,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
 
-                // TBR correction — independent of smbAllowed. When SMBs are capped,
-                // TBR picks up the slack by running a high temp basal. The remaining
-                // undelivered correction is spread over TBR_WINDOW_HOURS (30 min).
-                // IOB guard: mirrors SMB's iobHeadroom — TBR is scaled proportionally
-                // as IOB approaches max_iob, not just cut off at the boundary.
-                // This prevents a large TBR firing right at max_iob, then slamming to
-                // zero one cycle later.
-                val iobHeadroomFraction = if (oapsProfile.max_iob > 0.0)
-                    (iobHeadroom / oapsProfile.max_iob).coerceIn(0.0, 1.0)
-                else 0.0
-                val tbrCorrectionU = if (iobOk && insulinReq > 0.0)
-                    insulinReq * aggressiveness * iobHeadroomFraction
-                else 0.0
+                val tbrCorrectionU = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
                 val remainingU     = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
+                    .coerceAtMost(iobHeadroom)  // respect max_iob same as SMB
 
                 val tbrRateRaw = when {
-                    !iobOk           -> profileBasal  // at max_iob: hold profile basal, don't zero out
+                    !iobOk           -> 0.0
                     remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
-                    // Target respect: reduce basal when pred_min is below target
                     predictedMin < targetBg &&
                         (targetRespectEnabled || targetBg > (6.0 * MMOL_TO_MGDL)) -> {
                         val missingBgMgdl   = targetBg - predictedMin
@@ -239,7 +259,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     }
                     else -> profileBasal
                 }
-
                 val tbrRate = tbrRateRaw * reboundTaperFraction
                 val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
                 val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
