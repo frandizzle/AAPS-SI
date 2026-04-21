@@ -175,7 +175,9 @@ class BolusCurveTracker @Inject constructor(
             bgPeakMmol = bgPeakMmol, bgNadirMmol = bgNadirMmol,
             iobDeclineSeen = iobDeclineSeen, lastEventDesc = lastEvent,
             learnedPeakMins = safePeak,
-            learnedDurationMins = carbDuration
+            learnedDurationMins = carbDuration,
+            hadRealRise = bgPeak > (bgAtStart + 18.0),
+            bgAtStartMmol = if (isMmol) bgAtStart / 18.0 else bgAtStart
         )
     }
 
