@@ -332,16 +332,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
             mealMode == MealMode.EXTENDED
 
         val carbDuration = when {
-            mealMode == MealMode.FASTING -> 30.0   // short burst — dawn/stress fades in ~30 min
+            mealMode == MealMode.FASTING -> 30.0
             else                         -> carbAbs.absorptionMinutes
         }
         val carbPeakRaw = if (mealMode == MealMode.FASTING) 10.0 else carbAbs.peakMinutes
-        // Fasting: clamp ci tightly — only real momentum gets through, not IOB inflation
-        // Meal modes: standard clamp
-        val ciClamped = when {
-            mealMode == MealMode.FASTING -> ci.coerceIn(-FASTING_CI_MAX_MGDL, FASTING_CI_MAX_MGDL)
-            else                         -> ci.coerceIn(-CI_MAX_MGDL_PER_TICK, CI_MAX_MGDL_PER_TICK)
+
+        // Tabletop modes (P/F, Low-carb, Extended): protein converts to glucose very slowly.
+        // ci is inflated by large BGI when ISF is sensitive — clamp tightly.
+        // Max 0.5 mmol/tick = 9 mg/dL/tick for tabletop. Meal modes use full clamp.
+        val ciClampMgdl = when {
+            mealMode == MealMode.FASTING -> FASTING_CI_MAX_MGDL
+            isPureTabletop               -> TABLETOP_CI_MAX_MGDL
+            else                         -> CI_MAX_MGDL_PER_TICK
         }
+        val ciClamped = ci.coerceIn(-ciClampMgdl, ciClampMgdl)
 
         val useLearnedPeak = carbAbs.sampleCount >= CARB_PEAK_MIN_SAMPLES
         val safePeak = if (carbDuration > 0.0) {
@@ -446,10 +450,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** Maximum ci per 5-min tick in mg/dL for MEAL modes. Prevents high-IOB BGI
          *  inflation from creating moonshot predictions. 90 mg/dL = 5 mmol — upper bound. */
         private const val CI_MAX_MGDL_PER_TICK        = 90.0
-        /** Maximum ci per 5-min tick in fasting mode. Tighter than meal mode — blocks
-         *  IOB-inflation moonshots (high meal IOB makes ci huge) while still allowing
-         *  real fasting glucose momentum (dawn phenomenon, liver dump) through.
-         *  27 mg/dL = 1.5 mmol per 5-min tick over a 30-min window. */
+        /** Maximum ci per 5-min tick in fasting mode. 27 mg/dL = 1.5 mmol. */
         private const val FASTING_CI_MAX_MGDL         = 27.0
+        /** Maximum ci per 5-min tick for tabletop modes (P/F, Low-carb, Extended).
+         *  Protein converts to glucose very slowly. With sensitive ISF (e.g. 6 mmol/U),
+         *  BGI inflates ci even at delta=0. Tight clamp prevents prediction moonshots.
+         *  9 mg/dL = 0.5 mmol per tick. */
+        private const val TABLETOP_CI_MAX_MGDL        = 9.0
     }
 }
