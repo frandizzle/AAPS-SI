@@ -957,15 +957,6 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── Raw status log ─────────────────────────────────────────────
-        SiCard(title = "Raw Status Log") {
-            Text(plugin.statusSummary(),
-                 fontFamily = FontFamily.Monospace,
-                 fontSize = 11.sp,
-                 lineHeight = 15.sp,
-                 color = MaterialTheme.colorScheme.onSurface)
-        }
-
         // ── Reset card ─────────────────────────────────────────────────
         SiCard(title = "Reset Learners") {
             ResetRow("Aggressiveness score") { plugin.resetAggression() }
