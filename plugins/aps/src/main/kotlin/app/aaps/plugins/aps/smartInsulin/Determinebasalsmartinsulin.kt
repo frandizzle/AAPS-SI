@@ -332,10 +332,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
             mealMode == MealMode.EXTENDED
 
         val carbDuration = when {
-            mealMode == MealMode.FASTING -> 60.0   // short window for fasting glucose momentum
+            mealMode == MealMode.FASTING -> 30.0   // short burst — dawn/stress fades in ~30 min
             else                         -> carbAbs.absorptionMinutes
         }
-        val carbPeakRaw = if (mealMode == MealMode.FASTING) 15.0 else carbAbs.peakMinutes
+        val carbPeakRaw = if (mealMode == MealMode.FASTING) 10.0 else carbAbs.peakMinutes
         // Fasting: clamp ci tightly — only real momentum gets through, not IOB inflation
         // Meal modes: standard clamp
         val ciClamped = when {
@@ -449,7 +449,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         /** Maximum ci per 5-min tick in fasting mode. Tighter than meal mode — blocks
          *  IOB-inflation moonshots (high meal IOB makes ci huge) while still allowing
          *  real fasting glucose momentum (dawn phenomenon, liver dump) through.
-         *  36 mg/dL = 2.0 mmol per 5-min tick — roughly +24 mmol/hr max fasting rise. */
-        private const val FASTING_CI_MAX_MGDL         = 36.0
+         *  27 mg/dL = 1.5 mmol per 5-min tick over a 30-min window. */
+        private const val FASTING_CI_MAX_MGDL         = 27.0
     }
 }
