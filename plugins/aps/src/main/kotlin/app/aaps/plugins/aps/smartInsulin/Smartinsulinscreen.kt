@@ -820,6 +820,22 @@ fun SmartInsulinScreen(
                  style = MaterialTheme.typography.bodySmall,
                  color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
+
+            val (profStatusPrimary, profStatusColor) = when {
+                d.profileLearningStatus.startsWith("off") -> "Learning paused" to StatusWarn
+                d.profileLearningStatus.contains("tracker=idle") -> "Watching for new bolus" to StatusGood
+                else -> "Tracking active bolus curve" to StatusInfo
+            }
+            val profStatusDetail = d.profileLearningStatus
+                .replace("off: ", "")
+                .replace("tracker=idle", "Waiting for IOB spike (≥0.3U) to begin tracking kinetics.")
+                .replace("tracker=waiting_peak", "Tracking: waiting for IOB to peak...")
+                .replace("tracker=tracking_nadir", "Tracking: waiting for BG nadir...")
+                .replace("tracker=confirming", "Tracking: confirming recovery from nadir...")
+
+            SiRow(profStatusPrimary, profStatusDetail, primaryColor = profStatusColor)
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
             d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
                 val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
                 val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()

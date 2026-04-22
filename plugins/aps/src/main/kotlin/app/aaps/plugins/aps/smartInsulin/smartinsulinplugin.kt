@@ -470,6 +470,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val stftActive:         Boolean,
         val uamStatusLine:      String?,
         val uamDebug:           String,
+        val profileLearningStatus: String,
         val circadianRawStatus: String,
         val profilesRawStatus:  String,
         val tirRawLine:         String,
@@ -495,6 +496,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val isfMult      = circadianLearner.isfMultiplier(hour)
         val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
         val activeMode   = mealOverrideManager.activeMealMode
+        val currentMealMode = activeMode ?: MealMode.FASTING
+        val isLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         val nowMs        = System.currentTimeMillis()
 
         val tbrStep           = activePlugin.activePump.pumpDescription.tempAbsoluteStep.takeIf { it > 0.0 } ?: 0.05
@@ -608,6 +611,7 @@ open class SmartInsulinPlugin @Inject constructor(
             stftActive         = stftController.isActive,
             uamStatusLine      = uamController.statusString(),
             uamDebug           = uamController.debugSummary(),
+            profileLearningStatus = if (!isLearningEnabled) "off: Learning disabled" else bolusCurveTracker.statusSummary(currentMealMode),
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
             tirRawLine         = aggressionLearner.tirSummary,
