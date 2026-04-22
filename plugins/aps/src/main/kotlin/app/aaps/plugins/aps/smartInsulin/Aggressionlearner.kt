@@ -149,7 +149,13 @@ class AggressionLearner @Inject constructor(
         stats.lowPct > MAX_LOW_PCT                              -> (current - STEP_DOWN).coerceAtLeast(floor)
         stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
         stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
-        else                                                    -> current + (1.0 - current) * 0.05
+        else                                                    -> {
+            // Asymmetric decay back to 1.0 (neutral)
+            // If current < 1.0 (conservative), return to neutral faster (10% per hour)
+            // If current > 1.0 (aggressive), return to neutral slower (3% per hour)
+            val decayAlpha = if (current < 1.0) 0.10 else 0.03
+            current + (1.0 - current) * decayAlpha
+        }
     }
 
     private fun updateScore() {

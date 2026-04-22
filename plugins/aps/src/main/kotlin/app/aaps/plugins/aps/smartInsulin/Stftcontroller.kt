@@ -48,9 +48,9 @@ class StftController @Inject constructor(
     companion object {
         private const val MMOL_TO_MGDL          = 18.0
 
-        // Trigger: BG must be above this threshold to start counting
-        const val TRIGGER_THRESHOLD_MMOL        = 6.0
-        private const val TRIGGER_THRESHOLD_MGDL = TRIGGER_THRESHOLD_MMOL * MMOL_TO_MGDL
+        // Trigger: BG must be this much above target to start counting
+        private const val TRIGGER_OFFSET_MMOL   = 0.6
+        private const val TRIGGER_OFFSET_MGDL   = TRIGGER_OFFSET_MMOL * MMOL_TO_MGDL
 
         // Number of consecutive readings above threshold before STFT activates (3 = 15 min)
         private const val TRIGGER_READINGS      = 3
@@ -59,9 +59,9 @@ class StftController @Inject constructor(
         private const val STEP_MMOL             = 0.1
         private const val STEP_MGDL             = STEP_MMOL * MMOL_TO_MGDL
 
-        // Floor — never push target below this
-        const val TARGET_FLOOR_MMOL             = 5.0
-        private const val TARGET_FLOOR_MGDL     = TARGET_FLOOR_MMOL * MMOL_TO_MGDL
+        // Floor — never push target more than 0.5 mmol below profile target
+        private const val FLOOR_OFFSET_MMOL     = 0.5
+        private const val FLOOR_OFFSET_MGDL     = FLOOR_OFFSET_MMOL * MMOL_TO_MGDL
 
         // Consecutive negative deltas required to reset
         private const val NEG_DELTA_RESET_COUNT = 2
@@ -170,10 +170,11 @@ class StftController @Inject constructor(
         // Single duplicate-timestamp guard — skip all counter/step mutations on a
         // repeated CGM reading. Return the appropriate target (reduced if active,
         // profile if not) without advancing any state.
+        val targetFloorMgdl = profileTargetMgdl - FLOOR_OFFSET_MGDL
         if (bgTimestampMs > 0L && bgTimestampMs == lastCountedTimestampMs) {
             return if (stftActive) {
                 val reduction = stepsApplied * STEP_MGDL
-                (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
+                (profileTargetMgdl - reduction).coerceAtLeast(targetFloorMgdl)
             } else profileTargetMgdl
         }
 
@@ -184,7 +185,8 @@ class StftController @Inject constructor(
         // a delta-gated check would miss this because shortAvgDelta is negative).
         // The reset logic (shortAvgDelta < 0 × 2 while STFT active) handles
         // turning STFT off when a genuine recovery establishes.
-        if (currentBgMgdl > TRIGGER_THRESHOLD_MGDL) {
+        val triggerThresholdMgdl = profileTargetMgdl + TRIGGER_OFFSET_MGDL
+        if (currentBgMgdl > triggerThresholdMgdl) {
             lastCountedTimestampMs = bgTimestampMs
             consecutiveAbove++
         } else {
@@ -197,7 +199,7 @@ class StftController @Inject constructor(
         if (!stftActive && consecutiveAbove >= TRIGGER_READINGS) {
             stftActive = true
             aapsLogger.debug(LTag.APS,
-                             "STFT: activated — BG above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel for $TRIGGER_READINGS readings")
+                             "STFT: activated — BG above ${fmtBg(triggerThresholdMgdl)}$unitLabel for $TRIGGER_READINGS readings")
         }
 
         if (!stftActive) return profileTargetMgdl
@@ -205,19 +207,20 @@ class StftController @Inject constructor(
         // Apply one step per loop cycle (dup-timestamp already guarded above)
         stepsApplied++
         val reduction      = stepsApplied * STEP_MGDL
-        val adjustedTarget = (profileTargetMgdl - reduction).coerceAtLeast(TARGET_FLOOR_MGDL)
+        val adjustedTarget = (profileTargetMgdl - reduction).coerceAtLeast(targetFloorMgdl)
 
         aapsLogger.debug(LTag.APS,
-                         "STFT: active steps=$stepsApplied target ${fmtBg(profileTargetMgdl)}→${fmtBg(adjustedTarget)}$unitLabel (floor=${fmtBg(TARGET_FLOOR_MGDL)}$unitLabel)")
+                         "STFT: active steps=$stepsApplied target ${fmtBg(profileTargetMgdl)}→${fmtBg(adjustedTarget)}$unitLabel (floor=${fmtBg(targetFloorMgdl)}$unitLabel)")
 
         return adjustedTarget
     }
 
     /** Current STFT status for display — null if inactive and not watching */
-    fun statusString(profileTargetMgdl: Double = TARGET_FLOOR_MGDL + STEP_MGDL): String? {
+    fun statusString(profileTargetMgdl: Double): String? {
+        val targetFloorMgdl = profileTargetMgdl - FLOOR_OFFSET_MGDL
         if (stftActive) {
             val theoreticalTarget = profileTargetMgdl - (stepsApplied * STEP_MGDL)
-            val actualTarget      = theoreticalTarget.coerceAtLeast(TARGET_FLOOR_MGDL)
+            val actualTarget      = theoreticalTarget.coerceAtLeast(targetFloorMgdl)
             val actualReductionMgdl = profileTargetMgdl - actualTarget
             val reductionStr = if (isMmol)
                 "${"%.1f".format(java.util.Locale.US, actualReductionMgdl / MMOL_TO_MGDL)}mmol"
@@ -227,7 +230,8 @@ class StftController @Inject constructor(
         }
         if (currentlyHighTempTarget) return "STFT: inactive (high temp target set)"
         if (consecutiveAbove > 0) {
-            return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${fmtBg(TRIGGER_THRESHOLD_MGDL)}$unitLabel)"
+            val triggerThresholdMgdl = profileTargetMgdl + TRIGGER_OFFSET_MGDL
+            return "STFT: watching ($consecutiveAbove/$TRIGGER_READINGS readings above ${fmtBg(triggerThresholdMgdl)}$unitLabel)"
         }
         return null
     }

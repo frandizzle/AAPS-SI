@@ -43,7 +43,7 @@ class BasalLearner @Inject constructor(
     init { restoreState() }
     companion object {
         // Gate conditions
-        private const val MIN_MINUTES_NO_BOLUS   = 240.0  // 4h — longer than overnight to catch daytime
+        private const val MIN_MINUTES_NO_BOLUS   = 120.0  // 2h — enough to catch steady drift without blocking all day on SMBs
         private const val LOW_BG_GATE_MGDL        = 72.0   // 4.0 mmol
         private const val HIGH_BG_GATE_MGDL       = 162.0  // 9.0 mmol — tighter than overnight gate
         private const val MAX_COB_G               = 5.0

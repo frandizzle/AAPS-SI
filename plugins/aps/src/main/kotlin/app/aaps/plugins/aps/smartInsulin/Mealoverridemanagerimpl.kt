@@ -345,7 +345,8 @@ class MealOverrideManagerImpl @Inject constructor(
     override fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
         iobArray:      Array<IobTotal>,
-        maxIobU:       Double
+        maxIobU:       Double,
+        profile:       app.aaps.core.interfaces.profile.Profile?
     ) {
         val s = _state ?: return
         // Skip entirely if neither PB2 nor PB3 is pending
@@ -355,7 +356,7 @@ class MealOverrideManagerImpl @Inject constructor(
         // fireAt = pb2FiredMs + pb3Delay). We don't try to fire PB3 in the same cycle as PB2
         // — gives at least one 5-min gap so SMB logic can react to the PB2 bolus first.
         if (s.preBolus2Pending) {
-            processPreBolus2(glucoseStatus, iobArray, maxIobU)
+            processPreBolus2(glucoseStatus, iobArray, maxIobU, profile)
             // Re-read state after PB2 handling — it may have fired/failed/cancelled
             return
         }
@@ -364,7 +365,7 @@ class MealOverrideManagerImpl @Inject constructor(
         // have cascade-cancelled already), or was never requested (PB3 can't fire — has no timing
         // reference). Check PB3 now.
         if (s.preBolus3Pending) {
-            processPreBolus3(glucoseStatus, iobArray, maxIobU)
+            processPreBolus3(glucoseStatus, iobArray, maxIobU, profile)
         }
     }
 
@@ -373,7 +374,8 @@ class MealOverrideManagerImpl @Inject constructor(
     private fun processPreBolus2(
         glucoseStatus: GlucoseStatus,
         iobArray:      Array<IobTotal>,
-        maxIobU:       Double
+        maxIobU:       Double,
+        profile:       app.aaps.core.interfaces.profile.Profile?
     ) {
         val s = _state ?: return
         if (!s.preBolus2Pending) return
@@ -390,7 +392,6 @@ class MealOverrideManagerImpl @Inject constructor(
         // ── Safety checks ─────────────────────────────────────────────────────
         val currentBgMgdl = glucoseStatus.glucose
         val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
-        val profile       = runBlocking { profileFunction.getProfile() }
         val profileTarget = profile?.getTargetMgdl() ?: 108.0
 
         // Cache for preBolus2StatusText so dialog can show live block reasons between cycles
@@ -477,7 +478,8 @@ class MealOverrideManagerImpl @Inject constructor(
     private fun processPreBolus3(
         glucoseStatus: GlucoseStatus,
         iobArray:      Array<IobTotal>,
-        maxIobU:       Double
+        maxIobU:       Double,
+        profile:       app.aaps.core.interfaces.profile.Profile?
     ) {
         val s = _state ?: return
         if (!s.preBolus3Pending) return
@@ -519,7 +521,6 @@ class MealOverrideManagerImpl @Inject constructor(
         // ── Safety checks (identical gates to PB2) ───────────────────────────
         val currentBgMgdl = glucoseStatus.glucose
         val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
-        val profile       = runBlocking { profileFunction.getProfile() }
         val profileTarget = profile?.getTargetMgdl() ?: 108.0
 
         // Cache for preBolus3StatusText — separate from PB2 cache so both stay accurate

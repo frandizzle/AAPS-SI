@@ -87,9 +87,10 @@ interface MealOverrideManager {
      * Checks if pre-bolus 2 is due, runs safety checks, fires if safe.
      */
     fun onLoopCycle(
-        glucoseStatus: GlucoseStatus,
-        iobArray:      Array<IobTotal>,
-        maxIobU:       Double
+        glucoseStatus: app.aaps.core.interfaces.aps.GlucoseStatus,
+        iobArray:      Array<app.aaps.core.interfaces.aps.IobTotal>,
+        maxIobU:       Double,
+        profile:       app.aaps.core.interfaces.profile.Profile? = null
     )
 
     companion object {

@@ -980,7 +980,8 @@ open class SmartInsulinPlugin @Inject constructor(
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
             iobArray      = iobArray,
-            maxIobU       = pb2MaxIob
+            maxIobU       = pb2MaxIob,
+            profile       = profile
         )
         // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
         // post-fire UI still shows what the gate state was on the last tick.

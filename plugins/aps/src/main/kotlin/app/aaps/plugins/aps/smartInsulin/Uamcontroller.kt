@@ -97,21 +97,18 @@ class UamController @Inject constructor(
 
     init {
         // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts.
-        // Validate it's from today — discard if from a previous calendar day.
+        // Rely solely on the 10h expiry window; allow crossing midnight so late-night 
+        // protein/fat rises are caught.
         val saved = preferences.get(StringKey.ApsSmartInsulinLastMealEndedMs).toLongOrNull() ?: 0L
         if (saved > 0L) {
-            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = saved }
-            val nowCal  = java.util.Calendar.getInstance()
-            lastMealEndedMs = if (
-                mealCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR) &&
-                mealCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR)
-            ) {
+            val isExpired = (System.currentTimeMillis() - saved) > 10 * 60 * 60 * 1000L
+            if (!isExpired) {
                 aapsLogger.debug(LTag.APS, "UAM: restored lastMealEndedMs from prefs — P/F armed")
-                saved
+                lastMealEndedMs = saved
             } else {
-                aapsLogger.debug(LTag.APS, "UAM: discarding stale lastMealEndedMs (different day) — P/F requires today's meal")
+                aapsLogger.debug(LTag.APS, "UAM: discarding stale lastMealEndedMs (>10h old) — P/F disarmed")
                 preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
-                0L
+                lastMealEndedMs = 0L
             }
         }
     }
@@ -210,17 +207,12 @@ class UamController @Inject constructor(
         currentlyHighTempTarget    = highTempTarget
         justFiredThisCycle         = null  // reset each cycle
 
-        // ── ROBUST EXPIRY: Reset lastMealEndedMs if from a previous day OR >10h old
+        // ── ROBUST EXPIRY: Reset lastMealEndedMs if >10h old.
+        // Midnight reset removed — allowing P/F to cross into the next day.
         if (lastMealEndedMs > 0L) {
-            val mealCal = java.util.Calendar.getInstance().also { it.timeInMillis = lastMealEndedMs }
-            val nowCal  = java.util.Calendar.getInstance()
-            val isNewDay = mealCal.get(java.util.Calendar.DAY_OF_YEAR) != nowCal.get(java.util.Calendar.DAY_OF_YEAR) ||
-                mealCal.get(java.util.Calendar.YEAR) != nowCal.get(java.util.Calendar.YEAR)
             val isExpired = (System.currentTimeMillis() - lastMealEndedMs) > 10 * 60 * 60 * 1000L
-
-            if (isNewDay || isExpired) {
-                val reason = if (isNewDay) "new day" else ">10h old"
-                aapsLogger.debug(LTag.APS, "UAM: $reason — resetting lastMealEndedMs, P/F disarmed")
+            if (isExpired) {
+                aapsLogger.debug(LTag.APS, "UAM: last meal >10h old — resetting lastMealEndedMs, P/F disarmed")
                 lastMealEndedMs = 0L
                 preferences.put(StringKey.ApsSmartInsulinLastMealEndedMs, "0")
             }

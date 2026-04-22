@@ -316,15 +316,22 @@ class CircadianLearner @Inject constructor(
         //   BG drops MORE than expected → deviation negative → mult DOWN → dosingISF UP → less aggressive ✓
         //   BG drops LESS than expected (insulin weaker) → deviation positive → mult UP → dosingISF DOWN → more aggressive ✓
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+
+        // Confidence-weighted learning speed:
+        // High confidence hours (0.8+) learn slower (stable).
+        // Low confidence hours (<0.2) learn faster (converge quickly).
+        val conf  = isfState.getConfidence(dow, hour)
+        val alpha = (ISF_ALPHA * (1.5 - conf)).coerceIn(ISF_ALPHA * 0.5, ISF_ALPHA * 1.5)
+
         // Write to both day bucket AND global so the blended output actually reflects
         // what the learner has observed. updatedDayOnly left global at 1.0 permanently,
         // causing get() to return 1.0 regardless of day bucket learnings until day
         // confidence crossed DAY_CONFIDENCE_THRESHOLD.
-        isfState = isfState.updated(dow, hour, multTarget, ISF_ALPHA)
+        isfState = isfState.updated(dow, hour, multTarget, alpha)
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f → mult=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, isfState.get(dow, hour)))
+                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f α=%.3f → mult=%.3f"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, isfState.get(dow, hour)))
         return true
     }
 
@@ -634,12 +641,17 @@ class CircadianLearner @Inject constructor(
                     else -> {
                         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
                         val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA)
+                        
+                        // Confidence-weighted learning speed:
+                        val conf  = basalState.getConfidence(dow, hour)
+                        val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
+                        
+                        basalState = basalState.updated(dow, hour, newMult, alpha)
                         basalDriftWindow.clear()
                         driftFired = true
                         lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mgdlhr → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                         aapsLogger.debug(LTag.APS,
-                                         "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                                         "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr α=%.3f → mult=${"%.3f".format(basalState.get(dow, hour))}")
                     }
                 }
             } else {
