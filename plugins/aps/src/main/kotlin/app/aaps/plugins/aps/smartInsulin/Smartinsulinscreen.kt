@@ -75,8 +75,6 @@ fun SmartInsulinScreen(
     var data by remember { mutableStateOf<SmartInsulinPlugin.FragmentData?>(null) }
     var selectedDow by remember { mutableStateOf(java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1) }
 
-    var showProfileDebug by rememberSaveable { mutableStateOf(false) }
-
     val lifecycleOwner = LocalLifecycleOwner.current
 
     LaunchedEffect(lifecycleOwner, plugin) {
@@ -816,55 +814,53 @@ fun SmartInsulinScreen(
             }
         }
 
-        // ── Insulin Profile Learning Debug (expandable) ───────────────────────
-        SiCard(title = "Insulin Profile Learning Debug") {
-            TextButton(
-                onClick = { showProfileDebug = !showProfileDebug },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = if (showProfileDebug) "▲ Hide profile learning debug"
-                    else "▼ Show last update details (Peak/DIA shifts)",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            if (showProfileDebug) {
+        // ── Insulin profiles card ──────────────────────────────────────
+        SiCard(title = "Insulin Profiles") {
+            Text("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.",
+                 style = MaterialTheme.typography.bodySmall,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
+                val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
+                val name = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
+                val n = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+                val col = when { n >= 5 -> StatusGood; n >= 1 -> StatusWarn; else -> Color(0xFF888888) }
+                // Highlight the active insulin profile — match mode label against profile name
+                // UAM modes are separate learners, but should only be highlighted if we're actually in UAM
+                val isActive = if (d.mealMode.contains("(UAM)", ignoreCase = true)) {
+                    name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name.substringBefore(" ("), ignoreCase = true)
+                } else {
+                    !name.contains("(UAM)", ignoreCase = true) && d.mealMode.contains(name, ignoreCase = true)
+                }
+                val prefix = if (isActive) "► " else "  "
+                val note = when {
+                    n == 0 -> "  (using profile values — not enough data yet)"
+                    n < 5  -> "  (still learning)"
+                    else   -> ""
+                }
+                val rowBg = if (isActive) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            shape = MaterialTheme.shapes.small
-                        )
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(rowBg)
+                        .padding(vertical = 4.dp, horizontal = 4.dp)
                 ) {
-                    d.profilesRawStatus.lines().filter { it.isNotBlank() && !it.startsWith("──") }.forEach { line ->
-                        val parts = line.trim().split(":")
-                        if (parts.size < 2) return@forEach
-                        val name = parts[0].trim()
-
-                        // Try to get the profile object so we can call debugString()
-                        val profile = when (name) {
-                            "Global Insulin" -> plugin.getLearnedInsulinProfile(MealMode.FASTING) // adjust if you have a getter
-                            else -> null
-                        }
-
-                        Text("$name", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        if (profile != null) {
-                            Text(profile.debugString(),
-                                 fontFamily = FontFamily.Monospace,
-                                 fontSize = 11.sp,
-                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
-                            Text("— no debug data yet —", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
-                        }
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    }
+                    Text("$prefix$name", fontWeight = FontWeight.Bold, color = col, fontSize = 13.sp)
+                    Text(info + note, fontFamily = FontFamily.Monospace, fontSize = 11.sp,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                Spacer(Modifier.height(2.dp))
             }
+        }
+
+        // ── Raw status log ─────────────────────────────────────────────
+        SiCard(title = "Raw Status Log") {
+            Text(plugin.statusSummary(),
+                 fontFamily = FontFamily.Monospace,
+                 fontSize = 11.sp,
+                 lineHeight = 15.sp,
+                 color = MaterialTheme.colorScheme.onSurface)
         }
 
         // ── Reset card ─────────────────────────────────────────────────

@@ -1,7 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import java.util.Locale
 import org.json.JSONObject
 
 /**
@@ -22,12 +21,7 @@ data class LearnedInsulinProfile(
     val peakMinutes:    Double,
     val diaMinutes:     Double,
     val sampleCount:    Int,
-    val lastUpdatedMs:  Long,
-    val lastShiftPeak:  Double = 0.0,
-    val lastShiftDia:   Double = 0.0,
-    val lastObservedPeak: Double = 0.0,
-    val lastObservedDia:  Double = 0.0,
-    val lastWeight:     Double = 0.0
+    val lastUpdatedMs:  Long
 ) {
     // Silently clamp to physiological bounds on construction — prevents corrupt
     // JSON or learner math errors from producing dangerous out-of-range values.
@@ -42,19 +36,6 @@ data class LearnedInsulinProfile(
         put("diaMinutes",    diaMinutes)
         put("sampleCount",   sampleCount)
         put("lastUpdatedMs", lastUpdatedMs)
-        put("lastShiftPeak", lastShiftPeak)
-        put("lastShiftDia",  lastShiftDia)
-        put("lastObservedPeak", lastObservedPeak)
-        put("lastObservedDia",  lastObservedDia)
-        put("lastWeight",    lastWeight)
-
-        fun debugString(): String {
-            val shiftP = if (lastShiftPeak != 0.0) "%.1f".format(Locale.US, lastShiftPeak) else "—"
-            val shiftD = if (lastShiftDia != 0.0)  "%.1f".format(Locale.US, lastShiftDia)  else "—"
-            return "last update: Peak $shiftP m  |  DIA $shiftD m\n" +
-                "observed: Peak ${"%.1f".format(Locale.US, lastObservedPeak)} m  |  DIA ${"%.1f".format(Locale.US, lastObservedDia)} m\n" +
-                "weight (α) = ${"%.3f".format(Locale.US, lastWeight)}"
-        }
     }
 
     // ── Derived helpers ──────────────────────────────────────────────────────
@@ -102,21 +83,19 @@ data class LearnedInsulinProfile(
 
         /**
          * Deserialise from JSON stored in SharedPreferences.
-         * Returns the default profile for [mode] if JSON is missing or malformed.
+         * Uses opt* with defaults so a partially-written or partially-corrupted JSON
+         * still preserves whatever fields are intact — e.g. an app-killed-mid-write
+         * that loses sampleCount but keeps peak/dia won't wipe out learned values.
+         * The caller's try-catch still handles total corruption (malformed JSON).
          */
         fun fromJson(json: JSONObject, mode: MealMode): LearnedInsulinProfile =
             LearnedInsulinProfile(
                 mode          = mode,  // trust the caller — pref key already identifies the slot
-                peakMinutes   = json.getDouble("peakMinutes"),
-                diaMinutes    = json.getDouble("diaMinutes"),
+                peakMinutes   = json.optDouble("peakMinutes",   FALLBACK_PEAK_MINS),
+                diaMinutes    = json.optDouble("diaMinutes",    FALLBACK_DIA_MINS),
                 // "confidence" key intentionally ignored — now derived from sampleCount
-                sampleCount   = json.getInt("sampleCount"),
-                lastUpdatedMs = json.getLong("lastUpdatedMs"),
-                lastShiftPeak = json.optDouble("lastShiftPeak", 0.0),
-                lastShiftDia  = json.optDouble("lastShiftDia", 0.0),
-                lastObservedPeak = json.optDouble("lastObservedPeak", 0.0),
-                lastObservedDia  = json.optDouble("lastObservedDia", 0.0),
-                lastWeight    = json.optDouble("lastWeight", 0.0)
+                sampleCount   = json.optInt("sampleCount",      0),
+                lastUpdatedMs = json.optLong("lastUpdatedMs",   0L)
             )
     }
 }

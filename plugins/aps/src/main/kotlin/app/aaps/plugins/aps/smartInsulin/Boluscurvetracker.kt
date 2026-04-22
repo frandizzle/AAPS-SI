@@ -53,10 +53,12 @@ class BolusCurveTracker @Inject constructor(
     }
 
     companion object {
-        private const val MIN_TRACK_IOB_U        = 1.0
+        private const val MIN_TRACK_IOB_U        = 0.6
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
-        private const val RECOVERY_MGDL          = 18.0   // ~1 mmol recovery above nadir
-        private const val MIN_BG_DROP_MGDL       = 18.0   // ~1 mmol minimum drop to count
+        private const val ABANDON_SPIKE_U        = 0.8   // IOB must rise ≥0.8U in one cycle while tracking to abandon (ignores SMBs)
+        private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
+        private const val MIN_BG_DROP_MGDL       = 10.0  // ~0.5 mmol minimum drop below start (for Fasting)
+        private const val MEAL_NADIR_HEADROOM    = 10.0  // Nadir can be up to 10mg/dL above start for meal modes
         private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
         // Minimum time between nadir reading and confirmation. Prevents a single noisy
         // reading upward from prematurely "recovering" the curve — the BG has to prove
@@ -175,8 +177,8 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        if (currentIob > iobPeak * 2.0) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (massive IOB jump, current=$currentIob, peak=$iobPeak)")
+        if (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
             reset(); return
         }
 
@@ -203,10 +205,15 @@ class BolusCurveTracker @Inject constructor(
         }
 
         // Check recovery
+        val dropTarget = if (trackMode == MealMode.FASTING)
+            bgAtStart - MIN_BG_DROP_MGDL
+        else
+            bgAtStart + MEAL_NADIR_HEADROOM
+
         if (!nadirConfirmed &&
             (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
             currentBg > bgNadir + RECOVERY_MGDL &&
-            bgNadir < bgAtStart - MIN_BG_DROP_MGDL
+            bgNadir < dropTarget
         ) {
             nadirConfirmed = true
             val observedPeakMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
