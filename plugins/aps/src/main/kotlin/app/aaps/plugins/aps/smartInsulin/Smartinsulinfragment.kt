@@ -68,6 +68,9 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.btnResetAggression.setOnClickListener {
             confirmReset("Reset aggressiveness score to 1.0?") { smartInsulinPlugin.resetAggression(); refreshStatus() }
         }
+        binding.btnResetIsf.setOnClickListener {
+            confirmReset("Reset ISF circadian learning to 1.0? Basal and aggression learning kept.") { smartInsulinPlugin.resetIsf(); refreshStatus() }
+        }
         binding.btnResetBasal.setOnClickListener {
             confirmReset("Reset basal + circadian basal learners to 1.0?") { smartInsulinPlugin.resetBasal(); refreshStatus() }
         }
@@ -797,7 +800,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     // ── Circadian table ───────────────────────────────────────────────────────
 
-    private data class CircRow(val hour: Int, val isfMult: Float, val basMult: Float, val ceil: Float, val confPct: Int)
+    private data class CircRow(val hour: Int, val isfVal: Float, val basVal: Float, val ceil: Float, val confPct: Int)
 
     private fun parseCircRows(raw: String) = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
         .findAll(raw).mapNotNull { m -> CircRow(
@@ -808,7 +811,8 @@ class SmartInsulinFragment : DaggerFragment() {
             m.groupValues[5].toIntOrNull()   ?: return@mapNotNull null) }.toList()
 
     private fun confColor(p: Int)   = when { p >= 60 -> Color.parseColor("#FF43A047"); p >= 30 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFE53935") }
-    private fun multColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
+    // Ceiling colour: <0.95 = blue (restricted), >1.05 = amber (boosted), else grey
+    private fun ceilColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
 
     private fun updateCircadianTable(ignored: String) {
         val b = _binding ?: return; val ctx = context ?: return
@@ -847,6 +851,51 @@ class SmartInsulinFragment : DaggerFragment() {
         val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
         val rows  = parseCircRows(raw); if (rows.isEmpty()) return
 
+        // Profile reference values for colour coding
+        val isMmolUnit  = smartInsulinPlugin.isMmol
+        val profIsfMgdl = smartInsulinPlugin.profileIsfMgdl
+        val profBasalU  = smartInsulinPlugin.profileBasalU
+        val profIsfDisp = if (isMmolUnit && profIsfMgdl > 0) (profIsfMgdl / 18.0).toFloat() else profIsfMgdl.toFloat()
+
+        // Colour logic:
+        // ISF: grey = profile, orange = lower ISF (more aggressive), blue = higher ISF (less aggressive)
+        // Basal: grey = profile, orange = higher basal (more aggressive), blue = lower basal (less aggressive)
+        fun isfColor(v: Float): Int {
+            if (profIsfDisp <= 0f) return Color.parseColor("#FFDDDDDD")
+            val ratio = v / profIsfDisp
+            return when {
+                ratio < 0.97f -> Color.parseColor("#FFFB8C00")  // lower ISF = more aggressive = orange
+                ratio > 1.03f -> Color.parseColor("#FF64B5F6")  // higher ISF = less aggressive = blue
+                else          -> Color.parseColor("#FF888888")  // at profile = grey
+            }
+        }
+        fun basColor(v: Float): Int {
+            if (profBasalU <= 0.0) return Color.parseColor("#FFDDDDDD")
+            val ratio = v / profBasalU.toFloat()
+            return when {
+                ratio > 1.03f -> Color.parseColor("#FFFB8C00")  // higher basal = more aggressive = orange
+                ratio < 0.97f -> Color.parseColor("#FF64B5F6")  // lower basal = less aggressive = blue
+                else          -> Color.parseColor("#FF888888")  // at profile = grey
+            }
+        }
+        val isfHeader  = if (isMmolUnit) "ISF mmol" else "ISF mg/dL"
+        val basHeader  = "Basal U/h"
+        val headerRow  = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (4*dp).toInt() }
+        }
+        fun hcell(t: String, w: Float) = TextView(ctx).apply {
+            text = t; textSize = 10f; setTextColor(Color.parseColor("#FF888888"))
+            setTypeface(null, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
+        }
+        headerRow.addView(hcell("Hr", 1f))
+        headerRow.addView(hcell(isfHeader, 2f))
+        headerRow.addView(hcell(basHeader, 2f))
+        headerRow.addView(hcell("Ceil", 2f))
+        headerRow.addView(hcell("Conf", 3f))
+        cont.addView(headerRow)
+
         rows.forEach { row ->
             val isCur = selectedCircadianDow == todayDow && row.hour == currentHr
             val rowL = LinearLayout(ctx).apply {
@@ -860,9 +909,9 @@ class SmartInsulinFragment : DaggerFragment() {
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
             }
             rowL.addView(cell(if (isCur) "►${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
-            rowL.addView(cell("%.3f".format(row.isfMult), 2f, multColor(row.isfMult)))
-            rowL.addView(cell("%.3f".format(row.basMult), 2f, multColor(row.basMult)))
-            rowL.addView(cell("%.3f".format(row.ceil),    2f, multColor(row.ceil)))
+            rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal)))
+            rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor(row.basVal)))
+            rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
             val confL = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f)

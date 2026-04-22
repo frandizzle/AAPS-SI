@@ -90,9 +90,10 @@
                 <TextView android:id="@+id/tv_tir_hba1c"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textSize="13sp"
-                    android:layout_marginTop="10dp"
-                    tools:text="Est. HbA1c: 6.2%  •  24h avg: 6.8 mmol/L" />
+                    android:textSize="12sp"
+                    android:layout_marginTop="6dp"
+                    android:textColor="#FF43A047"
+                    tools:text="Est. HbA1c: 5.6%  •  avg: 6.3 mmol/L" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -236,6 +237,15 @@
                         android:text="Aggressiveness score" android:textSize="16sp" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_aggression"
                         style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
+                </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="12dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="ISF circadian learning" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_isf"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
