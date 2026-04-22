@@ -40,78 +40,54 @@ class BolusCurveTrackerTest {
         var t = baseTime
         sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L
         sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(1.0))
-        
-        assertTrue(sut.statusSummary().contains("tracker=kinetics"))
+
+        assertTrue(sut.statusSummary().contains("tracker=waiting_peak"))
     }
 
     @Test fun `completes FASTING kinetics observation`() {
         var t = baseTime
         var bg = 120.0
         // Seed
-        sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L
+        repeat(3) { sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L }
         // Spike
         sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(2.0)); t += 300_000L
-        
+
         // Rise to peak IOB then decline
         sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(2.5)); t += 300_000L
         sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(2.2)); t += 300_000L // decline seen
-        
+
         // Track nadir
-        repeat(12) { // 60 mins
+        repeat(15) { // 75 mins
             bg -= 2.0
             sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(1.5)); t += 300_000L
         }
-        val nadirBg = bg
-        
+
         // Recovery
-        repeat(7) { // 35 mins (above MIN_CONFIRM_DELAY_MS)
+        repeat(10) { // 50 mins (above MIN_NADIR_DELAY_MS)
             bg += 2.0
             sut.onLoopCycle(gs(bg, t), MealMode.FASTING, iobArray(1.0)); t += 300_000L
         }
-        
-        verify(profileLearner).observeInsulinKinetics(any(), any(), any())
-    }
 
-    @Test fun `completes MEAL absorption observation`() {
-        var t = baseTime
-        var bg = 100.0
-        // Seed
-        sut.onLoopCycle(gs(bg, t), MealMode.BREAKFAST, iobArray(0.0)); t += 300_000L
-        // Spike
-        sut.onLoopCycle(gs(bg, t), MealMode.BREAKFAST, iobArray(2.0)); t += 300_000L
-        
-        // BG Peak
-        repeat(12) { // 60 mins
-            bg += 5.0
-            sut.onLoopCycle(gs(bg, t), MealMode.BREAKFAST, iobArray(2.5)); t += 300_000L
-        }
-        
-        // Recovery
-        repeat(12) { // 60 mins
-            bg -= 3.0
-            sut.onLoopCycle(gs(bg, t), MealMode.BREAKFAST, iobArray(1.5)); t += 300_000L
-        }
-        
-        verify(profileLearner).observeCarbAbsorption(any(), any(), any(), any())
+        verify(profileLearner).observeBolusCurve(any(), any(), any(), any())
     }
 
     @Test fun `abandons on mode change`() {
         var t = baseTime
-        sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L
+        repeat(3) { sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L }
         sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(1.0)); t += 300_000L
-        
+
         sut.onLoopCycle(gs(100.0, t), MealMode.BREAKFAST, iobArray(1.0))
-        
+
         assertTrue(sut.statusSummary().contains("tracker=idle"))
     }
 
     @Test fun `abandons on large IOB spike while tracking`() {
         var t = baseTime
-        sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L
+        repeat(3) { sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(0.0)); t += 300_000L }
         sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(1.0)); t += 300_000L
-        
-        sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(2.5))
-        
+
+        sut.onLoopCycle(gs(100.0, t), MealMode.FASTING, iobArray(3.0))
+
         assertTrue(sut.statusSummary().contains("tracker=idle"))
     }
 

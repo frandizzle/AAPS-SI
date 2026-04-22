@@ -11,6 +11,7 @@ import java.util.Locale
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.max
 
 /**
  * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
@@ -43,6 +44,8 @@ class BolusCurveTracker @Inject constructor(
     private var nadirTimeMs     = 0L
     private var nadirConfirmed  = false
     private var prevIob         = 0.0   // tracks IOB from last cycle to detect new bolus spikes
+    // ── BG Smoothing buffer ──────────────────────────────────────────────────
+    private val bgBuffer        = mutableListOf<Double>()
     // Not persisted — set true after first onLoopCycle call or successful restoreState.
     // Prevents a false-positive bolus spike on the first cycle after app start when the user
     // has pre-existing IOB (prevIob=0.0 vs currentIob=2.0 would look like a fresh 2U bolus).
@@ -55,7 +58,7 @@ class BolusCurveTracker @Inject constructor(
     companion object {
         private const val MIN_TRACK_IOB_U        = 0.6
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
-        private const val ABANDON_SPIKE_U        = 0.8   // IOB must rise ≥0.8U in one cycle while tracking to abandon (ignores SMBs)
+        private const val ABANDON_SPIKE_U        = 1.0   // IOB must rise ≥1.0U in one cycle while tracking to abandon
         private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
         private const val MIN_BG_DROP_MGDL       = 10.0  // ~0.5 mmol minimum drop below start (for Fasting)
         private const val MEAL_NADIR_HEADROOM    = 10.0  // Nadir can be up to 10mg/dL above start for meal modes
@@ -82,6 +85,7 @@ class BolusCurveTracker @Inject constructor(
         private const val K_NADIR_TIME_MS    = "nadirTimeMs"
         private const val K_NADIR_CONFIRMED  = "nadirConfirmed"
         private const val K_PREV_IOB         = "prevIob"   // persisted to prevent false-positive spike on app restart
+        private const val K_BG_BUFFER        = "bgBuffer"
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -94,6 +98,7 @@ class BolusCurveTracker @Inject constructor(
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
         val nadirStr   = if (bgNadir == Double.MAX_VALUE) "?" else "%.1f".format(Locale.US, bgNadir)
+        val smoothed   = if (bgBuffer.size >= 3) bgBuffer.sorted()[1] else bgBuffer.lastOrNull() ?: 0.0
         val phase = when {
             !iobDeclineSeen -> "waiting_peak"
             !nadirConfirmed -> "tracking_nadir"
@@ -104,7 +109,7 @@ class BolusCurveTracker @Inject constructor(
             trackMode.label
         else
             "${trackMode.label}(historical)"
-        return "tracker=$phase mode=$modeStr " +
+        return "tracker=$phase mode=$modeStr smoothedBG=%.1f ".format(Locale.US, smoothed) +
             "peak=%.1fm nadir=$nadirStr elapsed=%.0fm".format(Locale.US, iobPeak, elapsedMin)
     }
 
@@ -120,6 +125,18 @@ class BolusCurveTracker @Inject constructor(
         // Dirty flag — replaces the 4 scattered saveState() calls that used to run per
         // cycle. We accumulate changes and persist once at the end of the cycle (if needed).
         var stateDirty = false
+
+        // ── BG Smoothing ──────────────────────────────────────────────────────
+        bgBuffer.add(currentBg)
+        if (bgBuffer.size > 3) bgBuffer.removeAt(0)
+        stateDirty = true
+
+        // Use median of last 3 readings to avoid noise-driven nadir/recovery
+        val smoothedBg = if (bgBuffer.size >= 3) {
+            bgBuffer.sorted()[1]
+        } else {
+            currentBg
+        }
 
         // First cycle after app start — seed prevIob from currentIob so subsequent
         // spike detection compares against a real baseline, not 0.0. Only seeds when
@@ -141,7 +158,7 @@ class BolusCurveTracker @Inject constructor(
                 trackStartMs    = nowMs
                 trackMode       = mealMode
                 iobAtStart      = currentIob
-                bgAtStart       = currentBg
+                bgAtStart       = smoothedBg
                 iobPeak         = currentIob
                 iobDeclineSeen  = false
                 bgNadir         = Double.MAX_VALUE   // will update to first BG reading below bgAtStart
@@ -149,7 +166,7 @@ class BolusCurveTracker @Inject constructor(
                 nadirConfirmed  = false
                 stateDirty      = true
                 aapsLogger.debug(LTag.APS,
-                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg")
+                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg (smoothed=$smoothedBg)")
             }
             // prevIob already updated above — no else branch needed
             if (stateDirty) saveState()
@@ -177,7 +194,11 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        if (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.4) {
+        // Abandon if a significant new bolus is detected while tracking.
+        // Small corrections (<0.4U) or minor basal drift are ignored to allow 
+        // the curve to finish if the impact is small.
+        val isSignificantSpike = iobSpikeWhileTracking >= 0.4
+        if (isSignificantSpike && (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.5)) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
             reset(); return
         }
@@ -198,13 +219,14 @@ class BolusCurveTracker @Inject constructor(
         }
 
         // Update BG nadir
-        if (currentBg < bgNadir) {
-            bgNadir     = currentBg
+        if (smoothedBg < bgNadir) {
+            bgNadir     = smoothedBg
             nadirTimeMs = nowMs
             stateDirty  = true
         }
 
         // Check recovery
+        val dynamicRecovery = max(RECOVERY_MGDL, smoothedBg * 0.06)
         val dropTarget = if (trackMode == MealMode.FASTING)
             bgAtStart - MIN_BG_DROP_MGDL
         else
@@ -212,7 +234,7 @@ class BolusCurveTracker @Inject constructor(
 
         if (!nadirConfirmed &&
             (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
-            currentBg > bgNadir + RECOVERY_MGDL &&
+            smoothedBg > bgNadir + dynamicRecovery &&
             bgNadir < dropTarget
         ) {
             nadirConfirmed = true
@@ -222,8 +244,8 @@ class BolusCurveTracker @Inject constructor(
             aapsLogger.debug(
                 LTag.APS,
                 "BolusCurveTracker: complete mode=${trackMode.label} " +
-                    "peak=%.1fmin dia=%.1fmin bgDrop=%.1f".format(
-                        Locale.US, observedPeakMins, observedDiaMins, bgAtStart - bgNadir
+                    "peak=%.1fmin dia=%.1fmin bgDrop=%.1f recoveryThresh=%.1f".format(
+                        Locale.US, observedPeakMins, observedDiaMins, bgAtStart - bgNadir, dynamicRecovery
                     )
             )
 
@@ -258,6 +280,7 @@ class BolusCurveTracker @Inject constructor(
                 put(K_NADIR_TIME_MS,    nadirTimeMs)
                 put(K_NADIR_CONFIRMED,  nadirConfirmed)
                 put(K_PREV_IOB,         prevIob)
+                put(K_BG_BUFFER,        org.json.JSONArray(bgBuffer))
             }
             preferences.put(StringKey.ApsSmartInsulinTrackerState, json.toString())
         } catch (e: Exception) {
@@ -295,6 +318,14 @@ class BolusCurveTracker @Inject constructor(
             // which is fine: the tracking branch's `takeIf { it > 0.0 } ?: currentIob` pattern
             // handles the 0 case defensively by returning zero spike.
             prevIob         = json.optDouble(K_PREV_IOB, 0.0)
+
+            bgBuffer.clear()
+            json.optJSONArray(K_BG_BUFFER)?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    bgBuffer.add(arr.getDouble(i))
+                }
+            }
+
             // Successful restore with tracking active — prevIob is set, skip the seed-on-first-cycle path
             seededPrevIob   = true
 
@@ -317,6 +348,7 @@ class BolusCurveTracker @Inject constructor(
         bgNadir         = Double.MAX_VALUE
         nadirTimeMs     = 0L
         nadirConfirmed  = false
+        bgBuffer.clear()
         // prevIob intentionally NOT reset — we still need continuity to detect next bolus spike
         try {
             preferences.put(StringKey.ApsSmartInsulinTrackerState, "")

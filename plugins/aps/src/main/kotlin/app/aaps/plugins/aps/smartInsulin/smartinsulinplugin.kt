@@ -611,7 +611,12 @@ open class SmartInsulinPlugin @Inject constructor(
             stftActive         = stftController.isActive,
             uamStatusLine      = uamController.statusString(),
             uamDebug           = uamController.debugSummary(),
-            profileLearningStatus = if (!isLearningEnabled) "off: Learning disabled" else bolusCurveTracker.statusSummary(currentMealMode),
+            profileLearningStatus = when {
+                !isLearningEnabled -> "off: Learning disabled"
+                activityMonitor.level != ActivityMonitor.ActivityLevel.SEDENTARY -> "off: Activity ${activityMonitor.level.label}"
+                (glucoseStatusProvider.glucoseStatusData?.noise ?: 0.0) > 1.5 -> "off: High noise"
+                else -> bolusCurveTracker.statusSummary(currentMealMode)
+            },
             circadianRawStatus = circRaw,
             profilesRawStatus  = profRaw,
             tirRawLine         = aggressionLearner.tirSummary,
@@ -1583,8 +1588,18 @@ open class SmartInsulinPlugin @Inject constructor(
         // ── BolusCurveTracker — meal modes only (peak/DIA learning from bolus curves)
         // This is intentionally NOT suppressed during high TT — a meal bolus during
         // a high TT is still a valid peak/DIA observation.
-        if (learningEnabled) {
+        // Skip if activity is detected (insulin acts faster) or sensor is noisy.
+        val trackerNoiseBlocked = glucoseStatus.noise > 1.5
+        val trackerActivityBlocked = activityMonitor.level != ActivityMonitor.ActivityLevel.SEDENTARY
+        if (learningEnabled && !trackerNoiseBlocked && !trackerActivityBlocked) {
             bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
+        } else if (learningEnabled) {
+            val trackerPauseReason = when {
+                trackerNoiseBlocked -> "High noise (>1.5)"
+                trackerActivityBlocked -> "Activity (${activityMonitor.level.label})"
+                else -> "Blocked"
+            }
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: paused ($trackerPauseReason)")
         }
 
         // ── Circadian learner — fasting + no high TT only ─────────────────────

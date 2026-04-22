@@ -146,6 +146,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val lowGuardMgdl  = lowGuardMmol * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
+        val systemDiaMins = (profile.iCfg?.dia ?: 6.0) * 60.0
+
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
         val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
@@ -157,7 +159,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5
+            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+            systemDiaMins  = systemDiaMins
         )
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -396,12 +399,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         isfMgdl:        Double,
         learnedProfile: LearnedInsulinProfile,
-        ticks:          Int
+        ticks:          Int,
+        systemDiaMins:  Double
     ): List<Double> {
         var bg           = startBg
         val predictions  = mutableListOf<Double>()
         for (tick in 1..ticks) {
-            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile)
+            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
             val iobDelta   = -(activity * isfMgdl * 5.0)
             val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
             bg += iobDelta + predDev
@@ -413,13 +417,29 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private fun getActivityAtMinute(
         minutes:        Int,
         iobArray:       Array<IobTotal>,
-        learnedProfile: LearnedInsulinProfile
+        learnedProfile: LearnedInsulinProfile,
+        systemDiaMins:  Double
     ): Double {
-        val idx = minutes / 5
-        if (idx < iobArray.size) return max(0.0, iobArray[idx].activity)
-        val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
-        val extraTicks = idx - iobArray.size + 1
-        return max(0.0, lastActivity * Math.exp(-extraTicks * 0.05))
+        val learnedDiaMins = learnedProfile.safeDiaMinutes
+        // timeScale > 1 means learned insulin is FASTER (shorter DIA)
+        // timeScale < 1 means learned insulin is SLOWER (longer DIA)
+        val timeScale = systemDiaMins / learnedDiaMins
+
+        val scaledMinutes = minutes * timeScale
+        val idx = (scaledMinutes / 5.0).toInt()
+
+        val baseActivity = if (idx < iobArray.size) {
+            iobArray[idx].activity
+        } else {
+            // Exponential decay from the end of the array if we ran off
+            val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
+            val extraTicks = idx - iobArray.size + 1
+            lastActivity * Math.exp(-extraTicks * 0.05)
+        }
+
+        // Multiply by timeScale to preserve AUC.
+        // e.g. if DIA is half as long, activity at each point must be twice as high.
+        return max(0.0, baseActivity * timeScale)
     }
 
     companion object {
