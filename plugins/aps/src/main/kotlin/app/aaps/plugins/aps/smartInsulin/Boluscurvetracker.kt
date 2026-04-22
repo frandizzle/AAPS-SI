@@ -58,7 +58,6 @@ class BolusCurveTracker @Inject constructor(
     companion object {
         private const val MIN_TRACK_IOB_U        = 0.6
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
-        private const val ABANDON_SPIKE_U        = 1.0   // IOB must rise ≥1.0U in one cycle while tracking to abandon
         private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
         private const val MIN_BG_DROP_MGDL       = 10.0  // ~0.5 mmol minimum drop below start (for Fasting)
         private const val MEAL_NADIR_HEADROOM    = 10.0  // Nadir can be up to 10mg/dL above start for meal modes
@@ -194,13 +193,38 @@ class BolusCurveTracker @Inject constructor(
             reset(); return
         }
 
-        // Abandon if a significant new bolus is detected while tracking.
-        // Small corrections (<0.4U) or minor basal drift are ignored to allow 
-        // the curve to finish if the impact is small.
+        // ── Abandon and Pivot Logic ──────────────────────────────────────────
+        // Refined for High-Frequency Dosing & Large UAM SMBs.
+        // We only Pivot if the new bolus is large enough to fundamentally change 
+        // the curve shape.
+        
+        // Use a relative ratio: only pivot if the new spike is > 30% of existing IOB.
+        // This allows large SMBs (e.g. 1.0U into 5.0U active) to "ride along" without
+        // resetting the learner, ensuring we actually finish a sample.
+        val existingIob = currentIob - iobSpikeWhileTracking
+        val pivotRatio  = if (existingIob > 0) iobSpikeWhileTracking / existingIob else 1.0
         val isSignificantSpike = iobSpikeWhileTracking >= 0.4
-        if (isSignificantSpike && (iobSpikeWhileTracking >= ABANDON_SPIKE_U || currentIob > iobPeak * 1.5)) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: abandoned (new bolus spike=%.2f iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking))
-            reset(); return
+        val shouldPivot = isSignificantSpike && (pivotRatio > 0.30 || iobSpikeWhileTracking >= 2.0)
+
+        if (shouldPivot) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: pivot to new bolus (spike=%.2f ratio=%.1f%% iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking, pivotRatio * 100))
+            
+            // PIVOT: Restart tracking immediately using the new spike as the baseline.
+            trackStartMs    = nowMs
+            trackMode       = mealMode
+            iobAtStart      = currentIob
+            bgAtStart       = smoothedBg
+            iobPeak         = currentIob
+            iobDeclineSeen  = false
+            bgNadir         = Double.MAX_VALUE
+            nadirTimeMs     = nowMs
+            nadirConfirmed  = false
+            bgBuffer.clear()
+            bgBuffer.add(currentBg) 
+            saveState()
+            return
+        } else if (isSignificantSpike) {
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: spike ignored (ride-along) - spike=%.2f ratio=%.1f%%".format(Locale.US, iobSpikeWhileTracking, pivotRatio * 100))
         }
 
         // Track IOB peak and confirm decline
