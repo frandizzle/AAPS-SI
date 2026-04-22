@@ -27,13 +27,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
+import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
+import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.icons.IcSettingsOff
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.overview.chips.ProfileChip
 import app.aaps.ui.compose.overview.chips.RunningModeChip
+import app.aaps.ui.compose.overview.chips.TbrChip
 import app.aaps.ui.compose.overview.chips.TempTargetChip
 
 @Composable
@@ -49,6 +52,9 @@ fun OverviewChipsColumn(
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
+    tbrState: TbrState,
+    iobUiState: IobUiState,
+    cobUiState: CobUiState,
     onNavigate: (NavigationRequest) -> Unit,
     modifier: Modifier = Modifier,
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
@@ -81,6 +87,7 @@ fun OverviewChipsColumn(
                             tempTargetState = tempTargetState,
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
+                            tbrState = tbrState,
                             onNavigate = onNavigate
                         )
                     }
@@ -103,6 +110,7 @@ fun OverviewChipsColumn(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
+                tbrState = tbrState,
                 onNavigate = onNavigate
             )
         }
@@ -213,6 +221,7 @@ private fun NarrowChips(
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
+    tbrState: TbrState,
     onNavigate: (NavigationRequest) -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {
@@ -244,17 +253,23 @@ private fun NarrowChips(
             onClick = { onNavigate(NavigationRequest.Element(ElementType.PROFILE_MANAGEMENT)) }
         )
     }
-    if (tempTargetText.isNotEmpty()) {
-        Text(
-            text = "", // Placeholder to ensure vertical consistency if needed, though spacedBy handles it
-            modifier = Modifier.height(0.dp)
-        )
-        TempTargetChip(
-            targetText = tempTargetText,
-            state = tempTargetState,
-            progress = tempTargetProgress,
-            reason = tempTargetReason,
-            onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_TARGET_MANAGEMENT)) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(AapsSpacing.small)
+    ) {
+        if (tempTargetText.isNotEmpty()) {
+            TempTargetChip(
+                targetText = tempTargetText,
+                state = tempTargetState,
+                progress = tempTargetProgress,
+                reason = tempTargetReason,
+                modifier = Modifier.weight(1f),
+                onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_TARGET_MANAGEMENT)) }
+            )
+        }
+        TbrChip(
+            state = tbrState,
+            onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) }
         )
     }
 }

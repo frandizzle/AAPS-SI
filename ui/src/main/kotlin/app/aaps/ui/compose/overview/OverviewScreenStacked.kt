@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
+import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
@@ -46,6 +47,7 @@ fun OverviewScreenStacked(
     runningMode: RM.Mode,
     runningModeText: String,
     runningModeProgress: Float,
+    tbrState: TbrState,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -61,6 +63,7 @@ fun OverviewScreenStacked(
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
+    val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
     val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
     val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
@@ -109,6 +112,9 @@ fun OverviewScreenStacked(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
+                tbrState = tbrState,
+                iobUiState = iobUiState,
+                cobUiState = cobUiState,
                 onNavigate = onNavigate,
                 siOverviewState = siOverviewState,
                 modifier = Modifier

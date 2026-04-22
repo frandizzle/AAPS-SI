@@ -55,6 +55,7 @@ import app.aaps.wear.interaction.WatchfaceConfigurationActivity
 import app.aaps.wear.interaction.actions.AcceptActivity
 import app.aaps.wear.interaction.actions.ProfileSwitchActivity
 import app.aaps.wear.tile.ActionsTileService
+import app.aaps.wear.tile.BgGraphTileService
 import app.aaps.wear.tile.RunningModeTileService
 import app.aaps.wear.tile.QuickWizardTileService
 import app.aaps.wear.tile.TempTargetTileService
@@ -233,6 +234,7 @@ class DataHandlerWear @Inject constructor(
 
                     // Trigger complications AFTER DataStore write completes
                     triggerComplicationUpdates()
+                    TileService.getUpdater(context).requestUpdate(BgGraphTileService::class.java)
                 }
 
                 LocalBroadcastManager.getInstance(context).sendBroadcast(Intent(DataLayerListenerServiceWear.INTENT_NEW_DATA))
