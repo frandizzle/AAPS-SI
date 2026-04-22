@@ -845,24 +845,22 @@ fun SmartInsulinScreen(
                         val parts = line.trim().split(":")
                         if (parts.size < 2) return@forEach
                         val name = parts[0].trim()
-                        val info = parts.drop(1).joinToString(":").trim()
 
-                        // Extract debug fields if they were added to the raw status string
-                        val shiftPeak = Regex("""shiftPeak=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
-                        val shiftDia  = Regex("""shiftDia=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
-                        val obsPeak   = Regex("""obsPeak=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
-                        val obsDia    = Regex("""obsDia=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
-                        val weight    = Regex("""weight=([-\d.]+)""").find(info)?.groupValues?.get(1) ?: "?"
+                        // Try to get the profile object so we can call debugString()
+                        val profile = when (name) {
+                            "Global Insulin" -> plugin.getLearnedInsulinProfile(MealMode.FASTING) // adjust if you have a getter
+                            else -> null
+                        }
 
                         Text("$name", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        Text(
-                            "Last shift: Peak ${shiftPeak}m  |  DIA ${shiftDia}m\n" +
-                                "Observed: Peak ${obsPeak}m  |  DIA ${obsDia}m\n" +
-                                "Weight (alpha): ${weight}",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        if (profile != null) {
+                            Text(profile.debugString(),
+                                 fontFamily = FontFamily.Monospace,
+                                 fontSize = 11.sp,
+                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            Text("— no debug data yet —", fontFamily = FontFamily.Monospace, fontSize = 11.sp)
+                        }
                         HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                     }
                 }

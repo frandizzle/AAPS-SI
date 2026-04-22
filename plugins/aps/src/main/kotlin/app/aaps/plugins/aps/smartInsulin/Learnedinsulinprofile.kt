@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import java.util.Locale
 import org.json.JSONObject
 
 /**
@@ -46,6 +47,14 @@ data class LearnedInsulinProfile(
         put("lastObservedPeak", lastObservedPeak)
         put("lastObservedDia",  lastObservedDia)
         put("lastWeight",    lastWeight)
+
+        fun debugString(): String {
+            val shiftP = if (lastShiftPeak != 0.0) "%.1f".format(Locale.US, lastShiftPeak) else "—"
+            val shiftD = if (lastShiftDia != 0.0)  "%.1f".format(Locale.US, lastShiftDia)  else "—"
+            return "last update: Peak $shiftP m  |  DIA $shiftD m\n" +
+                "observed: Peak ${"%.1f".format(Locale.US, lastObservedPeak)} m  |  DIA ${"%.1f".format(Locale.US, lastObservedDia)} m\n" +
+                "weight (α) = ${"%.3f".format(Locale.US, lastWeight)}"
+        }
     }
 
     // ── Derived helpers ──────────────────────────────────────────────────────
