@@ -233,6 +233,10 @@ fun SecondaryGraphCompose(
         if (!hasRealTimeRange || iobData == null) return@remember emptyList()
         processPoints(iobData.iob, minTimestamp, minX, maxX)
     }
+    val processedIobPredictions = remember(iobData, stableTimeRange) {
+        if (!hasRealTimeRange || iobData == null || iobData.predictions.isEmpty()) return@remember emptyList()
+        processPoints(iobData.predictions, minTimestamp, minX, maxX)
+    }
 
     // IOB treatment overlays processing
     val processedIobTreatments = remember(lastTreatmentData.value, stableTimeRange) {
@@ -308,6 +312,7 @@ fun SecondaryGraphCompose(
         processedDevSlopeMin,
         processedDeviationLines,
         processedIob,
+        processedIobPredictions,
         processedIobTreatments,
         processedCob,
         processedCarbs,
@@ -335,6 +340,12 @@ fun SecondaryGraphCompose(
                 if (processedIob.isNotEmpty()) {
                     series(x = processedIob.map { it.first }, y = processedIob.map { it.second })
                     slots.add(SeriesSlot.IobLine)
+                }
+
+                // IOB predictions
+                if (processedIobPredictions.isNotEmpty()) {
+                    series(x = processedIobPredictions.map { it.first }, y = processedIobPredictions.map { it.second })
+                    slots.add(SeriesSlot.IobPrediction)
                 }
 
                 // IOB overlays: SMBs (small, medium, large), normal boluses, extended boluses
@@ -450,6 +461,7 @@ fun SecondaryGraphCompose(
                     when (slot) {
                         is SeriesSlot.DeviationLine -> createDeviationLine(slot.type)
                         SeriesSlot.IobLine          -> iobLineStyle.iobLine
+                        SeriesSlot.IobPrediction    -> iobLineStyle.iobPredictionLine
                         SeriesSlot.SmallSmb         -> iobLineStyle.smallSmbLine
                         SeriesSlot.MediumSmb        -> iobLineStyle.mediumSmbLine
                         SeriesSlot.LargeSmb         -> iobLineStyle.largeSmbLine
@@ -654,6 +666,7 @@ fun SecondaryGraphCompose(
 private sealed class SeriesSlot {
     data class DeviationLine(val type: DeviationType) : SeriesSlot()
     data object IobLine : SeriesSlot()
+    data object IobPrediction : SeriesSlot()
     data object SmallSmb : SeriesSlot()
     data object MediumSmb : SeriesSlot()
     data object LargeSmb : SeriesSlot()
@@ -860,6 +873,7 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
 
 data class IobLineStyles(
     val iobLine: LineCartesianLayer.Line,
+    val iobPredictionLine: LineCartesianLayer.Line,
     val smallSmbLine: LineCartesianLayer.Line,
     val mediumSmbLine: LineCartesianLayer.Line,
     val largeSmbLine: LineCartesianLayer.Line,
@@ -893,6 +907,17 @@ fun rememberIobLineStyles(): IobLineStyles {
                 areaFill = LineCartesianLayer.AreaFill.single(
                     Fill(Brush.verticalGradient(listOf(iobColor.copy(alpha = 1f), Color.Transparent)))
                 ),
+                interpolator = Square
+            ),
+            iobPredictionLine = LineCartesianLayer.Line(
+                fill = LineCartesianLayer.LineFill.single(Fill(iobColor)),
+                stroke = LineCartesianLayer.LineStroke.Dashed(
+                    thickness = 1.dp,
+                    cap = StrokeCap.Round,
+                    dashLength = 1.dp,
+                    gapLength = 2.dp
+                ),
+                areaFill = null,
                 interpolator = Square
             ),
             smallSmbLine = LineCartesianLayer.Line(
