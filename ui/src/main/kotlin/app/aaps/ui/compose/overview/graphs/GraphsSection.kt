@@ -117,20 +117,20 @@ fun GraphsSection(
         initialScroll = Scroll.Absolute.End
     )
 
-    // 2. Create a variable to hold your exact pixel position when you start long-pressing
     val lockedScroll = remember { mutableStateOf(0f) }
 
-    // 3. The exact moment 'scrubbing' turns true, freeze the current pixel position
     LaunchedEffect(scrubbing) {
         if (scrubbing) {
+            // 1. Freeze the exact pixel position
             lockedScroll.value = bgScrollState.value
-        }
-    }
 
-    // 4. The Snap-Back: If Vico tries to slide the graph while you are scrubbing, instantly snap it back!
-    LaunchedEffect(bgScrollState.value) {
-        if (scrubbing && bgScrollState.value != lockedScroll.value) {
-            bgScrollState.scroll(Scroll.Absolute.pixels(lockedScroll.value))
+            // 2. Overpower Vico's physics engine every single frame
+            while (true) {
+                if (kotlin.math.abs(bgScrollState.value - lockedScroll.value) > 0.5f) {
+                    bgScrollState.scroll(Scroll.Absolute.pixels(lockedScroll.value))
+                }
+                kotlinx.coroutines.delay(16) // Runs at 60fps only while your finger is down
+            }
         }
     }
 

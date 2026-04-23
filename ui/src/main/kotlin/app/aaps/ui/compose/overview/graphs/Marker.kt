@@ -49,10 +49,12 @@ fun rememberMarker(
         style = TextStyle(
             color = onSurfaceColor,
             fontSize = 13.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Start // <-- Changed to Start
+            textAlign = androidx.compose.ui.text.style.TextAlign.Start
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
+        // 👇 This 48dp bottom margin pushes the box up and perfectly clears your thumb!
+        margins = Insets(start = 0.dp, top = 0.dp, end = 0.dp, bottom = 48.dp),
         lineCount = 3
     )
     
