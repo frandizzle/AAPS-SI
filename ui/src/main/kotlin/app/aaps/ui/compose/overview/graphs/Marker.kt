@@ -46,9 +46,14 @@ fun rememberMarker(
     }
 
     val label = rememberTextComponent(
-        style = TextStyle(color = onSurfaceColor, fontSize = 13.sp),
+        style = TextStyle(
+            color = onSurfaceColor,
+            fontSize = 13.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center // Optional: Centers the 3 lines nicely
+        ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
+        lineCount = 3 // <-- THIS IS THE FIX
     )
     
     val guideline = rememberLineComponent(
