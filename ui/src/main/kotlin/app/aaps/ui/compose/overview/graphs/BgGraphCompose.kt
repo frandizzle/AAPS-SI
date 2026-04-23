@@ -368,12 +368,15 @@ fun BgGraphCompose(
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
     val decorations = remember(nowLine) { listOf(nowLine) }
+
+    // 👇 1. Move this line UP (previously it was down at line 310)
+    val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
+
+    // 👇 2. Now 'scrubbing' is defined and can be passed here
     val marker = rememberMarker(minTimestamp, scrubbing, getBgDetails)
+
     val startAxisRangeProvider = remember(maxX) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX) }
     val endAxisRangeProvider = remember(maxX, basalMaxY) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY) }
-
-    // 9. Chart Host
-    val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
 
     // (I DELETED the scrubbingScrollConnection block from here!)
 
