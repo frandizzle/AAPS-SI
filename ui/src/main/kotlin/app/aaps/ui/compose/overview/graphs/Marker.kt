@@ -46,11 +46,15 @@ fun rememberMarker(
     }
 
     val label = rememberTextComponent(
-        style = TextStyle(color = onSurfaceColor, fontSize = 13.sp),
+        style = TextStyle(
+            color = onSurfaceColor,
+            fontSize = 13.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Start // <-- Restored!
+        ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        // 👇 Add this line to push the box upward
-        margins = Insets(bottom = 48.dp)
+        margins = Insets(bottom = 48.dp),
+        lineCount = 3 // <-- CRITICAL: Restored so your text doesn't cut off!
     )
     
     val guideline = rememberLineComponent(
