@@ -49,11 +49,11 @@ fun rememberMarker(
         style = TextStyle(
             color = onSurfaceColor,
             fontSize = 13.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center // Optional: Centers the 3 lines nicely
+            textAlign = androidx.compose.ui.text.style.TextAlign.Start // <-- Changed to Start
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        lineCount = 3 // <-- THIS IS THE FIX
+        lineCount = 3
     )
     
     val guideline = rememberLineComponent(
