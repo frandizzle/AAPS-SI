@@ -100,15 +100,21 @@ fun GraphsSection(
     // In simple mode: fixed layout (BG, IOB+BAS, COB — no overlays, no editing)
     val graphConfig = if (isSimpleMode) SIMPLE_MODE_CONFIG else savedGraphConfig
 
-    // BG graph - primary interactive
-    val bgScrollState = rememberVicoScrollState(
-        scrollEnabled = true,
-        initialScroll = Scroll.Absolute.End
-    )
     val bgZoomState = rememberVicoZoomState(
         zoomEnabled = true,
         initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES),
         maxZoom = Zoom.x(MIN_GRAPH_ZOOM_MINUTES)
+    )
+
+    // Collect nowTimestamp ONCE so all graphs use the same value (avoids separate recompositions every 30s)
+    val nowTimestamp by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
+
+    val scrubbing by graphViewModel.isScrubbing.collectAsStateWithLifecycle()
+
+    // BG graph - primary interactive
+    val bgScrollState = rememberVicoScrollState(
+        scrollEnabled = !scrubbing,
+        initialScroll = Scroll.Absolute.End
     )
 
     // Pre-allocate secondary graph scroll/zoom states (up to MAX_SECONDARY_GRAPHS)
@@ -123,9 +129,6 @@ fun GraphsSection(
     val sec3zoom = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES))
     val sec4scroll = rememberVicoScrollState(scrollEnabled = false, initialScroll = Scroll.Absolute.End)
     val sec4zoom = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES))
-
-    // Collect nowTimestamp ONCE so all graphs use the same value (avoids separate recompositions every 30s)
-    val nowTimestamp by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
 
     // Collect time range ONCE so all graphs use the exact same values in the same frame.
     // Without this, each graph independently collects derivedTimeRange via

@@ -217,6 +217,13 @@ class GraphViewModel @AssistedInject constructor(
     // NSClient status (pump/openAPS/uploader from Nightscout)
     val nsClientStatusFlow = cache.nsClientStatusFlow
 
+    private val _isScrubbing = MutableStateFlow(false)
+    val isScrubbing: StateFlow<Boolean> = _isScrubbing.asStateFlow()
+
+    fun setScrubbing(active: Boolean) {
+        _isScrubbing.value = active
+    }
+
     // =========================================================================
     // BG Info Section (Overview info display)
     // =========================================================================
