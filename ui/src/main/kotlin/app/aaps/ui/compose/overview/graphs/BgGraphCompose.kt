@@ -544,13 +544,13 @@ fun BgGraphCompose(
                 ),
                 guideline = LineComponent(fill = Fill(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
             ),
+            marker = marker,
             decorations = decorations,
             getXStep = { 1.0 }
         ),
         modelProducer = modelProducer,
         modifier = modifier.fillMaxWidth(),
         scrollState = scrollState,
-        zoomState = zoomState,
-        marker = marker
+        zoomState = zoomState
     )
 }
