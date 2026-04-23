@@ -101,11 +101,41 @@ fun BgGraphCompose(
     val activityData by viewModel.activityGraphFlow.collectAsStateWithLifecycle()
     val chartConfig by viewModel.chartConfigFlow.collectAsStateWithLifecycle()
 
+    val iobData by viewModel.iobGraphFlow.collectAsStateWithLifecycle()
+
     // Use derived time range or fall back to default (last GRAPH_TIME_RANGE_HOURS hours)
     val (minTimestamp, maxTimestamp) = derivedTimeRange ?: run {
         val now = System.currentTimeMillis()
         val dayAgo = now - Constants.GRAPH_TIME_RANGE_HOURS * 60 * 60 * 1000L
         dayAgo to now
+    }
+
+    // Build lookup for BG details (BG, Delta, IOB) at any timestamp
+    val getBgDetails = remember(bgReadings, bucketedData, iobData, viewModel.profileUtil) {
+        { ts: Long ->
+            val allBg = bgReadings + bucketedData
+            val closest = allBg.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
+            if (closest != null && kotlin.math.abs(closest.timestamp - ts) < 5 * 60000) {
+                val isMmol = viewModel.profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
+                val valStr = if (isMmol) "%.1f".format(closest.value) else "%.0f".format(closest.value)
+                
+                // Find previous reading to compute delta
+                val prev = allBg.filter { it.timestamp < closest.timestamp }.maxByOrNull { it.timestamp }
+                val deltaStr = if (prev != null) {
+                    val delta = closest.value - prev.value
+                    if (isMmol) " (%+.1f)".format(delta) else " (%+0.0f)".format(delta)
+                } else ""
+                
+                // Find closest IOB
+                val closestIob = iobData.iob.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
+                val iobStr = if (closestIob != null && kotlin.math.abs(closestIob.timestamp - ts) < 5 * 60000) {
+                    "\nIOB: %.2f U".format(closestIob.value)
+                } else ""
+                
+                val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(closest.timestamp))
+                "$valStr$deltaStr | $timeStr$iobStr"
+            } else null
+        }
     }
 
     // Single model producer shared by all layers
@@ -490,7 +520,7 @@ fun BgGraphCompose(
         CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY)
     }
 
-    val marker = rememberMarker(minTimestamp, viewModel.profileUtil)
+    val marker = rememberMarker(minTimestamp, getBgDetails)
 
     // =========================================================================
     // Chart — multi layer
