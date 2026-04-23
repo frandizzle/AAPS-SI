@@ -81,7 +81,7 @@ fun rememberMarker(
         },
         // 👇 Change this back to Top
         // This pins the box to the top of the chart so it only moves left/right.
-        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
+        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )
 }

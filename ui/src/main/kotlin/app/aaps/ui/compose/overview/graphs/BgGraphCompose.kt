@@ -364,21 +364,36 @@ fun BgGraphCompose(
     }
     val activityLines = remember(activityHistLine, activityPredLine) { listOf(activityHistLine, activityPredLine) }
 
-    // 8. Marker & Decorations
+// 8. Marker & Range Providers
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
     val decorations = remember(nowLine) { listOf(nowLine) }
 
-    // 👇 1. Move this line UP (previously it was down at line 310)
     val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
-
-    // 👇 2. Now 'scrubbing' is defined and can be passed here
     val marker = rememberMarker(minTimestamp, scrubbing, getBgDetails)
 
-    val startAxisRangeProvider = remember(maxX) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX) }
-    val endAxisRangeProvider = remember(maxX, basalMaxY) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY) }
+    // 👇 1. Calculate the headroom buffer
+    val chartMaxY = remember(bgReadings, bucketedData, chartConfig) {
+        val allBgValues = (bgReadings + bucketedData).map { it.value }
+        val maxBgValue = if (allBgValues.isNotEmpty()) allBgValues.max() else chartConfig.highMark
 
-    // (I DELETED the scrubbingScrollConnection block from here!)
+        // Add 30% buffer so the marker box has a "runway" at the top
+        maxOf(maxBgValue * 1.3, chartConfig.highMark + 40.0)
+    }
+
+    // 👇 2. Update the provider to use that maxY
+    val startAxisRangeProvider = remember(maxX, chartMaxY) {
+        CartesianLayerRangeProvider.fixed(
+            minX = 0.0,
+            maxX = maxX,
+            minY = 0.0,
+            maxY = chartMaxY
+        )
+    }
+
+    val endAxisRangeProvider = remember(maxX, basalMaxY) {
+        CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY)
+    }
 
     Box(
         modifier = modifier
