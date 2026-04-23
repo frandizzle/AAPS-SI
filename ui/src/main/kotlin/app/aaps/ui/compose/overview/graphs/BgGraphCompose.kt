@@ -399,22 +399,7 @@ fun BgGraphCompose(
     val startAxisRangeProvider = remember(maxX) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX) }
     val endAxisRangeProvider = remember(maxX, basalMaxY) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY) }
 
-// 9. Chart Host
-    val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
-
-    val scrollLockConnection = remember(scrubbing) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                // If scrubbing, consume the horizontal (X) scroll so Vico stays completely still
-                return if (scrubbing) Offset(available.x, 0f) else Offset.Zero
-            }
-            override suspend fun onPreFling(available: Velocity): Velocity {
-                // Also block flings to prevent drift
-                return if (scrubbing) Velocity(available.x, 0f) else Velocity.Zero
-            }
-        }
-    }
-
+    // 9. Chart Host
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -426,7 +411,6 @@ fun BgGraphCompose(
                     onDrag = { _, _ -> }
                 )
             }
-            .nestedScroll(scrollLockConnection) // <-- Drop the interceptor right here!
     ) {
         CartesianChartHost(
             chart = rememberCartesianChart(

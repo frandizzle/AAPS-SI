@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -111,11 +112,22 @@ fun GraphsSection(
 
     val scrubbing by graphViewModel.isScrubbing.collectAsStateWithLifecycle()
 
-    // BG graph - primary interactive
-    val bgScrollState = rememberVicoScrollState(
-        scrollEnabled = !scrubbing,
-        initialScroll = Scroll.Absolute.End
-    )
+    // 1. Hold the exact pixel position of the scroll continuously
+    val currentScrollPixels = remember { mutableStateOf<Float?>(null) }
+
+    // 2. Use a 'key' block. Whenever 'scrubbing' changes, Compose instantly recreates this state.
+    val bgScrollState = key(scrubbing) {
+        rememberVicoScrollState(
+            scrollEnabled = !scrubbing,
+            // If we have a saved position, resume exactly there. Otherwise, start at the end.
+            initialScroll = currentScrollPixels.value?.let { Scroll.Absolute.pixels(it) } ?: Scroll.Absolute.End
+        )
+    }
+
+    // 3. Keep our saved pixel value updated on every frame so it's ready for the next toggle
+    LaunchedEffect(bgScrollState.value) {
+        currentScrollPixels.value = bgScrollState.value
+    }
 
     // Pre-allocate secondary graph scroll/zoom states (up to MAX_SECONDARY_GRAPHS)
     // These are always created to keep Compose's remember slots stable
