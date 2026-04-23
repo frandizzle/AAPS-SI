@@ -374,18 +374,31 @@ fun BgGraphCompose(
     val endAxisRangeProvider = remember(maxX, basalMaxY) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY) }
 
     // 9. Chart Host
+    // 9. Chart Host
+    val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
+
+    val scrubbingScrollConnection = remember(scrubbing) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // If scrubbing, consume ALL horizontal (X) scroll before Vico sees it
+                return if (scrubbing) Offset(available.x, 0f) else Offset.Zero
+            }
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                // Also kill horizontal flings while scrubbing
+                return if (scrubbing) Velocity(available.x, 0f) else Velocity.Zero
+            }
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .nestedScroll(scrubbingScrollConnection) // <-- 🎯 The Scalpel
             .pointerInput(Unit) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { viewModel.setScrubbing(true) },
                     onDragEnd = { viewModel.setScrubbing(false) },
                     onDragCancel = { viewModel.setScrubbing(false) },
-                    onDrag = { change, _ ->
-                        // 👇 CRUCIAL FIX: Swallow the drag event completely!
-                        change.consume()
-                    }
+                    onDrag = { _, _ -> } // Leave empty! Do not consume here!
                 )
             }
     ) {
