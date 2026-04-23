@@ -382,7 +382,10 @@ fun BgGraphCompose(
                     onDragStart = { viewModel.setScrubbing(true) },
                     onDragEnd = { viewModel.setScrubbing(false) },
                     onDragCancel = { viewModel.setScrubbing(false) },
-                    onDrag = { _, _ -> }
+                    onDrag = { change, _ ->
+                        // 👇 CRUCIAL FIX: Swallow the drag event completely!
+                        change.consume()
+                    }
                 )
             }
     ) {

@@ -121,15 +121,15 @@ fun GraphsSection(
 
     LaunchedEffect(scrubbing) {
         if (scrubbing) {
-            // 1. Freeze the exact pixel position
+            // 1. Freeze the exact pixel position the moment you touch
             lockedScroll.value = bgScrollState.value
 
-            // 2. Overpower Vico's physics engine every single frame
+            // 2. Kill any residual fling momentum instantly
             while (true) {
                 if (kotlin.math.abs(bgScrollState.value - lockedScroll.value) > 0.5f) {
                     bgScrollState.scroll(Scroll.Absolute.pixels(lockedScroll.value))
                 }
-                kotlinx.coroutines.delay(16) // Runs at 60fps only while your finger is down
+                kotlinx.coroutines.delay(16)
             }
         }
     }
