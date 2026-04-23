@@ -67,15 +67,15 @@ fun rememberMarker(
             DefaultCartesianMarker.ValueFormatter { _, targets ->
                 val target = targets.firstOrNull() ?: return@ValueFormatter ""
                 val x = target.x
-                
+
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
-                // Use plain multi-line string first to ensure it displays without clipping
                 "${data.time}\n🩸 %.1f ${data.deltaText}\n💉 ${data.iobText}".format(data.bgValue)
             }
         },
-        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
+        // 👇 Changed from Top to AroundPoint to stop it from squishing the graph
+        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )
 }
