@@ -528,6 +528,8 @@ fun BgGraphCompose(
                 rangeProvider = startAxisRangeProvider,
                 verticalAxisPosition = Axis.Position.Vertical.Start
             ),
+            marker = marker,
+            decorations = decorations,
             startAxis = VerticalAxis.rememberStart(
                 itemPlacer = VerticalAxis.ItemPlacer.step({ 1.0 }),
                 label = rememberTextComponent(
@@ -544,8 +546,6 @@ fun BgGraphCompose(
                 ),
                 guideline = LineComponent(fill = Fill(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
             ),
-            marker = marker,
-            decorations = decorations,
             getXStep = { 1.0 }
         ),
         modelProducer = modelProducer,

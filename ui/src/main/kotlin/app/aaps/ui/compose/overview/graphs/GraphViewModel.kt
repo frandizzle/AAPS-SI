@@ -153,7 +153,7 @@ class GraphViewModel @AssistedInject constructor(
     private val constraintChecker: ConstraintsChecker,
     private val profileFunction: ProfileFunction,
     private val processedDeviceStatusData: ProcessedDeviceStatusData,
-    private val profileUtil: ProfileUtil,
+    public val profileUtil: ProfileUtil,
     private val activePlugin: ActivePlugin,
     private val processedTbrEbData: ProcessedTbrEbData
 ) : ViewModel() {
