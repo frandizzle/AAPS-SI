@@ -21,10 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
-import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
+import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.main.TempTargetChipState
@@ -47,7 +47,6 @@ fun OverviewScreenStacked(
     runningMode: RM.Mode,
     runningModeText: String,
     runningModeProgress: Float,
-    tbrState: TbrState,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -59,14 +58,14 @@ fun OverviewScreenStacked(
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
-    val config = LocalConfig.current
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
-    val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
     val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
     val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
+
+    val config = LocalConfig.current
 
     var statusExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -112,9 +111,6 @@ fun OverviewScreenStacked(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
-                tbrState = tbrState,
-                iobUiState = iobUiState,
-                cobUiState = cobUiState,
                 onNavigate = onNavigate,
                 siOverviewState = siOverviewState,
                 modifier = Modifier
@@ -127,6 +123,7 @@ fun OverviewScreenStacked(
             iobUiState = iobUiState,
             tbrUiState = tbrUiState,
             smbUiState = smbUiState,
+            onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp)

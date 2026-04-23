@@ -62,11 +62,14 @@ fun TbrChip(
 
 @Composable
 internal fun TbrChip(
-    modifier: Modifier = Modifier,
     state: TbrUiState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
     showIcon: Boolean = true
 ) {
+    val haptic = LocalHapticFeedback.current
     Surface(
+        onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() },
         shape = RoundedCornerShape(AapsSpacing.chipCornerRadius),
         color = ElementType.INSULIN.color().copy(alpha = 0.15f),
         modifier = modifier.height(AapsSpacing.chipHeight)
@@ -104,7 +107,7 @@ private fun TbrState.toIcon(): ImageVector = when (this) {
 @Composable
 private fun TbrChipUpPreview() {
     MaterialTheme {
-        TbrChip(state = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP))
+        TbrChip(state = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP), onClick = {})
     }
 }
 

@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
-import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.icons.IcSettingsOff
@@ -54,9 +53,6 @@ fun OverviewChipsColumn(
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
-    tbrState: TbrState,
-    iobUiState: IobUiState,
-    cobUiState: CobUiState,
     onNavigate: (NavigationRequest) -> Unit,
     modifier: Modifier = Modifier,
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
@@ -89,7 +85,6 @@ fun OverviewChipsColumn(
                             tempTargetState = tempTargetState,
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
-                            tbrState = tbrState,
                             onNavigate = onNavigate
                         )
                     }
@@ -112,7 +107,6 @@ fun OverviewChipsColumn(
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
-                tbrState = tbrState,
                 onNavigate = onNavigate
             )
         }
@@ -223,7 +217,6 @@ private fun NarrowChips(
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
-    tbrState: TbrState,
     onNavigate: (NavigationRequest) -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {
@@ -269,9 +262,5 @@ private fun NarrowChips(
                 onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_TARGET_MANAGEMENT)) }
             )
         }
-        TbrChip(
-            state = tbrState,
-            onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) }
-        )
     }
 }
