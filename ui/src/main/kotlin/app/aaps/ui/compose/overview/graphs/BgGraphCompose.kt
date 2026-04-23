@@ -490,6 +490,8 @@ fun BgGraphCompose(
         CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY)
     }
 
+    val marker = rememberMarker(minTimestamp, viewModel.profileUtil)
+
     // =========================================================================
     // Chart — multi layer
     // =========================================================================
@@ -548,6 +550,7 @@ fun BgGraphCompose(
         modelProducer = modelProducer,
         modifier = modifier.fillMaxWidth(),
         scrollState = scrollState,
-        zoomState = zoomState
+        zoomState = zoomState,
+        marker = marker
     )
 }
