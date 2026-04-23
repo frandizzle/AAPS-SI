@@ -203,6 +203,7 @@ fun BgGraphCompose(
         if (regularPoints.isEmpty() && bucketedPoints.isEmpty()) return
 
         modelProducer.runTransaction {
+            // Block 1: BG & Predictions
             lineSeries {
                 val activeSeries = mutableListOf<String>()
                 if (regularPoints.isNotEmpty()) {
@@ -232,24 +233,7 @@ fun BgGraphCompose(
                 series(x = normalizerX(maxX), y = NORMALIZER_Y)
                 activeSeriesState.value = activeSeries.toList()
             }
-            lineSeries {
-                if (currentBasalData.profileBasal.size >= 2) {
-                    val pts = currentBasalData.profileBasal
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
-                        .sortedBy { it.first }
-                    series(x = pts.map { it.first }, y = pts.map { it.second })
-                } else {
-                    series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
-                }
-                if (currentBasalData.actualBasal.size >= 2) {
-                    val pts = currentBasalData.actualBasal
-                        .map { timestampToX(it.timestamp, minTimestamp) to it.value }
-                        .sortedBy { it.first }
-                    series(x = pts.map { it.first }, y = pts.map { it.second })
-                } else {
-                    series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
-                }
-            }
+            // Block 2: Target Line
             lineSeries {
                 if (currentTargetData.targets.size >= 2) {
                     val pts = currentTargetData.targets
@@ -260,17 +244,7 @@ fun BgGraphCompose(
                     series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
                 }
             }
-            lineSeries {
-                if (currentEpsPoints.isNotEmpty()) {
-                    val epsBaseline = currentBasalData.maxBasal * 4.0 * 0.75
-                    val pts = currentEpsPoints
-                        .map { timestampToX(it.timestamp, minTimestamp) to (it.originalPercentage / 100.0 * epsBaseline) }
-                        .sortedBy { it.first }
-                    series(x = pts.map { it.first }, y = pts.map { it.second })
-                } else {
-                    series(x = listOf(0.0, 1.0), y = listOf(0.0, 0.0))
-                }
-            }
+            // Block 3: Activity
             lineSeries {
                 val maxAct = currentActivityData.maxActivity
                 if (!showActivity || maxAct <= 0.0 || currentActivityData.activity.size < 2) {
@@ -414,31 +388,19 @@ fun BgGraphCompose(
     ) {
         CartesianChartHost(
             chart = rememberCartesianChart(
-                // Layer 1: BG & Predictions (Maps to the 1st lineSeries)
+                // Layer 1: BG & Predictions
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(bgLines),
                     rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                // Layer 2: Basal (Maps to the 2nd lineSeries)
-                rememberLineCartesianLayer(
-                    lineProvider = LineCartesianLayer.LineProvider.series(basalLines),
-                    rangeProvider = endAxisRangeProvider,
-                    verticalAxisPosition = Axis.Position.Vertical.End
-                ),
-                // Layer 3: Target Line (Maps to the 3rd lineSeries)
+                // Layer 2: Target Line
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(targetLines),
-                    rangeProvider = startAxisRangeProvider, // Targets share the BG scale
+                    rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                // Layer 4: EPS (Maps to the 4th lineSeries)
-                rememberLineCartesianLayer(
-                    lineProvider = LineCartesianLayer.LineProvider.series(epsLines),
-                    rangeProvider = endAxisRangeProvider,
-                    verticalAxisPosition = Axis.Position.Vertical.End
-                ),
-                // Layer 5: Activity (Maps to the 5th lineSeries)
+                // Layer 3: Activity
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(activityLines),
                     rangeProvider = startAxisRangeProvider,
