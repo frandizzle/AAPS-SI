@@ -30,6 +30,7 @@ data class MarkerData(
 @Composable
 fun rememberMarker(
     minTimestamp: Long,
+    isVisible: Boolean, // 👇 Add this parameter
     getDetails: (Long) -> MarkerData?
 ): DefaultCartesianMarker {
     val surfaceColor = MaterialTheme.colorScheme.surface
@@ -49,33 +50,38 @@ fun rememberMarker(
         style = TextStyle(
             color = onSurfaceColor,
             fontSize = 13.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Start // <-- Restored!
+            // 👇 Ensures text aligns nicely on the left
+            textAlign = androidx.compose.ui.text.style.TextAlign.Start
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
+        // 👇 The 48dp margin pushes it up above your thumb
         margins = Insets(bottom = 48.dp),
-        lineCount = 3 // <-- CRITICAL: Restored so your text doesn't cut off!
+        // 👇 CRITICAL: Allows all 3 lines to show
+        lineCount = 3
     )
-    
+
     val guideline = rememberLineComponent(
-        fill = Fill(onSurfaceColor.copy(alpha = 0.2f)),
+        // 👇 Hide the line unless we are scrubbing
+        fill = Fill(if (isVisible) onSurfaceColor.copy(alpha = 0.2f) else Color.Transparent),
         thickness = 2.dp,
     )
 
     return rememberDefaultCartesianMarker(
         label = label,
-        valueFormatter = remember(minTimestamp, getDetails) {
+        valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
+                // 👇 Hide the text box completely unless we are scrubbing
+                if (!isVisible) return@ValueFormatter ""
+
                 val target = targets.firstOrNull() ?: return@ValueFormatter ""
                 val x = target.x
-
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
                 "${data.time}\n🩸 %.1f ${data.deltaText}\n💉 ${data.iobText}".format(data.bgValue)
             }
         },
-        // 👇 Changed from Top to AroundPoint to stop it from squishing the graph
         labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )

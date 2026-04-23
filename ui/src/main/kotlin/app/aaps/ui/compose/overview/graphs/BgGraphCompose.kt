@@ -368,8 +368,7 @@ fun BgGraphCompose(
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
     val decorations = remember(nowLine) { listOf(nowLine) }
-    val marker = rememberMarker(minTimestamp, getBgDetails)
-
+    val marker = rememberMarker(minTimestamp, scrubbing, getBgDetails)
     val startAxisRangeProvider = remember(maxX) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX) }
     val endAxisRangeProvider = remember(maxX, basalMaxY) { CartesianLayerRangeProvider.fixed(minX = 0.0, maxX = maxX, minY = 0.0, maxY = basalMaxY) }
 
