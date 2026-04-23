@@ -134,22 +134,22 @@ fun BgGraphCompose(
             val closest = allBg.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
             if (closest != null && kotlin.math.abs(closest.timestamp - ts) < 5 * 60000) {
                 val isMmol = viewModel.profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
-                
+
                 // Find previous reading to compute delta
                 val prev = allBg.filter { it.timestamp < closest.timestamp }.maxByOrNull { it.timestamp }
                 val deltaText = if (prev != null) {
                     val delta = closest.value - prev.value
                     if (isMmol) "(%+.1f)".format(delta) else "(%+0.0f)".format(delta)
                 } else ""
-                
+
                 // Find closest IOB
                 val closestIob = iobData.iob.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
                 val iobText = if (closestIob != null && kotlin.math.abs(closestIob.timestamp - ts) < 5 * 60000) {
                     "%.2f U".format(closestIob.value)
                 } else "—"
-                
+
                 val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(closest.timestamp))
-                
+
                 val bgColor = when {
                     isMmol -> when {
                         closest.value <= 3.9 -> Color(0xFFE53935)
@@ -414,9 +414,33 @@ fun BgGraphCompose(
     ) {
         CartesianChartHost(
             chart = rememberCartesianChart(
-                // Keep ONLY the BG layer
+                // Layer 1: BG & Predictions (Maps to the 1st lineSeries)
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(bgLines),
+                    rangeProvider = startAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.Start
+                ),
+                // Layer 2: Basal (Maps to the 2nd lineSeries)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(basalLines),
+                    rangeProvider = endAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.End
+                ),
+                // Layer 3: Target Line (Maps to the 3rd lineSeries)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(targetLines),
+                    rangeProvider = startAxisRangeProvider, // Targets share the BG scale
+                    verticalAxisPosition = Axis.Position.Vertical.Start
+                ),
+                // Layer 4: EPS (Maps to the 4th lineSeries)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(epsLines),
+                    rangeProvider = endAxisRangeProvider,
+                    verticalAxisPosition = Axis.Position.Vertical.End
+                ),
+                // Layer 5: Activity (Maps to the 5th lineSeries)
+                rememberLineCartesianLayer(
+                    lineProvider = LineCartesianLayer.LineProvider.series(activityLines),
                     rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
