@@ -411,8 +411,8 @@ fun BgGraphCompose(
                     rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                // 👇 Change this line to only pass the marker if scrubbing is true
-                marker = if (scrubbing) marker else null,
+                // 👇 REVERT THIS LINE: Always pass the marker!
+                marker = marker,
                 decorations = decorations,
                 startAxis = VerticalAxis.rememberStart(
                     itemPlacer = VerticalAxis.ItemPlacer.step({ 1.0 }),
