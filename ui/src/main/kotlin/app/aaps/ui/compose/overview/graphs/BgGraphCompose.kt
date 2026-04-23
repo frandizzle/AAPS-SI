@@ -416,13 +416,14 @@ fun BgGraphCompose(
                     rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                // Layer 3: Activity
+// Layer 3: Activity
                 rememberLineCartesianLayer(
                     lineProvider = LineCartesianLayer.LineProvider.series(activityLines),
                     rangeProvider = startAxisRangeProvider,
                     verticalAxisPosition = Axis.Position.Vertical.Start
                 ),
-                marker = marker,
+                // 👇 Change this line to only pass the marker if scrubbing is true
+                marker = if (scrubbing) marker else null,
                 decorations = decorations,
                 startAxis = VerticalAxis.rememberStart(
                     itemPlacer = VerticalAxis.ItemPlacer.step({ 1.0 }),

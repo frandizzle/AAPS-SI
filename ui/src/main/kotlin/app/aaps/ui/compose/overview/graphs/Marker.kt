@@ -46,16 +46,11 @@ fun rememberMarker(
     }
 
     val label = rememberTextComponent(
-        style = TextStyle(
-            color = onSurfaceColor,
-            fontSize = 13.sp,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Start
-        ),
+        style = TextStyle(color = onSurfaceColor, fontSize = 13.sp),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        // 👇 This 48dp bottom margin pushes the box up and perfectly clears your thumb!
-        margins = Insets(start = 0.dp, top = 0.dp, end = 0.dp, bottom = 48.dp),
-        lineCount = 3
+        // 👇 Add this line to push the box upward
+        margins = Insets(bottom = 48.dp)
     )
     
     val guideline = rememberLineComponent(
