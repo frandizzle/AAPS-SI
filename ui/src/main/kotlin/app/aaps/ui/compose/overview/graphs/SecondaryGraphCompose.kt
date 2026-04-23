@@ -911,7 +911,7 @@ fun rememberIobLineStyles(): IobLineStyles {
             ),
             iobPredictionLine = LineCartesianLayer.Line(
                 fill = LineCartesianLayer.LineFill.single(Fill(iobColor)),
-                stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 1.dp),
+                stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),
                 areaFill = null,
                 interpolator = Square
             ),
