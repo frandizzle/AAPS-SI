@@ -826,6 +826,9 @@ class OverviewDataCacheImpl @AssistedInject constructor(
 
     private suspend fun rebuildBasalGraph() {
         val (fromTime, toTime) = graphTimeRange() ?: return
+        var endTime = toTime
+        loop.lastRun?.constraintsProcessed?.let { endTime = maxOf(it.latestPredictionsTime, endTime) }
+
         val profileBasal = mutableListOf<GraphDataPoint>()
         val actualBasal = mutableListOf<GraphDataPoint>()
         var lastProfileBasal = -1.0
@@ -833,7 +836,7 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         var maxBasal = 0.0
 
         var time = fromTime
-        while (time < toTime) {
+        while (time < endTime) {
             val profile = profileFunction.getProfile(time)
             if (profile == null) {
                 time += 60 * 1000L
@@ -857,8 +860,8 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         }
 
         // Final points
-        if (lastProfileBasal >= 0.0) profileBasal.add(GraphDataPoint(toTime, lastProfileBasal))
-        if (lastActualBasal >= 0.0) actualBasal.add(GraphDataPoint(toTime, lastActualBasal))
+        if (lastProfileBasal >= 0.0) profileBasal.add(GraphDataPoint(endTime, lastProfileBasal))
+        if (lastActualBasal >= 0.0) actualBasal.add(GraphDataPoint(endTime, lastActualBasal))
 
         _basalGraphFlow.value = BasalGraphData(profileBasal, actualBasal, maxBasal)
     }
