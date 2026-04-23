@@ -30,7 +30,7 @@ data class MarkerData(
 @Composable
 fun rememberMarker(
     minTimestamp: Long,
-    isVisible: Boolean, // 👇 Add this parameter
+    isVisible: Boolean,
     getDetails: (Long) -> MarkerData?
 ): DefaultCartesianMarker {
     val surfaceColor = MaterialTheme.colorScheme.surface
@@ -50,19 +50,17 @@ fun rememberMarker(
         style = TextStyle(
             color = onSurfaceColor,
             fontSize = 13.sp,
-            // 👇 Ensures text aligns nicely on the left
             textAlign = androidx.compose.ui.text.style.TextAlign.Start
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        // 👇 The 48dp margin pushes it up above your thumb
-        margins = Insets(bottom = 48.dp),
-        // 👇 CRITICAL: Allows all 3 lines to show
+        // 👇 Change bottom margin to top margin.
+        // This gives it a small 8dp gap from the top of the graph.
+        margins = Insets(top = 8.dp),
         lineCount = 3
     )
 
     val guideline = rememberLineComponent(
-        // 👇 Hide the line unless we are scrubbing
         fill = Fill(if (isVisible) onSurfaceColor.copy(alpha = 0.2f) else Color.Transparent),
         thickness = 2.dp,
     )
@@ -71,7 +69,6 @@ fun rememberMarker(
         label = label,
         valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
-                // 👇 Hide the text box completely unless we are scrubbing
                 if (!isVisible) return@ValueFormatter ""
 
                 val target = targets.firstOrNull() ?: return@ValueFormatter ""
@@ -82,7 +79,9 @@ fun rememberMarker(
                 "${data.time}\n🩸 %.1f ${data.deltaText}\n💉 ${data.iobText}".format(data.bgValue)
             }
         },
-        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
+        // 👇 Change this back to Top
+        // This pins the box to the top of the chart so it only moves left/right.
+        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
         guideline = guideline,
     )
 }
