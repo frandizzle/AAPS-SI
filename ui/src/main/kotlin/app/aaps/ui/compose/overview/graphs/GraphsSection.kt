@@ -112,21 +112,26 @@ fun GraphsSection(
 
     val scrubbing by graphViewModel.isScrubbing.collectAsStateWithLifecycle()
 
-    // 1. Hold the exact pixel position of the scroll continuously
-    val currentScrollPixels = remember { mutableStateOf<Float?>(null) }
+    // 1. REVERT to the simple, stable scroll state (This fixes the stuck-in-the-past bug instantly!)
+    val bgScrollState = rememberVicoScrollState(
+        initialScroll = Scroll.Absolute.End
+    )
 
-    // 2. Use a 'key' block. Whenever 'scrubbing' changes, Compose instantly recreates this state.
-    val bgScrollState = key(scrubbing) {
-        rememberVicoScrollState(
-            scrollEnabled = !scrubbing,
-            // If we have a saved position, resume exactly there. Otherwise, start at the end.
-            initialScroll = currentScrollPixels.value?.let { Scroll.Absolute.pixels(it) } ?: Scroll.Absolute.End
-        )
+    // 2. Create a variable to hold your exact pixel position when you start long-pressing
+    val lockedScroll = remember { mutableStateOf(0f) }
+
+    // 3. The exact moment 'scrubbing' turns true, freeze the current pixel position
+    LaunchedEffect(scrubbing) {
+        if (scrubbing) {
+            lockedScroll.value = bgScrollState.value
+        }
     }
 
-    // 3. Keep our saved pixel value updated on every frame so it's ready for the next toggle
+    // 4. The Snap-Back: If Vico tries to slide the graph while you are scrubbing, instantly snap it back!
     LaunchedEffect(bgScrollState.value) {
-        currentScrollPixels.value = bgScrollState.value
+        if (scrubbing && bgScrollState.value != lockedScroll.value) {
+            bgScrollState.scroll(Scroll.Absolute.pixels(lockedScroll.value))
+        }
     }
 
     // Pre-allocate secondary graph scroll/zoom states (up to MAX_SECONDARY_GRAPHS)
