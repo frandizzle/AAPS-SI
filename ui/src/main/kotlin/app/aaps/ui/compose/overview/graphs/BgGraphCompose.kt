@@ -410,7 +410,6 @@ fun BgGraphCompose(
         CartesianChartHost(
             chart = rememberCartesianChart(
                 rememberLineCartesianLayer(lineProvider = LineCartesianLayer.LineProvider.series(bgLines), rangeProvider = startAxisRangeProvider, verticalAxisPosition = Axis.Position.Vertical.Start),
-                rememberLineCartesianLayer(lineProvider = LineCartesianLayer.LineProvider.series(basalLines), rangeProvider = endAxisRangeProvider, verticalAxisPosition = Axis.Position.Vertical.End),
                 rememberLineCartesianLayer(lineProvider = LineCartesianLayer.LineProvider.series(targetLines), rangeProvider = startAxisRangeProvider, verticalAxisPosition = Axis.Position.Vertical.Start),
                 rememberLineCartesianLayer(lineProvider = LineCartesianLayer.LineProvider.series(epsLines), rangeProvider = endAxisRangeProvider, verticalAxisPosition = Axis.Position.Vertical.End),
                 rememberLineCartesianLayer(lineProvider = LineCartesianLayer.LineProvider.series(activityLines), rangeProvider = startAxisRangeProvider, verticalAxisPosition = Axis.Position.Vertical.Start),
