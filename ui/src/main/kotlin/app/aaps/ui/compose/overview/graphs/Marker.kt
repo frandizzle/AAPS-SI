@@ -1,5 +1,6 @@
 package app.aaps.ui.compose.overview.graphs
 
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -13,14 +14,12 @@ import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesi
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.Insets
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 
 /**
  * Data structure for the interactive graph tooltip.
- *
- * The bgColor field is mirrored by [rangeEmoji] so the marker can show a
- * colored swatch regardless of whether Vico honors TextStyle spans.
  */
 data class MarkerData(
     val time: String,
@@ -67,32 +66,38 @@ fun rememberMarker(
         thickness = 2.dp,
     )
 
+    // A small dot drawn at the highlighted BG point. This follows the curve
+    // (up with highs, down with lows), while the label itself stays pinned
+    // to the top of the chart so it doesn't jitter as CGM readings step.
+    val indicator = rememberShapeComponent(
+        fill = Fill(onSurfaceColor),
+        shape = CircleShape,
+        strokeFill = Fill(surfaceColor),
+        strokeThickness = 2.dp
+    )
+
     return rememberDefaultCartesianMarker(
         label = label,
         valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
                 if (!isVisible) return@ValueFormatter ""
-
-                // Anchor preference: bucketed (seriesIndex=1, smoothed) before
-                // regular (seriesIndex=0, raw) to reduce per-reading jitter.
-                val layer0Targets = targets.filter { it.toString().contains("layerIndex=0") }
-                val bgTarget = layer0Targets.firstOrNull { it.toString().contains("seriesIndex=1") }
-                    ?: layer0Targets.firstOrNull { it.toString().contains("seriesIndex=0") }
-                    ?: layer0Targets.firstOrNull()
-                    ?: targets.firstOrNull()
-                    ?: return@ValueFormatter ""
+                // CartesianMarker.Target exposes `x` directly — no cast needed.
+                val bgTarget = targets.firstOrNull() ?: return@ValueFormatter ""
 
                 val x = bgTarget.x
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
-                // Colored range indicator via emoji — rendered by the emoji font,
-                // so the color is honored regardless of Vico's text paint.
                 "${data.time}\n${data.rangeEmoji} %.1f ${data.deltaText}\n💉 ${data.iobText}"
                     .format(data.bgValue)
             }
         },
-        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
+        indicator = { _ -> indicator },
+        indicatorSize = 10.dp,
+        // Top = label stays pinned at the top of the chart area.
+        // No vertical jitter as you scrub across different BG heights.
+        // The dot indicator separately marks the point on the curve.
+        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
         guideline = guideline,
     )
 }
