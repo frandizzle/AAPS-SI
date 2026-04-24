@@ -8,13 +8,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.compose.cartesian.marker.CartesianMarker
 import com.patrykandpatrick.vico.compose.cartesian.marker.DefaultCartesianMarker
-import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesianMarker
+import com.patrykandpatrick.vico.compose.cartesian.marker.LineCartesianLayerMarkerTarget
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.Insets
+import com.patrykandpatrick.vico.compose.common.Position
+import com.patrykandpatrick.vico.compose.common.component.LineComponent
+import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
+import kotlin.math.abs
 
 /**
  * Data structure for the interactive graph tooltip.
@@ -27,6 +33,76 @@ data class MarkerData(
     val deltaText: String,
     val iobText: String
 )
+
+/**
+ * DefaultCartesianMarker subclass that paints the label at an EMA-smoothed
+ * Y position so the tooltip rises and falls with the BG curve without
+ * snapping between per-reading step changes.
+ *
+ * Only the label Y is smoothed. The guideline is drawn by the parent at
+ * the real canvas X so horizontal tracking stays precise.
+ */
+private class SmoothedCartesianMarker(
+    label: TextComponent,
+    valueFormatter: ValueFormatter,
+    guideline: LineComponent?
+) : DefaultCartesianMarker(
+    label = label,
+    valueFormatter = valueFormatter,
+    labelPosition = LabelPosition.Top, // keeps chart insets off; we override drawing anyway
+    indicator = null,
+    indicatorSize = 0.dp,
+    guideline = guideline,
+) {
+    /** EMA-smoothed label Y in canvas pixels. NaN = reset. */
+    private var smoothedY: Float = Float.NaN
+    private var lastX: Float = Float.NaN
+
+    // 0..1. Lower = more smoothing (more lag). 0.25 ≈ gentle follow.
+    private val smoothing: Float = 0.25f
+
+    override fun drawOverLayers(
+        context: CartesianDrawingContext,
+        targets: List<CartesianMarker.Target>
+    ) {
+        with(context) {
+            // Let the parent draw the guideline at its real X.
+            drawGuideline(targets)
+
+            if (targets.isEmpty()) return
+
+            val lineTarget = targets.filterIsInstance<LineCartesianLayerMarkerTarget>()
+                .firstOrNull() ?: return
+            val point = lineTarget.points.firstOrNull() ?: return
+            val rawY = point.canvasY
+            val targetX = lineTarget.canvasX
+
+            // Reset smoothing on first frame of a scrub or on a big horizontal jump.
+            val reset = smoothedY.isNaN() ||
+                (!lastX.isNaN() && abs(targetX - lastX) > 80f)
+            smoothedY = if (reset) rawY else smoothedY + smoothing * (rawY - smoothedY)
+            lastX = targetX
+
+            // Keep the label inside the plot area.
+            val text = valueFormatter.format(context, targets)
+            val labelBounds = label.getBounds(context, text, layerBounds.width.toInt())
+            val halfH = labelBounds.height / 2f
+            val drawY = smoothedY.coerceIn(
+                layerBounds.top + halfH,
+                layerBounds.bottom - halfH
+            )
+
+            label.draw(
+                context = context,
+                text = text,
+                x = targetX,
+                y = drawY,
+                verticalPosition = Position.Vertical.Center,
+                maxWidth = layerBounds.width.toInt(),
+            )
+        }
+    }
+}
 
 @Composable
 fun rememberMarker(
@@ -55,8 +131,6 @@ fun rememberMarker(
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        // No top margin — with AroundPoint, any top margin gets baked into the
-        // chart's reserved insets and eats visible plot area.
         lineCount = 3
     )
 
@@ -65,24 +139,24 @@ fun rememberMarker(
         thickness = 2.dp,
     )
 
-    return rememberDefaultCartesianMarker(
-        label = label,
-        valueFormatter = remember(minTimestamp, getDetails, isVisible) {
-            DefaultCartesianMarker.ValueFormatter { _, targets ->
-                if (!isVisible) return@ValueFormatter ""
-                val bgTarget = targets.firstOrNull() ?: return@ValueFormatter ""
-                val x = bgTarget.x
-                val timestamp = minTimestamp + (x * 60000).toLong()
-                val data = getDetails(timestamp) ?: return@ValueFormatter ""
+    val valueFormatter = remember(minTimestamp, getDetails, isVisible) {
+        DefaultCartesianMarker.ValueFormatter { _, targets ->
+            if (!isVisible) return@ValueFormatter ""
+            val bgTarget = targets.firstOrNull() ?: return@ValueFormatter ""
+            val x = bgTarget.x
+            val timestamp = minTimestamp + (x * 60000).toLong()
+            val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
-                "${data.time}\n${data.rangeEmoji} %.1f ${data.deltaText}\n💉 ${data.iobText}"
-                    .format(data.bgValue)
-            }
-        },
-        // AroundPoint: label centered on the target point, no top-space
-        // reservation. The chart keeps its full height; the label can draw
-        // outside the layer bounds because composables aren't clipped.
-        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
-        guideline = guideline,
-    )
+            "${data.time}\n${data.rangeEmoji} %.1f ${data.deltaText}\n💉 ${data.iobText}"
+                .format(data.bgValue)
+        }
+    }
+
+    return remember(label, valueFormatter, guideline) {
+        SmoothedCartesianMarker(
+            label = label,
+            valueFormatter = valueFormatter,
+            guideline = guideline,
+        )
+    }
 }
