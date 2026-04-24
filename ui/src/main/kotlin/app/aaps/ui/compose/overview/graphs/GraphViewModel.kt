@@ -49,9 +49,13 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventLoopUpdateGui
+import app.aaps.core.interfaces.rx.events.EventRefreshOverview
 import java.util.Locale
 
 /**
@@ -155,7 +159,8 @@ class GraphViewModel @AssistedInject constructor(
     private val processedDeviceStatusData: ProcessedDeviceStatusData,
     public val profileUtil: ProfileUtil,
     private val activePlugin: ActivePlugin,
-    private val processedTbrEbData: ProcessedTbrEbData
+    private val processedTbrEbData: ProcessedTbrEbData,
+    private val rxBus: RxBus
 ) : ViewModel() {
 
     @AssistedFactory
@@ -236,8 +241,15 @@ class GraphViewModel @AssistedInject constructor(
         }
     }
 
-    /** Current time updated every 30s — use as key for now line position */
-    val nowTimestamp: StateFlow<Long> = ticker30s.stateIn(
+    // Combined flow that triggers on periodic 30s ticker OR loop completion
+    private val refreshFlow = merge(
+        ticker30s,
+        rxBus.toFlow(EventLoopUpdateGui::class.java).map { System.currentTimeMillis() },
+        rxBus.toFlow(EventRefreshOverview::class.java).map { System.currentTimeMillis() }
+    )
+
+    /** Current time updated every 30s or on loop — use as key for now line position */
+    val nowTimestamp: StateFlow<Long> = refreshFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = System.currentTimeMillis()
@@ -246,7 +258,7 @@ class GraphViewModel @AssistedInject constructor(
     // BG info UI state - combines bgInfo with periodic timeAgo updates
     val bgInfoState: StateFlow<BgInfoUiState> = combine(
         cache.bgInfoFlow,
-        ticker30s
+        refreshFlow
     ) { bgInfo, _ ->
         BgInfoUiState(
             bgInfo = bgInfo,
@@ -259,15 +271,19 @@ class GraphViewModel @AssistedInject constructor(
     )
 
     // =========================================================================
-    // IOB / COB current values (updated every 2.5 minutes)
+    // IOB / COB current values (updated every 2.5 minutes or on loop)
     // =========================================================================
 
-    private val iobCobTicker = flow {
-        while (true) {
-            emit(Unit)
-            delay(150_000L) // 2.5 minutes
-        }
-    }
+    private val iobCobTicker = merge(
+        flow {
+            while (true) {
+                emit(Unit)
+                delay(150_000L) // 2.5 minutes
+            }
+        },
+        rxBus.toFlow(EventLoopUpdateGui::class.java).map { Unit },
+        rxBus.toFlow(EventRefreshOverview::class.java).map { Unit }
+    )
 
     val iobUiState: StateFlow<IobUiState> = iobCobTicker.combine(cache.iobGraphFlow) { _, _ ->
         val bolusIob = iobCobCalculator.calculateIobFromBolus().round()
@@ -309,10 +325,10 @@ class GraphViewModel @AssistedInject constructor(
     )
 
     // =========================================================================
-    // Sensitivity / Autosens (updated every 2.5 minutes with IOB/COB)
+    // Sensitivity / SMB / TBR status (updated every 30 seconds or on loop)
     // =========================================================================
 
-    val sensitivityUiState: StateFlow<SensitivityUiState> = iobCobTicker.combine(cache.iobGraphFlow) { _, _ ->
+    val sensitivityUiState: StateFlow<SensitivityUiState> = refreshFlow.map {
         buildSensitivityUiState()
     }.stateIn(
         scope = viewModelScope,
@@ -320,7 +336,7 @@ class GraphViewModel @AssistedInject constructor(
         initialValue = SensitivityUiState()
     )
 
-    val smbUiState: StateFlow<SmbUiState> = ticker30s.map {
+    val smbUiState: StateFlow<SmbUiState> = refreshFlow.map {
         val lastSmbBolus = persistenceLayer.getNewestBolusOfType(app.aaps.core.data.model.BS.Type.SMB)
         if (lastSmbBolus != null) {
             val minsAgo = (dateUtil.now() - lastSmbBolus.timestamp) / 60000
@@ -337,7 +353,7 @@ class GraphViewModel @AssistedInject constructor(
         initialValue = SmbUiState()
     )
 
-    val tbrUiState: StateFlow<TbrUiState> = combine(ticker30s, nowTimestamp) { _, now ->
+    val tbrUiState: StateFlow<TbrUiState> = combine(refreshFlow, nowTimestamp) { _, now ->
         val currentTbr = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
         val profileBasal = profileFunction.getProfile()?.getBasal(now) ?: 0.0
 
