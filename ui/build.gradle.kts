@@ -47,5 +47,4 @@ dependencies {
     ksp(libs.com.google.dagger.compiler)
     ksp(libs.com.google.dagger.hilt.compiler)
     ksp(libs.com.google.dagger.android.processor)
-    implementation("com.patrykandpatrick.vico:core:3.1.0")
 }
