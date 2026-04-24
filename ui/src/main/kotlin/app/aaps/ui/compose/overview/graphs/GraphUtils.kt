@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.patrykandpatrick.vico.compose.cartesian.CartesianDrawingContext
+import com.patrykandpatrick.vico.compose.cartesian.axis.Axis
 import com.patrykandpatrick.vico.compose.cartesian.axis.HorizontalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianValueFormatter
 import com.patrykandpatrick.vico.compose.cartesian.decoration.Decoration
@@ -288,6 +289,57 @@ class NowLine(
 
     override fun hashCode(): Int {
         var result = nowX.hashCode()
+        result = 31 * result + color.hashCode()
+        result = 31 * result + strokeWidthPx.hashCode()
+        return result
+    }
+}
+
+/**
+ * Horizontal solid baseline decoration for Vico charts.
+ * Draws a solid horizontal line at a specific y-value across the full chart width.
+ * Used as a zero-baseline for Fuel Trim and other bipolar series.
+ *
+ * @param y The y-value for the line
+ * @param color The line color
+ * @param strokeWidthPx Line stroke width in pixels
+ */
+class HorizontalBaseline(
+    private val y: Double,
+    private val color: Color,
+    private val strokeWidthPx: Float = 2f
+) : Decoration {
+
+    override fun drawOverLayers(context: CartesianDrawingContext) {
+        with(context) {
+            val startRanges = ranges.get(Axis.Position.Vertical.Start)
+            val yRange = startRanges.minY..startRanges.maxY
+            if (y !in yRange) return
+
+            // Convert y-value to canvas coordinate (mirrors Vico's internal getDrawY logic)
+            val canvasY = layerBounds.bottom -
+                ((y - startRanges.minY) / (startRanges.maxY - startRanges.minY)).toFloat() * layerBounds.height
+
+            with(mutableDrawScope) {
+                drawLine(
+                    color = this@HorizontalBaseline.color,
+                    start = Offset(layerBounds.left, canvasY),
+                    end = Offset(layerBounds.right, canvasY),
+                    strokeWidth = strokeWidthPx
+                )
+            }
+        }
+    }
+
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            other is HorizontalBaseline &&
+            y == other.y &&
+            color == other.color &&
+            strokeWidthPx == other.strokeWidthPx
+
+    override fun hashCode(): Int {
+        var result = y.hashCode()
         result = 31 * result + color.hashCode()
         result = 31 * result + strokeWidthPx.hashCode()
         return result

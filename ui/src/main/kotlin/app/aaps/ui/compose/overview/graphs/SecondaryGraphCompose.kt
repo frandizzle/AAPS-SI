@@ -525,7 +525,16 @@ fun SecondaryGraphCompose(
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
-    val decorations = remember(nowLine) { listOf(nowLine)  }
+    
+    val zeroLineColor = nowLineColor.copy(alpha = 0.3f)
+    val zeroLine = remember(hasFuelTrim, zeroLineColor) {
+        if (!hasFuelTrim) null
+        else HorizontalBaseline(y = 0.0, color = zeroLineColor, strokeWidthPx = 2f)
+    }
+
+    val decorations = remember(nowLine, zeroLine) { 
+        listOfNotNull(nowLine, zeroLine) 
+    }
 
     // When basal overlay or fuel trim is active, custom primary Y range is needed
     val primaryYMax = remember(hasBasalLayer, hasFuelTrim, processedIob, processedSimpleSeries, processedCob) {
