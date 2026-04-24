@@ -1,14 +1,10 @@
 package app.aaps.ui.compose.overview.graphs
 
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.ForegroundColorSpan
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -22,11 +18,15 @@ import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 
 /**
  * Data structure for the interactive graph tooltip.
+ *
+ * The bgColor field is mirrored by [rangeEmoji] so the marker can show a
+ * colored swatch regardless of whether Vico honors TextStyle spans.
  */
 data class MarkerData(
     val time: String,
     val bgValue: Double,
     val bgColor: Color,
+    val rangeEmoji: String,
     val deltaText: String,
     val iobText: String
 )
@@ -72,7 +72,13 @@ fun rememberMarker(
         valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
                 if (!isVisible) return@ValueFormatter ""
-                val bgTarget = targets.firstOrNull { it.toString().contains("layerIndex=0") }
+
+                // Anchor preference: bucketed (seriesIndex=1, smoothed) before
+                // regular (seriesIndex=0, raw) to reduce per-reading jitter.
+                val layer0Targets = targets.filter { it.toString().contains("layerIndex=0") }
+                val bgTarget = layer0Targets.firstOrNull { it.toString().contains("seriesIndex=1") }
+                    ?: layer0Targets.firstOrNull { it.toString().contains("seriesIndex=0") }
+                    ?: layer0Targets.firstOrNull()
                     ?: targets.firstOrNull()
                     ?: return@ValueFormatter ""
 
@@ -80,30 +86,13 @@ fun rememberMarker(
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
-                // Build a SpannableStringBuilder so we can color just the BG number.
-                val bgStr = "%.1f".format(data.bgValue)
-                val builder = SpannableStringBuilder()
-                builder.append(data.time)
-                builder.append("\n🩸 ")
-                val bgStart = builder.length
-                builder.append(bgStr)
-                val bgEnd = builder.length
-                builder.setSpan(
-                    ForegroundColorSpan(data.bgColor.toArgb()),
-                    bgStart,
-                    bgEnd,
-                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
-                builder.append(" ")
-                builder.append(data.deltaText)
-                builder.append("\n💉 ")
-                builder.append(data.iobText)
-                builder
+                // Colored range indicator via emoji — rendered by the emoji font,
+                // so the color is honored regardless of Vico's text paint.
+                "${data.time}\n${data.rangeEmoji} %.1f ${data.deltaText}\n💉 ${data.iobText}"
+                    .format(data.bgValue)
             }
         },
-        // 👇 Pin the label to the top of the chart so it only moves horizontally
-        // while scrubbing, instead of jumping up/down with the BG curve height.
-        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
+        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )
 }

@@ -127,7 +127,7 @@ fun BgGraphCompose(
     val uamPredColor = AapsTheme.generalColors.uamPrediction
     val ztPredColor = AapsTheme.generalColors.ztPrediction
 
-    // 4. Data Lookups (for Tooltip)
+// 4. Data Lookups (for Tooltip)
     val getBgDetails = remember(bgReadings, bucketedData, iobData, viewModel.profileUtil, lowColor, inRangeColor, highColor) {
         { ts: Long ->
             val allBg = bgReadings + bucketedData
@@ -135,14 +135,12 @@ fun BgGraphCompose(
             if (closest != null && kotlin.math.abs(closest.timestamp - ts) < 5 * 60000) {
                 val isMmol = viewModel.profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
 
-                // Find previous reading to compute delta
                 val prev = allBg.filter { it.timestamp < closest.timestamp }.maxByOrNull { it.timestamp }
                 val deltaText = if (prev != null) {
                     val delta = closest.value - prev.value
                     if (isMmol) "(%+.1f)".format(delta) else "(%+0.0f)".format(delta)
                 } else ""
 
-                // Find closest IOB
                 val closestIob = iobData.iob.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
                 val iobText = if (closestIob != null && kotlin.math.abs(closestIob.timestamp - ts) < 5 * 60000) {
                     "%.2f U".format(closestIob.value)
@@ -150,16 +148,16 @@ fun BgGraphCompose(
 
                 val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(closest.timestamp))
 
-                val bgColor = when {
+                val (bgColor, rangeEmoji) = when {
                     isMmol -> when {
-                        closest.value <= 3.9 -> Color(0xFFE53935)
-                        closest.value >= 10.0 -> Color(0xFFFB8C00)
-                        else -> Color(0xFF43A047)
+                        closest.value <= 3.9  -> Color(0xFFE53935) to "🔴"
+                        closest.value >= 10.0 -> Color(0xFFFB8C00) to "🟠"
+                        else                  -> Color(0xFF43A047) to "🟢"
                     }
                     else -> when {
-                        closest.value <= 70.0 -> Color(0xFFE53935)
-                        closest.value >= 180.0 -> Color(0xFFFB8C00)
-                        else -> Color(0xFF43A047)
+                        closest.value <= 70.0  -> Color(0xFFE53935) to "🔴"
+                        closest.value >= 180.0 -> Color(0xFFFB8C00) to "🟠"
+                        else                   -> Color(0xFF43A047) to "🟢"
                     }
                 }
 
@@ -167,6 +165,7 @@ fun BgGraphCompose(
                     time = timeStr,
                     bgValue = closest.value,
                     bgColor = bgColor,
+                    rangeEmoji = rangeEmoji,
                     deltaText = deltaText,
                     iobText = iobText
                 )
