@@ -241,7 +241,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Line       = null,
             pb3Line       = null,
             learningState = "Learning",
-            isFasting     = true
+            isFasting     = true,
+            isLearning    = true
         )
     )
 
@@ -1384,7 +1385,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Line       = pb2LineStr,
             pb3Line       = pb3LineStr,
             learningState = learningStateStr,
-            isFasting     = mealMode == MealMode.FASTING
+            isFasting     = mealMode == MealMode.FASTING,
+            isLearning    = learningStateStr == "Learning"
         )
 
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
@@ -1785,6 +1787,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
+        _overviewStateFlow.value = cachedOverviewState
         calculationWorkflow.runOnReceivedPredictions(overviewData)
         rxBus.send(EventOpenAPSUpdateGui())
     }

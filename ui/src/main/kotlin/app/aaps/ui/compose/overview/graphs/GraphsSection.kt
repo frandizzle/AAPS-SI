@@ -99,7 +99,7 @@ fun GraphsSection(
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
-    val isFasting = siOverviewState?.isFasting ?: true
+    val isLearning = siOverviewState?.isLearning ?: true
     val savedGraphConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
     // In simple mode: fixed layout (BG, IOB+BAS, COB — no overlays, no editing)
     val graphConfig = if (isSimpleMode) SIMPLE_MODE_CONFIG else savedGraphConfig
@@ -385,9 +385,9 @@ fun GraphsSection(
         var editingGraphIndex by remember { mutableIntStateOf(-1) }
         for (i in 0 until activeCount) {
             val secondary = graphConfig.secondaryGraphs[i]
-            // TRIM% is only active while fasting: hide graphs that ONLY contain TRIM% when not fasting
+            // TRIM% is only active while learning: hide graphs that ONLY contain TRIM% when not learning
             val isTrimOnly = secondary.series.size == 1 && secondary.series[0] == SeriesType.FUEL_TRIM
-            if (!isFasting && isTrimOnly) continue
+            if (!isLearning && isTrimOnly) continue
 
             Box(modifier = Modifier.offset(y = (-8).dp)) {
                 SecondaryGraphCompose(
