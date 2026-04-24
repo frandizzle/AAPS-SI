@@ -771,21 +771,27 @@ fun SmartInsulinScreen(
             val profileIsfMgdl = d.profileIsfMgdl.toFloat()
             val profileBasalU  = d.profileBasalU.toFloat()
             raw.lines().filter { it.isNotBlank() }.forEach { line ->
-                val m = Regex("""[\u25ba\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
+                val m = Regex("""[▶►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""").find(line) ?: return@forEach
                 val hr      = m.groupValues[1].toIntOrNull() ?: return@forEach
-                val isfMult = m.groupValues[2].toFloatOrNull() ?: return@forEach
-                val basMult = m.groupValues[3].toFloatOrNull() ?: return@forEach
+                val valIsf  = m.groupValues[2].toFloatOrNull() ?: return@forEach
+                val valBas  = m.groupValues[3].toFloatOrNull() ?: return@forEach
                 val ceil    = m.groupValues[4].toFloatOrNull() ?: return@forEach
                 val conf    = m.groupValues[5].toIntOrNull() ?: return@forEach
-                // Convert multipliers to actual values
-                val finalIsf   = if (isfMult > 0f && profileIsfMgdl > 0f) profileIsfMgdl / isfMult else 0f
-                val finalBasal = profileBasalU * basMult
-                // ISF display: mg/dL or mmol
-                val isfStr  = if (d.isMmol) "%.2f".format(finalIsf / 18.0f) else "%.1f".format(finalIsf)
-                val basStr  = "%.3f".format(finalBasal)
-                // Color: lower ISF = more sensitive = blue, higher = less sensitive = orange
-                fun isfColor(mult: Float) = when { mult < 0.95f -> StatusInfo; mult > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) }
-                fun basColor(mult: Float) = when { mult < 0.95f -> StatusInfo; mult > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) }
+
+                // Values are already calculated and unit-converted by circadianDataForDay.
+                // We use them directly for display.
+                val isfStr = if (d.isMmol) "%.2f".format(valIsf) else "%.1f".format(valIsf)
+                val basStr = "%.3f".format(valBas)
+
+                // For color coding, we need to compare against the profile to determine if it's more/less aggressive.
+                // ISF: lower value = more sensitive = orange (StatusWarn), higher value = less sensitive = blue (StatusInfo)
+                // Basal: higher value = more aggressive = orange (StatusWarn), lower value = less aggressive = blue (StatusInfo)
+                val profIsfDisp = if (d.isMmol) profileIsfMgdl / 18.0f else profileIsfMgdl
+                val isfMultForColor = if (valIsf > 0 && profIsfDisp > 0) profIsfDisp / valIsf else 1f
+                val basMultForColor = if (profileBasalU > 0) valBas / profileBasalU else 1f
+
+                fun isfColor(mult: Float) = when { mult > 1.03f -> StatusWarn; mult < 0.97f -> StatusInfo; else -> Color(0xFFAAAAAA) }
+                fun basColor(mult: Float) = when { mult > 1.03f -> StatusWarn; mult < 0.97f -> StatusInfo; else -> Color(0xFFAAAAAA) }
                 fun confColor(p: Int) = when { p >= 60 -> StatusGood; p >= 30 -> StatusWarn; else -> StatusBad }
                 val isCur  = selectedDow == todayDow && hr == currentHr
                 val rowBg  = if (isCur) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent
@@ -793,8 +799,8 @@ fun SmartInsulinScreen(
                     Text(if (isCur) "►$hr" else "  $hr", modifier = Modifier.weight(1.5f), fontSize = 11.sp,
                          color = if (isCur) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                          fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
-                    Text(isfStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = isfColor(isfMult))
-                    Text(basStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = basColor(basMult))
+                    Text(isfStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = isfColor(isfMultForColor))
+                    Text(basStr,  modifier = Modifier.weight(2.5f), fontSize = 11.sp, color = basColor(basMultForColor))
                     Text("%.3f".format(ceil), modifier = Modifier.weight(2f), fontSize = 11.sp,
                          color = when { ceil < 0.95f -> StatusInfo; ceil > 1.05f -> StatusWarn; else -> Color(0xFFAAAAAA) })
                     Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
