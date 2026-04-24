@@ -89,10 +89,16 @@ private class SmoothedCartesianMarker(
             val text = valueFormatter.format(context, targets)
             val labelBounds = label.getBounds(context, text, layerBounds.width.toInt())
             val halfH = labelBounds.height / 2f
+
+            // Offset the label upward so it doesn't sit under the finger.
+            // Roughly: full label height + small gap above the touch point.
+            val fingerOffset = labelBounds.height + 24f
+            val targetY = smoothedY - fingerOffset
+
             val minY = layerBounds.top + halfH
             val maxY = layerBounds.bottom - halfH
             val drawY = if (minY <= maxY) {
-                smoothedY.coerceIn(minY, maxY)
+                targetY.coerceIn(minY, maxY)
             } else {
                 (layerBounds.top + layerBounds.bottom) / 2f
             }
