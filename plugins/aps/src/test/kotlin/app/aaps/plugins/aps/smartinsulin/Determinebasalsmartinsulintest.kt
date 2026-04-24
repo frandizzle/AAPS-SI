@@ -46,6 +46,7 @@ class DetermineBasalSmartInsulinTest {
         override var hasPredictions: Boolean             = false
         override var variableSens: Double?               = null
         override var isfMgdlForCarbs: Double?            = null
+        override var fuelTrim: Double?                   = null
         override var scriptDebug: List<String>?          = null
         override val predictionsAsGv: MutableList<GV>   = mutableListOf()
         override val latestPredictionsTime: Long         = 0

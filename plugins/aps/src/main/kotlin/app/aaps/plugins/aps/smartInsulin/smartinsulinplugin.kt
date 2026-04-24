@@ -1592,6 +1592,7 @@ open class SmartInsulinPlugin @Inject constructor(
             uamSmbFraction           = uamSmbFraction,
             targetRespectEnabled     = true,
             reboundWindowMins        = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toDouble(),
+            circCeil                 = circAggrCeil,
             isMmol                   = isMmol
         )
 

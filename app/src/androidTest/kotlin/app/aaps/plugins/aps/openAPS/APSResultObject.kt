@@ -76,6 +76,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
     override var carbsReqWithin = 0
     override var variableSens: Double? = null
     override var isfMgdlForCarbs: Double? = null
+    override var fuelTrim: Double? = null
     override var inputConstraints: Constraint<Double>? = null
     override var rateConstraint: Constraint<Double>? = null
     override var percentConstraint: Constraint<Int>? = null
@@ -176,6 +177,7 @@ open class APSResultObject(protected val injector: HasAndroidInjector) : APSResu
         newResult.carbsReq = carbsReq
         newResult.carbsReqWithin = carbsReqWithin
         newResult.targetBG = targetBG
+        newResult.fuelTrim = fuelTrim
     }
 
     override fun json(): JSONObject? {

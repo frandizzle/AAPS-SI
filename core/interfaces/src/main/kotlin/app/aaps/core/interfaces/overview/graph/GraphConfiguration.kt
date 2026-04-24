@@ -24,7 +24,8 @@ enum class SeriesType {
     HEART_RATE,
     STEPS,
     ACTIVITY,
-    PREDICTIONS
+    PREDICTIONS,
+    FUEL_TRIM
 }
 
 /**

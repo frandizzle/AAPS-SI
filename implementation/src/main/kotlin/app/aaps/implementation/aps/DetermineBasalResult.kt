@@ -70,6 +70,7 @@ class DetermineBasalResult @Inject constructor(
     override var carbsReqWithin = 0
     override var variableSens: Double? = null
     override var isfMgdlForCarbs: Double? = null // used only to pass to AAPS client
+    override var fuelTrim: Double? = null
     override var scriptDebug: List<String>? = null
     var eventualBG = 0.0
     var snoozeBG = 0.0
@@ -112,6 +113,7 @@ class DetermineBasalResult @Inject constructor(
         deliverAt = result.deliverAt ?: 0L
         variableSens = result.variable_sens
         isfMgdlForCarbs = result.isfMgdlForCarbs
+        fuelTrim = result.fuelTrim
         scriptDebug = result.consoleError
     }
 

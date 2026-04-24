@@ -98,6 +98,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         uamSmbFraction:           Double = 1.0,
         targetRespectEnabled:     Boolean = false,
         reboundWindowMins:        Double = 60.0,
+        circCeil:                 Double = 1.0,
         isMmol:                   Boolean = true
     ): APSResult {
 
@@ -107,7 +108,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             runningDynamicIsf = false,
             timestamp = currentTime,
             consoleLog = mutableListOf(),
-            consoleError = mutableListOf()
+            consoleError = mutableListOf(),
+            fuelTrim = (circCeil - 1.0) * 100.0
         )
 
         val currentBg      = glucoseStatus.glucose

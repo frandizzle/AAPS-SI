@@ -523,6 +523,7 @@ private fun seriesShortNameId(type: SeriesType): Int = when (type) {
     SeriesType.HEART_RATE      -> app.aaps.core.ui.R.string.heartRate_shortname
     SeriesType.STEPS           -> app.aaps.core.ui.R.string.steps_shortname
     SeriesType.ACTIVITY        -> app.aaps.core.ui.R.string.activity_shortname
+    SeriesType.FUEL_TRIM       -> app.aaps.core.ui.R.string.fuel_trim_shortname
     SeriesType.PREDICTIONS     -> app.aaps.core.ui.R.string.predictions_shortname
 }
 

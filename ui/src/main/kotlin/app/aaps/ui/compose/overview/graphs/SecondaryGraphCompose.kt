@@ -117,6 +117,7 @@ fun SecondaryGraphCompose(
     val devSlopeData = if (primaryType == SeriesType.DEV_SLOPE) viewModel.devSlopeGraphFlow.collectAsStateWithLifecycle().value else null
     val hrData = if (primaryType == SeriesType.HEART_RATE) viewModel.heartRateGraphFlow.collectAsStateWithLifecycle().value else null
     val stepsData = if (primaryType == SeriesType.STEPS) viewModel.stepsGraphFlow.collectAsStateWithLifecycle().value else null
+    val fuelTrimData = if (primaryType == SeriesType.FUEL_TRIM) viewModel.fuelTrimGraphFlow.collectAsStateWithLifecycle().value else null
     // Activity data: either as primary series OR as overlay (on IOB graph)
     val needsActivity = primaryType == SeriesType.ACTIVITY || (activityOverlay && hasIob)
     val activityData = if (needsActivity) viewModel.activityGraphFlow.collectAsStateWithLifecycle().value else null
@@ -141,6 +142,7 @@ fun SecondaryGraphCompose(
         SeriesType.DEV_SLOPE       -> viewModel.devSlopeGraphFlow.collectAsStateWithLifecycle().value.dsMax
         SeriesType.HEART_RATE      -> viewModel.heartRateGraphFlow.collectAsStateWithLifecycle().value.heartRates
         SeriesType.STEPS           -> viewModel.stepsGraphFlow.collectAsStateWithLifecycle().value.steps
+        SeriesType.FUEL_TRIM       -> viewModel.fuelTrimGraphFlow.collectAsStateWithLifecycle().value.fuelTrim
         SeriesType.ACTIVITY        -> viewModel.activityGraphFlow.collectAsStateWithLifecycle().value.activity
         SeriesType.PREDICTIONS     -> emptyList() // UI-only overlay flag, not a secondary series
         null                       -> emptyList()
@@ -187,6 +189,9 @@ fun SecondaryGraphCompose(
             }
             stepsData?.steps?.takeIf { it.isNotEmpty() }?.let {
                 add(SeriesType.STEPS to processPoints(it, minTimestamp, minX, maxX))
+            }
+            fuelTrimData?.fuelTrim?.takeIf { it.isNotEmpty() }?.let {
+                add(SeriesType.FUEL_TRIM to processPoints(it, minTimestamp, minX, maxX))
             }
             if (primaryType == SeriesType.ACTIVITY) {
                 activityData?.let {
@@ -780,7 +785,8 @@ data class SeriesColors(
     val devSlope: Color,
     val heartRate: Color,
     val steps: Color,
-    val activity: Color
+    val activity: Color,
+    val fuelTrim: Color
 ) {
 
     fun colorFor(type: SeriesType): Color = when (type) {
@@ -795,6 +801,7 @@ data class SeriesColors(
         SeriesType.HEART_RATE      -> heartRate
         SeriesType.STEPS           -> steps
         SeriesType.ACTIVITY        -> activity
+        SeriesType.FUEL_TRIM       -> fuelTrim
         SeriesType.PREDICTIONS     -> activity // unused — PREDICTIONS is a BG overlay flag, not a secondary series
     }
 }
@@ -816,7 +823,8 @@ fun rememberSeriesColors(): SeriesColors {
             devSlope = Color(0xFFFFFF00),            // yellow (matches @color/devSlopePos)
             heartRate = Color(0xFFFFFF66),           // pale yellow (matches @color/heartRate #FFFFFF66)
             steps = Color(0xFF66FFB8),              // mint green (matches @color/steps)
-            activity = Color(0xFFD3F166)            // lime green (matches @color/activity)
+            activity = Color(0xFFD3F166),           // lime green (matches @color/activity)
+            fuelTrim = Color(0xFFFF5252)             // Red (approx matches the user's diagram)
         )
     }
 }
@@ -845,6 +853,18 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
         SeriesType.DEV_SLOPE, SeriesType.SENSITIVITY, SeriesType.VAR_SENSITIVITY -> LineCartesianLayer.Line(
             fill = LineCartesianLayer.LineFill.single(Fill(color)),
             areaFill = null
+        )
+        // Fuel Trim: Fluent line with dots
+        SeriesType.FUEL_TRIM                                                     -> LineCartesianLayer.Line(
+            fill = LineCartesianLayer.LineFill.single(Fill(color)),
+            stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),
+            areaFill = null,
+            pointProvider = LineCartesianLayer.PointProvider.single(
+                LineCartesianLayer.Point(
+                    component = ShapeComponent(fill = Fill(color), shape = CircleShape),
+                    size = 4.dp
+                )
+            )
         )
         // Points/dots only — no connecting line
         SeriesType.HEART_RATE, SeriesType.STEPS                                  -> LineCartesianLayer.Line(

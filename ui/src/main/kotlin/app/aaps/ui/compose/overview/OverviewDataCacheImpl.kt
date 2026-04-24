@@ -42,6 +42,7 @@ import app.aaps.core.interfaces.overview.graph.DevSlopeGraphData
 import app.aaps.core.interfaces.overview.graph.DeviationsGraphData
 import app.aaps.core.interfaces.overview.graph.EpsGraphPoint
 import app.aaps.core.interfaces.overview.graph.ExtendedBolusGraphPoint
+import app.aaps.core.interfaces.overview.graph.FuelTrimGraphData
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
 import app.aaps.core.interfaces.overview.graph.HeartRateGraphData
 import app.aaps.core.interfaces.overview.graph.IobGraphData
@@ -219,6 +220,8 @@ class OverviewDataCacheImpl @AssistedInject constructor(
     override val heartRateGraphFlow: StateFlow<HeartRateGraphData> = _heartRateGraphFlow.asStateFlow()
     private val _stepsGraphFlow = MutableStateFlow(StepsGraphData(emptyList()))
     override val stepsGraphFlow: StateFlow<StepsGraphData> = _stepsGraphFlow.asStateFlow()
+    private val _fuelTrimGraphFlow = MutableStateFlow(FuelTrimGraphData(emptyList()))
+    override val fuelTrimGraphFlow: StateFlow<FuelTrimGraphData> = _fuelTrimGraphFlow.asStateFlow()
     private val _treatmentGraphFlow = MutableStateFlow(TreatmentGraphData(emptyList(), emptyList(), emptyList(), emptyList()))
     override val treatmentGraphFlow: StateFlow<TreatmentGraphData> = _treatmentGraphFlow.asStateFlow()
     private val _epsGraphFlow = MutableStateFlow<List<EpsGraphPoint>>(emptyList())
@@ -665,6 +668,10 @@ class OverviewDataCacheImpl @AssistedInject constructor(
 
     override fun updateStepsGraph(data: StepsGraphData) {
         _stepsGraphFlow.value = data
+    }
+
+    override fun updateFuelTrimGraph(data: FuelTrimGraphData) {
+        _fuelTrimGraphFlow.value = data
     }
 
     // =========================================================================

@@ -19,6 +19,7 @@ import app.aaps.core.interfaces.overview.graph.DevSlopeGraphData
 import app.aaps.core.interfaces.overview.graph.DeviationDataPoint
 import app.aaps.core.interfaces.overview.graph.DeviationType
 import app.aaps.core.interfaces.overview.graph.DeviationsGraphData
+import app.aaps.core.interfaces.overview.graph.FuelTrimGraphData
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
 import app.aaps.core.interfaces.overview.graph.IobGraphData
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
@@ -84,6 +85,7 @@ class PrepareIobAutosensGraphDataWorker(
         val ratioListCompose: MutableList<GraphDataPoint> = ArrayList()
         val dsMaxListCompose: MutableList<GraphDataPoint> = ArrayList()
         val dsMinListCompose: MutableList<GraphDataPoint> = ArrayList()
+        val fuelTrimListCompose: MutableList<GraphDataPoint> = ArrayList()
 
         val adsData = data.iobCobCalculator.ads.clone()
 
@@ -166,6 +168,10 @@ class PrepareIobAutosensGraphDataWorker(
                 val varSens = profileUtil.fromMgdlToUnits(variableSens)
                 varSensListCompose.add(GraphDataPoint(it.date, varSens))
             }
+            // Fuel Trim extraction
+            it.fuelTrim?.let { fuelTrim ->
+                fuelTrimListCompose.add(GraphDataPoint(it.date, fuelTrim))
+            }
         }
 
         // ========== MIGRATION: KEEP - Compose cache updates ==========
@@ -218,6 +224,11 @@ class PrepareIobAutosensGraphDataWorker(
         data.cache.updateVarSensGraph(
             VarSensGraphData(
                 varSens = varSensListCompose
+            )
+        )
+        data.cache.updateFuelTrimGraph(
+            FuelTrimGraphData(
+                fuelTrim = fuelTrimListCompose
             )
         )
 
