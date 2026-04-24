@@ -92,7 +92,7 @@ private class SmoothedCartesianMarker(
 
             // Offset the label upward so it doesn't sit under the finger.
             // Roughly: full label height + small gap above the touch point.
-            val fingerOffset = labelBounds.height + 24f
+            val fingerOffset = labelBounds.height + 50f
             val targetY = smoothedY - fingerOffset
 
             val minY = layerBounds.top + halfH
