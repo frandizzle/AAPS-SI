@@ -42,25 +42,21 @@ fun OverviewChipsColumn(
     runningMode: RM.Mode,
     runningModeText: String,
     runningModeProgress: Float,
-    runningModeSceneManaged: Boolean = false,
     isSimpleMode: Boolean,
     profileName: String,
     isProfileModified: Boolean,
     profileProgress: Float,
-    profileSceneManaged: Boolean = false,
     tempTargetText: String,
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
-    tempTargetSceneManaged: Boolean = false,
-    tbrState: TbrState,
-    iobUiState: IobUiState,
-    smbUiState: SmbUiState,
-    tbrUiState: TbrUiState,
     onNavigate: (NavigationRequest) -> Unit,
     modifier: Modifier = Modifier,
+    runningModeSceneManaged: Boolean = false,
+    profileSceneManaged: Boolean = false,
+    tempTargetSceneManaged: Boolean = false,
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
-    trailingContent: @Composable (RowScope.() -> Unit)? = null
+    trailingContent: @Composable (RowScope.() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier,
@@ -92,7 +88,6 @@ fun OverviewChipsColumn(
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
                             tempTargetSceneManaged = tempTargetSceneManaged,
-                            tbrState = tbrState,
                             onNavigate = onNavigate
                         )
                     }
@@ -118,17 +113,10 @@ fun OverviewChipsColumn(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 tempTargetSceneManaged = tempTargetSceneManaged,
-                tbrState = tbrState,
                 onNavigate = onNavigate
             )
         }
         siOverviewState?.let { SmartInsulinStatusBlock(state = it) }
-        IobCobChipsRow(
-            iobUiState = iobUiState,
-            smbUiState = smbUiState,
-            tbrUiState = tbrUiState,
-            onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) }
-        )
     }
 }
 
@@ -238,7 +226,6 @@ private fun NarrowChips(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     tempTargetSceneManaged: Boolean,
-    tbrState: TbrState,
     onNavigate: (NavigationRequest) -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {
@@ -287,9 +274,5 @@ private fun NarrowChips(
                 sceneManaged = tempTargetSceneManaged
             )
         }
-        TbrChip(
-            state = tbrState,
-            onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) }
-        )
     }
 }

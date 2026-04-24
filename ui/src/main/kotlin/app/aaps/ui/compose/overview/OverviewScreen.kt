@@ -15,11 +15,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.notifications.AapsNotification
-import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.pump.BolusProgressState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.navigation.NavigationRequest
@@ -50,7 +50,6 @@ fun OverviewScreen(
     runningModeText: String,
     runningModeProgress: Float,
     runningModeRecordId: Long = 0,
-    tbrState: TbrState,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -81,6 +80,10 @@ fun OverviewScreen(
     var showNotificationSheet by remember { mutableStateOf(false) }
     var showPumpActivityDialog by remember { mutableStateOf(false) }
     val showPumpFab = isPumpCommunicating || (bolusState != null && bolusState.isSMB)
+
+    val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
+    val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
+    val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(bolusState) {
         if (bolusState == null) showPumpActivityDialog = false
@@ -117,7 +120,6 @@ fun OverviewScreen(
                     runningModeText = runningModeText,
                     runningModeProgress = runningModeProgress,
                     runningModeSceneManaged = runningModeSceneManaged,
-                    tbrState = tbrState,
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
                     graphViewModel = graphViewModel,
@@ -131,7 +133,10 @@ fun OverviewScreen(
                     onEndScene = onEndScene,
                     onDismissScene = onDismissScene,
                     formatDuration = formatDuration,
-                    siOverviewState = siOverviewState
+                    siOverviewState = siOverviewState,
+                    iobUiState = iobUiState,
+                    smbUiState = smbUiState,
+                    tbrUiState = tbrUiState
                 )
             } else {
                 OverviewScreenStacked(
@@ -148,7 +153,6 @@ fun OverviewScreen(
                     runningModeText = runningModeText,
                     runningModeProgress = runningModeProgress,
                     runningModeSceneManaged = runningModeSceneManaged,
-                    tbrState = tbrState,
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
                     graphViewModel = graphViewModel,
@@ -162,7 +166,10 @@ fun OverviewScreen(
                     onEndScene = onEndScene,
                     onDismissScene = onDismissScene,
                     formatDuration = formatDuration,
-                    siOverviewState = siOverviewState
+                    siOverviewState = siOverviewState,
+                    iobUiState = iobUiState,
+                    smbUiState = smbUiState,
+                    tbrUiState = tbrUiState
                 )
             }
         }
