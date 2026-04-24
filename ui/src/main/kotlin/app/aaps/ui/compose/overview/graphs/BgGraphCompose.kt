@@ -372,13 +372,10 @@ fun BgGraphCompose(
     val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
     val marker = rememberMarker(minTimestamp, scrubbing, getBgDetails)
 
-    // 👇 UPDATED: Use a 1.5x multiplier (50% headroom) instead of adding 40.
     val chartMaxY = remember(bgReadings, bucketedData, chartConfig) {
         val allBgValues = (bgReadings + bucketedData).map { it.value }
         val maxBgValue = if (allBgValues.isNotEmpty()) allBgValues.max() else chartConfig.highMark
-
-        // This stays proportional whether you are in mmol/L or mg/dL
-        maxOf(maxBgValue * 1.5, chartConfig.highMark * 1.2)
+        maxOf(maxBgValue * 1.3, chartConfig.highMark * 1.2)
     }
 
     val startAxisRangeProvider = remember(maxX, chartMaxY) {
