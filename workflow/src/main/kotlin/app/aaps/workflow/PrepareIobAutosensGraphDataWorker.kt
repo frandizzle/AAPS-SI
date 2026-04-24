@@ -94,7 +94,14 @@ class PrepareIobAutosensGraphDataWorker(
         // instead of as sparse flat plateaus between loop cycles.
         val apsResults = persistenceLayer.getApsResults(fromTime, endTime).sortedBy { it.date }
         var apsIdx = 0
-        var currentTrim: Double? = null
+
+        // Seed currentTrim from the most recent APS result BEFORE the visible window so the
+        // line starts at the chart's left edge instead of only appearing once the first
+        // non-null fuelTrim lands inside the window. Look back a conservative 6h.
+        var currentTrim: Double? = persistenceLayer
+            .getApsResults(fromTime - 6 * 60 * 60 * 1000L, fromTime)
+            .asReversed()
+            .firstNotNullOfOrNull { it.fuelTrim }
 
         while (time <= endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
