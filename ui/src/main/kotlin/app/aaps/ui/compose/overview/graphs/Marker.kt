@@ -70,17 +70,17 @@ fun rememberMarker(
         valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
                 if (!isVisible) return@ValueFormatter ""
+                val bgTarget = targets.firstOrNull { it.toString().contains("layerIndex=0") }
+                    ?: targets.firstOrNull()
+                    ?: return@ValueFormatter ""
 
-                val target = targets.firstOrNull() ?: return@ValueFormatter ""
-                val x = target.x
+                val x = bgTarget.x
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
                 "${data.time}\n🩸 %.1f ${data.deltaText}\n💉 ${data.iobText}".format(data.bgValue)
             }
         },
-        // 👇 Change this back to Top
-        // This pins the box to the top of the chart so it only moves left/right.
         labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )
