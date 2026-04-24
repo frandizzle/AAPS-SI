@@ -69,6 +69,7 @@ class DetermineBasalSmartInsulinTest {
         override fun with(result: RT): APSResult         = this
         override fun resultAsString(): String            = reason
         override fun resultAsSpanned(): Spanned          = mock()
+        override fun resultAsHtmlString(): String        = ""
         override fun newAndClone(): APSResult            = FakeAPSResult()
         override fun json(): JSONObject?                 = null
         override fun predictions(): Predictions?         = null
@@ -88,7 +89,7 @@ class DetermineBasalSmartInsulinTest {
 
     @Before fun setUp() {
         fakeResult = FakeAPSResult()
-        sut = DetermineBasalSmartInsulin(Provider { fakeResult })
+        sut = DetermineBasalSmartInsulin { fakeResult }
 
         whenever(oapsProfile.sens).thenReturn(50.0)
         whenever(oapsProfile.current_basal).thenReturn(1.0)
@@ -122,19 +123,42 @@ class DetermineBasalSmartInsulinTest {
         horizonMins:       Int                  = 60
     ): FakeAPSResult {
         sut.determine_basal(
-            glucoseStatus         = glucoseStatus,
-            currentTemp           = currentTemp,
-            iobArray              = iobArray,
-            oapsProfile           = oapsProfile,
-            mealData              = mealData,
-            profile               = profile,
-            learnedProfile        = learnedProfile,
-            mealMode              = MealMode.FASTING,
-            predictionHorizonMins = horizonMins,
-            lowGuardMmol          = lowGuardMmol,
-            warnGuardMmol         = warnGuardMmol,
-            microBolusAllowed     = microBolusAllowed,
-            currentTime           = System.currentTimeMillis()
+            glucoseStatus            = glucoseStatus,
+            currentTemp              = currentTemp,
+            iobArray                 = iobArray,
+            oapsProfile              = oapsProfile,
+            mealData                 = mealData,
+            profile                  = profile,
+            learnedProfile           = learnedProfile,
+            mealMode                 = MealMode.FASTING,
+            lowGuardMmol             = lowGuardMmol,
+            warnGuardMmol            = warnGuardMmol,
+            maxSmbU                  = 2.0,
+            maxTbrU                  = 5.0,
+            aggressiveness           = 1.0,
+            tirSummary               = "",
+            basalMultiplier          = 1.0,
+            dosingIsfMgdl            = 50.0,
+            microBolusAllowed        = microBolusAllowed,
+            inReboundWindow          = false,
+            msSinceLastSuspend       = 3600_000L,
+            currentTime              = System.currentTimeMillis(),
+            isTempTarget             = false,
+            profileTargetMgdl        = 100.0,
+            dawnWindowStartHour      = 4,
+            dawnWindowEndHour        = 7,
+            dawnSmbReduction         = 0.5,
+            bgWentLow                = false,
+            activityLevel            = ActivityMonitor.ActivityLevel.SEDENTARY,
+            activityTargetOffsetMmol = 0.0,
+            cgmSmbFraction           = 1.0,
+            cgmDeltaPlausible        = true,
+            cgmWarmupReason          = "",
+            uamSmbFraction           = 1.0,
+            targetRespectEnabled     = false,
+            reboundWindowMins        = horizonMins.toDouble(), // Matches legacy horizon input
+            circCeil                 = 1.0,
+            isMmol                   = true
         )
         return fakeResult
     }
