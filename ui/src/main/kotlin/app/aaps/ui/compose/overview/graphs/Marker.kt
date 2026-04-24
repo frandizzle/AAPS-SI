@@ -55,7 +55,8 @@ fun rememberMarker(
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        margins = Insets(top = 8.dp),
+        // No top margin — with AroundPoint, any top margin gets baked into the
+        // chart's reserved insets and eats visible plot area.
         lineCount = 3
     )
 
@@ -78,10 +79,10 @@ fun rememberMarker(
                     .format(data.bgValue)
             }
         },
-        // AbovePoint: label sits above the BG point with a fixed vertical offset.
-        // As you scrub, it rises/falls with the curve but without the hard
-        // per-reading snap that AroundPoint causes.
-        labelPosition = DefaultCartesianMarker.LabelPosition.AbovePoint,
+        // AroundPoint: label centered on the target point, no top-space
+        // reservation. The chart keeps its full height; the label can draw
+        // outside the layer bounds because composables aren't clipped.
+        labelPosition = DefaultCartesianMarker.LabelPosition.AroundPoint,
         guideline = guideline,
     )
 }
