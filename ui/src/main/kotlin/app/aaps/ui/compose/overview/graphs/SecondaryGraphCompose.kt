@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.graph.vico.AdaptiveStep
+import app.aaps.core.graph.vico.Smooth
 import app.aaps.core.graph.vico.Square
 import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.DeviationType
@@ -864,7 +865,8 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
                     component = ShapeComponent(fill = Fill(color), shape = CircleShape),
                     size = 4.dp
                 )
-            )
+            ),
+            interpolator = Smooth
         )
         // Points/dots only — no connecting line
         SeriesType.HEART_RATE, SeriesType.STEPS                                  -> LineCartesianLayer.Line(
