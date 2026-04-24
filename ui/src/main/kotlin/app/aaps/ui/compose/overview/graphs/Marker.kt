@@ -58,8 +58,13 @@ private class SmoothedCartesianMarker(
     private var smoothedY: Float = Float.NaN
     private var lastX: Float = Float.NaN
 
-    // 0..1. Lower = more smoothing (more lag). 0.25 ≈ gentle follow.
-    private val smoothing: Float = 0.25f
+    // Movement less than this many pixels is ignored — the label stays put.
+    // Kills the per-reading step bounce (typical CGM jump is ~3-8px of Y).
+    private val deadZonePx: Float = 15f
+
+    // Fraction of the remaining gap closed per frame when smoothing kicks in.
+    // Low = very gentle drift. 0.08 ≈ slow follow.
+    private val smoothing: Float = 0.08f
 
     override fun drawOverLayers(
         context: CartesianDrawingContext,
@@ -80,7 +85,14 @@ private class SmoothedCartesianMarker(
             // Reset smoothing on first frame of a scrub or on a big horizontal jump.
             val reset = smoothedY.isNaN() ||
                 (!lastX.isNaN() && abs(targetX - lastX) > 80f)
-            smoothedY = if (reset) rawY else smoothedY + smoothing * (rawY - smoothedY)
+
+            smoothedY = when {
+                reset -> rawY
+                // Dead zone: small per-reading jumps don't move the label at all.
+                abs(rawY - smoothedY) < deadZonePx -> smoothedY
+                // Gentle EMA drift toward the new Y.
+                else -> smoothedY + smoothing * (rawY - smoothedY)
+            }
             lastX = targetX
 
             // Keep the label inside the plot area — but only if the plot is
@@ -92,7 +104,7 @@ private class SmoothedCartesianMarker(
 
             // Offset the label upward so it doesn't sit under the finger.
             // Roughly: full label height + gap above the touch point.
-            val fingerOffset = labelBounds.height + 55f
+            val fingerOffset = labelBounds.height + 80f
             val targetY = smoothedY - fingerOffset
 
             // Clamp only against the BOTTOM edge (so the label can't escape
