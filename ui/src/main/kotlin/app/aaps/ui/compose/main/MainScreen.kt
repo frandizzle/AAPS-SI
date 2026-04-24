@@ -225,7 +225,6 @@ fun MainScreen(
                         runningModeText = uiState.runningModeText,
                         runningModeProgress = uiState.runningModeProgress,
                         runningModeRecordId = uiState.runningModeRecordId,
-                        tbrState = uiState.tbrState,
                         isSimpleMode = uiState.isSimpleMode,
                         calcProgress = calcProgress,
                         graphViewModel = graphViewModel,
