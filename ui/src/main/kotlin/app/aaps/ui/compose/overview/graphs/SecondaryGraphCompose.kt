@@ -855,7 +855,7 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
             fill = LineCartesianLayer.LineFill.single(Fill(color)),
             areaFill = null
         )
-        // Fuel Trim: Fluent line with dots
+// Fuel Trim: Fluent line with dots
         SeriesType.FUEL_TRIM                                                     -> LineCartesianLayer.Line(
             fill = LineCartesianLayer.LineFill.single(Fill(color)),
             stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),

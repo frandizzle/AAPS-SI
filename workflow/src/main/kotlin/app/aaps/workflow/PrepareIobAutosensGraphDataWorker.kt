@@ -89,6 +89,13 @@ class PrepareIobAutosensGraphDataWorker(
 
         val adsData = data.iobCobCalculator.ads.clone()
 
+        // Pre-fetch APS results once; we sample fuelTrim onto the 5-min grid below
+        // so the TRIM line has the same density as IOB/BGI/etc. and renders smoothly
+        // instead of as sparse flat plateaus between loop cycles.
+        val apsResults = persistenceLayer.getApsResults(fromTime, endTime).sortedBy { it.date }
+        var apsIdx = 0
+        var currentTrim: Double? = null
+
         while (time <= endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
             val progress = (time - fromTime).toDouble() / (endTime - fromTime) * 100.0
@@ -146,6 +153,15 @@ class PrepareIobAutosensGraphDataWorker(
             if (iob.activity > maxActivity) maxActivity = iob.activity
             else if (-iob.activity > maxActivity) maxActivity = -iob.activity
 
+            // Fuel Trim: advance through APS results up to current tick, hold most recent value.
+            // Emitting one point per 5-min tick gives the line the same density as BGI/IOB so
+            // Smooth interpolation produces a flowing curve instead of sparse plateaus.
+            while (apsIdx < apsResults.size && apsResults[apsIdx].date <= time) {
+                apsResults[apsIdx].fuelTrim?.let { currentTrim = it }
+                apsIdx++
+            }
+            currentTrim?.let { fuelTrimListCompose.add(GraphDataPoint(time, it)) }
+
             time += 5 * 60 * 1000L
         }
 
@@ -161,16 +177,12 @@ class PrepareIobAutosensGraphDataWorker(
         aapsLogger.debug(LTag.AUTOSENS, "IOB prediction for AS=" + decimalFormatter.to2Decimal(lastAutosensResult.ratio) + ": " + data.iobCobCalculator.iobArrayToString(iobPredictionArray))
 
         // ========== MIGRATION: KEEP - VarSens for Compose ==========
+        // Note: apsResults was fetched above the main loop for fuelTrim grid sampling; reuse it here.
         val varSensListCompose: MutableList<GraphDataPoint> = ArrayList()
-        val apsResults = persistenceLayer.getApsResults(fromTime, endTime)
         apsResults.forEach {
             it.variableSens?.let { variableSens ->
                 val varSens = profileUtil.fromMgdlToUnits(variableSens)
                 varSensListCompose.add(GraphDataPoint(it.date, varSens))
-            }
-            // Fuel Trim extraction
-            it.fuelTrim?.let { fuelTrim ->
-                fuelTrimListCompose.add(GraphDataPoint(it.date, fuelTrim))
             }
         }
 
