@@ -49,7 +49,7 @@ private class SmoothedCartesianMarker(
 ) : DefaultCartesianMarker(
     label = label,
     valueFormatter = valueFormatter,
-    labelPosition = LabelPosition.Top, // keeps chart insets off; we override drawing anyway
+    labelPosition = LabelPosition.AroundPoint, // no reserved insets; draw position is overridden anyway
     indicator = null,
     indicatorSize = 0.dp,
     guideline = guideline,
@@ -83,14 +83,19 @@ private class SmoothedCartesianMarker(
             smoothedY = if (reset) rawY else smoothedY + smoothing * (rawY - smoothedY)
             lastX = targetX
 
-            // Keep the label inside the plot area.
+            // Keep the label inside the plot area — but only if the plot is
+            // tall enough to contain it. If not (label height > plot height),
+            // center it vertically in the plot to avoid an invalid range.
             val text = valueFormatter.format(context, targets)
             val labelBounds = label.getBounds(context, text, layerBounds.width.toInt())
             val halfH = labelBounds.height / 2f
-            val drawY = smoothedY.coerceIn(
-                layerBounds.top + halfH,
-                layerBounds.bottom - halfH
-            )
+            val minY = layerBounds.top + halfH
+            val maxY = layerBounds.bottom - halfH
+            val drawY = if (minY <= maxY) {
+                smoothedY.coerceIn(minY, maxY)
+            } else {
+                (layerBounds.top + layerBounds.bottom) / 2f
+            }
 
             label.draw(
                 context = context,
