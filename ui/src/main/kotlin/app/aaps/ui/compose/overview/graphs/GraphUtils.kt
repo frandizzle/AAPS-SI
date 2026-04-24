@@ -312,13 +312,12 @@ class HorizontalBaseline(
 
     override fun drawOverLayers(context: CartesianDrawingContext) {
         with(context) {
-            val startRanges = ranges.get(Axis.Position.Vertical.Start)
-            val yRange = startRanges.minY..startRanges.maxY
-            if (y !in yRange) return
+            val yRange = ranges.getYRange(Axis.Position.Vertical.Start)
+            if (y !in yRange.minY..yRange.maxY) return
 
             // Convert y-value to canvas coordinate (mirrors Vico's internal getDrawY logic)
             val canvasY = layerBounds.bottom -
-                ((y - startRanges.minY) / (startRanges.maxY - startRanges.minY)).toFloat() * layerBounds.height
+                ((y - yRange.minY) / (yRange.maxY - yRange.minY)).toFloat() * layerBounds.height
 
             with(mutableDrawScope) {
                 drawLine(
