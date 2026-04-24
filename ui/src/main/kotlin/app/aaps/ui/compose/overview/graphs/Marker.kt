@@ -91,17 +91,16 @@ private class SmoothedCartesianMarker(
             val halfH = labelBounds.height / 2f
 
             // Offset the label upward so it doesn't sit under the finger.
-            // Roughly: full label height + small gap above the touch point.
+            // Roughly: full label height + gap above the touch point.
             val fingerOffset = labelBounds.height + 80f
             val targetY = smoothedY - fingerOffset
 
-            val minY = layerBounds.top + halfH
+            // Clamp only against the BOTTOM edge (so the label can't escape
+            // downward off the plot). Allow it to rise above layerBounds.top
+            // — Compose doesn't clip, so drawing outside the plot area is
+            // fine and it means the finger doesn't cover the tooltip.
             val maxY = layerBounds.bottom - halfH
-            val drawY = if (minY <= maxY) {
-                targetY.coerceIn(minY, maxY)
-            } else {
-                (layerBounds.top + layerBounds.bottom) / 2f
-            }
+            val drawY = if (targetY > maxY) maxY else targetY
 
             label.draw(
                 context = context,
