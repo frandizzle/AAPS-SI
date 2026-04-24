@@ -19,34 +19,40 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
+import app.aaps.ui.compose.scenes.ActiveSceneBanner
+import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
-import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
+import app.aaps.ui.compose.overview.chips.OverviewChipsColumn
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
-import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 
 @Composable
 fun OverviewScreenStacked(
     profileName: String,
     isProfileModified: Boolean,
     profileProgress: Float,
+    profileSceneManaged: Boolean = false,
     tempTargetText: String,
     tempTargetState: TempTargetChipState,
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
+    tempTargetSceneManaged: Boolean = false,
     runningMode: RM.Mode,
     runningModeText: String,
     runningModeProgress: Float,
+    runningModeSceneManaged: Boolean = false,
+    tbrState: TbrState,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -55,17 +61,21 @@ fun OverviewScreenStacked(
     statusLightsDef: PreferenceSubScreenDef,
     onNavigate: (NavigationRequest) -> Unit,
     paddingValues: PaddingValues,
+    activeSceneState: ActiveSceneState? = null,
+    sceneExpired: Boolean = false,
+    onEndScene: () -> Unit = {},
+    onDismissScene: () -> Unit = {},
+    formatDuration: (Long) -> String = { ms -> "${(ms / 60000L).toInt()}m" },
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
+    val config = LocalConfig.current
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
     val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
     val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
-
-    val config = LocalConfig.current
 
     var statusExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -83,11 +93,18 @@ fun OverviewScreenStacked(
                     .height(4.dp),
             )
         }
+        ActiveSceneBanner(
+            activeState = activeSceneState,
+            expired = sceneExpired,
+            onEndClick = onEndScene,
+            onDismiss = onDismissScene,
+            formatDuration = formatDuration
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Top
+            verticalAlignment = Alignment.Bottom
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -103,14 +120,21 @@ fun OverviewScreenStacked(
                 runningMode = runningMode,
                 runningModeText = runningModeText,
                 runningModeProgress = runningModeProgress,
+                runningModeSceneManaged = runningModeSceneManaged,
                 isSimpleMode = isSimpleMode,
                 profileName = profileName,
                 isProfileModified = isProfileModified,
                 profileProgress = profileProgress,
+                profileSceneManaged = profileSceneManaged,
                 tempTargetText = tempTargetText,
                 tempTargetState = tempTargetState,
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
+                tempTargetSceneManaged = tempTargetSceneManaged,
+                tbrState = tbrState,
+                iobUiState = iobUiState,
+                smbUiState = smbUiState,
+                tbrUiState = tbrUiState,
                 onNavigate = onNavigate,
                 siOverviewState = siOverviewState,
                 modifier = Modifier
@@ -118,16 +142,6 @@ fun OverviewScreenStacked(
                     .padding(start = 8.dp)
             )
         }
-
-        IobCobChipsRow(
-            iobUiState = iobUiState,
-            tbrUiState = tbrUiState,
-            smbUiState = smbUiState,
-            onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp)
-        )
 
         OverviewStatusSection(
             sensorStatus = statusState.sensorStatus,

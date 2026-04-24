@@ -29,6 +29,7 @@ data class MainUiState(
     val showMaintenanceSheet: Boolean = false,
     // Profile state for top bar chip
     val profileName: String = "",
+    val profilePsId: Long = 0, // PS id that triggered current EPS (for scene override detection)
     val isProfileModified: Boolean = false,
     val profileProgress: Float = 0f, // 0-1 progress for temporary profile switch
     // TempTarget state for chip
@@ -36,10 +37,12 @@ data class MainUiState(
     val tempTargetState: TempTargetChipState = TempTargetChipState.None,
     val tempTargetProgress: Float = 0f, // 0-1 progress for active temp target
     val tempTargetReason: TT.Reason? = null, // TT reason for icon coloring
+    val tempTargetRecordId: Long = 0, // DB record ID (for scene override detection)
     // Running mode state for chip
     val runningMode: RM.Mode = RM.Mode.DISABLED_LOOP,
     val runningModeText: String = "",
     val runningModeProgress: Float = 0f, // 0-1 progress for temporary modes
+    val runningModeRecordId: Long = 0, // DB record ID (for scene override detection)
     // Running TBR state for chip (HIGH / LOW / NONE)
     val tbrState: TbrState = TbrState.NONE,
     // QuickWizard entries for treatment bottom sheet
@@ -81,4 +84,7 @@ sealed class ConfirmableAction {
         val percentage: Int,
         val durationMinutes: Int
     ) : ConfirmableAction()
+
+    data class ActivateScene(val sceneId: String, val durationMinutes: Int) : ConfirmableAction()
+    data object DeactivateScene : ConfirmableAction()
 }

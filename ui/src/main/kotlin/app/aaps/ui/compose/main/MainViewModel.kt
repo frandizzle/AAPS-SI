@@ -4,6 +4,7 @@ import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import app.aaps.core.data.iob.InMemoryGlucoseValue
+import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.data.time.T
@@ -41,6 +42,8 @@ import app.aaps.core.interfaces.pump.defs.determineCorrectBolusStepSize
 import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
+import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.events.EventShowDialog
 import app.aaps.core.interfaces.ui.IconsProvider
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
@@ -56,6 +59,9 @@ import app.aaps.ui.compose.alertDialogs.AboutDialogData
 import app.aaps.ui.compose.quickLaunch.QuickLaunchResolver
 import app.aaps.ui.compose.quickLaunch.QuickLaunchSerializer
 import app.aaps.ui.compose.quickLaunch.ResolvedQuickLaunchItem
+import app.aaps.ui.compose.scenes.ActiveSceneManager
+import app.aaps.ui.compose.scenes.SceneExecutor
+import app.aaps.ui.compose.scenes.SceneRepository
 import app.aaps.ui.compose.tempTarget.toTTPresetsWithNameRes
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -99,7 +105,11 @@ class MainViewModel @Inject constructor(
     private val uiInteraction: UiInteraction,
     private val uel: UserEntryLogger,
     private val loop: Loop,
-    private val protectionCheck: ProtectionCheck
+    private val protectionCheck: ProtectionCheck,
+    private val sceneRepository: SceneRepository,
+    private val sceneExecutor: SceneExecutor,
+    private val activeSceneManager: ActiveSceneManager,
+    private val rxBus: RxBus
 ) : ViewModel() {
 
     // Event-driven state (drawer, dialogs, simple-mode preference). Imperative .update{} calls
@@ -154,15 +164,18 @@ class MainViewModel @Inject constructor(
             showAuthFailedDialog = ev.showAuthFailedDialog,
             isProfileLoaded = chip.isProfileLoaded,
             profileName = chip.profileName,
+            profilePsId = chip.profilePsId,
             isProfileModified = chip.isProfileModified,
             profileProgress = chip.profileProgress,
             tempTargetText = chip.tempTargetText,
             tempTargetState = chip.tempTargetState,
             tempTargetProgress = chip.tempTargetProgress,
             tempTargetReason = chip.tempTargetReason,
+            tempTargetRecordId = chip.tempTargetRecordId,
             runningMode = chip.runningMode,
             runningModeText = chip.runningModeText,
             runningModeProgress = chip.runningModeProgress,
+            runningModeRecordId = chip.runningModeRecordId,
             tbrState = chip.tbrState,
             quickWizardItems = chip.quickWizardItems
         )
@@ -188,9 +201,11 @@ class MainViewModel @Inject constructor(
         now: Long
     ): ChipState {
         // Detect expired chips and schedule a cache refresh. Duration >= 30 days is
-        // effectively permanent (e.g. loop disabled uses Int.MAX_VALUE minutes).
-        val ttExpired = ttData != null && ttData.state == TempTargetState.ACTIVE && ttData.duration > 0
-            && now >= ttData.timestamp + ttData.duration
+        // effectively permanent (e.g. loop disabled uses Int.MAX_VALUE minutes, or scene
+        // permanent TT uses Long.MAX_VALUE — avoid Long-overflow in expiry math).
+        val ttIsFinite = ttData != null && ttData.state == TempTargetState.ACTIVE
+            && ttData.duration > 0 && ttData.duration < T.days(30).msecs()
+        val ttExpired = ttIsFinite && now >= ttData.timestamp + ttData.duration
         if (ttExpired) overviewDataCache.refreshTempTarget()
 
         val profileExpired = profileData != null && profileData.duration > 0
@@ -198,7 +213,7 @@ class MainViewModel @Inject constructor(
         if (profileExpired) overviewDataCache.refreshProfile()
 
         val rmIsFinite = rmData != null && rmData.duration > 0 && rmData.duration < T.days(30).msecs()
-        val rmExpired = rmIsFinite && now >= rmData!!.timestamp + rmData.duration
+        val rmExpired = rmIsFinite && now >= rmData.timestamp + rmData.duration
         if (rmExpired) overviewDataCache.refreshRunningMode()
 
         val tbrExpired = tbrData != null && tbrData.state != TbrState.NONE && tbrData.duration > 0
@@ -206,13 +221,13 @@ class MainViewModel @Inject constructor(
         if (tbrExpired) overviewDataCache.refreshTbr()
 
         // TT progress and display text
-        val ttProgress = if (ttData != null && ttData.duration > 0 && !ttExpired) {
+        val ttProgress = if (ttIsFinite && !ttExpired) {
             val elapsed = now - ttData.timestamp
             (elapsed.toFloat() / ttData.duration.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
         val ttText = if (ttData != null && !ttExpired) {
-            if (ttData.state == TempTargetState.ACTIVE && ttData.duration > 0) {
+            if (ttIsFinite) {
                 "${ttData.targetRangeText} ${dateUtil.untilString(ttData.timestamp + ttData.duration, rh)}"
             } else {
                 ttData.targetRangeText
@@ -235,7 +250,7 @@ class MainViewModel @Inject constructor(
 
         // Running mode progress and display text
         val rmProgress = if (rmIsFinite && !rmExpired) {
-            val elapsed = now - rmData!!.timestamp
+            val elapsed = now - rmData.timestamp
             (elapsed.toFloat() / rmData.duration.toFloat()).coerceIn(0f, 1f)
         } else 0f
 
@@ -251,6 +266,7 @@ class MainViewModel @Inject constructor(
         return ChipState(
             isProfileLoaded = profileData?.isLoaded ?: false,
             profileName = profileText,
+            profilePsId = profileData?.originalPsId ?: 0,
             isProfileModified = profileData?.isModified ?: false,
             profileProgress = profileProgress,
             tempTargetText = ttText,
@@ -258,9 +274,11 @@ class MainViewModel @Inject constructor(
             else ttData?.state?.toChipState() ?: TempTargetChipState.None,
             tempTargetProgress = ttProgress,
             tempTargetReason = if (ttExpired) null else ttData?.reason,
+            tempTargetRecordId = if (ttExpired) 0 else ttData?.recordId ?: 0,
             runningMode = rmData?.mode ?: RM.Mode.DISABLED_LOOP,
             runningModeText = rmText,
             runningModeProgress = rmProgress,
+            runningModeRecordId = if (rmExpired) 0 else rmData?.recordId ?: 0,
             tbrState = if (tbrExpired) TbrState.NONE else tbrData?.state ?: TbrState.NONE,
             quickWizardItems = computeQuickWizardItems(rmData?.mode)
         )
@@ -361,29 +379,29 @@ class MainViewModel @Inject constructor(
      * Execute QuickWizard by GUID: re-validates at execution time and calls confirmAndExecute.
      * Needs Activity context for the confirmation dialog.
      */
-    fun executeQuickWizard(context: android.content.Context, guid: String) {
+    fun executeQuickWizard(guid: String) {
         viewModelScope.launch {
             val entry = quickWizard.get(guid) ?: return@launch
             if (!entry.isActive()) return@launch
             when (entry.mode()) {
-                QuickWizardMode.WIZARD  -> executeQuickWizardMode(context, entry)
-                QuickWizardMode.INSULIN -> executeInsulinMode(context, entry)
-                QuickWizardMode.CARBS   -> executeCarbsMode(context, entry)
+                QuickWizardMode.WIZARD  -> executeQuickWizardMode(entry)
+                QuickWizardMode.INSULIN -> executeInsulinMode(entry)
+                QuickWizardMode.CARBS   -> executeCarbsMode(entry)
             }
         }
     }
 
-    private suspend fun executeQuickWizardMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private suspend fun executeQuickWizardMode(entry: QuickWizardEntry) {
         val bg = iobCobCalculator.ads.actualBg() ?: return
         val profile = profileFunction.getProfile() ?: return
         val profileName = profileFunction.getProfileName()
         val wizard = entry.doCalc(profile, profileName, bg)
         if (wizard.calculatedTotalInsulin > 0.0 && entry.carbs() > 0) {
-            wizard.confirmAndExecute(context, entry)
+            wizard.confirmAndExecute(entry)
         }
     }
 
-    private fun executeInsulinMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private fun executeInsulinMode(entry: QuickWizardEntry) {
         val pump = activePlugin.activePump
         if (!pump.isInitialized() || pump.isSuspended()) return
 
@@ -402,33 +420,34 @@ class MainViewModel @Inject constructor(
             }
         }
 
-        uiInteraction.showOkCancelDialog(
-            context = context,
-            title = entry.buttonText(),
-            message = message,
-            ok = {
-                uel.log(
-                    Action.BOLUS, Sources.QuickWizard,
-                    entry.buttonText(),
-                    ValueWithUnit.Insulin(insulinAfterConstraints)
-                )
-                val detailedBolusInfo = DetailedBolusInfo().apply {
-                    eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
-                    this.insulin = insulinAfterConstraints
-                }
-                commandQueue.bolus(detailedBolusInfo, object : Callback() {
-                    override fun run() {
-                        if (!result.success) {
-                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
-                        }
+        rxBus.send(
+            EventShowDialog.OkCancel(
+                title = entry.buttonText(),
+                message = message,
+                onOk = {
+                    uel.log(
+                        Action.BOLUS, Sources.QuickWizard,
+                        entry.buttonText(),
+                        ValueWithUnit.Insulin(insulinAfterConstraints)
+                    )
+                    val detailedBolusInfo = DetailedBolusInfo().apply {
+                        eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
+                        this.insulin = insulinAfterConstraints
                     }
-                })
-                entry.markAsUsed()
-            }
+                    commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                            }
+                        }
+                    })
+                    entry.markAsUsed()
+                }
+            )
         )
     }
 
-    private fun executeCarbsMode(context: android.content.Context, entry: QuickWizardEntry) {
+    private fun executeCarbsMode(entry: QuickWizardEntry) {
         val carbs = entry.carbs()
         if (carbs <= 0) return
 
@@ -436,30 +455,31 @@ class MainViewModel @Inject constructor(
             append(rh.gs(app.aaps.core.ui.R.string.carbs) + ": ${carbs}g")
         }
 
-        uiInteraction.showOkCancelDialog(
-            context = context,
-            title = entry.buttonText(),
-            message = message,
-            ok = {
-                uel.log(
-                    Action.CARBS, Sources.QuickWizard,
-                    entry.buttonText(),
-                    ValueWithUnit.Gram(carbs)
-                )
-                val detailedBolusInfo = DetailedBolusInfo().apply {
-                    eventType = app.aaps.core.data.model.TE.Type.CARBS_CORRECTION
-                    this.carbs = carbs.toDouble()
-                    carbsTimestamp = dateUtil.now()
-                }
-                commandQueue.bolus(detailedBolusInfo, object : Callback() {
-                    override fun run() {
-                        if (!result.success) {
-                            uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
-                        }
+        rxBus.send(
+            EventShowDialog.OkCancel(
+                title = entry.buttonText(),
+                message = message,
+                onOk = {
+                    uel.log(
+                        Action.CARBS, Sources.QuickWizard,
+                        entry.buttonText(),
+                        ValueWithUnit.Gram(carbs)
+                    )
+                    val detailedBolusInfo = DetailedBolusInfo().apply {
+                        eventType = app.aaps.core.data.model.TE.Type.CARBS_CORRECTION
+                        this.carbs = carbs.toDouble()
+                        carbsTimestamp = dateUtil.now()
                     }
-                })
-                entry.markAsUsed()
-            }
+                    commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                            }
+                        }
+                    })
+                    entry.markAsUsed()
+                }
+            )
         )
     }
 
@@ -610,6 +630,63 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    /** Expose active scene state for UI (banner, etc.) */
+    val activeSceneState: StateFlow<ActiveSceneState?> = activeSceneManager.activeSceneState
+
+    /** Whether the active scene has expired (duration ran out, non-duration actions reverted) */
+    val sceneExpired: StateFlow<Boolean> = activeSceneManager.expired
+
+    /** Dismiss the expired scene banner */
+    fun dismissExpiredScene() {
+        sceneExecutor.dismiss()
+    }
+
+    /** Format milliseconds to human-readable duration using DateUtil */
+    fun formatDuration(ms: Long): String = dateUtil.niceTimeScalar(ms, rh)
+
+    fun requestSceneConfirmation(sceneId: String) {
+        val scene = sceneRepository.getScene(sceneId) ?: return
+        val actionSummary = scene.actions.joinToString("\n") { action ->
+            when (action) {
+                is app.aaps.core.data.model.SceneAction.TempTarget      ->
+                    rh.gs(app.aaps.core.ui.R.string.scene_action_tt, "${action.targetMgdl} mg/dL")
+
+                is app.aaps.core.data.model.SceneAction.ProfileSwitch   ->
+                    rh.gs(app.aaps.core.ui.R.string.scene_action_profile, action.profileName, action.percentage)
+
+                is app.aaps.core.data.model.SceneAction.SmbToggle       ->
+                    if (action.enabled) rh.gs(app.aaps.core.ui.R.string.scene_action_smb_on)
+                    else rh.gs(app.aaps.core.ui.R.string.scene_action_smb_off)
+
+                is app.aaps.core.data.model.SceneAction.LoopModeChange  ->
+                    rh.gs(app.aaps.core.ui.R.string.scene_action_loop_mode, action.mode.name)
+
+                is app.aaps.core.data.model.SceneAction.CarePortalEvent ->
+                    rh.gs(app.aaps.core.ui.R.string.scene_action_careportal, action.type.text)
+            }
+        }
+        val message = "${scene.name}\n${scene.defaultDurationMinutes} min\n\n$actionSummary"
+        _actionConfirmation.update {
+            ActionConfirmation(
+                title = rh.gs(app.aaps.core.ui.R.string.scene),
+                message = message,
+                onConfirmAction = ConfirmableAction.ActivateScene(sceneId, scene.defaultDurationMinutes)
+            )
+        }
+    }
+
+    fun requestSceneDeactivation() {
+        val activeState = activeSceneManager.getActiveState() ?: return
+        val message = rh.gs(app.aaps.core.ui.R.string.scene_confirm_deactivate, activeState.scene.name)
+        _actionConfirmation.update {
+            ActionConfirmation(
+                title = rh.gs(app.aaps.core.ui.R.string.scene_deactivate),
+                message = message,
+                onConfirmAction = ConfirmableAction.DeactivateScene
+            )
+        }
+    }
+
     fun dismissActionConfirmation() {
         _actionConfirmation.update { null }
     }
@@ -667,6 +744,14 @@ class MainViewModel @Inject constructor(
                 )
             }
 
+            is ConfirmableAction.ActivateScene            -> {
+                val scene = sceneRepository.getScene(action.sceneId) ?: return@launch
+                sceneExecutor.activate(scene, action.durationMinutes)
+            }
+
+            is ConfirmableAction.DeactivateScene          -> {
+                sceneExecutor.deactivate()
+            }
         }
     }
 
@@ -692,15 +777,18 @@ private data class EventState(
 private data class ChipState(
     val isProfileLoaded: Boolean = false,
     val profileName: String = "",
+    val profilePsId: Long = 0,
     val isProfileModified: Boolean = false,
     val profileProgress: Float = 0f,
     val tempTargetText: String = "",
     val tempTargetState: TempTargetChipState = TempTargetChipState.None,
     val tempTargetProgress: Float = 0f,
     val tempTargetReason: TT.Reason? = null,
+    val tempTargetRecordId: Long = 0,
     val runningMode: RM.Mode = RM.Mode.DISABLED_LOOP,
     val runningModeText: String = "",
     val runningModeProgress: Float = 0f,
+    val runningModeRecordId: Long = 0,
     val tbrState: TbrState = TbrState.NONE,
     val quickWizardItems: List<QuickWizardItem> = emptyList()
 )
