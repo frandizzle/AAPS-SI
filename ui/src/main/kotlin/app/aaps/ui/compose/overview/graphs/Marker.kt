@@ -1,6 +1,5 @@
 package app.aaps.ui.compose.overview.graphs
 
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -14,7 +13,6 @@ import com.patrykandpatrick.vico.compose.cartesian.marker.rememberDefaultCartesi
 import com.patrykandpatrick.vico.compose.common.Fill
 import com.patrykandpatrick.vico.compose.common.Insets
 import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
-import com.patrykandpatrick.vico.compose.common.component.rememberShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 
@@ -66,24 +64,12 @@ fun rememberMarker(
         thickness = 2.dp,
     )
 
-    // A small dot drawn at the highlighted BG point. This follows the curve
-    // (up with highs, down with lows), while the label itself stays pinned
-    // to the top of the chart so it doesn't jitter as CGM readings step.
-    val indicator = rememberShapeComponent(
-        fill = Fill(onSurfaceColor),
-        shape = CircleShape,
-        strokeFill = Fill(surfaceColor),
-        strokeThickness = 2.dp
-    )
-
     return rememberDefaultCartesianMarker(
         label = label,
         valueFormatter = remember(minTimestamp, getDetails, isVisible) {
             DefaultCartesianMarker.ValueFormatter { _, targets ->
                 if (!isVisible) return@ValueFormatter ""
-                // CartesianMarker.Target exposes `x` directly — no cast needed.
                 val bgTarget = targets.firstOrNull() ?: return@ValueFormatter ""
-
                 val x = bgTarget.x
                 val timestamp = minTimestamp + (x * 60000).toLong()
                 val data = getDetails(timestamp) ?: return@ValueFormatter ""
@@ -92,12 +78,10 @@ fun rememberMarker(
                     .format(data.bgValue)
             }
         },
-        indicator = { _ -> indicator },
-        indicatorSize = 10.dp,
-        // Top = label stays pinned at the top of the chart area.
-        // No vertical jitter as you scrub across different BG heights.
-        // The dot indicator separately marks the point on the curve.
-        labelPosition = DefaultCartesianMarker.LabelPosition.Top,
+        // AbovePoint: label sits above the BG point with a fixed vertical offset.
+        // As you scrub, it rises/falls with the curve but without the hard
+        // per-reading snap that AroundPoint causes.
+        labelPosition = DefaultCartesianMarker.LabelPosition.AbovePoint,
         guideline = guideline,
     )
 }
