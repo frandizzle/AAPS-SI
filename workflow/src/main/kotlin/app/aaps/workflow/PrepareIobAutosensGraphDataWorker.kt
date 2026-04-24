@@ -98,10 +98,21 @@ class PrepareIobAutosensGraphDataWorker(
         // Seed currentTrim from the most recent APS result BEFORE the visible window so the
         // line starts at the chart's left edge instead of only appearing once the first
         // non-null fuelTrim lands inside the window. Look back a conservative 6h.
-        var currentTrim: Double? = persistenceLayer
-            .getApsResults(fromTime - 6 * 60 * 60 * 1000L, fromTime)
+        val seedResults = persistenceLayer.getApsResults(fromTime - 6 * 60 * 60 * 1000L, fromTime)
+        var currentTrim: Double? = seedResults
             .asReversed()
             .firstNotNullOfOrNull { it.fuelTrim }
+
+        aapsLogger.debug(
+            LTag.AUTOSENS,
+            "FuelTrim debug: fromTime=${dateUtil.dateAndTimeAndSecondsString(fromTime)} " +
+                "endTime=${dateUtil.dateAndTimeAndSecondsString(endTime)} " +
+                "apsResultsInWindow=${apsResults.size} " +
+                "nonNullTrimInWindow=${apsResults.count { it.fuelTrim != null }} " +
+                "seedResultsBefore=${seedResults.size} " +
+                "nonNullSeedTrim=${seedResults.count { it.fuelTrim != null }} " +
+                "seededTrim=$currentTrim"
+        )
 
         while (time <= endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
@@ -163,11 +174,13 @@ class PrepareIobAutosensGraphDataWorker(
             // Fuel Trim: advance through APS results up to current tick, hold most recent value.
             // Emitting one point per 5-min tick gives the line the same density as BGI/IOB so
             // Smooth interpolation produces a flowing curve instead of sparse plateaus.
+            // Only emit up to 'now' — trim is a historical/current measurement, not a forecast,
+            // so the line must stop at the now-marker like BGI/activity do.
             while (apsIdx < apsResults.size && apsResults[apsIdx].date <= time) {
                 apsResults[apsIdx].fuelTrim?.let { currentTrim = it }
                 apsIdx++
             }
-            currentTrim?.let { fuelTrimListCompose.add(GraphDataPoint(time, it)) }
+            if (time <= now) currentTrim?.let { fuelTrimListCompose.add(GraphDataPoint(time, it)) }
 
             time += 5 * 60 * 1000L
         }
