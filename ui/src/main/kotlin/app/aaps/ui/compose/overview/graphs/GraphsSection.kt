@@ -48,6 +48,7 @@ import app.aaps.core.interfaces.overview.graph.GraphConfig
 import app.aaps.core.interfaces.overview.graph.SecondaryGraph
 import app.aaps.core.interfaces.overview.graph.SeriesType
 import app.aaps.core.ui.compose.NumberInputRow
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import com.patrykandpatrick.vico.compose.cartesian.Scroll
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
@@ -95,8 +96,10 @@ private val CONFIGURABLE_SERIES = SeriesType.entries.filter {
 fun GraphsSection(
     graphViewModel: GraphViewModel,
     isSimpleMode: Boolean,
+    siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
+    val isFasting = siOverviewState?.isFasting ?: true
     val savedGraphConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
     // In simple mode: fixed layout (BG, IOB+BAS, COB — no overlays, no editing)
     val graphConfig = if (isSimpleMode) SIMPLE_MODE_CONFIG else savedGraphConfig
@@ -382,6 +385,10 @@ fun GraphsSection(
         var editingGraphIndex by remember { mutableIntStateOf(-1) }
         for (i in 0 until activeCount) {
             val secondary = graphConfig.secondaryGraphs[i]
+            // TRIM% is only active while fasting: hide graphs that ONLY contain TRIM% when not fasting
+            val isTrimOnly = secondary.series.size == 1 && secondary.series[0] == SeriesType.FUEL_TRIM
+            if (!isFasting && isTrimOnly) continue
+
             Box(modifier = Modifier.offset(y = (-8).dp)) {
                 SecondaryGraphCompose(
                     viewModel = graphViewModel,

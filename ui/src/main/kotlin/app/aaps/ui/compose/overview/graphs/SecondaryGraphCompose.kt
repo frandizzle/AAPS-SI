@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -44,7 +45,9 @@ import com.patrykandpatrick.vico.compose.common.Position
 import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
+import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
+import kotlin.math.abs
 
 /**
  * General-purpose secondary graph composable.
@@ -105,6 +108,7 @@ fun SecondaryGraphCompose(
 
     val hasIob = primaryType == SeriesType.IOB
     val hasCob = primaryType == SeriesType.COB
+    val hasFuelTrim = primaryType == SeriesType.FUEL_TRIM
 
     // Collect flows for primary series
     val iobData = if (hasIob) viewModel.iobGraphFlow.collectAsStateWithLifecycle().value else null
@@ -521,20 +525,29 @@ fun SecondaryGraphCompose(
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
-    val decorations = remember(nowLine) { listOf(nowLine) }
-    // When basal overlay is active, reserve top 25% for basal by extending primary Y range
-    val primaryYMax = remember(hasBasalLayer, processedIob, processedSimpleSeries, processedCob) {
-        if (!hasBasalLayer) return@remember null // auto-range when no basal
+    val decorations = remember(nowLine) { listOf(nowLine)  }
+
+    // When basal overlay or fuel trim is active, custom primary Y range is needed
+    val primaryYMax = remember(hasBasalLayer, hasFuelTrim, processedIob, processedSimpleSeries, processedCob) {
+        if (!hasBasalLayer && !hasFuelTrim) return@remember null // auto-range
         val allY = buildList {
             addAll(processedIob.map { it.second })
             for ((_, pts) in processedSimpleSeries) addAll(pts.map { it.second })
             addAll(processedCob.first.map { it.second })
         }
-        if (allY.isEmpty()) null
-        else {
+        if (allY.isEmpty()) {
+            if (hasFuelTrim) -5.0 to 5.0 else null
+        } else {
             val dataMax = allY.max().coerceAtLeast(0.1)
             val dataMin = allY.min().coerceAtMost(0.0)
-            dataMin to (dataMax / 0.75) // extend so data fills 75%, top 25% reserved for basal
+            
+            if (hasFuelTrim) {
+                // Symmetric range around 0 for Fuel Trim, at least [-5, 5]
+                val limit = maxOf(abs(dataMax), abs(dataMin), 5.0)
+                -limit to limit
+            } else {
+                dataMin to (dataMax / 0.75) // extend so data fills 75%, top 25% reserved for basal
+            }
         }
     }
     // Dual-axis zero alignment.

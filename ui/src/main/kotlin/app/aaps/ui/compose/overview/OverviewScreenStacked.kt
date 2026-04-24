@@ -177,6 +177,6 @@ fun OverviewScreenStacked(
             )
         }
 
-        GraphsSection(graphViewModel = graphViewModel, isSimpleMode = isSimpleMode)
+        GraphsSection(graphViewModel = graphViewModel, isSimpleMode = isSimpleMode, siOverviewState = siOverviewState)
     }
 }

@@ -24,7 +24,9 @@ interface SmartInsulinOverview {
         /** null = full learning active
          *  "limited" = meal mode (only DIA/peak learning)
          *  "off: <reason>" = fully suppressed */
-        val learningState: String
+        val learningState: String,
+        /** True when in FASTING mode (no meal overrides active) */
+        val isFasting: Boolean = true
     )
 
     fun overviewState(): OverviewState

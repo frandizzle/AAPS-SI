@@ -240,7 +240,8 @@ open class SmartInsulinPlugin @Inject constructor(
             modeLine      = "Meal: Fasting",
             pb2Line       = null,
             pb3Line       = null,
-            learningState = "Learning"
+            learningState = "Learning",
+            isFasting     = true
         )
     )
 
@@ -1382,7 +1383,8 @@ open class SmartInsulinPlugin @Inject constructor(
             modeLine      = modeLineStr,
             pb2Line       = pb2LineStr,
             pb3Line       = pb3LineStr,
-            learningState = learningStateStr
+            learningState = learningStateStr,
+            isFasting     = mealMode == MealMode.FASTING
         )
 
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
