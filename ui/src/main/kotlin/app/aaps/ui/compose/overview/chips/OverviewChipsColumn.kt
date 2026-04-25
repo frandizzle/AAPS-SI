@@ -22,20 +22,17 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
-import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.icons.IcSettingsOff
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.ui.compose.main.TempTargetChipState
-import app.aaps.ui.compose.overview.graphs.IobUiState
-import app.aaps.ui.compose.overview.graphs.SmbUiState
-import app.aaps.ui.compose.overview.graphs.TbrUiState
 
 @Composable
 fun OverviewChipsColumn(
@@ -51,8 +48,6 @@ fun OverviewChipsColumn(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     onNavigate: (NavigationRequest) -> Unit,
-    onTbrChipClick: () -> Unit,
-    tbrState: TbrState,
     modifier: Modifier = Modifier,
     runningModeSceneManaged: Boolean = false,
     profileSceneManaged: Boolean = false,
@@ -90,9 +85,7 @@ fun OverviewChipsColumn(
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
                             tempTargetSceneManaged = tempTargetSceneManaged,
-                            tbrState = tbrState,
                             onNavigate = onNavigate,
-                            onTbrChipClick = onTbrChipClick
                         )
                     }
                     Row(
@@ -117,9 +110,7 @@ fun OverviewChipsColumn(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 tempTargetSceneManaged = tempTargetSceneManaged,
-                tbrState = tbrState,
                 onNavigate = onNavigate,
-                onTbrChipClick = onTbrChipClick
             )
         }
         siOverviewState?.let { SmartInsulinStatusBlock(state = it) }
@@ -232,9 +223,7 @@ private fun NarrowChips(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     tempTargetSceneManaged: Boolean,
-    tbrState: TbrState,
     onNavigate: (NavigationRequest) -> Unit,
-    onTbrChipClick: () -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -282,9 +271,26 @@ private fun NarrowChips(
                 sceneManaged = tempTargetSceneManaged
             )
         }
-        TbrChip(
-            state = tbrState,
-            onClick = onTbrChipClick
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun OverviewChipsColumnPreview() {
+    MaterialTheme {
+        OverviewChipsColumn(
+            runningMode = RM.Mode.CLOSED_LOOP,
+            runningModeText = "Closed Loop",
+            runningModeProgress = 0f,
+            isSimpleMode = false,
+            profileName = "LocalProfile1",
+            isProfileModified = false,
+            profileProgress = 0f,
+            tempTargetText = "5.5",
+            tempTargetState = TempTargetChipState.Active,
+            tempTargetProgress = 0.5f,
+            tempTargetReason = TT.Reason.ACTIVITY,
+            onNavigate = {}
         )
     }
 }

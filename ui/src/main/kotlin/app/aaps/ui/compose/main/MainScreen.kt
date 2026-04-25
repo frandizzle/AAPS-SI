@@ -232,7 +232,6 @@ fun MainScreen(
                         statusViewModel = statusViewModel,
                         statusLightsDef = statusLightsDef,
                         onNavigate = onNavigate,
-                        onTbrChipClick = mainViewModel::showTbrInfo,
                         notifications = notifications,
                         onDismissNotification = onDismissNotification,
                         onNotificationActionClick = onNotificationActionClick,

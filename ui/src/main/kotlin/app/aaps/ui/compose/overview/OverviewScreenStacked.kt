@@ -64,7 +64,6 @@ fun OverviewScreenStacked(
     statusViewModel: StatusViewModel,
     statusLightsDef: PreferenceSubScreenDef,
     onNavigate: (NavigationRequest) -> Unit,
-    onTbrChipClick: () -> Unit,
     paddingValues: PaddingValues,
     activeSceneState: ActiveSceneState? = null,
     sceneExpired: Boolean = false,
@@ -134,8 +133,6 @@ fun OverviewScreenStacked(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 onNavigate = onNavigate,
-                onTbrChipClick = onTbrChipClick,
-                tbrState = tbrUiState.toTbrState(),
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 8.dp),
