@@ -496,6 +496,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val stftActive:         Boolean,
         val uamStatusLine:      String?,
         val uamDebug:           String,
+        val fuelTrimStrength:   Double,
         val profileLearningStatus: String,
         val circadianRawStatus: String,
         val profilesRawStatus:  String,
@@ -680,7 +681,8 @@ open class SmartInsulinPlugin @Inject constructor(
             activeDoseU        = mealOverrideManager.activeDoseU,
             activePb2DoseU     = mealOverrideManager.activePb2DoseU,
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
-            pb3Status          = cachedOverviewState.pb3Line ?: ""
+            pb3Status          = cachedOverviewState.pb3Line ?: "",
+            fuelTrimStrength   = circadianLearner.trimStrength
         )
     }
 

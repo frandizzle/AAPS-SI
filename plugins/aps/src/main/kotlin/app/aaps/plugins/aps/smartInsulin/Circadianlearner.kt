@@ -106,7 +106,7 @@ class CircadianLearner @Inject constructor(
     private val trimBgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(36)
     private var trimWindowMs: Long = 90 * 60_000L
     private var trimActive   = false
-    private var trimStrength = 0.0
+    var trimStrength = 0.0
     private var trimDirection = 0
     private var trimStartMs  = 0L
     private var lastTrimActionMs = 0L // NEW: Tracks the "Wait and Re-assess" window
