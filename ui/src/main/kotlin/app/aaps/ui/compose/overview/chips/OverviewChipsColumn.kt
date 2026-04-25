@@ -51,6 +51,8 @@ fun OverviewChipsColumn(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     onNavigate: (NavigationRequest) -> Unit,
+    onTbrChipClick: () -> Unit,
+    tbrState: TbrState,
     modifier: Modifier = Modifier,
     runningModeSceneManaged: Boolean = false,
     profileSceneManaged: Boolean = false,
@@ -88,7 +90,9 @@ fun OverviewChipsColumn(
                             tempTargetProgress = tempTargetProgress,
                             tempTargetReason = tempTargetReason,
                             tempTargetSceneManaged = tempTargetSceneManaged,
-                            onNavigate = onNavigate
+                            tbrState = tbrState,
+                            onNavigate = onNavigate,
+                            onTbrChipClick = onTbrChipClick
                         )
                     }
                     Row(
@@ -113,7 +117,9 @@ fun OverviewChipsColumn(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 tempTargetSceneManaged = tempTargetSceneManaged,
-                onNavigate = onNavigate
+                tbrState = tbrState,
+                onNavigate = onNavigate,
+                onTbrChipClick = onTbrChipClick
             )
         }
         siOverviewState?.let { SmartInsulinStatusBlock(state = it) }
@@ -226,7 +232,9 @@ private fun NarrowChips(
     tempTargetProgress: Float,
     tempTargetReason: TT.Reason?,
     tempTargetSceneManaged: Boolean,
-    onNavigate: (NavigationRequest) -> Unit
+    tbrState: TbrState,
+    onNavigate: (NavigationRequest) -> Unit,
+    onTbrChipClick: () -> Unit
 ) {
     if (runningModeText.isNotEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -274,5 +282,9 @@ private fun NarrowChips(
                 sceneManaged = tempTargetSceneManaged
             )
         }
+        TbrChip(
+            state = tbrState,
+            onClick = onTbrChipClick
+        )
     }
 }

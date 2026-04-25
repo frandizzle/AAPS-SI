@@ -74,6 +74,7 @@ class ConfigImpl @Inject constructor(
         enabledOptionsCache.getOrPut(option) {
             fileListProvider.get().ensureExtraDirExists()?.findFile(option.filename) != null
         }
+
     override fun isUnfinishedMode(): Boolean = isEnabled(ExternalOptions.UNFINISHED_MODE)
     override fun showUserActionsOnWatchOnly(): Boolean = isEnabled(ExternalOptions.SHOW_USER_ACTIONS_ON_WATCH_ONLY)
     override fun ignoreNightscoutV3Errors(): Boolean = isEnabled(ExternalOptions.IGNORE_NS_V3_ERRORS)

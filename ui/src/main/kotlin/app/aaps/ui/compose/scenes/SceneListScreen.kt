@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -38,15 +39,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.Scene
 import app.aaps.core.data.model.SceneAction
+import app.aaps.core.data.model.SceneEndAction
 import app.aaps.core.data.model.TT
 import app.aaps.core.ui.R
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.AapsTopAppBar
+import app.aaps.core.ui.compose.dialogs.OkDialog
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.labelResId
 
@@ -82,7 +85,8 @@ fun SceneListScreen(
         }
 
         is SceneListViewModel.DialogState.ValidationError     -> {
-            SceneValidationErrorDialog(
+            OkDialog(
+                title = stringResource(R.string.error),
                 message = state.message,
                 onDismiss = viewModel::dismissDialog
             )
@@ -144,15 +148,20 @@ fun SceneListScreen(
                         scene.actions.size,
                         viewModel.formatMinutes(scene.defaultDurationMinutes)
                     )
+                    val chainTargetId = (scene.endAction as? SceneEndAction.ChainScene)?.sceneId
+                    val chainTargetName = chainTargetId?.let { id -> scenes.firstOrNull { it.id == id }?.name }
                     SceneCard(
                         scene = scene,
                         subtitle = subtitle,
                         isActive = isActive,
                         isInvalid = isInvalid,
+                        chainTargetName = chainTargetName,
+                        chainMissing = chainTargetId != null && chainTargetName == null,
                         onActivate = { viewModel.requestActivation(scene) },
                         onDeactivate = { viewModel.requestDeactivation() },
                         onEdit = { onNavigateToEditor(scene.id) },
-                        onDelete = { viewModel.deleteScene(scene.id) }
+                        onDelete = { viewModel.deleteScene(scene.id) },
+                        onToggleEnabled = { viewModel.toggleEnabled(scene.id) }
                     )
                 }
             }
@@ -166,10 +175,13 @@ internal fun SceneCard(
     subtitle: String,
     isActive: Boolean,
     isInvalid: Boolean = false,
+    chainTargetName: String? = null,
+    chainMissing: Boolean = false,
     onActivate: () -> Unit,
     onDeactivate: () -> Unit,
     onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onToggleEnabled: () -> Unit = {}
 ) {
     val nameColor = when {
         isInvalid -> MaterialTheme.colorScheme.error
@@ -190,6 +202,10 @@ internal fun SceneCard(
             horizontalArrangement = Arrangement.spacedBy(AapsSpacing.medium),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Checkbox(
+                checked = scene.isEnabled,
+                onCheckedChange = { onToggleEnabled() }
+            )
             Icon(
                 imageVector = SceneIcons.fromKey(scene.icon).icon,
                 contentDescription = null,
@@ -208,6 +224,19 @@ internal fun SceneCard(
                     color = if (isInvalid) MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                when {
+                    chainMissing            -> Text(
+                        text = stringResource(R.string.scene_chain_target_missing),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+
+                    chainTargetName != null -> Text(
+                        text = stringResource(R.string.scene_chain_indicator, chainTargetName),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Row {
                 if (isActive) {
@@ -215,7 +244,7 @@ internal fun SceneCard(
                         Icon(Icons.Default.Stop, contentDescription = stringResource(R.string.scene_deactivate))
                     }
                 } else {
-                    IconButton(onClick = onActivate) {
+                    IconButton(onClick = onActivate, enabled = scene.isEnabled) {
                         Icon(Icons.Default.PlayArrow, contentDescription = stringResource(R.string.scene_activate))
                     }
                 }
@@ -317,31 +346,6 @@ private fun SceneDeactivationDialog(
             }
         },
         properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = false)
-    )
-}
-
-@Composable
-private fun SceneValidationErrorDialog(
-    message: String,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(stringResource(R.string.error))
-        },
-        text = {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.ok))
-            }
-        },
-        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
     )
 }
 

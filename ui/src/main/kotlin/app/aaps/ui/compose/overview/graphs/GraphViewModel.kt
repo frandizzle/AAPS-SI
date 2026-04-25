@@ -18,6 +18,7 @@ import app.aaps.core.interfaces.overview.graph.GraphConfig
 import app.aaps.core.interfaces.overview.graph.GraphConfigRepository
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.overview.graph.SeriesType
+import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -123,13 +124,20 @@ data class SensitivityUiState(
 /**
  * UI state for TBR display
  */
+@Stable
 @Immutable
 data class TbrUiState(
     val rate: Double = 0.0,
     val profileBasal: Double = 0.0,
     val isAbsolute: Boolean = true,
     val arrow: TbrArrow = TbrArrow.FLAT
-)
+) {
+    fun toTbrState(): TbrState = when (arrow) {
+        TbrArrow.UP   -> TbrState.HIGH
+        TbrArrow.DOWN -> TbrState.LOW
+        TbrArrow.FLAT -> TbrState.NONE
+    }
+}
 
 data class SmbUiState(
     val text: String = "",

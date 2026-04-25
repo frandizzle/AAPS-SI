@@ -22,8 +22,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
-import app.aaps.ui.compose.scenes.ActiveSceneBanner
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
+import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
 import app.aaps.core.ui.compose.navigation.ElementType
@@ -40,6 +40,7 @@ import app.aaps.ui.compose.overview.graphs.SmbUiState
 import app.aaps.ui.compose.overview.graphs.TbrUiState
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
+import app.aaps.ui.compose.scenes.ActiveSceneBanner
 
 @Composable
 fun OverviewScreenStacked(
@@ -63,6 +64,7 @@ fun OverviewScreenStacked(
     statusViewModel: StatusViewModel,
     statusLightsDef: PreferenceSubScreenDef,
     onNavigate: (NavigationRequest) -> Unit,
+    onTbrChipClick: () -> Unit,
     paddingValues: PaddingValues,
     activeSceneState: ActiveSceneState? = null,
     sceneExpired: Boolean = false,
@@ -132,6 +134,8 @@ fun OverviewScreenStacked(
                 tempTargetProgress = tempTargetProgress,
                 tempTargetReason = tempTargetReason,
                 onNavigate = onNavigate,
+                onTbrChipClick = onTbrChipClick,
+                tbrState = tbrUiState.toTbrState(),
                 modifier = Modifier
                     .weight(1f)
                     .padding(start = 8.dp),

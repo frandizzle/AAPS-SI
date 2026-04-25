@@ -126,6 +126,31 @@ class SceneSerializerTest : TestBase() {
     }
 
     @Test
+    fun isEnabled_roundTrip() {
+        val enabled = Scene(id = "e", name = "Enabled", isEnabled = true)
+        val disabled = Scene(id = "d", name = "Disabled", isEnabled = false)
+
+        val restored = listOf(enabled, disabled).toJson().toScenes()
+        assertThat(restored[0].isEnabled).isTrue()
+        assertThat(restored[1].isEnabled).isFalse()
+    }
+
+    @Test
+    fun isEnabled_missingField_defaultsTrue() {
+        // Legacy JSON without isEnabled — should default to true
+        val json = JSONArray().apply {
+            put(JSONObject().apply {
+                put("id", "legacy")
+                put("name", "Legacy")
+            })
+        }.toString()
+
+        val restored = json.toScenes()
+        assertThat(restored).hasSize(1)
+        assertThat(restored[0].isEnabled).isTrue()
+    }
+
+    @Test
     fun sceneEndAction_notification_roundTrip() {
         val scene = Scene(
             id = "n1",
@@ -138,16 +163,16 @@ class SceneSerializerTest : TestBase() {
     }
 
     @Test
-    fun sceneEndAction_suggestScene_roundTrip() {
+    fun sceneEndAction_chainScene_roundTrip() {
         val scene = Scene(
             id = "s1",
             name = "Pre-Meal",
-            endAction = SceneEndAction.SuggestScene("post-meal-id")
+            endAction = SceneEndAction.ChainScene("post-meal-id")
         )
 
         val restored = listOf(scene).toJson().toScenes()[0]
-        assertThat(restored.endAction).isInstanceOf(SceneEndAction.SuggestScene::class.java)
-        assertThat((restored.endAction as SceneEndAction.SuggestScene).sceneId).isEqualTo("post-meal-id")
+        assertThat(restored.endAction).isInstanceOf(SceneEndAction.ChainScene::class.java)
+        assertThat((restored.endAction as SceneEndAction.ChainScene).sceneId).isEqualTo("post-meal-id")
     }
 
     @Test
