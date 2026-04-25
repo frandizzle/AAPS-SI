@@ -524,10 +524,10 @@ class OmnipodDashPumpPlugin @Inject constructor(
             aapsLogger.info(LTag.PUMP, "Basal correction no longer appropriate")
             return pumpEnactResultProvider.get().success(true).enacted(false).comment("Basal correction no longer appropriate")
         }
-
+        
         // Set cooldown to prevent duplicate corrections
         podStateManager.lastBasalCorrectionTime = System.currentTimeMillis()
-
+        
         val requestedInsulinAmount = PodConstants.POD_PULSE_BOLUS_UNITS
 
         val availableInsulin = reservoirLevel.value.cU
