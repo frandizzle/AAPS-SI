@@ -87,6 +87,7 @@ class UamController @Inject constructor(
     // burst threshold, fire burst — that's the whole point of burst.
     private var burstPrevBgMmol            = 0.0
     private var burstPrevBgTimestampMs     = 0L
+    private var burstAnchorBgMmol          = 0.0
     // Rebound window transition tracking — prevents post-low counter-regulatory hyperglycemia
     // from triggering UAM/P/F in the first hour after recovery ends. When BG crashes low,
     // the liver releases glucagon → BG rebounds high → can get stuck above target for up to
@@ -328,9 +329,28 @@ class UamController @Inject constructor(
         // ── Protein/Fat stuck-high detection ──────────────────────────────────
         checkStuckHigh(currentBgMmol, deltaMmol, shortAvgDeltaMmol, currentHour, bgWentLow, inReboundWindow, lastLowTimeMs, currentMealMode, inPostMealLockout, profileTargetMmol, bgTimestampMs)
 
+        // ── Independent Burst Accumulation ────────────────────────────────────
+        // We track the rise even when below threshold or outside windows so that
+        // we can trigger the moment we cross them.
+        val timeSinceLastBgMs  = bgTimestampMs - burstPrevBgTimestampMs
+        val freshCycle         = timeSinceLastBgMs in 1L..BURST_MAX_CYCLE_GAP_MS
+
+        if (burstPrevBgMmol == 0.0 || !freshCycle || currentBgMmol < burstPrevBgMmol - 0.01) {
+            burstAnchorBgMmol = currentBgMmol
+        } else {
+            // Rising! If we don't have an anchor yet, seed it from the previous reading.
+            if (burstAnchorBgMmol == 0.0) {
+                burstAnchorBgMmol = burstPrevBgMmol
+            }
+        }
+        
+        lastBurstRiseMmol = if (burstAnchorBgMmol > 0.0 && currentBgMmol > burstAnchorBgMmol) currentBgMmol - burstAnchorBgMmol else 0.0
+
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
             lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, inPostMealLockout)
+            burstPrevBgMmol = currentBgMmol
+            burstPrevBgTimestampMs = bgTimestampMs
             resetStreak(); return
         }
 
@@ -339,19 +359,6 @@ class UamController @Inject constructor(
             resetStreak()
         }
         lastResolvedMode = uamMode
-
-        // ── Independent burst trigger ─────────────────────────────────────────
-        // Simple rule: two consecutive BG readings with cumulative rise ≥ user's burst
-        // threshold setting, and we're past all the armed/enabled/window gates above →
-        // fire burst immediately. Independent of streak counter / wobble / delta thresholds.
-        // This is the whole point of burst: catch fast spikes the regular streak logic
-        // misses because threshold cycling or mid-rise anchoring delays the trigger.
-        //
-        val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        val timeSinceLastBgMs  = bgTimestampMs - burstPrevBgTimestampMs
-        val freshCycle         = timeSinceLastBgMs in 1L..BURST_MAX_CYCLE_GAP_MS
-
-        lastBurstRiseMmol = if (burstPrevBgMmol > 0.0 && freshCycle) currentBgMmol - burstPrevBgMmol else 0.0
 
         // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
@@ -363,42 +370,36 @@ class UamController @Inject constructor(
 
         if (!aboveThreshold) {
             resetStreak()
-            // Slide the burst window forward even when below threshold so the NEXT cycle can trigger
             burstPrevBgMmol = currentBgMmol
             burstPrevBgTimestampMs = bgTimestampMs
             return
         }
 
         // ── Independent burst trigger ─────────────────────────────────────────
-        // Simple rule: two consecutive BG readings with cumulative rise ≥ user's burst
-        // threshold setting, and we're past all the armed/enabled/window gates above →
-        // fire burst immediately. Independent of streak counter / wobble / delta thresholds.
-        // This is the whole point of burst: catch fast spikes the regular streak logic
-        // misses because threshold cycling or mid-rise anchoring delays the trigger.
-        //
+        // Simple rule: cumulative rise ≥ user's burst threshold setting → fire.
+        // Independent of streak counter / wobble / delta thresholds.
         // SAFETY GATE: The CGM gap must be a fresh 5-min cycle (allow up to 6.5 min for
-        // CGM jitter). This prevents stale-data misfires — e.g. UAM disabled overnight
-        // (night cutoff), BG 5.0 at sleep, BG 8.0 at wake = +3.0 mmol "rise" over 8 hours,
-        // which would instantly fire burst without this check. Demanding ~5 min between
-        // readings ensures we only act on true per-cycle jumps.
+        // CGM jitter). This prevents stale-data misfires.
+        val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
 
-        if (burstThresholdPref > 0.0 && burstPrevBgMmol > 0.0 && freshCycle) {
+        if (burstThresholdPref > 0.0 && burstAnchorBgMmol > 0.0 && freshCycle) {
             if (lastBurstRiseMmol >= burstThresholdPref - 0.01) {
                 aapsLogger.debug(LTag.APS,
-                                 "UAM: BURST trigger (2-reading) — rise=${fmtDelta(lastBurstRiseMmol)}$unitLabel " +
+                                 "UAM: BURST trigger (multi-reading) — rise=${fmtDelta(lastBurstRiseMmol)}$unitLabel " +
                                      ">= threshold=${fmtBg(burstThresholdPref)}$unitLabel " +
-                                     "(prev=${fmtBg(burstPrevBgMmol)} → current=${fmtBg(currentBgMmol)} " +
-                                     "over ${timeSinceLastBgMs / 1000}s) " +
+                                     "(anchor=${fmtBg(burstAnchorBgMmol)} → current=${fmtBg(currentBgMmol)}) " +
                                      "firing ${uamMode.label}")
                 triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
                 resetStreak()
                 // Clear burst window so we don't immediately re-fire on the next reading
                 burstPrevBgMmol = 0.0
                 burstPrevBgTimestampMs = 0L
+                burstAnchorBgMmol = 0.0
                 lastBurstRiseMmol = 0.0
                 return
             }
-        } else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_CYCLE_GAP_MS) {
+        }
+else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_CYCLE_GAP_MS) {
             // Log stale-data rejection at debug so you can see it if burst "should have" fired post-gap
             aapsLogger.debug(LTag.APS,
                              "UAM: burst check skipped — CGM gap ${timeSinceLastBgMs / 1000}s > " +
