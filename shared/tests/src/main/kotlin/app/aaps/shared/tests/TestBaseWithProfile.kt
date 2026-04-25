@@ -159,7 +159,8 @@ open class TestBaseWithProfile : TestBase() {
         whenever(preferences.observe(any<LongNonPreferenceKey>())).thenReturn(MutableStateFlow(0L))
         whenever(localProfileManager.profile).thenReturn(getValidProfileStore())
         deltaCalculator = DeltaCalculator(aapsLogger)
-        apsResultProvider = Provider { DetermineBasalResult(aapsLogger, constraintsChecker, preferences, activePlugin, processedTbrEbData, profileFunction, rh, decimalFormatter, dateUtil, apsResultProvider, ch) }
+        val profileFunctionLazy = dagger.Lazy { profileFunction }
+        apsResultProvider = Provider { DetermineBasalResult(aapsLogger, constraintsChecker, preferences, activePlugin, processedTbrEbData, profileFunctionLazy, rh, decimalFormatter, dateUtil, apsResultProvider, ch) }
         validProfile = ProfileSealed.Pure(pureProfileFromJson(JSONObject(validProfileJSON), dateUtil)!!, activePlugin)
         effectiveProfileSwitch = EPS(
             timestamp = dateUtil.now(),

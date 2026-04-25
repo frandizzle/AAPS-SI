@@ -68,6 +68,8 @@ class UamController @Inject constructor(
     private var stuckHighReadings = 0
     // Last BG seen during a rise streak — for statusString display only
     private var lastRiseBgMmol = 0.0
+    // Last 2-reading rise seen by burst logic — for statusString display only
+    private var lastBurstRiseMmol = 0.0
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
@@ -157,12 +159,12 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
+    private fun mgdlPrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     private fun rawMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
         val raw = sp.getDouble(key.key, key.defaultValue)
         return if (raw < mmolThreshold) raw * 18.0 else raw
     }
     private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
-    private fun purePrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -338,6 +340,19 @@ class UamController @Inject constructor(
         }
         lastResolvedMode = uamMode
 
+        // ── Independent burst trigger ─────────────────────────────────────────
+        // Simple rule: two consecutive BG readings with cumulative rise ≥ user's burst
+        // threshold setting, and we're past all the armed/enabled/window gates above →
+        // fire burst immediately. Independent of streak counter / wobble / delta thresholds.
+        // This is the whole point of burst: catch fast spikes the regular streak logic
+        // misses because threshold cycling or mid-rise anchoring delays the trigger.
+        //
+        val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+        val timeSinceLastBgMs  = bgTimestampMs - burstPrevBgTimestampMs
+        val freshCycle         = timeSinceLastBgMs in 1L..BURST_MAX_CYCLE_GAP_MS
+
+        lastBurstRiseMmol = if (burstPrevBgMmol > 0.0 && freshCycle) currentBgMmol - burstPrevBgMmol else 0.0
+
         // ── BG above trigger threshold ────────────────────────────────────────
         val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
 
@@ -348,7 +363,7 @@ class UamController @Inject constructor(
 
         if (!aboveThreshold) {
             resetStreak()
-            // Still update the 2-reading burst window so it's ready when BG crosses threshold
+            // Slide the burst window forward even when below threshold so the NEXT cycle can trigger
             burstPrevBgMmol = currentBgMmol
             burstPrevBgTimestampMs = bgTimestampMs
             return
@@ -366,23 +381,21 @@ class UamController @Inject constructor(
         // (night cutoff), BG 5.0 at sleep, BG 8.0 at wake = +3.0 mmol "rise" over 8 hours,
         // which would instantly fire burst without this check. Demanding ~5 min between
         // readings ensures we only act on true per-cycle jumps.
-        val burstThresholdPref = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        val timeSinceLastBgMs  = bgTimestampMs - burstPrevBgTimestampMs
-        val freshCycle         = timeSinceLastBgMs in 1L..BURST_MAX_CYCLE_GAP_MS
+
         if (burstThresholdPref > 0.0 && burstPrevBgMmol > 0.0 && freshCycle) {
-            val twoReadingRise = currentBgMmol - burstPrevBgMmol
-            if (twoReadingRise >= burstThresholdPref) {
+            if (lastBurstRiseMmol >= burstThresholdPref - 0.01) {
                 aapsLogger.debug(LTag.APS,
-                                 "UAM: BURST trigger (2-reading) — rise=${fmtDelta(twoReadingRise)}$unitLabel " +
+                                 "UAM: BURST trigger (2-reading) — rise=${fmtDelta(lastBurstRiseMmol)}$unitLabel " +
                                      ">= threshold=${fmtBg(burstThresholdPref)}$unitLabel " +
                                      "(prev=${fmtBg(burstPrevBgMmol)} → current=${fmtBg(currentBgMmol)} " +
                                      "over ${timeSinceLastBgMs / 1000}s) " +
                                      "firing ${uamMode.label}")
-                triggerUam(uamMode, currentBgMmol, deltaMmol, twoReadingRise)
+                triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
                 resetStreak()
                 // Clear burst window so we don't immediately re-fire on the next reading
                 burstPrevBgMmol = 0.0
                 burstPrevBgTimestampMs = 0L
+                lastBurstRiseMmol = 0.0
                 return
             }
         } else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_CYCLE_GAP_MS) {
@@ -396,7 +409,7 @@ class UamController @Inject constructor(
         burstPrevBgTimestampMs = bgTimestampMs
 
         // ── Rise confirmation: delta, shortAvgDelta, AND BGI-gap ─────────────
-        val riseMinDeltaBase   = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase   = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
 
         val dirtyMultiplier    = if (inPostMealLockout) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
@@ -576,7 +589,7 @@ class UamController @Inject constructor(
     }
 
     fun debugSummary(): String {
-        val riseMinDeltaBase = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val normalDelta      = riseMinDeltaBase
         val dirtyDelta       = riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER
         val normalUnexpected = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION
@@ -647,15 +660,11 @@ class UamController @Inject constructor(
             }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
-                val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-                val burstThreshold = purePrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+                val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
                 // Burst now uses 2-reading sliding window — show progress toward next-reading burst.
-                // burstPrevBgMmol is the previous cycle's BG; if current BG rises by >= burst
-                // threshold vs prev, burst fires on the *next* reading.
-                val twoReadingRise = if (burstPrevBgMmol > 0.0 && lastRiseBgMmol > 0.0)
-                    lastRiseBgMmol - burstPrevBgMmol else 0.0
                 val burstNote = if (burstThreshold > 0.0)
-                    " | Burst: ${fmtDelta(twoReadingRise)}/${fmtDelta(burstThreshold)}$unitLabel (2-reading)" else ""
+                    " | Burst: ${fmtDelta(lastBurstRiseMmol)}/${fmtDelta(burstThreshold)}$unitLabel (2-reading)" else ""
                 "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
             }
             lastUamMode != null && lastUamTimeMs > 0L &&
@@ -700,6 +709,7 @@ class UamController @Inject constructor(
         bgAtStreakStart           = 0.0
         lastCountedBgTimestampMs  = 0L
         lastRiseBgMmol            = 0.0
+        lastBurstRiseMmol         = 0.0
     }
 
     var justFiredThisCycle: MealMode? = null
