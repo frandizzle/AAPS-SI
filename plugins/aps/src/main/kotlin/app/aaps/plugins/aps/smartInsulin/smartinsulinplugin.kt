@@ -1007,44 +1007,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // ISF overrides: resolved by modeIsfMgdl() — stored as mg/dL, do NOT use spMgdl().
         val modeIsfMgdl = modeIsfMgdl(mealMode, currentHour)
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
-        // Circadian per-hour multipliers — computed here so circIsfMult is available for dosingIsfMgdl
-        val circIsfMult   = circadianLearner.isfMultiplier()
-        val circBasalMult = circadianLearner.basalMultiplier()
-        val circAggrCeil  = circadianLearner.aggrCeiling()
-        // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
-        // Meal mode ISF overrides are user-set — don't touch them
-        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → more aggressive → more insulin
-        // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
-        // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
-        var dosingIsfMgdl = when {
-            modeIsfMgdl > 0.0 -> modeIsfMgdl                    // user meal-mode override — already mg/dL
-            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → more aggressive → more insulin
-        }
-
-        // ── Tick the override manager — fires queued bolus when safe ──────────
-        val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
-        mealOverrideManager.onLoopCycle(
-            glucoseStatus = glucoseStatus,
-            iobArray      = iobArray,
-            maxIobU       = pb2MaxIob,
-            profile       = profile
-        )
-        // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
-        // post-fire UI still shows what the gate state was on the last tick.
-        pb2LastBgMgdl            = glucoseStatus.glucose
-        pb2LastDeltaMgdl         = glucoseStatus.delta
-        pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
-        pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
-        pb2LastMaxIobU           = pb2MaxIob
-        pb2ProfileTargetMgdl     = profile.getTargetMgdl()
-        // PB3 cache — same values, identical gates. Refreshed every cycle so UI reflects
-        // current state accurately while PB3 is waiting on PB2 or on its own delay.
-        pb3LastBgMgdl            = glucoseStatus.glucose
-        pb3LastDeltaMgdl         = glucoseStatus.delta
-        pb3LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
-        pb3LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
-        pb3LastMaxIobU           = pb2MaxIob
-        pb3ProfileTargetMgdl     = profile.getTargetMgdl()
 
         // ── STFT: short-term target reduction for stuck-high fasting BG ──────
         // Only runs in fasting, never overrides a deliberate temp target.
@@ -1084,6 +1046,135 @@ open class SmartInsulinPlugin @Inject constructor(
             noiseLevelRaw       = glucoseStatus.noise
         )
         val cgmInWarmup = cgmState.inWarmup
+
+        // ── Circadian learner — fasting + no high TT only ─────────────────────
+        // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
+        // The circadian learner itself also gates on mealMode==FASTING internally,
+        // but we gate highTempTarget here before the call to avoid polluting bgHistory.
+        // Circadian learner:
+        //   - Always call during normal conditions
+        //   - During CGM warmup: call with suppressAdaptiveLearning=true so rollercoaster still fires
+        //   - During activity or high TT: skip entirely (BG movement isn't insulin-driven)
+        // CircadianLearner gets its own suppress flag WITHOUT inPostMealLockout.
+        // Drift-based basal learning should fire during lockout — it's measuring real BG physics.
+        // Only the negIOB signal needs lockout gating (IOB shape could be meal bolus tail).
+        // ISF learning also runs during lockout — activity-based deviation is independent of meals.
+        // The negIOB gate is handled inside CircadianLearner via inPostMealLockout parameter.
+        val isfMultBefore = circadianLearner.isfMultiplier()
+        val totalBasalMultBefore = basalLearner.multiplierClamped * circadianLearner.basalMultiplier()
+        val lastDirection = run {
+            val parts = lastSeenNudgeState.split("|")
+            val p = parts.getOrNull(0) ?: "INACTIVE"
+            if (p == "TRIM") parts.getOrNull(1) else if (p == "ACTIVE_HIGH" || p == "ACTIVE_LOW") p else null
+        }
+
+        if (!highTempTarget) {
+            val suppressAdaptiveLearningUpdate = activityMonitor.suppressLearning || cgmState.suppressLearning
+            circadianLearner.update(
+                glucoseStatus            = glucoseStatus,
+                iobArray                 = iobArray,
+                mealMode                 = mealMode,
+                cobG                     = mealData.mealCOB,
+                profileIsfMgdl           = trueIsfMgdl,
+                targetMgdl               = targetBg,
+                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
+                inPostMealLockout        = inPostMealLockout,
+                aggressiveness           = circadianLearner.aggrCeiling(), // initial estimate for summary logging
+                suppressAdaptiveLearning = suppressAdaptiveLearningUpdate,
+                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
+            )
+            // If nudge is suppressed within update() (activity/CGM warmup), mark paused
+            if (suppressAdaptiveLearningUpdate) {
+                val pauseReason = when {
+                    activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
+                    cgmState.suppressLearning        -> "New sensor — CGM warmup"
+                    else                             -> "Learning suppressed"
+                }
+                circadianLearner.pauseNudgeStatus(pauseReason)
+            }
+        } else {
+            val pauseReason = when {
+                highTempTarget           -> "Temp target active"
+                activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
+                else                     -> "Learning suppressed"
+            }
+            circadianLearner.pauseNudgeStatus(pauseReason)
+            aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
+        }
+        // Also pause nudge during meal modes and post-meal lockout
+        if (mealMode != MealMode.FASTING) {
+            val mealReason = when (mealMode) {
+                MealMode.UAM_PROTEIN_FAT -> "P/F mode active"
+                else                     -> "Meal mode active (${mealMode.label})"
+            }
+            circadianLearner.pauseNudgeStatus(mealReason)
+        } else if (inPostMealLockout) {
+            circadianLearner.pauseNudgeStatus("Post-meal lockout active")
+        } else if (inReboundWindow) {
+            // Paused during rebound window — BG is recovering from a low.
+            // Once the window expires, nudge resumes regardless of bgWentLow.
+            circadianLearner.pauseNudgeStatus("Post-low recovery — waiting for BG to stabilise")
+        }
+
+        // Capture session-start multipliers on first nudge of this session.
+        // Uses the multipliers from BEFORE the update() call to ensure "was" reflects the baseline.
+        val currentAggrNudgeStatus = circadianLearner.lastAggrNudgeStatus
+        val currentDirection = run {
+            val parts = currentAggrNudgeStatus.split("|")
+            val p = parts.getOrNull(0) ?: "INACTIVE"
+            if (p == "TRIM") parts.getOrNull(1) else if (p == "ACTIVE_HIGH" || p == "ACTIVE_LOW") p else null
+        }
+        if (currentDirection != null && currentDirection != lastDirection) {
+            nudgeDisplaySessionIsfMgdl = if (isfMultBefore > 0) trueIsfMgdl / isfMultBefore else 0.0
+            nudgeDisplaySessionBasalU  = cachedProfileBasal * totalBasalMultBefore
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
+                                 "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
+        }
+        lastSeenNudgeState = currentAggrNudgeStatus
+
+        // Refresh circadian per-hour multipliers after learner update
+        val circIsfMult   = circadianLearner.isfMultiplier()
+        val circBasalMult = circadianLearner.basalMultiplier()
+        val circAggrCeil  = circadianLearner.aggrCeiling()
+        // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
+        // Meal mode ISF overrides are user-set — don't touch them
+        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → more aggressive → more insulin
+        // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
+        // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
+        var dosingIsfMgdl = when {
+            modeIsfMgdl > 0.0 -> modeIsfMgdl                    // user meal-mode override — already mg/dL
+            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → more aggressive → more insulin
+        }
+
+
+
+        // ── Tick the override manager — fires queued bolus when safe ──────────
+        val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
+        mealOverrideManager.onLoopCycle(
+            glucoseStatus = glucoseStatus,
+            iobArray      = iobArray,
+            maxIobU       = pb2MaxIob,
+            profile       = profile
+        )
+        // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
+        // post-fire UI still shows what the gate state was on the last tick.
+        pb2LastBgMgdl            = glucoseStatus.glucose
+        pb2LastDeltaMgdl         = glucoseStatus.delta
+        pb2LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
+        pb2LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
+        pb2LastMaxIobU           = pb2MaxIob
+        pb2ProfileTargetMgdl     = profile.getTargetMgdl()
+        // PB3 cache — same values, identical gates. Refreshed every cycle so UI reflects
+        // current state accurately while PB3 is waiting on PB2 or on its own delay.
+        pb3LastBgMgdl            = glucoseStatus.glucose
+        pb3LastDeltaMgdl         = glucoseStatus.delta
+        pb3LastShortAvgDeltaMgdl = glucoseStatus.shortAvgDelta
+        pb3LastIobU              = iobArray.firstOrNull()?.iob ?: 0.0
+        pb3LastMaxIobU           = pb2MaxIob
+        pb3ProfileTargetMgdl     = profile.getTargetMgdl()
+
+
 
         // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
         // Only fires in FASTING mode within configured time windows.
@@ -1255,8 +1346,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
         // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
-        val suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
-        val suppressRollercoaster    = activityMonitor.suppressLearning  // activity only — not CGM warmup
+        val suppressAdaptiveLearningGlobal = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
+        val suppressRollercoasterGlobal    = activityMonitor.suppressLearning  // activity only — not CGM warmup
+
 
         // Activity targets stored as mg/dL (9/18/27) — use sp.getDouble directly.
         // Do NOT use spMgdl() — these values are < 20 and would be wrongly multiplied by 18.
@@ -1272,7 +1364,7 @@ open class SmartInsulinPlugin @Inject constructor(
             )
         } else 0.0
 
-        if (suppressAdaptiveLearning) {
+        if (suppressAdaptiveLearningGlobal) {
             aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
                 "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
         }
@@ -1285,7 +1377,7 @@ open class SmartInsulinPlugin @Inject constructor(
             lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
             highThreshMgdl  = 180.0,  // 10.0 mmol — clinical TIR high threshold
             mealMode        = mealMode,
-            suppressScoring = suppressAdaptiveLearning
+            suppressScoring = suppressAdaptiveLearningGlobal
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
@@ -1394,7 +1486,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearning) {
+        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearningGlobal) {
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
@@ -1653,66 +1745,7 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: paused ($trackerPauseReason)")
         }
 
-        // ── Circadian learner — fasting + no high TT only ─────────────────────
-        // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
-        // The circadian learner itself also gates on mealMode==FASTING internally,
-        // but we gate highTempTarget here before the call to avoid polluting bgHistory.
-        // Circadian learner:
-        //   - Always call during normal conditions
-        //   - During CGM warmup: call with suppressAdaptiveLearning=true so rollercoaster still fires
-        //   - During activity or high TT: skip entirely (BG movement isn't insulin-driven)
-        // CircadianLearner gets its own suppress flag WITHOUT inPostMealLockout.
-        // Drift-based basal learning should fire during lockout — it's measuring real BG physics.
-        // Only the negIOB signal needs lockout gating (IOB shape could be meal bolus tail).
-        // ISF learning also runs during lockout — activity-based deviation is independent of meals.
-        // The negIOB gate is handled inside CircadianLearner via inPostMealLockout parameter.
-        val suppressCircadianLearning = activityMonitor.suppressLearning || cgmState.suppressLearning
-        if (!highTempTarget && !suppressRollercoaster) {
-            circadianLearner.update(
-                glucoseStatus            = glucoseStatus,
-                iobArray                 = iobArray,
-                mealMode                 = mealMode,
-                cobG                     = mealData.mealCOB,
-                profileIsfMgdl           = trueIsfMgdl,
-                targetMgdl               = oapsProfile.target_bg.toDouble(),
-                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
-                inPostMealLockout        = inPostMealLockout,
-                aggressiveness           = circAggrCeil,
-                suppressAdaptiveLearning = suppressCircadianLearning,
-                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
-            )
-            // If nudge is suppressed within update() (activity/CGM warmup), mark paused
-            if (suppressCircadianLearning) {
-                val pauseReason = when {
-                    activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
-                    cgmState.suppressLearning        -> "New sensor — CGM warmup"
-                    else                             -> "Learning suppressed"
-                }
-                circadianLearner.pauseNudgeStatus(pauseReason)
-            }
-        } else {
-            val pauseReason = when {
-                highTempTarget           -> "Temp target active"
-                activityMonitor.suppressLearning -> "Activity detected (${activityMonitor.level.label})"
-                else                     -> "Learning suppressed"
-            }
-            circadianLearner.pauseNudgeStatus(pauseReason)
-            aapsLogger.debug(LTag.APS, "CircadianLearner skipped: highTT=$highTempTarget activity=${activityMonitor.level}")
-        }
-        // Also pause nudge during meal modes and post-meal lockout
-        if (mealMode != MealMode.FASTING) {
-            val mealReason = when (mealMode) {
-                MealMode.UAM_PROTEIN_FAT -> "P/F mode active"
-                else                     -> "Meal mode active (${mealMode.label})"
-            }
-            circadianLearner.pauseNudgeStatus(mealReason)
-        } else if (inPostMealLockout) {
-            circadianLearner.pauseNudgeStatus("Post-meal lockout active")
-        } else if (inReboundWindow) {
-            // Paused during rebound window — BG is recovering from a low.
-            // Once the window expires, nudge resumes regardless of bgWentLow.
-            circadianLearner.pauseNudgeStatus("Post-low recovery — waiting for BG to stabilise")
-        }
+
 
         // Append per-cycle learner summary to reason — visible in Loop tab
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
