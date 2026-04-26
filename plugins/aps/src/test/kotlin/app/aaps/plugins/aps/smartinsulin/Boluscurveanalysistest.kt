@@ -1,10 +1,9 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.plugins.aps.smartInsulin.BolusCurveAnalysis.PeakResult
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertInstanceOf
-import org.junit.jupiter.api.Assertions.assertTrue
-import org.junit.jupiter.api.Test
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 /**
  * Unit tests for [BolusCurveAnalysis].
@@ -43,10 +42,10 @@ class BolusCurveAnalysisTest {
         val bgs = listOf(200.0, 195.0, 185.0, 170.0, 155.0, 145.0, 140.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
 
-        assertInstanceOf(PeakResult.Ok::class.java, result)
+        assertTrue("expected Ok, got $result", result is PeakResult.Ok)
         val peakMins = (result as PeakResult.Ok).minutes
         // Peak should land within or just past segment 2 (10–17.5 min range)
-        assertTrue(peakMins in 10.0..17.5, "peak=$peakMins not in [10, 17.5]")
+        assertTrue("peak=$peakMins not in [10, 17.5]", peakMins in 10.0..17.5)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -66,10 +65,10 @@ class BolusCurveAnalysisTest {
         val bgs = listOf(200.0, 190.0, 175.0, 150.0, 140.0, 135.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
 
-        assertInstanceOf(PeakResult.Ok::class.java, result)
+        assertTrue("expected Ok, got $result", result is PeakResult.Ok)
         val peakMins = (result as PeakResult.Ok).minutes
-        assertTrue(peakMins < 12.5, "asymmetric flank should pull peak before midpoint, got $peakMins")
-        assertTrue(peakMins > 10.0, "peak should still be near steepest segment, got $peakMins")
+        assertTrue("asymmetric flank should pull peak before midpoint, got $peakMins", peakMins < 12.5)
+        assertTrue("peak should still be near steepest segment, got $peakMins", peakMins > 10.0)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +81,7 @@ class BolusCurveAnalysisTest {
         // which IS above the floor and would (correctly) be detected as a real drop.
         val bgs = listOf(110.0, 110.0, 110.0, 110.0, 110.0, 110.0, 110.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
-        assertInstanceOf(PeakResult.NoNegSlope::class.java, result)
+        assertTrue("expected NoNegSlope, got $result", result is PeakResult.NoNegSlope)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -94,7 +93,7 @@ class BolusCurveAnalysisTest {
     fun `monotonic rise returns NoNegSlope`() {
         val bgs = listOf(120.0, 130.0, 145.0, 165.0, 180.0, 195.0, 205.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
-        assertInstanceOf(PeakResult.NoNegSlope::class.java, result)
+        assertTrue("expected NoNegSlope, got $result", result is PeakResult.NoNegSlope)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -105,7 +104,7 @@ class BolusCurveAnalysisTest {
         // Drops of 0.25 mg/dL per 5min = -0.05 mg/dL/min — well below -0.1 floor
         val bgs = listOf(110.0, 109.75, 109.5, 109.25, 109.0, 108.75)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
-        assertInstanceOf(PeakResult.NoNegSlope::class.java, result)
+        assertTrue("expected NoNegSlope, got $result", result is PeakResult.NoNegSlope)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -115,7 +114,7 @@ class BolusCurveAnalysisTest {
     fun `fewer than 4 samples returns TooFewPoints`() {
         val bgs = listOf(180.0, 160.0, 140.0)  // 3 samples → only 2 velocities → can't fit
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
-        assertInstanceOf(PeakResult.TooFewPoints::class.java, result)
+        assertTrue("expected TooFewPoints, got $result", result is PeakResult.TooFewPoints)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +127,7 @@ class BolusCurveAnalysisTest {
         val bgs = listOf(180.0, 178.0, 175.0, 170.0, 150.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
 
-        assertInstanceOf(PeakResult.Ok::class.java, result)
+        assertTrue("expected Ok, got $result", result is PeakResult.Ok)
         val peakMins = (result as PeakResult.Ok).minutes
         // Last segment midpoint: index 3 * 5min + 2.5min = 17.5 min
         assertEquals(17.5, peakMins, 0.1)
@@ -143,7 +142,7 @@ class BolusCurveAnalysisTest {
         val bgs = listOf(180.0, 150.0, 145.0, 143.0, 142.0)
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(uniformCurve(bgs), startMs)
 
-        assertInstanceOf(PeakResult.Ok::class.java, result)
+        assertTrue("expected Ok, got $result", result is PeakResult.Ok)
         val peakMins = (result as PeakResult.Ok).minutes
         // First segment midpoint: 2.5 min
         assertEquals(2.5, peakMins, 0.1)
@@ -167,9 +166,9 @@ class BolusCurveAnalysisTest {
             (startMs + 6 * cycleMs)       to 140.0
         )
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(curve, startMs)
-        assertInstanceOf(PeakResult.Ok::class.java, result)
+        assertTrue("expected Ok, got $result", result is PeakResult.Ok)
         val peakMins = (result as PeakResult.Ok).minutes
-        assertTrue(peakMins in 10.0..18.0, "mild-jitter peak=$peakMins not in [10, 18]")
+        assertTrue("mild-jitter peak=$peakMins not in [10, 18]", peakMins in 10.0..18.0)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -188,10 +187,10 @@ class BolusCurveAnalysisTest {
             (startMs + 6 * cycleMs)  to 135.0
         )
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(curve, startMs)
-        assertInstanceOf(PeakResult.NonUniform::class.java, result)
+        assertTrue("expected NonUniform, got $result", result is PeakResult.NonUniform)
         // Fallback should be midpoint of the wide segment: (10min + 20min) / 2 = 15min from start
         val fallback = (result as PeakResult.NonUniform).fallbackMinutes
-        assertEquals(15.0, fallback, 0.5, "fallback should be midpoint of the gap segment")
+        assertEquals("fallback should be midpoint of the gap segment", 15.0, fallback, 0.5)
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -213,8 +212,8 @@ class BolusCurveAnalysisTest {
         val result = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(curve, startMs)
         // Should produce some Ok or NonUniform — main thing is no crash, no NaN, no negative time
         assertTrue(
-            result is PeakResult.Ok || result is PeakResult.NonUniform,
-            "expected Ok or NonUniform after skipping corrupt segment, got $result"
+            "expected Ok or NonUniform after skipping corrupt segment, got $result",
+            result is PeakResult.Ok || result is PeakResult.NonUniform
         )
     }
 }
