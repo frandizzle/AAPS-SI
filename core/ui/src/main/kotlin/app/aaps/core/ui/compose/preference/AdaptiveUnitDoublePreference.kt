@@ -18,7 +18,6 @@ import app.aaps.core.keys.interfaces.PreferenceVisibilityContext
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
 import app.aaps.core.ui.compose.LocalPreferences
 import app.aaps.core.ui.compose.LocalProfileUtil
-import app.aaps.core.ui.compose.SliderWithButtons
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.text.DecimalFormat
@@ -100,7 +99,7 @@ fun AdaptiveUnitDoublePreferenceItem(
                 color = theme.summaryColor
             )
         }
-        SliderWithButtons(
+        PreferenceSliderWithButtons(
             value = currentValue,
             onValueChange = { newValue ->
                 if (visibility.enabled) {

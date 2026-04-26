@@ -7,6 +7,7 @@ import androidx.compose.ui.graphics.toArgb
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.iob.InMemoryGlucoseValue
 import app.aaps.core.data.model.BCR
+import app.aaps.core.data.model.Scene
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.GlucoseUnit
@@ -63,6 +64,8 @@ import app.aaps.core.interfaces.rx.weardata.LoopStatusData
 import app.aaps.core.interfaces.rx.weardata.OapsResultInfo
 import app.aaps.core.interfaces.rx.weardata.TargetRange
 import app.aaps.core.interfaces.rx.weardata.TempTargetInfo
+import app.aaps.core.interfaces.scenes.SceneAutomationApi
+import app.aaps.core.interfaces.scenes.SceneAutomationResult
 import app.aaps.core.interfaces.tempTargets.ttDurationMinutes
 import app.aaps.core.interfaces.tempTargets.ttTargetMgdl
 import app.aaps.core.interfaces.ui.UiInteraction
@@ -149,6 +152,7 @@ class DataHandlerMobile @Inject constructor(
 ) {
 
     @Inject lateinit var automation: Automation
+    @Inject lateinit var scenes: SceneAutomationApi
     private val disposable = CompositeDisposable()
 
     private var lastBolusWizard: BolusWizard? = null
@@ -168,6 +172,7 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "CancelBolus received from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
                            activePlugin.activePump.stopBolusDelivering()
                        }, fabricPrivacy::logException)
         disposable += rxBus
@@ -175,6 +180,7 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "OpenLoopRequestConfirmed received from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
                            loop.acceptChangeRequest()
                            (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(Constants.notificationID)
                        }, fabricPrivacy::logException)
@@ -341,6 +347,7 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionFillConfirmed received $it from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
                            if (constraintChecker.applyBolusConstraints(ConstraintObject(it.insulin, aapsLogger)).value() - it.insulin != 0.0) {
                                rxBus.send(EventShowSnackbar("aborting: previously applied constraint changed", EventShowSnackbar.Type.Warning))
                                sendError("aborting: previously applied constraint changed")
@@ -410,6 +417,7 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionUserActionPreCheck received $it from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
                            handleUserActionPreCheck(it)
                        }, fabricPrivacy::logException)
         disposable += rxBus
@@ -417,7 +425,24 @@ class DataHandlerMobile @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({
                            aapsLogger.debug(LTag.WEAR, "ActionUserActionConfirmed received $it from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
                            handleUserActionConfirmed(it)
+                       }, fabricPrivacy::logException)
+        disposable += rxBus
+            .toObservable(EventData.ActionScenePreCheck::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({
+                           aapsLogger.debug(LTag.WEAR, "ActionScenePreCheck received $it from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
+                           handleScenePreCheck(it)
+                       }, fabricPrivacy::logException)
+        disposable += rxBus
+            .toObservable(EventData.ActionSceneConfirmed::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe({
+                           aapsLogger.debug(LTag.WEAR, "ActionSceneConfirmed received $it from ${it.sourceNodeId}")
+                           if (!config.appInitialized) return@subscribe
+                           handleSceneConfirmed(it)
                        }, fabricPrivacy::logException)
         disposable += rxBus
             .toObservable(EventData.SnoozeAlert::class.java)
@@ -823,6 +848,41 @@ class DataHandlerMobile @Inject constructor(
                         automation.processEvent(event)
                     }
                 }
+            }
+        }
+    }
+
+    private fun handleScenePreCheck(command: EventData.ActionScenePreCheck) {
+        appScope.launch {
+            val pump = activePlugin.activePump
+            val profile = profileFunction.getProfile()
+            if (loop.runningMode.isLoopRunning() && pump.isInitialized() && profile != null) {
+                val scene = scenes.getScene(command.id)
+                if (scene != null && scene.isEnabled) {
+                    rxBus.send(
+                        EventMobileToWear(
+                            EventData.ConfirmAction(
+                                rh.gs(app.aaps.core.ui.R.string.confirm).uppercase(), command.title,
+                                returnCommand = EventData.ActionSceneConfirmed(command.id, command.title)
+                            )
+                        )
+                    )
+                } else {
+                    sendError(rh.gs(R.string.scene_not_available, command.title))
+                }
+            } else {
+                sendError(rh.gs(app.aaps.core.ui.R.string.wizard_pump_not_available))
+            }
+        }
+    }
+
+    private fun handleSceneConfirmed(command: EventData.ActionSceneConfirmed) {
+        appScope.launch {
+            when (val result = scenes.runScene(command.id)) {
+                is SceneAutomationResult.Success        -> Unit
+                is SceneAutomationResult.SceneNotFound,
+                is SceneAutomationResult.SceneDisabled  -> sendError(rh.gs(R.string.scene_not_available, command.title))
+                is SceneAutomationResult.Failed         -> sendError(result.message ?: rh.gs(R.string.scene_not_available, command.title))
             }
         }
     }
@@ -1348,6 +1408,13 @@ class DataHandlerMobile @Inject constructor(
 
     fun resendData(from: String) {
         aapsLogger.debug(LTag.WEAR, "Sending data to wear from $from")
+        // Wear can request a resend before MainApp's init scope has populated pluginStore.plugins
+        // (e.g. immediately after device reboot). Skip until the active pump is selectable —
+        // the wear app will retry on its next state change.
+        if (!config.appInitialized) {
+            aapsLogger.debug(LTag.WEAR, "Skipping resendData — app not yet initialized")
+            return
+        }
         // SingleBg
         iobCobCalculator.ads.lastBg()?.let { rxBus.send(EventMobileToWear(getSingleBG(it))) }
         // Preferences
@@ -1371,6 +1438,8 @@ class DataHandlerMobile @Inject constructor(
         sendQuickWizardToWear()
         //UserAction
         sendUserActions()
+        // Scenes
+        sendScenes()
         // GraphData
         iobCobCalculator.ads.getBucketedDataTableCopy()?.let { bucketedData ->
             rxBus.send(EventMobileToWear(EventData.GraphData(ArrayList(bucketedData.map { getSingleBG(it) }))))
@@ -1408,6 +1477,27 @@ class DataHandlerMobile @Inject constructor(
         }
     }
 
+    private fun Scene.toWear(now: Long): EventData.SceneList.SceneEntry =
+        EventData.SceneList.SceneEntry(
+            timeStamp = now,
+            id = id,
+            title = name
+        )
+
+    fun sendScenes() {
+        appScope.launch {
+            val now = System.currentTimeMillis()
+            val enabled = scenes.getScenes().filter { it.isEnabled }
+            rxBus.send(
+                EventMobileToWear(
+                    EventData.SceneList(
+                        ArrayList(enabled.map { it.toWear(now) })
+                    )
+                )
+            )
+        }
+    }
+
     private fun sendTreatments() {
         val now = System.currentTimeMillis()
         val startTimeWindow = now - (60000 * 60 * 5.5).toLong()
@@ -1415,6 +1505,7 @@ class DataHandlerMobile @Inject constructor(
         val temps = arrayListOf<EventData.TreatmentData.TempBasal>()
         val boluses = arrayListOf<EventData.TreatmentData.Treatment>()
         val predictions = arrayListOf<EventData.SingleBg>()
+        if (!config.appInitialized) return
         val profile = runBlocking { profileFunction.getProfile() } ?: return
         var beginBasalSegmentTime = startTimeWindow
         var runningTime = startTimeWindow

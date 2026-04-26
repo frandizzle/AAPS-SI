@@ -16,8 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -44,7 +45,6 @@ import app.aaps.core.ui.compose.AapsTopAppBar
 import app.aaps.core.ui.compose.NumberInputRow
 import app.aaps.core.ui.compose.dialogs.OkCancelDialog
 import app.aaps.core.ui.compose.navigation.ElementType
-import app.aaps.core.ui.compose.navigation.color
 import app.aaps.core.ui.compose.navigation.icon
 import app.aaps.core.ui.compose.navigation.labelResId
 import java.text.DecimalFormat
@@ -132,26 +132,16 @@ private fun ExtendedBolusDialogContent(
     onNavigateBack: () -> Unit,
     onConfirmClick: () -> Unit
 ) {
+    val focusManager = LocalFocusManager.current
     Scaffold(
         topBar = {
             AapsTopAppBar(
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = ElementType.EXTENDED_BOLUS.icon(),
-                            contentDescription = null,
-                            tint = ElementType.EXTENDED_BOLUS.color(),
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.padding(start = 8.dp))
-                        Text(stringResource(ElementType.EXTENDED_BOLUS.labelResId()))
-                    }
-                },
+                title = { Text(stringResource(ElementType.EXTENDED_BOLUS.labelResId())) },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(CoreUiR.string.back)
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(CoreUiR.string.close)
                         )
                     }
                 },
@@ -160,7 +150,10 @@ private fun ExtendedBolusDialogContent(
         },
         bottomBar = {
             Button(
-                onClick = onConfirmClick,
+                onClick = {
+                    focusManager.clearFocus()
+                    onConfirmClick()
+                },
                 enabled = uiState.insulin > 0.0,
                 modifier = Modifier
                     .fillMaxWidth()
