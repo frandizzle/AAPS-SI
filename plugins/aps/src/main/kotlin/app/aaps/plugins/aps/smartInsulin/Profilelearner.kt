@@ -53,6 +53,16 @@ class ProfileLearner @Inject constructor(
     // ── In-memory cache of learned profiles ──────────────────────────────────
     private val profiles: MutableMap<MealMode, LearnedInsulinProfile> = mutableMapOf()
 
+    private companion object {
+        // Minimum gap between observed peak and observed DIA for an observation to be accepted.
+        // Physiologically the insulin decline phase must take longer than zero — observations
+        // where DIA is within ~15 min of peak indicate a tracker fault (timestamps too close,
+        // duplicate readings, peak/DIA confused, etc.) rather than real kinetics. Loose enough
+        // to allow fast-clearance users (peak ~85m, DIA ~120m) but tight enough to catch
+        // obviously-corrupt data.
+        private const val PEAK_DIA_MIN_GAP_MINUTES = 15.0
+    }
+
     init {
         // Load persisted profiles for all modes on construction
         MealMode.entries.forEach { mode ->
@@ -95,7 +105,22 @@ class ProfileLearner @Inject constructor(
         observedDiaMins:  Double,
         learningRate:     Double
     ) {
-        // Clamp observations to physiological hard limits before accepting them
+        // Reject implausible observations on the RAW values — peak must be meaningfully less
+        // than DIA. Doing this check on raw (pre-clamp) values catches cases where the tracker
+        // emits e.g. peak=130, dia=125 — clamping would silently produce peak=120, dia=125 and
+        // pass the old "clampedPeak >= clampedDia" check, accepting obviously corrupt data.
+        // The minimum gap reflects physiology: the insulin decline phase must take longer than
+        // zero, so peak and DIA can't be arbitrarily close.
+        if (observedPeakMins >= observedDiaMins - PEAK_DIA_MIN_GAP_MINUTES) {
+            aapsLogger.debug(
+                LTag.APS,
+                "ProfileLearner: rejecting raw observation peak=%.1f dia=%.1f (gap < %.0fm) for %s"
+                    .format(Locale.US, observedPeakMins, observedDiaMins, PEAK_DIA_MIN_GAP_MINUTES, mode)
+            )
+            return
+        }
+
+        // Clamp observations to physiological hard limits before learning from them
         val clampedPeak = observedPeakMins.coerceIn(
             LearnedInsulinProfile.PEAK_MIN_MINUTES,
             LearnedInsulinProfile.PEAK_MAX_MINUTES
@@ -105,11 +130,12 @@ class ProfileLearner @Inject constructor(
             LearnedInsulinProfile.DIA_MAX_MINUTES
         )
 
-        // Reject implausible observations — peak must be less than DIA
+        // Defensive: if clamping somehow still produced peak >= dia (extremely unlikely given
+        // PEAK_MAX=120 and DIA_MIN=120 leave zero gap), reject. Belt-and-braces.
         if (clampedPeak >= clampedDia) {
             aapsLogger.debug(
                 LTag.APS,
-                "ProfileLearner: rejecting observation peak=$clampedPeak >= dia=$clampedDia for $mode"
+                "ProfileLearner: rejecting clamped observation peak=$clampedPeak >= dia=$clampedDia for $mode"
             )
             return
         }

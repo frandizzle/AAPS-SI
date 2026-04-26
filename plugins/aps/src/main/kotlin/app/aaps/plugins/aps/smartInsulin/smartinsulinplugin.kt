@@ -1599,6 +1599,7 @@ open class SmartInsulinPlugin @Inject constructor(
             targetRespectEnabled     = true,
             reboundWindowMins        = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toDouble(),
             circCeil                 = circAggrCeil,
+            fuelTrimStrength         = circadianLearner.trimStrength,
             isMmol                   = isMmol
         )
 

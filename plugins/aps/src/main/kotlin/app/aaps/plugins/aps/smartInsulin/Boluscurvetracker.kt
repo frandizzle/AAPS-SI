@@ -59,8 +59,14 @@ class BolusCurveTracker @Inject constructor(
         private const val MIN_TRACK_IOB_U        = 0.6
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
         private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
-        private const val MIN_BG_DROP_MGDL       = 10.0  // ~0.5 mmol minimum drop below start (for Fasting)
-        private const val MEAL_NADIR_HEADROOM    = 10.0  // Nadir can be up to 10mg/dL above start for meal modes
+        // Minimum drop below bgAtStart for the nadir to count as a real insulin trough.
+        // Fasting requires a meaningful drop (clean signal). Meal/UAM modes allow a smaller
+        // drop because carb absorption can keep BG near or above start even with healthy
+        // insulin action — but we still require *some* drop, otherwise we end up feeding
+        // ProfileLearner samples where insulin never visibly pulled BG down at all (carbs
+        // won the curve), which corrupts learned peak/DIA.
+        private const val MIN_BG_DROP_MGDL_FASTING = 10.0  // ~0.5 mmol — clean signal, demand real drop
+        private const val MIN_BG_DROP_MGDL_MEAL    = 5.0   // ~0.3 mmol — token drop to confirm insulin acted
         private const val MAX_TRACK_DURATION_MS  = 6 * 60 * 60 * 1000L
         // Minimum time between nadir reading and confirmation. Prevents a single noisy
         // reading upward from prematurely "recovering" the curve — the BG has to prove
@@ -195,9 +201,9 @@ class BolusCurveTracker @Inject constructor(
 
         // ── Abandon and Pivot Logic ──────────────────────────────────────────
         // Refined for High-Frequency Dosing & Large UAM SMBs.
-        // We only Pivot if the new bolus is large enough to fundamentally change 
+        // We only Pivot if the new bolus is large enough to fundamentally change
         // the curve shape.
-        
+
         // Use a relative ratio: only pivot if the new spike is > 30% of existing IOB.
         // This allows large SMBs (e.g. 1.0U into 5.0U active) to "ride along" without
         // resetting the learner, ensuring we actually finish a sample.
@@ -208,7 +214,7 @@ class BolusCurveTracker @Inject constructor(
 
         if (shouldPivot) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: pivot to new bolus (spike=%.2f ratio=%.1f%% iob=$currentIob)".format(Locale.US, iobSpikeWhileTracking, pivotRatio * 100))
-            
+
             // PIVOT: Restart tracking immediately using the new spike as the baseline.
             trackStartMs    = nowMs
             trackMode       = mealMode
@@ -220,7 +226,7 @@ class BolusCurveTracker @Inject constructor(
             nadirTimeMs     = nowMs
             nadirConfirmed  = false
             bgBuffer.clear()
-            bgBuffer.add(currentBg) 
+            bgBuffer.add(currentBg)
             saveState()
             return
         } else if (isSignificantSpike) {
@@ -251,10 +257,12 @@ class BolusCurveTracker @Inject constructor(
 
         // Check recovery
         val dynamicRecovery = max(RECOVERY_MGDL, smoothedBg * 0.06)
-        val dropTarget = if (trackMode == MealMode.FASTING)
-            bgAtStart - MIN_BG_DROP_MGDL
-        else
-            bgAtStart + MEAL_NADIR_HEADROOM
+        // Required drop below start before nadir is acceptable. Both modes now require a real
+        // drop — meal modes just demand a smaller one. Previously meal modes used `bgAtStart +
+        // headroom` which was a near-trivial ceiling and let through samples where BG never
+        // actually dropped (carbs winning the curve), feeding garbage into ProfileLearner.
+        val minDrop = if (trackMode == MealMode.FASTING) MIN_BG_DROP_MGDL_FASTING else MIN_BG_DROP_MGDL_MEAL
+        val dropTarget = bgAtStart - minDrop
 
         if (!nadirConfirmed &&
             (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
