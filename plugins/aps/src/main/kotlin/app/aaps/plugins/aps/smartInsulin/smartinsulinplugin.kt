@@ -531,34 +531,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val rawFinalBasal     = profileBasal * basalMult
         val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
 
-        // Capture full composite "was" baseline on nudge state transitions.
-        // Fires when: idle → active, or when active direction flips (ACTIVE_HIGH ↔ ACTIVE_LOW).
-        // Does NOT fire on magnitude changes within the same direction (e.g. TRIM pct updates)
-        // or on hour boundaries during a continuous nudge. This means "was" reliably reflects
-        // the pre-nudge ISF/basal the loop was delivering immediately before the current nudge
-        // session began — not a stale mid-nudge snapshot.
-        val rawNudgeStatus  = circadianLearner.lastAggrNudgeStatus
-        val nudgePrimary    = rawNudgeStatus.substringBefore("|").trim()
-        // Derive a "canonical active direction" — abstracts over TRIM|ACTIVE_HIGH vs ACTIVE_HIGH
-        val currentDirection: String? = when (nudgePrimary) {
-            "ACTIVE_HIGH", "ACTIVE_LOW" -> nudgePrimary
-            "TRIM" -> rawNudgeStatus.split("|").getOrNull(1)?.trim()  // TRIM|ACTIVE_HIGH|... or TRIM|ACTIVE_LOW|...
-            else -> null  // INACTIVE, PAUSED, or anything else → no active direction
-        }
-        val lastDirection: String? = when (lastSeenNudgeState.substringBefore("|").trim()) {
-            "ACTIVE_HIGH", "ACTIVE_LOW" -> lastSeenNudgeState.substringBefore("|").trim()
-            "TRIM" -> lastSeenNudgeState.split("|").getOrNull(1)?.trim()
-            else -> null
-        }
-        val shouldCaptureBaseline = currentDirection != null && currentDirection != lastDirection
-        if (shouldCaptureBaseline) {
-            nudgeDisplaySessionIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0
-            nudgeDisplaySessionBasalU  = roundedFinalBasal
-            aapsLogger.debug(LTag.APS,
-                             "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
-                                 "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
-        }
-        lastSeenNudgeState = rawNudgeStatus
+        // nudgeDisplaySessionIsfMgdl and nudgeDisplaySessionBasalU are written exclusively
+        // by invoke() — captured before circadianLearner.update() so "was" reflects the
+        // true pre-nudge baseline. fragmentData() just reads them; no capture logic here.
 
         val circRaw = buildString {
             val isfUnit  = if (isMmol) "mmol/U" else "mg/dL/U"
