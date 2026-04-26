@@ -223,7 +223,8 @@ dependencies {
     testImplementation(project(":shared:tests"))
     androidTestImplementation(project(":shared:tests"))
     androidTestImplementation(libs.androidx.test.rules)
-    androidTestImplementation(libs.org.skyscreamer.jsonassert) {
+    androidTestImplementation(libs.org.skyscreamer.jsonassert)
+    configurations.all {
         exclude(group = "org.json", module = "json")
     }
     androidTestImplementation(libs.kotlinx.coroutines.test)
