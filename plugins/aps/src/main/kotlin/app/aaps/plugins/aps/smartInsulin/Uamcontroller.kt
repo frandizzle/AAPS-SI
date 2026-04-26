@@ -99,6 +99,7 @@ class UamController @Inject constructor(
     // and only if app restarts in the exact lockout window).
     private var wasInReboundWindow         = false
     private var reboundExpiredMs           = 0L
+    private var lastEpisodeWasSoftLanding  = false
 
     init {
         // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts.
@@ -313,7 +314,19 @@ class UamController @Inject constructor(
         val msSincePostRebound = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
         val postReboundLockoutMs = POST_REBOUND_LOCKOUT_MINS * 60_000L
         val inPostReboundLockout = msSincePostRebound < postReboundLockoutMs
-        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || inPostReboundLockout) && !softLandingBypass
+
+        // Track soft-landing status throughout the episode (rebound -> lockout).
+        // Captures from the plugin's softLandingBypass flag during the active rebound.
+        if (bgWentLow || inReboundWindow) {
+            lastEpisodeWasSoftLanding = softLandingBypass
+        } else if (!inPostReboundLockout) {
+            // Once the lockout expires, neutralise the flag for the next episode.
+            lastEpisodeWasSoftLanding = false
+        }
+
+        val effectiveBypass = softLandingBypass || (inPostReboundLockout && lastEpisodeWasSoftLanding)
+        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || inPostReboundLockout) && !effectiveBypass
+
         if (blockedByLow) {
             if (consecutiveRiseReadings > 0) {
                 val reason = when {
@@ -530,7 +543,10 @@ class UamController @Inject constructor(
         val lowBlockMs = LOW_BLOCK_MINS * 60_000L
         val msSincePostRebound = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
         val postReboundLockoutMs = POST_REBOUND_LOCKOUT_MINS * 60_000L
-        if (bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || msSincePostRebound < postReboundLockoutMs) {
+        val inPostReboundLockout = msSincePostRebound < postReboundLockoutMs
+        val effectiveBypass = inPostReboundLockout && lastEpisodeWasSoftLanding
+
+        if ((bgWentLow || inReboundWindow || msSinceLow < lowBlockMs || inPostReboundLockout) && !effectiveBypass) {
             if (stuckHighReadings > 0) {
                 val reason = when {
                     inReboundWindow                             -> "rebound window active"
@@ -656,15 +672,18 @@ class UamController @Inject constructor(
 
     fun statusString(): String? {
         val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
+        val msSincePostRebound   = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
+        val inPostReboundLockout = msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L
+        val effectiveBypass      = inPostReboundLockout && lastEpisodeWasSoftLanding
 
         val uamLine = when {
             currentlyInMealMode        -> null
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
-            reboundExpiredMs > 0L && (System.currentTimeMillis() - reboundExpiredMs) < POST_REBOUND_LOCKOUT_MINS * 60_000L &&
+            inPostReboundLockout && !effectiveBypass &&
                 consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0 -> {
-                val leftMins = POST_REBOUND_LOCKOUT_MINS - (System.currentTimeMillis() - reboundExpiredMs) / 60_000L
+                val leftMins = POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L
                 "UAM: off (post-rebound lockout — ${leftMins}min left)"
             }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
@@ -700,6 +719,10 @@ class UamController @Inject constructor(
             currentlyHighTempTarget  -> "P/F: off (high temp target set)"
             currentlyCgmWarmup       -> "P/F: off (new sensor <24h)"
             currentlyPastNightCutoff -> "P/F: off (outside hours)"
+            inPostReboundLockout && !effectiveBypass -> {
+                val leftMins = POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L
+                "P/F: off (rebound lockout — ${leftMins}min left)"
+            }
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
             lastMealEndedMs == 0L    -> "P/F: waiting for first meal today"
             else -> {
