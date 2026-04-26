@@ -70,6 +70,8 @@ class UamController @Inject constructor(
     private var lastRiseBgMmol = 0.0
     // Last 2-reading rise seen by burst logic — for statusString display only
     private var lastBurstRiseMmol = 0.0
+    // Most recent cycle's contribution to the burst rise — for breakdown display "(prev, last)"
+    private var lastBurstDeltaMmol = 0.0
     // Post-meal lockout state — updated each cycle for statusString access
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
@@ -100,7 +102,7 @@ class UamController @Inject constructor(
 
     init {
         // Restore lastMealEndedMs from SharedPreferences so P/F gate survives app restarts.
-        // Rely solely on the 10h expiry window; allow crossing midnight so late-night 
+        // Rely solely on the 10h expiry window; allow crossing midnight so late-night
         // protein/fat rises are caught.
         val saved = preferences.get(StringKey.ApsSmartInsulinLastMealEndedMs).toLongOrNull() ?: 0L
         if (saved > 0L) {
@@ -343,8 +345,13 @@ class UamController @Inject constructor(
                 burstAnchorBgMmol = burstPrevBgMmol
             }
         }
-        
+
         lastBurstRiseMmol = if (burstAnchorBgMmol > 0.0 && currentBgMmol > burstAnchorBgMmol) currentBgMmol - burstAnchorBgMmol else 0.0
+        // Track the most recent cycle's contribution — used in statusString() breakdown "(prev, last)".
+        // Use actual reading-to-reading difference (not smoothed deltaMmol) so the two values
+        // always sum exactly to lastBurstRiseMmol.
+        lastBurstDeltaMmol = if (burstAnchorBgMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol)
+            currentBgMmol - burstPrevBgMmol else 0.0
 
         // ── Resolve time window ───────────────────────────────────────────────
         val uamMode = resolveUamMode(currentHour) ?: run {
@@ -396,10 +403,11 @@ class UamController @Inject constructor(
                 burstPrevBgTimestampMs = 0L
                 burstAnchorBgMmol = 0.0
                 lastBurstRiseMmol = 0.0
+                lastBurstDeltaMmol = 0.0
                 return
             }
         }
-else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_CYCLE_GAP_MS) {
+        else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_CYCLE_GAP_MS) {
             // Log stale-data rejection at debug so you can see it if burst "should have" fired post-gap
             aapsLogger.debug(LTag.APS,
                              "UAM: burst check skipped — CGM gap ${timeSinceLastBgMs / 1000}s > " +
@@ -663,9 +671,13 @@ else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_C
                 val riseReadingsNeeded = preferences.get(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings)
                 val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
                 val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-                // Burst now uses 2-reading sliding window — show progress toward next-reading burst.
-                val burstNote = if (burstThreshold > 0.0)
-                    " | Burst: ${fmtDelta(lastBurstRiseMmol)}/${fmtDelta(burstThreshold)}$unitLabel (2-reading)" else ""
+                // Show breakdown only once there's a prior accumulated rise (2+ readings into burst window)
+                val burstNote = if (burstThreshold > 0.0) {
+                    val burstLast = lastBurstDeltaMmol
+                    val burstPrev = lastBurstRiseMmol - burstLast
+                    val breakdown = if (burstPrev > 0.01) " (${fmtDelta(burstPrev)}, ${fmtDelta(burstLast)})" else ""
+                    " | Burst: ${fmtDelta(lastBurstRiseMmol)}/${fmtDelta(burstThreshold)}$unitLabel$breakdown"
+                } else ""
                 "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$riseReadingsNeeded rising$threshNote$burstNote)"
             }
             lastUamMode != null && lastUamTimeMs > 0L &&
@@ -711,6 +723,7 @@ else if (burstPrevBgMmol > 0.0 && !freshCycle && timeSinceLastBgMs > BURST_MAX_C
         lastCountedBgTimestampMs  = 0L
         lastRiseBgMmol            = 0.0
         lastBurstRiseMmol         = 0.0
+        lastBurstDeltaMmol        = 0.0
     }
 
     var justFiredThisCycle: MealMode? = null
