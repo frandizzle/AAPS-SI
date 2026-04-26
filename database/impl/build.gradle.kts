@@ -9,13 +9,14 @@ plugins {
 
 android {
     namespace = "app.aaps.database.impl"
+}
 
-    defaultConfig {
-        ksp {
-            arg("room.incremental", "true")
-            arg("room.schemaLocation", "${project.projectDir}/schemas")
-        }
-    }
+ksp {
+    arg("room.incremental", "true")
+    arg("room.schemaLocation", "${project.projectDir}/schemas")
+}
+
+android {
     sourceSets {
         getByName("androidTest").assets.directories.add("$projectDir/schemas")
     }

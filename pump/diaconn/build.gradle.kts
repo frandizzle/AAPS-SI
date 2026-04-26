@@ -10,12 +10,11 @@ plugins {
 android {
 
     namespace = "app.aaps.pump.diaconn"
-    defaultConfig {
-        ksp {
-            arg("room.incremental", "true")
-            arg("room.schemaLocation", "${project.projectDir}/schemas")
-        }
-    }
+}
+
+ksp {
+    arg("room.incremental", "true")
+    arg("room.schemaLocation", "${project.projectDir}/schemas")
 }
 
 dependencies {
