@@ -57,10 +57,16 @@ class ProfileLearner @Inject constructor(
         // Minimum gap between observed peak and observed DIA for an observation to be accepted.
         // Physiologically the insulin decline phase must take longer than zero — observations
         // where DIA is within ~15 min of peak indicate a tracker fault (timestamps too close,
-        // duplicate readings, peak/DIA confused, etc.) rather than real kinetics. Loose enough
-        // to allow fast-clearance users (peak ~85m, DIA ~120m) but tight enough to catch
-        // obviously-corrupt data.
+        // duplicate readings, peak/DIA confused). Loose enough to allow fast-clearance users
+        // (peak ~85m, DIA ~120m) but tight enough to catch obviously-corrupt data.
         private const val PEAK_DIA_MIN_GAP_MINUTES = 15.0
+
+        // Modes that contribute to peak learning. Carbs in meal/UAM modes mask the insulin
+        // peak signal — the steepest BG drop is dominated by absorption dynamics, not insulin
+        // kinetics. Restricting peak learning to FASTING and LOW_CARB ensures the learned
+        // peakMinutes reflects insulin pharmacology (site age, hydration, scar tissue) rather
+        // than glycemic index. DIA learning is unaffected and continues per mode.diaLearningEnabled.
+        private val PEAK_LEARNING_MODES = setOf(MealMode.FASTING, MealMode.LOW_CARB)
     }
 
     init {
@@ -91,78 +97,100 @@ class ProfileLearner @Inject constructor(
     /**
      * Update the learned profile for [mode] from a completed bolus observation.
      *
-     * Called by [BolusCurveTracker] once it has fitted a peak and DIA estimate
-     * from the post-bolus CGM curve.
+     * Called by [BolusCurveTracker] once it has analysed the post-bolus CGM curve.
+     *
+     * Peak learning is gated to clean-signal modes only ([PEAK_LEARNING_MODES] —
+     * currently FASTING and LOW_CARB). For all other modes, [observedPeakMins] is
+     * ignored even when present, because carb absorption distorts the BG-derived
+     * peak signal. DIA learning runs for all modes whose [MealMode.diaLearningEnabled]
+     * flag is true.
      *
      * @param mode              The [MealMode] active during this bolus
-     * @param observedPeakMins  Time from bolus to maximum insulin effect (minutes)
+     * @param observedPeakMins  Time from bolus to maximum insulin action (minutes), or null
+     *                          if the curve analyser couldn't extract a clean peak signal
+     *                          (e.g. monotonic rise on a meal mode where carbs dominated).
+     *                          When null, only DIA is learned this cycle; peak is held.
      * @param observedDiaMins   Time from bolus until BG returned to baseline (minutes)
      * @param learningRate      User-configured base learning rate (0.05–0.5)
      */
     fun observeBolusCurve(
         mode:             MealMode,
-        observedPeakMins: Double,
+        observedPeakMins: Double?,
         observedDiaMins:  Double,
         learningRate:     Double
     ) {
-        // Reject implausible observations on the RAW values — peak must be meaningfully less
-        // than DIA. Doing this check on raw (pre-clamp) values catches cases where the tracker
-        // emits e.g. peak=130, dia=125 — clamping would silently produce peak=120, dia=125 and
-        // pass the old "clampedPeak >= clampedDia" check, accepting obviously corrupt data.
-        // The minimum gap reflects physiology: the insulin decline phase must take longer than
-        // zero, so peak and DIA can't be arbitrarily close.
-        if (observedPeakMins >= observedDiaMins - PEAK_DIA_MIN_GAP_MINUTES) {
-            aapsLogger.debug(
-                LTag.APS,
-                "ProfileLearner: rejecting raw observation peak=%.1f dia=%.1f (gap < %.0fm) for %s"
-                    .format(Locale.US, observedPeakMins, observedDiaMins, PEAK_DIA_MIN_GAP_MINUTES, mode)
-            )
-            return
-        }
-
-        // Clamp observations to physiological hard limits before learning from them
-        val clampedPeak = observedPeakMins.coerceIn(
-            LearnedInsulinProfile.PEAK_MIN_MINUTES,
-            LearnedInsulinProfile.PEAK_MAX_MINUTES
-        )
-        val clampedDia = observedDiaMins.coerceIn(
-            LearnedInsulinProfile.DIA_MIN_MINUTES,
-            LearnedInsulinProfile.DIA_MAX_MINUTES
-        )
-
-        // Defensive: if clamping somehow still produced peak >= dia (extremely unlikely given
-        // PEAK_MAX=120 and DIA_MIN=120 leave zero gap), reject. Belt-and-braces.
-        if (clampedPeak >= clampedDia) {
-            aapsLogger.debug(
-                LTag.APS,
-                "ProfileLearner: rejecting clamped observation peak=$clampedPeak >= dia=$clampedDia for $mode"
-            )
-            return
+        // Sanity check the peak/DIA relationship on RAW values, BEFORE clamping. Doing the
+        // check on clamped values would silently accept e.g. peak=130/dia=125 (both clamped
+        // into range and then peak < dia by 5 min) when really both numbers are corrupt.
+        // Only relevant when peak is non-null AND we're going to use it — for non-peak-learning
+        // modes the peak is ignored entirely so the gap check is moot.
+        val peakLearningEnabled = mode in PEAK_LEARNING_MODES
+        if (peakLearningEnabled && observedPeakMins != null) {
+            if (observedPeakMins >= observedDiaMins - PEAK_DIA_MIN_GAP_MINUTES) {
+                aapsLogger.debug(
+                    LTag.APS,
+                    "ProfileLearner: rejecting raw observation peak=%.1f dia=%.1f (gap < %.0fm) for %s"
+                        .format(Locale.US, observedPeakMins, observedDiaMins, PEAK_DIA_MIN_GAP_MINUTES, mode)
+                )
+                return
+            }
         }
 
         val current = getProfile(mode)
 
-        // Effective learning rate blends base rate with mode's signal quality weight.
-        // Then attenuated by confidence — mature profiles (many samples) drift more slowly,
+        // Effective learning rate blends base rate with mode's signal quality weight,
+        // then attenuated by confidence — mature profiles (many samples) drift more slowly,
         // making them robust to occasional bad observations. At full confidence (30+ samples)
         // the effective alpha drops to 50% of the nominal rate.
-        val baseAlpha      = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
-        val confAttenuation = 1.0 - (current.normalizedConfidence * 0.5)  // 1.0 → 0.5 as confidence fills
-        val alpha          = baseAlpha * confAttenuation
+        val baseAlpha       = (learningRate * mode.learningWeight).coerceIn(0.01, 0.5)
+        val confAttenuation = 1.0 - (current.normalizedConfidence * 0.5)
+        val alpha           = baseAlpha * confAttenuation
 
-        // EWMA update for peak
-        val newPeak = ewma(current.peakMinutes, clampedPeak, alpha)
-
-        // EWMA update for DIA — suppressed for EXTENDED mode (flag lives on MealMode enum).
-        // Carb tail on extended meals distorts apparent insulin duration.
-        val newDia = if (mode.diaLearningEnabled) {
-            ewma(current.diaMinutes, clampedDia, alpha)
+        // ── Peak EWMA update (gated + nullable) ─────────────────────────────────────
+        // Only updates when (a) mode is in PEAK_LEARNING_MODES and (b) the analyser
+        // produced a non-null observation. Otherwise peakMinutes is held at its current
+        // learned value — no corruption from carb-dominated curves.
+        val newPeak: Double
+        val peakUpdated: Boolean
+        if (peakLearningEnabled && observedPeakMins != null) {
+            val clampedPeak = observedPeakMins.coerceIn(
+                LearnedInsulinProfile.PEAK_MIN_MINUTES,
+                LearnedInsulinProfile.PEAK_MAX_MINUTES
+            )
+            newPeak     = ewma(current.peakMinutes, clampedPeak, alpha)
+            peakUpdated = true
         } else {
-            current.diaMinutes  // hold DIA at current value
+            newPeak     = current.peakMinutes
+            peakUpdated = false
+        }
+
+        // ── DIA EWMA update — gated by MealMode flag ────────────────────────────────
+        // Suppressed for EXTENDED mode where the carb tail distorts apparent insulin duration.
+        val clampedDia = observedDiaMins.coerceIn(
+            LearnedInsulinProfile.DIA_MIN_MINUTES,
+            LearnedInsulinProfile.DIA_MAX_MINUTES
+        )
+        val newDia: Double
+        val diaUpdated: Boolean
+        if (mode.diaLearningEnabled) {
+            newDia     = ewma(current.diaMinutes, clampedDia, alpha)
+            diaUpdated = true
+        } else {
+            newDia     = current.diaMinutes
+            diaUpdated = false
+        }
+
+        // If we updated nothing (e.g. EXTENDED mode with null peak — DIA gated off, peak gated
+        // off), don't bump sampleCount or write to disk. There's nothing to remember.
+        if (!peakUpdated && !diaUpdated) {
+            aapsLogger.debug(
+                LTag.APS,
+                "ProfileLearner: no-op for ${mode.label} (peak gated/null, dia gated)"
+            )
+            return
         }
 
         val newSampleCount = current.sampleCount + 1
-
         val updated = current.copy(
             peakMinutes   = newPeak,
             diaMinutes    = newDia,
@@ -173,12 +201,12 @@ class ProfileLearner @Inject constructor(
         profiles[mode] = updated
         saveProfile(updated)
 
-        val confPct = (updated.normalizedConfidence * 100.0).toInt()
+        val confPct  = (updated.normalizedConfidence * 100.0).toInt()
+        val peakPart = if (peakUpdated) "peak ${fmtChange(current.peakMinutes, newPeak)}" else "peak HELD@%.1f".format(Locale.US, current.peakMinutes)
+        val diaPart  = if (diaUpdated)  "dia ${fmtChange(current.diaMinutes, newDia)}"   else "dia HELD@%.1f".format(Locale.US, current.diaMinutes)
         aapsLogger.debug(
             LTag.APS,
-            "ProfileLearner updated ${mode.label}: " +
-                "peak ${fmtChange(current.peakMinutes, newPeak)} " +
-                "dia ${fmtChange(current.diaMinutes, newDia)} " +
+            "ProfileLearner updated ${mode.label}: $peakPart $diaPart " +
                 "α=${"%.3f".format(Locale.US, alpha)} (base=${"%.3f".format(Locale.US, baseAlpha)} × conf=${"%.2f".format(Locale.US, confAttenuation)}) " +
                 "n=$newSampleCount conf=$confPct%"
         )
