@@ -21,6 +21,7 @@ dependencies {
     implementation(project(":core:objects"))
     implementation(project(":core:ui"))
     implementation(project(":core:utils"))
+    implementation(libs.com.google.android.flexbox)
 
     testImplementation(project(":implementation"))
     testImplementation(project(":plugins:aps"))

@@ -13,7 +13,7 @@ android {
     defaultConfig {
         ksp {
             arg("room.incremental", "true")
-            arg("room.schemaLocation", "$projectDir/schemas")
+            arg("room.schemaLocation", "${project.projectDir}/schemas")
         }
     }
     sourceSets {

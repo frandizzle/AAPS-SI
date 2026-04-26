@@ -1,5 +1,7 @@
 package app.aaps.plugins.automation.elements
 
+import app.aaps.core.interfaces.scenes.SceneAutomationApi
+
 /**
  * Holds the id of a scene selected by the user. The display name is resolved
  * from [SceneAutomationApi] at edit time and at action runtime; storing the id

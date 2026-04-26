@@ -11,7 +11,12 @@ class VersionCatalogHelper(private val project: Project) {
 
     fun dependency(libName: String, configurationName: String) {
         versionCatalog.findLibrary(libName).ifPresentOrElse(
-            { library -> project.dependencies.add(configurationName, library) },
+            { library ->
+                val dependency = project.dependencies.add(configurationName, library)
+                if (libName == "org-skyscreamer-jsonassert" && (configurationName == "androidTestImplementation" || configurationName == "testImplementation")) {
+                    (dependency as? org.gradle.api.artifacts.ExternalModuleDependency)?.exclude(mapOf("group" to "org.json", "module" to "json"))
+                }
+            },
             { throw IllegalArgumentException("Library '$libName' not found in version catalog.") }
         )
     }
