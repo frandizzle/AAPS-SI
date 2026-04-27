@@ -134,9 +134,7 @@
             </intent-filter>
         </service>
 
-        <service android:name=".heartrate.HeartRateListener" />
 
-        <service android:name=".wearStepCount.StepCountListener" />
 
         <service
             android:name=".complications.LongStatusComplication"

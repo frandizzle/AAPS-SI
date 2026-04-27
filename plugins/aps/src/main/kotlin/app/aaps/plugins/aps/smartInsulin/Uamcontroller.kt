@@ -25,15 +25,15 @@ import javax.inject.Singleton
  * ## Detection logic
  * - Current hour must fall within a UAM mode's configured window
  * - No recent low / rebound window active (hard block)
- * - BG must be above [triggerThresholdMmol] (default 6.0 mmol)
- * - [riseConsecutiveReadings] consecutive readings with:
- * - delta >= [riseMinDeltaMmol]
- * - shortAvgDelta >= [riseMinDeltaMmol] * 0.75  (filters single-reading noise)
- * - Total BG rise since streak start >= [RISE_TOTAL_MMOL_MIN] (filters wobble streaks)
+ * - BG must be above trigger threshold (default 6.0 mmol)
+ * - consecutive readings with:
+ * - delta >= riseMinDelta
+ * - shortAvgDelta >= riseMinDelta * 0.75  (filters single-reading noise)
+ * - Total BG rise since streak start >= rise threshold (filters wobble streaks)
  * → auto-activate the matching UAM mode via [MealOverrideManager.activateOverride]
  *
  * ## Hard cutoff
- * All UAM modes are disabled at [nightCutoffHour] (default 23:00). STFT handles
+ * All UAM modes are disabled at night cutoff hour (default 23:00). STFT handles
  * overnight sticky BG instead.
  *
  * ## Safety blocks

@@ -3,6 +3,7 @@ package app.aaps.plugins.sync.smsCommunicator.compose
 import android.app.Activity
 import android.graphics.Bitmap
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -57,7 +58,7 @@ internal fun SmsCommunicatorOtpScreen(
     modifier: Modifier = Modifier
 ) {
     // Prevent screenshots of TOTP QR code
-    val activity = LocalContext.current as? Activity
+    val activity = LocalActivity.current
     DisposableEffect(Unit) {
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onDispose {

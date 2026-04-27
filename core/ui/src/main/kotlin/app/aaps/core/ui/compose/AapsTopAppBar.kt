@@ -27,8 +27,8 @@ import androidx.compose.ui.tooling.preview.Preview
  * appearance once edge-to-edge is enabled (the bar's container color extends
  * behind the status bar).
  *
- * Uses [MaterialTheme.colorScheme.surface] for the resting state and
- * [MaterialTheme.colorScheme.surfaceContainer] for the scrolled state — a
+ * Uses `MaterialTheme.colorScheme.surface` for the resting state and
+ * `MaterialTheme.colorScheme.surfaceContainer` for the scrolled state — a
  * "seamless" look where the bar blends into the screen background, with a
  * subtle one-step elevation when content scrolls underneath.
  *
@@ -78,8 +78,8 @@ fun AapsTopAppBar(
  * **Always use this instead of Material 3's bare [TopAppBar]** — see the
  * single-arg overload above for the rationale.
  *
- * Uses [MaterialTheme.colorScheme.surface] for the resting state and
- * [MaterialTheme.colorScheme.surfaceContainer] for the scrolled state — a
+ * Uses `MaterialTheme.colorScheme.surface` for the resting state and
+ * `MaterialTheme.colorScheme.surfaceContainer` for the scrolled state — a
  * "seamless" look where the bar blends into the screen background, with a
  * subtle one-step elevation when content scrolls underneath.
  *

@@ -56,6 +56,7 @@ import app.aaps.core.ui.compose.DateTimeSection
 import app.aaps.core.ui.compose.EventTimeRow
 import app.aaps.core.ui.compose.LocalDateUtil
 import app.aaps.core.ui.compose.NumberInputRow
+import app.aaps.core.ui.compose.LocalDateUtil
 import app.aaps.core.ui.compose.clearFocusOnTap
 import app.aaps.core.ui.compose.dialogs.DatePickerModal
 import app.aaps.core.ui.compose.dialogs.OkCancelDialog
@@ -72,7 +73,6 @@ import java.util.Calendar
  * @param hasReuseValues Whether reuse button should be shown
  * @param showNotesField Whether to show the notes input field (based on BooleanKey.OverviewShowNotesInDialogs)
  * @param initialTimestamp Initial timestamp (defaults to now)
- * @param dateUtil DateUtil for formatting dates/times
  * @param rh ResourceHelper for string resources
  * @param onNavigateBack Callback to navigate back
  * @param onActivate Callback when profile is activated with (duration, percentage, timeshift, withTT, notes, timestamp, timeChanged)
