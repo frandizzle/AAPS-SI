@@ -286,8 +286,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val guardGap   = warnGuardMgdl - predictedMinSafety
                 val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
+                // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
+                // an already-scaled-down caution TBR to near zero while BG is heading toward the
+                // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
+                // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
+                val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
                 sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(warnGuardMgdl, isMmol)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
-                setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
             // ── Normal dosing ─────────────────────────────────────────────────
@@ -449,8 +454,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MMOL_TO_MGDL           = 18.0
         private const val TBR_WINDOW_HOURS       = 0.5
         private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
-        private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
+        // delta is mg/dL per 5-min CGM cycle — threshold is 2.0 mmol in a single reading.
+        // The previous formula divided by 5 which would give 0.4 mmol/min — wrong unit,
+        // and far too sensitive (any moderate drop would qualify).
+        private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL  // 36 mg/dL = 2.0 mmol per 5-min cycle
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
         private const val NEUTRAL_TEMP_EPSILON       = 1e-6  // floating-point tolerance for neutral-temp detection
+        // Floor for rebound taper in caution zone — prevents delivering near-zero basal
+        // while BG is already heading toward the warn guard.
+        private const val CAUTION_REBOUND_TAPER_FLOOR = 0.5
     }
 }
