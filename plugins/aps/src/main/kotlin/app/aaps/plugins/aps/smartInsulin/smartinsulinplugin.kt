@@ -169,6 +169,11 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedCgmSuppressLearning: Boolean = false
     @Volatile private var cachedProfileBasal: Double = 0.0
     @Volatile private var cachedProfileTarget: Double = 99.0  // 5.5 mmol default
+    // Cached sensor insert time — queried from DB at most once per SENSOR_CACHE_REFRESH_MS.
+    // Sensor changes are infrequent (every 10–14 days); a 30-min cache eliminates a 30-day
+    // DB scan on every 5-min loop cycle while still detecting a fresh sensor within 30 min.
+    @Volatile private var cachedSensorInsertTimeMs: Long = 0L
+    @Volatile private var sensorCacheRefreshedAtMs: Long = 0L
     // Cached HbA1c estimate — computed in invoke() (background thread) from suspend DB call
     @Volatile private var cachedHba1cAvgMgdl: Double = 0.0
     @Volatile private var cachedHba1cEstimate: Double = 0.0
@@ -207,6 +212,9 @@ open class SmartInsulinPlugin @Inject constructor(
         const val ROLLER_REBOUND_EXTENSION_MAX_MS = 45 * 60 * 1000L // cap at +45 min total extension
         const val UAM_EXIT_MAX_DELTA_MMOL       = 0.5                // max rising delta (mmol/5min) to allow auto-cancel at target
         const val SMB_DELIVERY_FRACTION = 0.5
+        // Sensor insert time is cached for this long — avoids a 30-day DB scan every 5-min loop cycle.
+        // 30 min is short enough to detect a fresh sensor well within the CGM warmup window.
+        private const val SENSOR_CACHE_REFRESH_MS = 30 * 60 * 1000L
     }
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -215,10 +223,10 @@ open class SmartInsulinPlugin @Inject constructor(
     // Use these for all user-visible strings.
     val isMmol: Boolean get() =
         profileUtil.units == GlucoseUnit.MMOL
-    /** Profile ISF in mg/dL — for circadian table colour comparison */
-    val profileIsfMgdl: Double get() = runBlocking { profileFunction.getProfile() }?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
-    /** Profile basal U/h — for circadian table colour comparison */
-    val profileBasalU: Double get() = runBlocking { profileFunction.getProfile() }?.getBasal() ?: 0.0
+    /** Profile ISF in mg/dL — for circadian table colour comparison. Reads from invoke() cache, never blocks. */
+    val profileIsfMgdl: Double get() = cachedProfileIsf
+    /** Profile basal U/h — for circadian table colour comparison. Reads from invoke() cache, never blocks. */
+    val profileBasalU: Double get() = cachedProfileBasal
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     /** Format a BG value in mg/dL to user units */
     private fun fmtBg(mgdl: Double): String =
@@ -964,7 +972,7 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
         previousMealModeForLockout = mealMode
-        val timeSinceLastMealMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
+        val lockoutRemainingMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
         // Clear persisted dirty flag once window has passed
         if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) {
             learningDirtyUntilMs = 0L
@@ -999,16 +1007,26 @@ open class SmartInsulinPlugin @Inject constructor(
         val cgmGuardEnabled = preferences.get(BooleanKey.ApsSmartInsulinCgmWarmupEnabled)
         // Query last sensor change from DB — covers fresh installs/rebuilds mid-sensor
         // where the gap-detection state was lost. Look back 30 days max.
-        val sensorInsertTimeMs: Long = try {
-            val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
-                now - 30 * 24 * 60 * 60 * 1000L,
-                TE.Type.SENSOR_CHANGE,
-                true
-            )
-            sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
-            0L
+        // Sensor insert time — cached for SENSOR_CACHE_REFRESH_MS to avoid a 30-day DB scan
+        // every 5-min loop cycle. Sensor changes happen every 10–14 days; 30-min staleness
+        // is inconsequential for CGM warmup detection (which has a 24-hour window).
+        val sensorInsertTimeMs: Long = if (now - sensorCacheRefreshedAtMs < SENSOR_CACHE_REFRESH_MS) {
+            cachedSensorInsertTimeMs
+        } else {
+            try {
+                val sensorEvents = persistenceLayer.getTherapyEventDataFromTime(
+                    now - 30 * 24 * 60 * 60 * 1000L,
+                    TE.Type.SENSOR_CHANGE,
+                    true
+                )
+                val found = sensorEvents.maxByOrNull { it.timestamp }?.timestamp ?: 0L
+                cachedSensorInsertTimeMs = found
+                sensorCacheRefreshedAtMs = now
+                found
+            } catch (e: Exception) {
+                aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: sensorChange query failed: ${e.message}")
+                cachedSensorInsertTimeMs  // keep using the last known value on failure
+            }
         }
         val cgmState = cgmWarmupGuard.evaluate(
             enabled             = cgmGuardEnabled,
