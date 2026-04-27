@@ -65,7 +65,6 @@ import app.aaps.core.objects.extensions.store
 import app.aaps.core.objects.extensions.target
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -319,8 +318,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow  = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val day  = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
-        val profIsf   = runBlocking { profileFunction.getProfile() }?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
-        val profBasal = runBlocking { profileFunction.getProfile() }?.getBasal() ?: 0.0
+        val profIsf   = cachedProfileIsf
+        val profBasal = cachedProfileBasal
         val isMmolUnit = isMmol
         return buildString {
             appendLine()
@@ -673,8 +672,8 @@ open class SmartInsulinPlugin @Inject constructor(
     fun circadianDataForDay(dow: Int): String {
         val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         val currentDow  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val profIsf     = runBlocking { profileFunction.getProfile() }?.getIsfMgdl("SmartInsulinPlugin") ?: 0.0
-        val profBasal   = runBlocking { profileFunction.getProfile() }?.getBasal() ?: 0.0
+        val profIsf     = cachedProfileIsf
+        val profBasal   = cachedProfileBasal
         val isMmolUnit  = isMmol
         return buildString {
             for (h in 0..23) {
