@@ -217,21 +217,22 @@ class AggressionLearnerTest {
         }
         val aggressive = learner.aggressiveness
 
-        // FIX: Fast-forward 24 hours (instead of 1 hour) so the 220 mg/dL
-        // samples age out of the sliding window and are pruned.
+        // 2. Fast-forward completely past the 24h window
         t += 24 * 60 * 60_000L
 
-        // 3. Feed in-range BG
-        repeat(15) {
+        // 3. Feed in-range BG for 4 HOURS (48 cycles).
+        // 15 cycles was not enough to pass the computeTir minimum sample gate!
+        repeat(48) {
             record(bgMgdl = 100.0, mode = MealMode.FASTING, nowMs = t)
             t += CYCLE_MS
         }
 
-        // Should have decayed but still above 1.0 (slow 3% decay)
-        assertTrue(learner.aggressiveness > 1.0,
-                   "Score > 1.0 should decay slowly — should still be above 1.0 after one update")
+        // Added values to the error message so we can see exactly what it's doing if it ever fails
         assertTrue(learner.aggressiveness < aggressive,
-                   "Score should have moved toward 1.0")
+                   "Score should have moved toward 1.0 (was $aggressive, now ${learner.aggressiveness})")
+
+        assertTrue(learner.aggressiveness > 1.0,
+                   "Score > 1.0 should decay slowly — should still be above 1.0 after updates")
     }
 
     // ── Persistence ───────────────────────────────────────────────────────────
