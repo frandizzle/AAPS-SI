@@ -39,7 +39,10 @@ class AggressionLearnerTest {
     @BeforeEach
     fun setUp() {
         prefs = FakePreferences()
-        prefs.setDouble(DoubleKey.ApsSmartInsulinAggressionMax.key, AGGR_MAX)
+
+        // Standard AAPS Preferences interface method
+        prefs.put(DoubleKey.ApsSmartInsulinAggressionMax, AGGR_MAX)
+
         learner = AggressionLearner(prefs, logger)
     }
 
