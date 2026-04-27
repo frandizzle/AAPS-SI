@@ -98,10 +98,12 @@ class BasalLearner @Inject constructor(
         cobG:          Double,
         minsLastBolus: Double,
         isfMgdl:       Double,
-        profileBasalU: Double
+        profileBasalU: Double,
+        // Time injection — defaults to wall clock. Override in tests to simulate
+        // specific hours (overnight vs daytime weight) and elapsed time.
+        nowMs:         Long = System.currentTimeMillis(),
+        hourOfDay:     Int  = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     ) {
-        val nowMs     = System.currentTimeMillis()
-        val hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         pruneWindow(nowMs)
         // ── Gate checks — all must pass to collect a sample ──────────────────
         if (cobG > MAX_COB_G) return

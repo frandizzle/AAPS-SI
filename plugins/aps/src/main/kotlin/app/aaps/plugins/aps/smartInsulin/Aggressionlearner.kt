@@ -114,13 +114,21 @@ class AggressionLearner @Inject constructor(
      *                         update the aggressiveness score. Use during activity or other
      *                         events where lows/highs are not caused by insulin dosing.
      */
-    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double, mealMode: MealMode, suppressScoring: Boolean = false) {
+    fun recordBg(
+        bgMgdl: Double,
+        lowThreshMgdl: Double,
+        highThreshMgdl: Double,
+        mealMode: MealMode,
+        suppressScoring: Boolean = false,
+        // Time injection — defaults to wall clock. Override in tests to simulate
+        // 24h sample windows and score update intervals without real time passing.
+        nowMs: Long = System.currentTimeMillis()
+    ) {
         val zone = when {
             bgMgdl < lowThreshMgdl  -> Zone.LOW
             bgMgdl > highThreshMgdl -> Zone.HIGH
             else                    -> Zone.IN_RANGE
         }
-        val nowMs   = System.currentTimeMillis()
         val isFasting = mealMode == MealMode.FASTING
         val sample  = BgSample(nowMs, zone, isFasting)
 
