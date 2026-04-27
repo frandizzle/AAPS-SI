@@ -145,13 +145,16 @@ class CircadianLearner @Inject constructor(
         lowGuardMgdl:             Double  = 90.0,
         inPostMealLockout:        Boolean = false,
         aggressiveness:           Double  = 1.0,
-        fastingPeakMins:          Double  = 90.0   // learned fasting insulin peak — sets trim window
+        fastingPeakMins:          Double  = 90.0,   // learned fasting insulin peak — sets trim window
+        // Time injection — defaults to wall clock. Override in tests to simulate specific
+        // hours/days without waiting for real time to pass.
+        hour:                     Int     = currentHour(),
+        dow:                      Int     = currentDow(),
+        nowMs:                    Long    = System.currentTimeMillis()
     ) {
-        val hour = currentHour()
-        val dow  = currentDow()
         val bg   = glucoseStatus.glucose
         val delta  = glucoseStatus.shortAvgDelta
-        val now    = System.currentTimeMillis()
+        val now    = nowMs
         val iob    = iobArray.firstOrNull()?.iob      ?: 0.0
         val activity = iobArray.firstOrNull()?.activity ?: 0.0
         val basalIob = iobArray.firstOrNull()?.basaliob ?: 0.0
@@ -253,7 +256,7 @@ class CircadianLearner @Inject constructor(
         trimWindowMs = (fastingPeakMins * 60_000.0).toLong().coerceIn(60 * 60_000L, 120 * 60_000L)
 
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
-                                                      bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = now,
+                                                      bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = nowMs,
                                                       isfPhysicsFired = isfPhysicsFired,
                                                       basalPhysicsFired = basalPhysicsFired)
 
@@ -641,11 +644,11 @@ class CircadianLearner @Inject constructor(
                     else -> {
                         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
                         val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                        
+
                         // Confidence-weighted learning speed:
                         val conf  = basalState.getConfidence(dow, hour)
                         val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
-                        
+
                         basalState = basalState.updated(dow, hour, newMult, alpha)
                         basalDriftWindow.clear()
                         driftFired = true

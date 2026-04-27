@@ -172,11 +172,13 @@ class BolusCurveTracker @Inject constructor(
     fun onLoopCycle(
         glucoseStatus: GlucoseStatus,
         mealMode:      MealMode,
-        iobArray:      Array<IobTotal>
+        iobArray:      Array<IobTotal>,
+        // Time injection — defaults to wall clock. Override in tests to simulate
+        // time-based state transitions (nadir delay, flatline window, track timeout).
+        nowMs:         Long = System.currentTimeMillis()
     ) {
         val currentIob = iobArray.firstOrNull()?.iob ?: return
         val currentBg  = glucoseStatus.glucose
-        val nowMs      = System.currentTimeMillis()
 
         // Dirty flag — replaces the 4 scattered saveState() calls that used to run per
         // cycle. We accumulate changes and persist once at the end of the cycle (if needed).
