@@ -68,39 +68,44 @@ class BolusCurveTrackerTest {
      * Returns the time at which the track closed.
      */
     private fun driveReboundTrack(
-        startBg:   Double = 162.0,  // 9 mmol — above target pre-bolus
-        nadirBg:   Double = 108.0,  // 6 mmol — dropped ~3 mmol
-        recovBg:   Double = 125.0,  // 6.9 mmol — recovered enough
+        startBg:   Double = 162.0,
+        nadirBg:   Double = 108.0,
+        recovBg:   Double = 130.0,   // needs to be >nadirBg+12 (RECOVERY_MGDL) for 3 consecutive cycles
         iobPeak:   Double = 3.0,
         mode:      MealMode = MealMode.FASTING
     ): Long {
         var t = BASE_MS
 
-        // Cycle 0: seed prevIob (first cycle always returns early)
+        // Seed cycle
         cycle(bg = startBg, iob = 0.5, mode = mode, nowMs = t); t += CYCLE_MS
 
-        // Cycle 1: bolus spike — IOB jumps from 0.5 to iobPeak
+        // Bolus spike
         cycle(bg = startBg, iob = iobPeak, mode = mode, nowMs = t); t += CYCLE_MS
 
-        // IOB peak then decline over 6 cycles
-        for (i in 1..6) {
-            cycle(bg = startBg - i * 5.0, iob = iobPeak * (1.0 - i * 0.08),
+        // IOB peak then decline — BG falls toward nadir
+        for (i in 1..8) {
+            cycle(bg = startBg - i * (startBg - nadirBg) / 8.0,
+                  iob = iobPeak * (1.0 - i * 0.08),
                   mode = mode, nowMs = t)
             t += CYCLE_MS
         }
 
-        // BG nadir reached
-        cycle(bg = nadirBg, iob = iobPeak * 0.4, mode = mode, nowMs = t); t += CYCLE_MS
+        // BG at nadir
+        cycle(bg = nadirBg, iob = iobPeak * 0.35, mode = mode, nowMs = t); t += CYCLE_MS
 
-        // Hold nadir for MIN_NADIR_DELAY (31 minutes)
+        // Hold nadir for >MIN_NADIR_DELAY_MS (30 min) — 7 cycles = 35 min
         repeat(7) {
-            cycle(bg = nadirBg, iob = iobPeak * 0.35, mode = mode, nowMs = t)
+            cycle(bg = nadirBg, iob = iobPeak * 0.30, mode = mode, nowMs = t)
             t += CYCLE_MS
         }
 
-        // Recovery — BG climbs back up past nadir + RECOVERY_MGDL (12 mg/dL)
-        cycle(bg = recovBg, iob = iobPeak * 0.3, mode = mode, nowMs = t)
-        t += CYCLE_MS
+        // Need 3 consecutive recovery cycles so smoothedBg median = recovBg (not nadirBg)
+        // After 3 cycles at recovBg, bgBuffer = [recovBg, recovBg, recovBg] → median = recovBg
+        // recovBg=130, nadirBg=108 → gap=22 > dynamicRecovery=max(12, 130*0.06=7.8)=12 ✓
+        repeat(3) {
+            cycle(bg = recovBg, iob = iobPeak * 0.25, mode = mode, nowMs = t)
+            t += CYCLE_MS
+        }
 
         return t
     }
@@ -264,7 +269,7 @@ class BolusCurveTrackerTest {
     }
 
     @Test
-    fun `small ride-along SMB does not pivot`() {
+    fun `small SMB below spike threshold does not pivot`() {
         var t = BASE_MS
 
         cycle(bg = 162.0, iob = 0.5, nowMs = t); t += CYCLE_MS  // seed
@@ -274,13 +279,17 @@ class BolusCurveTrackerTest {
         cycle(bg = 155.0, iob = 2.8, nowMs = t); t += CYCLE_MS
         cycle(bg = 145.0, iob = 2.3, nowMs = t); t += CYCLE_MS
 
-        // Small SMB: +0.2U on top of 2.3 existing IOB (ratio = 0.2/2.3 = 8.7% < 30%)
+        // Tiny SMB: +0.2U — below MIN_BOLUS_SPIKE (0.3U) — not even significant
+        // so neither pivot NOR ride-along fires; track continues normally
         cycle(bg = 140.0, iob = 2.5, nowMs = t); t += CYCLE_MS
 
         // Track should still be progressing — iobDeclineSeen from the first peak
-        // and NOT reset to waiting_peak by the ride-along
-        val logs = logger.debugMessages.filter { it.contains("ride-along") }
-        assertTrue(logs.isNotEmpty(), "Small SMB should be logged as ride-along, not pivot")
+        // Pivot would have reset to waiting_peak; without pivot we're still tracking_nadir
+        val status = tracker.statusSummary()
+        assertTrue(!status.contains("waiting_peak"),
+                   "Small SMB should not trigger pivot back to waiting_peak, got: $status")
+        assertTrue(!status.contains("idle"),
+                   "Small SMB should not abandon the track, got: $status")
     }
 
     // ── Abandon Logic ─────────────────────────────────────────────────────────
