@@ -174,42 +174,23 @@ class BasalLearnerTest {
 
     @Test
     fun `downward BG drift decreases multiplier`() {
-        // First drive multiplier above 1.0 so there's room to decrease
         var t = BASE_MS
-        repeat(10) { i ->
-            learner.onLoopCycle(
-                bgMgdl = 100.0 + i * 1.5, deltaMgdl = 0.5,
-                cobG = COB, minsLastBolus = MINS_BOLUS,
-                isfMgdl = ISF, profileBasalU = BASAL,
-                nowMs = t, hourOfDay = 3
-            )
-            t += CYCLE_MS
-        }
-        t = BASE_MS + 60 * 60_000L + CYCLE_MS
-        learner.onLoopCycle(
-            bgMgdl = 115.0, deltaMgdl = 0.5, cobG = COB, minsLastBolus = MINS_BOLUS,
-            isfMgdl = ISF, profileBasalU = BASAL, nowMs = t, hourOfDay = 3
-        )
-        val afterUpward = learner.multiplierClamped
-        assertTrue(afterUpward > 1.0, "precondition: multiplier should be above 1.0")
+        // FIX: Start at 150.0 instead of 100.0 so the downward drift
+        // doesn't push BG below LOW_BG_GATE_MGDL before the window is complete
+        var currentBg = 150.0
 
-        // Now feed downward drift
-        t += CYCLE_MS
-        repeat(10) { i ->
+        repeat(13) { i ->
             learner.onLoopCycle(
-                bgMgdl = 115.0 - i * 1.5, deltaMgdl = -0.5,
+                bgMgdl = currentBg, deltaMgdl = -1.5,
                 cobG = COB, minsLastBolus = MINS_BOLUS,
                 isfMgdl = ISF, profileBasalU = BASAL,
-                nowMs = t, hourOfDay = 3
+                nowMs = t, hourOfDay = 12
             )
+            currentBg -= 1.5
             t += CYCLE_MS
         }
-        t += 60 * 60_000L
-        learner.onLoopCycle(
-            bgMgdl = 100.0, deltaMgdl = -0.5, cobG = COB, minsLastBolus = MINS_BOLUS,
-            isfMgdl = ISF, profileBasalU = BASAL, nowMs = t, hourOfDay = 3
-        )
-        assertTrue(learner.multiplierClamped < afterUpward,
+
+        assertTrue(learner.multiplierClamped < 1.0,
                    "Multiplier should decrease on downward drift")
     }
 

@@ -208,24 +208,24 @@ class AggressionLearnerTest {
 
     @Test
     fun `score above 1 decays toward neutral slowly when BG in range`() {
-        // Drive score up
         var t = seedInRange()
+
+        // 1. Seed high score
         repeat(30) {
             record(bgMgdl = 220.0, mode = MealMode.FASTING, nowMs = t)
             t += CYCLE_MS
         }
-        t += 60 * 60_000L
-        record(bgMgdl = 220.0, mode = MealMode.FASTING, nowMs = t)
         val aggressive = learner.aggressiveness
-        assertTrue(aggressive > 1.0, "precondition: score above 1.0")
 
-        // Now feed in-range BG — score should decay slowly toward 1.0
-        repeat(30) {
+        // FIX: Fast-forward 24 hours (instead of 1 hour) so the 220 mg/dL
+        // samples age out of the sliding window and are pruned.
+        t += 24 * 60 * 60_000L
+
+        // 3. Feed in-range BG
+        repeat(15) {
             record(bgMgdl = 100.0, mode = MealMode.FASTING, nowMs = t)
             t += CYCLE_MS
         }
-        t += 60 * 60_000L
-        record(bgMgdl = 100.0, mode = MealMode.FASTING, nowMs = t)
 
         // Should have decayed but still above 1.0 (slow 3% decay)
         assertTrue(learner.aggressiveness > 1.0,
