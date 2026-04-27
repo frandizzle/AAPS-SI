@@ -177,6 +177,9 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedHba1cAvgMgdl: Double = 0.0
     @Volatile private var cachedHba1cEstimate: Double = 0.0
     @Volatile private var cachedHba1cWindowHours: Int = 0
+    // Timestamp of last HbA1c DB query — refreshed at most once per HBA1C_CACHE_REFRESH_MS.
+    // Today's CGM readings change slowly; querying all of them every 5-min cycle is wasteful.
+    @Volatile private var cachedHba1cRefreshedAtMs: Long = 0L
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
@@ -214,6 +217,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Sensor insert time is cached for this long — avoids a 30-day DB scan every 5-min loop cycle.
         // 30 min is short enough to detect a fresh sensor well within the CGM warmup window.
         private const val SENSOR_CACHE_REFRESH_MS = 30 * 60 * 1000L
+        // HbA1c estimate is derived from today's CGM readings (up to 288 rows by end of day).
+        // Querying all of them every 5-min cycle is wasteful — the estimate changes imperceptibly
+        // between cycles. 30 min refresh is more than sufficient for a display-only metric.
+        private const val HBA1C_CACHE_REFRESH_MS  = 30 * 60 * 1000L
     }
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -838,23 +845,29 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedProfileIsf   = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
         cachedProfileTarget = profile.getTargetMgdl()
-        // Cache HbA1c estimate — suspend DB call must stay on background thread
-        try {
-            val todayStart = dateUtil.beginOfDay(System.currentTimeMillis())
-            val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, System.currentTimeMillis(), true)
-            if (bgs.size >= 24) {
-                cachedHba1cAvgMgdl      = bgs.map { it.value }.average()
-                cachedHba1cEstimate     = (cachedHba1cAvgMgdl + 46.7) / 28.7
-                cachedHba1cWindowHours  = if (bgs.size >= 2)
-                    ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
-                else 0
-            } else {
-                cachedHba1cAvgMgdl     = 0.0
-                cachedHba1cEstimate    = 0.0
-                cachedHba1cWindowHours = 0
+        // Cache HbA1c estimate — suspend DB call must stay on background thread.
+        // Gated to once per HBA1C_CACHE_REFRESH_MS — today's readings grow by one row every
+        // 5 min, so querying up to 288 rows every cycle is wasteful for a display-only metric.
+        val nowForCache = System.currentTimeMillis()
+        if (nowForCache - cachedHba1cRefreshedAtMs >= HBA1C_CACHE_REFRESH_MS) {
+            try {
+                val todayStart = dateUtil.beginOfDay(nowForCache)
+                val bgs = persistenceLayer.getBgReadingsDataFromTimeToTime(todayStart, nowForCache, true)
+                if (bgs.size >= 24) {
+                    cachedHba1cAvgMgdl      = bgs.map { it.value }.average()
+                    cachedHba1cEstimate     = (cachedHba1cAvgMgdl + 46.7) / 28.7
+                    cachedHba1cWindowHours  = if (bgs.size >= 2)
+                        ((bgs.maxOf { it.timestamp } - bgs.minOf { it.timestamp }) / (60 * 60 * 1000L)).toInt().coerceAtLeast(1)
+                    else 0
+                } else {
+                    cachedHba1cAvgMgdl     = 0.0
+                    cachedHba1cEstimate    = 0.0
+                    cachedHba1cWindowHours = 0
+                }
+                cachedHba1cRefreshedAtMs = nowForCache
+            } catch (e: Exception) {
+                aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: HbA1c query failed: ${e.message}")
             }
-        } catch (e: Exception) {
-            aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: HbA1c query failed: ${e.message}")
         }
         if (!isEnabled()) {
             rxBus.send(EventResetOpenAPSGui(rh.gs(R.string.openapsma_disabled)))
