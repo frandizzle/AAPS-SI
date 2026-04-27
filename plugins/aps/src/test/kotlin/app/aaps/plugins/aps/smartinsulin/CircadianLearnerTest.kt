@@ -287,26 +287,33 @@ class CircadianLearnerTest {
     }
 
     @Test
-    fun `STFT decays when BG returns to target band`() {
+    fun `STFT deactivates after sustained return to target band`() {
         val start = BASE_MS
-        // Drive trim active with BG above target
+        // Phase 1: Drive trim active — 20 cycles of high BG
         repeat(20) { i ->
             tick(bg = 120.0, activity = 0.0, iob = 0.5,
                  target = 99.0, nowMs = start + i * 5 * 60_000L)
         }
-        assertTrue(learner.trimStrength > 0.0, "precondition: trim should be active, got ${learner.trimStrength}")
-        val strengthAfterTrim = learner.trimStrength
+        assertTrue(learner.trimStrength > 0.0,
+                   "precondition: trim should be active, got ${learner.trimStrength}")
 
-        // Advance time by trimWindowMs (90 min) + a bit so old readings age out of trimBgHistory.
-        // Without this, avgBg is still high from previous readings and trim re-fires rather than decaying.
-        val windowFlushMs = 100 * 60_000L  // 100 min clears the 90-min window
-        val t2 = start + 20 * 5 * 60_000L + windowFlushMs
-        repeat(10) { i ->
+        // Phase 2: BG returns to band — run enough cycles to:
+        //   (a) fill trimBgHistory with in-band readings (need ≥6 = MIN_WINDOW_SAMPLES)
+        //   (b) age out old high-BG readings (trimWindowMs=90 min = 18 cycles)
+        //   (c) trigger the decay branch each time BG is in-band
+        // Run 25 cycles = 125 min, spanning the full trim window
+        // After 18 cycles, trimBgHistory contains only fresh BG=100 readings → avgBg in band → decay fires
+        val t2 = start + 20 * 5 * 60_000L
+        repeat(25) { i ->
             tick(bg = 100.0, activity = 0.0, iob = 0.5,
                  target = 99.0, nowMs = t2 + i * 5 * 60_000L)
         }
-        assertTrue(learner.trimStrength < strengthAfterTrim,
-                   "STFT strength should have decayed after BG returns to band, before=${strengthAfterTrim} after=${learner.trimStrength}")
+
+        // After 25 in-band cycles (with decay rate 0.70 per cycle once active),
+        // trimActive should be false or trimStrength near zero
+        assertTrue(!learner.trimStrength.isNaN(), "trimStrength should not be NaN")
+        assertTrue(learner.trimStrength < 0.20,
+                   "STFT should be inactive or much reduced after sustained in-band BG, got ${learner.trimStrength}")
     }
 
     // ── Aggression Nudge ──────────────────────────────────────────────────────
