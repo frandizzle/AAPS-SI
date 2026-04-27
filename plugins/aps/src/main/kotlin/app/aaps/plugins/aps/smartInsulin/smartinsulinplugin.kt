@@ -51,7 +51,6 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
-import app.aaps.core.interfaces.workflow.CalculationWorkflow
 import app.aaps.core.interfaces.overview.OverviewData
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.utils.MidnightUtils
@@ -101,7 +100,6 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
     private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
-    private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData,
     private val ch: ConcentrationHelper
 ) : PluginBaseWithPreferences(
@@ -1800,7 +1798,6 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
         _overviewStateFlow.value = cachedOverviewState
-        calculationWorkflow.runOnReceivedPredictions(overviewData)
         rxBus.send(EventOpenAPSUpdateGui())
     }
 
