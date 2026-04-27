@@ -101,7 +101,6 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
     private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
-    private val csvLogger: LoopCsvLogger,
     private val calculationWorkflow: CalculationWorkflow,
     private val overviewData: OverviewData,
     private val ch: ConcentrationHelper
@@ -215,12 +214,11 @@ open class SmartInsulinPlugin @Inject constructor(
         const val UAM_EXIT_MAX_DELTA_MMOL       = 0.5                // max rising delta (mmol/5min) to allow auto-cancel at target
         const val SMB_DELIVERY_FRACTION = 0.5
         // Sensor insert time is cached for this long — avoids a 30-day DB scan every 5-min loop cycle.
-        // 30 min is short enough to detect a fresh sensor well within the CGM warmup window.
-        private const val SENSOR_CACHE_REFRESH_MS = 30 * 60 * 1000L
+        // Sensor changes happen every 10-14 days; 6h staleness is inconsequential for warmup detection.
+        private const val SENSOR_CACHE_REFRESH_MS = 6 * 60 * 60 * 1000L
         // HbA1c estimate is derived from today's CGM readings (up to 288 rows by end of day).
-        // Querying all of them every 5-min cycle is wasteful — the estimate changes imperceptibly
-        // between cycles. 30 min refresh is more than sufficient for a display-only metric.
-        private const val HBA1C_CACHE_REFRESH_MS  = 30 * 60 * 1000L
+        // It's a display-only metric approximating a 3-month average — 2h refresh is more than enough.
+        private const val HBA1C_CACHE_REFRESH_MS  = 2 * 60 * 60 * 1000L
     }
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
@@ -1791,33 +1789,6 @@ open class SmartInsulinPlugin @Inject constructor(
             activitySuffix +
             cgmSuffix +
             ukfFirstDaySuffix
-
-        // ── CSV logging ───────────────────────────────────────────────────────
-        val zone = when {
-            apsResult.reason.contains("LGS_SUSPEND") -> "LGS_SUSPEND"
-            apsResult.reason.contains("SUSPEND")     -> "SUSPEND"
-            apsResult.reason.contains("CAUTION")     -> "CAUTION"
-            else                                     -> "NORMAL"
-        }
-        csvLogger.log(LoopCsvLogger.LogRow(
-            timestampMs       = now,
-            bgMmol            = glucoseStatus.glucose / 18.0,
-            delta             = glucoseStatus.shortAvgDelta / 18.0,
-            iob               = iobArray.firstOrNull()?.iob ?: 0.0,
-            cob               = mealData.mealCOB,
-            mealMode          = mealMode.name,
-            isfUsedMmol       = dosingIsfMgdl / 18.0,
-            basalUsed         = profile.getBasal() * basalMultiplier,
-            aggrUsed          = aggressiveness,
-            circIsfMult       = circIsfMult,
-            circBasalMult     = circBasalMult,
-            circAggrCeil      = circAggrCeil,
-            smbU              = apsResult.smb,
-            tbrRate           = apsResult.rate,
-            zone              = zone,
-            reboundActive     = inReboundWindow,
-            reboundElapsedMin = (msSinceLastSuspend / 60_000).toInt().coerceAtMost(999)
-        ))
 
         // Append mode time remaining if an override is active
         val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
