@@ -363,7 +363,7 @@ class UamController @Inject constructor(
         // Track the most recent cycle's contribution — used in statusString() breakdown "(prev, last)".
         // Use actual reading-to-reading difference (not smoothed deltaMmol) so the two values
         // always sum exactly to lastBurstRiseMmol.
-        lastBurstDeltaMmol = if (burstAnchorBgMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol)
+        lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol)
             currentBgMmol - burstPrevBgMmol else 0.0
 
         // ── Resolve time window ───────────────────────────────────────────────
