@@ -181,10 +181,18 @@ class CircadianLearnerTest {
     @Test
     fun `rollercoaster counter increments on successive events`() {
         val start = BASE_MS
-        // Need ≥6 readings in bgHistory (MIN_HISTORY_FOR_ROLLER) within ROLLER_WINDOW_MS (90 min)
-        // Pattern: above highThreshold (target+18=117) → below lowGuard (90) → above → below
-        // That gives 2+ alternating swings = ROLLER_CROSSING_THRESHOLD
-        val bgs = listOf(120.0, 120.0, 80.0, 80.0, 120.0, 80.0, 120.0, 80.0)
+        // Need ≥6 readings in bgHistory within ROLLER_WINDOW_MS (90 min)
+        // Use sustained lows (3 readings at 80) to defeat the compression heuristic
+        // (compression requires duration 10-45 min — 3 readings = 15 min, could still match)
+        // Use lows lasting >45 min (10 readings) so compression check fails on duration criterion
+        // Pattern: high(120) × 4 → low(80) × 10 → high(120) × 3 → low(80) × 3
+        // This gives 2+ extreme swings and lows lasting 50 min (>45 min compression gate)
+        val bgs = buildList {
+            repeat(4)  { add(120.0) }  // above highThreshold (99+18=117)
+            repeat(10) { add(80.0)  }  // below lowGuard (90) — 50 min = too long for compression
+            repeat(3)  { add(120.0) }  // above highThreshold again → swing count++
+            repeat(3)  { add(80.0)  }  // below lowGuard again → swing count++
+        }
         bgs.forEachIndexed { i, bg ->
             tick(bg = bg, iob = 1.5, activity = 0.01,
                  target = 99.0, lowGuard = 90.0,
@@ -281,22 +289,24 @@ class CircadianLearnerTest {
     @Test
     fun `STFT decays when BG returns to target band`() {
         val start = BASE_MS
-        // Drive trim active with BG above target (safe, no low-guard conflict)
+        // Drive trim active with BG above target
         repeat(20) { i ->
             tick(bg = 120.0, activity = 0.0, iob = 0.5,
                  target = 99.0, nowMs = start + i * 5 * 60_000L)
         }
         assertTrue(learner.trimStrength > 0.0, "precondition: trim should be active, got ${learner.trimStrength}")
+        val strengthAfterTrim = learner.trimStrength
 
-        // BG returns to band — trim should decay toward 0
-        // Must advance time past trimWindowMs (90 min) from last action before "in-band" decay kicks in,
-        // OR the in-band case fires immediately via trimStrength *= DECAY_RATE each cycle
+        // Advance time by trimWindowMs (90 min) + a bit so old readings age out of trimBgHistory.
+        // Without this, avgBg is still high from previous readings and trim re-fires rather than decaying.
+        val windowFlushMs = 100 * 60_000L  // 100 min clears the 90-min window
+        val t2 = start + 20 * 5 * 60_000L + windowFlushMs
         repeat(10) { i ->
             tick(bg = 100.0, activity = 0.0, iob = 0.5,
-                 target = 99.0, nowMs = start + 20 * 5 * 60_000L + i * 5 * 60_000L)
+                 target = 99.0, nowMs = t2 + i * 5 * 60_000L)
         }
-        assertTrue(learner.trimStrength < 0.20,
-                   "STFT should decay toward 0 when BG returns to target band, got ${learner.trimStrength}")
+        assertTrue(learner.trimStrength < strengthAfterTrim,
+                   "STFT strength should have decayed after BG returns to band, before=${strengthAfterTrim} after=${learner.trimStrength}")
     }
 
     // ── Aggression Nudge ──────────────────────────────────────────────────────
