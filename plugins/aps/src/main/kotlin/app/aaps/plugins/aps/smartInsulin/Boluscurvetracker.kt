@@ -26,7 +26,13 @@ import kotlin.math.max
  *   4. Track BG nadir from that point.
  *   5. Once BG recovers [RECOVERY_MGDL] above nadir AND the nadir was a real drop
  *      below baseline (per [MIN_BG_DROP_MGDL_FASTING] / [MIN_BG_DROP_MGDL_MEAL]),
- *      the bolus is "complete".
+ *      the bolus is "complete" (rebound exit).
+ *   5b. Alternatively, if BG has been stable within [FLATLINE_MAX_VARIANCE_MGDL] for
+ *      [FLATLINE_WINDOW_MS] after a real nadir drop (FASTING only, ≥2h elapsed,
+ *      BG in safe range), the bolus is "complete" via flatline exit. DIA is measured
+ *      as bolus-start → nadir time (not current time — plateau adds no DIA signal).
+ *      Learning rate is attenuated by [FLATLINE_LEARNING_RATE_MULT] since the DIA
+ *      endpoint is blurrier than a rebound exit.
  *   6. Run [BolusCurveAnalysis.calculateInterpolatedPeakMinutes] over the recorded
  *      curve to extract the time of maximum negative BG velocity (peak insulin
  *      action) — this is physiologically distinct from BG nadir time and yields
@@ -93,6 +99,30 @@ class BolusCurveTracker @Inject constructor(
         // ISF/basal learning alphas because peak/DIA learning operates on a different signal
         // (bolus curve shape) with different noise characteristics.
         private const val PROFILE_LEARNING_RATE  = 0.15
+
+        // ── Flatline exit constants ───────────────────────────────────────────
+        // A flatline exit fires when BG has been stable near its nadir for a sustained
+        // period — indicating insulin finished acting without a visible rebound. This
+        // captures clean fasting corrections (the highest-quality learning signal)
+        // that would otherwise be abandoned at MAX_TRACK_DURATION_MS because BG
+        // simply landed at target and stayed there.
+        //
+        // DIA is measured as time from bolus start to nadir (when BG stopped falling),
+        // NOT elapsed-to-now. Using nadirTimeMs avoids inflating DIA by the entire
+        // flatline plateau duration, which has no insulin-action information.
+        //
+        // Only fires for FASTING — meal/UAM curves have carb-driven BG dynamics that
+        // make "flat near nadir" ambiguous and potentially food-driven rather than
+        // insulin-complete.
+        private const val FLATLINE_MIN_ELAPSED_MS     = 120 * 60_000L   // must be ≥2h into track
+        private const val FLATLINE_WINDOW_MS          = 45 * 60_000L    // variance measured over last 45 min
+        private const val FLATLINE_MIN_WINDOW_SAMPLES = 6               // ≥6 samples in window (~30 min minimum)
+        private const val FLATLINE_MAX_VARIANCE_MGDL  = 9.0             // ~0.5 mmol — tighter than this = flat
+        private const val FLATLINE_BG_MIN_MGDL        = 72.0            // 4.0 mmol — must be above this (not hypo-flat)
+        private const val FLATLINE_BG_MAX_MGDL        = 162.0           // 9.0 mmol — must be below this (not failed-bolus flat)
+        // Lower learning rate multiplier for flatline vs rebound — the DIA endpoint
+        // is blurrier (nadir time, not actual return-to-baseline time).
+        private const val FLATLINE_LEARNING_RATE_MULT = 0.7
 
         // JSON keys
         private const val K_TRACKING         = "tracking"
@@ -297,6 +327,88 @@ class BolusCurveTracker @Inject constructor(
         // actually dropped (carbs winning the curve), feeding garbage into ProfileLearner.
         val minDrop = if (trackMode == MealMode.FASTING) MIN_BG_DROP_MGDL_FASTING else MIN_BG_DROP_MGDL_MEAL
         val dropTarget = bgAtStart - minDrop
+
+        // ── Flatline exit — FASTING only ─────────────────────────────────────
+        // Fires when BG has been stable near the nadir for ≥45 min, indicating insulin
+        // finished acting without a visible rebound. This captures clean fasting corrections
+        // that would otherwise be abandoned at MAX_TRACK_DURATION_MS because BG landed at
+        // target and stayed there — the best possible outcome, and historically the one we
+        // threw away most often.
+        //
+        // Guards:
+        //   1. FASTING only — meal/UAM curves have carb dynamics that make "flat" ambiguous
+        //   2. ≥120 min elapsed — gives insulin time to fully act before declaring done
+        //   3. BG must have actually dropped below baseline (real nadir, not pre-peak plateau)
+        //   4. BG in safe range — not flatlining at 60 (hypo-flat) or 250 (failed bolus)
+        //   5. Low variance over last 45 min — genuinely stable, not just a quiet moment
+        //   6. ≥6 samples in variance window — enough data to confirm stability
+        if (!nadirConfirmed &&
+            trackMode == MealMode.FASTING &&
+            elapsedMs >= FLATLINE_MIN_ELAPSED_MS &&
+            bgNadir < dropTarget                           // real drop must have occurred
+        ) {
+            val windowStart = nowMs - FLATLINE_WINDOW_MS
+            val windowSamples = curveHistory.filter { it.first >= windowStart }
+
+            if (windowSamples.size >= FLATLINE_MIN_WINDOW_SAMPLES) {
+                val windowBgs = windowSamples.map { it.second }
+                val bgRange   = (windowBgs.maxOrNull() ?: 0.0) - (windowBgs.minOrNull() ?: 0.0)
+                val avgBg     = windowBgs.average()
+
+                if (bgRange <= FLATLINE_MAX_VARIANCE_MGDL &&
+                    avgBg >= FLATLINE_BG_MIN_MGDL &&
+                    avgBg <= FLATLINE_BG_MAX_MGDL
+                ) {
+                    // DIA = time from bolus start to nadir (when BG stopped falling).
+                    // NOT elapsed-to-now — the flatline plateau adds no DIA information.
+                    val observedDiaMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
+                    val flatlineLearningRate = PROFILE_LEARNING_RATE * FLATLINE_LEARNING_RATE_MULT
+
+                    val peakResult = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(
+                        curve        = curveHistory.toList(),
+                        trackStartMs = trackStartMs
+                    )
+                    val peakForLearner: Double? = when (peakResult) {
+                        is BolusCurveAnalysis.PeakResult.Ok         -> peakResult.minutes
+                        else                                         -> null
+                    }
+                    val peakDiagStr = when (peakResult) {
+                        is BolusCurveAnalysis.PeakResult.Ok          -> "%.1fmin".format(Locale.US, peakResult.minutes)
+                        is BolusCurveAnalysis.PeakResult.NoNegSlope  -> "no_neg_slope"
+                        is BolusCurveAnalysis.PeakResult.TooFewPoints -> "too_few(${peakResult.count})"
+                        is BolusCurveAnalysis.PeakResult.NonUniform  ->
+                            "non_uniform_skipped(fallback=%.1fmin)".format(Locale.US, peakResult.fallbackMinutes)
+                    }
+
+                    aapsLogger.debug(
+                        LTag.APS,
+                        "BolusCurveTracker: FLATLINE_EXIT mode=${trackMode.label} " +
+                            "peak=$peakDiagStr dia=%.1fmin(nadir) " +
+                            "avgBg=%.1f range=%.1f samples=${windowSamples.size} " +
+                            "elapsed=%.0fmin α=%.3f"
+                                .format(Locale.US, observedDiaMins, avgBg, bgRange,
+                                        elapsedMs / 60_000.0, flatlineLearningRate)
+                    )
+
+                    profileLearner.observeBolusCurve(
+                        mode             = trackMode,
+                        observedPeakMins = peakForLearner,
+                        observedDiaMins  = observedDiaMins,
+                        learningRate     = flatlineLearningRate
+                    )
+                    reset()
+                    return
+                } else {
+                    aapsLogger.debug(
+                        LTag.APS,
+                        "BolusCurveTracker: flatline check failed — " +
+                            "range=%.1f(max=%.0f) avgBg=%.1f(%.0f–%.0f) samples=${windowSamples.size}"
+                                .format(Locale.US, bgRange, FLATLINE_MAX_VARIANCE_MGDL,
+                                        avgBg, FLATLINE_BG_MIN_MGDL, FLATLINE_BG_MAX_MGDL)
+                    )
+                }
+            }
+        }
 
         if (!nadirConfirmed &&
             (nowMs - nadirTimeMs) > MIN_NADIR_DELAY_MS &&
