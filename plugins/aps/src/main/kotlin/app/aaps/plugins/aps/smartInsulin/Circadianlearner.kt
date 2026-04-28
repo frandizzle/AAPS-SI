@@ -1,11 +1,11 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import java.util.Calendar
@@ -27,7 +27,7 @@ import kotlin.math.sign
 @Singleton
 class CircadianLearner @Inject constructor(
     private val aapsLogger: AAPSLogger,
-    private val preferences: Preferences
+    private val sp: SP
 ) {
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -625,7 +625,7 @@ class CircadianLearner @Inject constructor(
                 put("basal", basalState.toJson())
                 put("aggr",  aggrState.toJson())
             }
-            preferences.put(StringKey.ApsSmartInsulinCircadianState, json.toString())
+            sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner persist failed: ${e.message}")
         }
@@ -633,8 +633,8 @@ class CircadianLearner @Inject constructor(
 
     private fun restore() {
         try {
-            val raw = preferences.get(StringKey.ApsSmartInsulinCircadianState)
-            if (raw.isBlank()) return
+            val raw = sp.getString(StringKey.ApsSmartInsulinCircadianState.key, StringKey.ApsSmartInsulinCircadianState.defaultValue)
+            if (raw.isNullOrBlank()) return
             val json = JSONObject(raw)
 
             // ── Migration: flat 24h format → 7-day format ─────────────────────
@@ -684,7 +684,7 @@ class CircadianLearner @Inject constructor(
         basalState = DayOfWeekCircadianState()
         aggrState  = DayOfWeekCircadianState()
         bgHistory.clear()
-        preferences.put(StringKey.ApsSmartInsulinCircadianState, "")
+        sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, "") }
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
 

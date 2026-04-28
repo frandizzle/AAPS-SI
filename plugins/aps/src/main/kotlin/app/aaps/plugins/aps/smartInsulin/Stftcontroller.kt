@@ -1,11 +1,11 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.BooleanKey
-import app.aaps.core.keys.interfaces.Preferences
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -33,7 +33,7 @@ import javax.inject.Singleton
 @Singleton
 class StftController @Inject constructor(
     private val aapsLogger:   AAPSLogger,
-    private val preferences:  Preferences,
+    private val sp:           SP,
     private val profileUtil:  ProfileUtil
 ) {
 
@@ -119,7 +119,7 @@ class StftController @Inject constructor(
         }
 
         // CGM warmup — deltas are unreliable, don't run STFT
-        if (cgmInWarmup && preferences.get(BooleanKey.ApsSmartInsulinStftCgmWarmupBlock)) {
+        if (cgmInWarmup && sp.getBoolean(BooleanKey.ApsSmartInsulinStftCgmWarmupBlock.key, BooleanKey.ApsSmartInsulinStftCgmWarmupBlock.defaultValue)) {
             if (stftActive || consecutiveAbove > 0) {
                 aapsLogger.debug(LTag.APS, "STFT: reset — CGM in warmup")
                 reset()

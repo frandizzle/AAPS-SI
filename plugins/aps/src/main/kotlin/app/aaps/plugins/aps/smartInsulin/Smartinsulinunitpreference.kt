@@ -5,10 +5,10 @@ import android.text.InputType
 import androidx.annotation.StringRes
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceViewHolder
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.utils.SafeParse
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.interfaces.UnitDoublePreferenceKey
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -23,7 +23,7 @@ class SmartInsulinUnitPreference(
     ctx: Context,
     val unitKey: UnitDoublePreferenceKey,
     private val profileUtil: ProfileUtil,
-    private val preferences: Preferences,
+    private val sp: SP,
     @StringRes private val dialogMessage: Int? = null,
     @StringRes title: Int?,
 ) : EditTextPreference(ctx) {
@@ -35,12 +35,11 @@ class SmartInsulinUnitPreference(
         title?.let { this.title = ctx.getString(it) }
         isPersistent = false  // We handle persistence ourselves in persistString
 
-        if (preferences.simpleMode && unitKey.defaultedBySM) isVisible = false
-        if (preferences.apsMode && !unitKey.showInApsMode) { isVisible = false; isEnabled = false }
-        if (preferences.nsclientMode && !unitKey.showInNsClientMode) { isVisible = false; isEnabled = false }
-        if (preferences.pumpControlMode && !unitKey.showInPumpControlMode) { isVisible = false; isEnabled = false }
-        unitKey.dependency?.let { if (!preferences.get(it)) isVisible = false }
-        unitKey.negativeDependency?.let { if (preferences.get(it)) isVisible = false }
+        // 3.3.2.1 doesn't have these mode flags in SP directly easily, 
+        // usually handled by Visibility/Config.
+        // For now, simpler migration:
+        unitKey.dependency?.let { if (!sp.getBoolean(it.key, it.defaultValue)) isVisible = false }
+        unitKey.negativeDependency?.let { if (sp.getBoolean(it.key, it.defaultValue)) isVisible = false }
 
         setOnBindEditTextListener { editText ->
             editText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -52,7 +51,7 @@ class SmartInsulinUnitPreference(
 
     /** Reads stored mg/dL and converts to current display units — fresh every call. */
     private fun toDisplay(): Double =
-        profileUtil.fromMgdlToUnits(preferences.get(unitKey), profileUtil.units)
+        profileUtil.fromMgdlToUnits(sp.getDouble(unitKey.key, unitKey.defaultValue), profileUtil.units)
 
     private fun displayString(): String {
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2

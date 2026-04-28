@@ -1,8 +1,8 @@
 package app.aaps.plugins.aps.smartInsulin
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.keys.StringKey
-import app.aaps.core.keys.interfaces.Preferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -31,7 +31,7 @@ import kotlin.math.abs
  */
 @Singleton
 class BasalLearner @Inject constructor(
-    private val preferences: Preferences,
+    private val sp: SP,
     private val aapsLogger:  AAPSLogger
 ) {
     private data class BgDriftSample(val timestampMs: Long, val bgMgdl: Double)
@@ -170,7 +170,7 @@ class BasalLearner @Inject constructor(
         for (i in 0..6) { dayMultipliers[i] = 1.0; daySampleCount[i] = 0 }
         globalMultiplier = 1.0
         lastLearnMs      = 0L
-        preferences.put(StringKey.ApsSmartInsulinBasalState, "")
+        sp.edit { putString(StringKey.ApsSmartInsulinBasalState.key, "") }
         aapsLogger.debug(LTag.APS, "BasalLearner: reset to 1.0")
     }
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -186,23 +186,25 @@ class BasalLearner @Inject constructor(
             window.forEach { s -> arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_BG, s.bgMgdl)) }
             val dayArr = org.json.JSONArray()
             for (i in 0..6) dayArr.put(JSONObject().put("mult", dayMultipliers[i]).put("n", daySampleCount[i]))
-            preferences.put(
-                StringKey.ApsSmartInsulinBasalState,
-                JSONObject()
-                    .put(K_MULTIPLIER, globalMultiplier)
-                    .put(K_LAST_LEARN, lastLearnMs)
-                    .put(K_SAMPLES, arr)
-                    .put("dayMultipliers", dayArr)
-                    .toString()
-            )
+            sp.edit {
+                putString(
+                    StringKey.ApsSmartInsulinBasalState.key,
+                    JSONObject()
+                        .put(K_MULTIPLIER, globalMultiplier)
+                        .put(K_LAST_LEARN, lastLearnMs)
+                        .put(K_SAMPLES, arr)
+                        .put("dayMultipliers", dayArr)
+                        .toString()
+                )
+            }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BasalLearner: save failed: ${e.message}")
         }
     }
     private fun restoreState() {
         try {
-            val raw = preferences.get(StringKey.ApsSmartInsulinBasalState)
-            if (raw.isBlank()) return
+            val raw = sp.getString(StringKey.ApsSmartInsulinBasalState.key, StringKey.ApsSmartInsulinBasalState.defaultValue)
+            if (raw.isNullOrBlank()) return
             val json    = JSONObject(raw)
             globalMultiplier = json.optDouble(K_MULTIPLIER, 1.0).coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
             lastLearnMs      = json.optLong(K_LAST_LEARN, 0L)

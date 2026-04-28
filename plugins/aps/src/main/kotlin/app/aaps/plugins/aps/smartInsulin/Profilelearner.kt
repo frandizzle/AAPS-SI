@@ -1,12 +1,12 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import java.util.Locale
 import org.json.JSONObject
@@ -46,7 +46,7 @@ import javax.inject.Singleton
 @Singleton
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
-    private val preferences:     Preferences,
+    private val sp:              SP,
     private val profileFunction: ProfileFunction,
     private val activePlugin:    ActivePlugin
 ) : SmartInsulinLearner {
@@ -195,8 +195,8 @@ class ProfileLearner @Inject constructor(
 
     private fun loadProfile(mode: MealMode): LearnedInsulinProfile {
         return try {
-            val json = preferences.get(prefKeyFor(mode))
-            if (json.isBlank()) return safeSeededDefault(mode)
+            val json = sp.getString(prefKeyFor(mode).key, prefKeyFor(mode).defaultValue)
+            if (json.isNullOrBlank()) return safeSeededDefault(mode)
             LearnedInsulinProfile.fromJson(JSONObject(json), mode)
         } catch (_: Exception) {
             safeSeededDefault(mode)
@@ -241,7 +241,7 @@ class ProfileLearner @Inject constructor(
 
     private fun saveProfile(profile: LearnedInsulinProfile) {
         try {
-            preferences.put(prefKeyFor(profile.mode), profile.toJson().toString())
+            sp.edit { putString(prefKeyFor(profile.mode).key, profile.toJson().toString()) }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "ProfileLearner: failed to save ${profile.mode}: ${e.message}")
         }

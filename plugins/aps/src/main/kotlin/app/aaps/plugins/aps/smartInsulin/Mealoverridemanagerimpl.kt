@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -13,7 +14,6 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
-import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import javax.inject.Inject
@@ -22,7 +22,7 @@ import javax.inject.Singleton
 @Singleton
 class MealOverrideManagerImpl @Inject constructor(
     private val aapsLogger:      AAPSLogger,
-    private val preferences:     Preferences,
+    private val sp:              SP,
     private val commandQueue:    CommandQueue,
     private val profileFunction: ProfileFunction,
     private val dateUtil:        DateUtil,
@@ -40,7 +40,7 @@ class MealOverrideManagerImpl @Inject constructor(
     private fun persistState() {
         val s = _state
         if (s == null) {
-            preferences.put(StringKey.ApsSmartInsulinOverrideState, "")
+            sp.edit { putString(StringKey.ApsSmartInsulinOverrideState.key, "") }
             return
         }
         val json = JSONObject().apply {
@@ -52,20 +52,20 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus2DelayMs", s.preBolus2DelayMs)
             if (s.preBolus2FiredMs != null) put("preBolus2FiredMs", s.preBolus2FiredMs)
         }
-        preferences.put(StringKey.ApsSmartInsulinOverrideState, json.toString())
+        sp.edit { putString(StringKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
     }
 
     private fun restoreState() {
-        val raw = preferences.get(StringKey.ApsSmartInsulinOverrideState)
-        if (raw.isBlank()) return
+        val raw = sp.getString(StringKey.ApsSmartInsulinOverrideState.key, StringKey.ApsSmartInsulinOverrideState.defaultValue)
+        if (raw.isNullOrBlank()) return
         try {
             val json         = JSONObject(raw)
             val mode         = MealMode.valueOf(json.getString("mode"))
             val now          = System.currentTimeMillis()
             val modeExpiryMs = json.getLong("modeExpiryMs")
             if (modeExpiryMs <= now) {
-                preferences.put(StringKey.ApsSmartInsulinOverrideState, "")
+                sp.edit { putString(StringKey.ApsSmartInsulinOverrideState.key, "") }
                 aapsLogger.debug(LTag.APS, "SmartInsulin: persisted override expired on restore")
                 return
             }
@@ -83,7 +83,7 @@ class MealOverrideManagerImpl @Inject constructor(
                 if (_state!!.preBolus2Pending) " pb2=${_state!!.preBolus2U}U pending" else "")
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: failed to restore override state: ${e.message}")
-            preferences.put(StringKey.ApsSmartInsulinOverrideState, "")
+            sp.edit { putString(StringKey.ApsSmartInsulinOverrideState.key, "") }
         }
     }
 

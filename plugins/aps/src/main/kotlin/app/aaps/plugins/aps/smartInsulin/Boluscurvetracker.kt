@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -7,7 +8,6 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.StringKey
-import app.aaps.core.keys.interfaces.Preferences
 import java.util.Locale
 import org.json.JSONObject
 import javax.inject.Inject
@@ -29,7 +29,7 @@ import javax.inject.Singleton
 @Singleton
 class BolusCurveTracker @Inject constructor(
     private val profileLearner: ProfileLearner,
-    private val preferences:    Preferences,
+    private val sp:             SP,
     private val aapsLogger:     AAPSLogger
 ) {
     // ── In-memory state ───────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ class BolusCurveTracker @Inject constructor(
             nadirConfirmed = true
             val observedPeakMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
             val observedDiaMins  = elapsedMs.toDouble() / 60_000.0
-            val learningRate     = preferences.get(DoubleKey.ApsSmartInsulinLearningRate)
+            val learningRate     = sp.getDouble(DoubleKey.ApsSmartInsulinLearningRate.key, DoubleKey.ApsSmartInsulinLearningRate.defaultValue)
 
             aapsLogger.debug(
                 LTag.APS,
@@ -210,7 +210,7 @@ class BolusCurveTracker @Inject constructor(
                 put(K_NADIR_TIME_MS,    nadirTimeMs)
                 put(K_NADIR_CONFIRMED,  nadirConfirmed)
             }
-            preferences.put(StringKey.ApsSmartInsulinTrackerState, json.toString())
+            sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to save state: ${e.message}")
         }
@@ -218,8 +218,8 @@ class BolusCurveTracker @Inject constructor(
 
     private fun restoreState() {
         try {
-            val raw = preferences.get(StringKey.ApsSmartInsulinTrackerState)
-            if (raw.isBlank()) return
+            val raw = sp.getString(StringKey.ApsSmartInsulinTrackerState.key, StringKey.ApsSmartInsulinTrackerState.defaultValue)
+            if (raw.isNullOrBlank()) return
             val json = JSONObject(raw)
             if (!json.optBoolean(K_TRACKING, false)) return
 
@@ -227,7 +227,7 @@ class BolusCurveTracker @Inject constructor(
             val restoredStartMs = json.getLong(K_START_MS)
             if (System.currentTimeMillis() - restoredStartMs > MAX_TRACK_DURATION_MS) {
                 aapsLogger.debug(LTag.APS, "BolusCurveTracker: restored state expired, discarding")
-                preferences.put(StringKey.ApsSmartInsulinTrackerState, "")
+                sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, "") }
                 return
             }
 
@@ -263,6 +263,6 @@ class BolusCurveTracker @Inject constructor(
         nadirTimeMs     = 0L
         nadirConfirmed  = false
         // prevIob intentionally NOT reset — we still need continuity to detect next bolus spike
-        try { preferences.put(StringKey.ApsSmartInsulinTrackerState, "") } catch (_: Exception) {}
+        try { sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, "") } } catch (_: Exception) {}
     }
 }

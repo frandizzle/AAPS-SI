@@ -1,11 +1,11 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.StringKey
-import app.aaps.core.keys.interfaces.Preferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
@@ -35,7 +35,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class AggressionLearner @Inject constructor(
-    private val preferences: Preferences,
+    private val sp: SP,
     private val aapsLogger:  AAPSLogger
 ) {
     private data class BgSample(val timestampMs: Long, val zone: Zone, val fasting: Boolean)
@@ -81,7 +81,7 @@ class AggressionLearner @Inject constructor(
 
     val aggressiveness: Double
         get() {
-            val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
+            val max   = sp.getDouble(DoubleKey.ApsSmartInsulinAggressionMax.key, DoubleKey.ApsSmartInsulinAggressionMax.defaultValue)
             val dow   = currentDow()
             val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
             val score = globalScore * (1.0 - blend) + dayScores[dow] * blend
@@ -146,7 +146,7 @@ class AggressionLearner @Inject constructor(
             aapsLogger.debug(LTag.APS, "AggressionLearner: insufficient fasting samples (${fastingSamples.size}/$MIN_SAMPLES_TO_LEARN), global held at $globalScore")
             return
         }
-        val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
+        val max   = sp.getDouble(DoubleKey.ApsSmartInsulinAggressionMax.key, DoubleKey.ApsSmartInsulinAggressionMax.defaultValue)
         val floor = 1.0 / max
         val ceil  = max
         val dow   = currentDow()
@@ -222,7 +222,7 @@ class AggressionLearner @Inject constructor(
         for (i in 0..6) { dayScores[i] = 1.0; daySampleCount[i] = 0 }
         globalScore  = 1.0
         lastUpdateMs = 0L
-        preferences.put(StringKey.ApsSmartInsulinAggressionState, "")
+        sp.edit { putString(StringKey.ApsSmartInsulinAggressionState.key, "") }
         aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
     }
 
@@ -238,11 +238,13 @@ class AggressionLearner @Inject constructor(
             }
             val dayArr = org.json.JSONArray()
             for (i in 0..6) dayArr.put(JSONObject().put("score", dayScores[i]).put("n", daySampleCount[i]))
-            preferences.put(
-                StringKey.ApsSmartInsulinAggressionState,
-                JSONObject().put(K_SCORE, globalScore).put(K_LAST_UPDATE, lastUpdateMs)
-                    .put(K_SAMPLES, arr).put("dayScores", dayArr).toString()
-            )
+            sp.edit {
+                putString(
+                    StringKey.ApsSmartInsulinAggressionState.key,
+                    JSONObject().put(K_SCORE, globalScore).put(K_LAST_UPDATE, lastUpdateMs)
+                        .put(K_SAMPLES, arr).put("dayScores", dayArr).toString()
+                )
+            }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: save failed: ${e.message}")
         }
@@ -250,8 +252,8 @@ class AggressionLearner @Inject constructor(
 
     private fun restoreState() {
         try {
-            val raw = preferences.get(StringKey.ApsSmartInsulinAggressionState)
-            if (raw.isBlank()) return
+            val raw = sp.getString(StringKey.ApsSmartInsulinAggressionState.key, StringKey.ApsSmartInsulinAggressionState.defaultValue)
+            if (raw.isNullOrBlank()) return
             val json     = JSONObject(raw)
             globalScore  = json.optDouble(K_SCORE, 1.0)
             lastUpdateMs = json.optLong(K_LAST_UPDATE, 0L)
