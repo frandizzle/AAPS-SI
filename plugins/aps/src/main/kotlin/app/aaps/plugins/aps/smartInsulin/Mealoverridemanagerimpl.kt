@@ -212,6 +212,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val preBolus2StatusText: String get() {
         val s   = _state ?: return ""
+        if (s.preBolus2U <= 0.0) return ""  // PB2 never requested
         val now = System.currentTimeMillis()
         return when {
             // Discarded (-1L) or already fired (positive timestamp)

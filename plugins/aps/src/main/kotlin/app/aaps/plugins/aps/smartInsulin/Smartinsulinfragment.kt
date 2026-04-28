@@ -415,6 +415,33 @@ class SmartInsulinFragment : DaggerFragment() {
                            "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
             }
         }
+
+        // Pre-bolus 3 — show delivered amount once fired
+        if (d.mealMode != "Fasting" && d.activePb3DoseU != null && d.activePb3DoseU > 0.0) {
+            addRow(c, "Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
+                   "Third bolus delivered (late-meal cover).",
+                   Color.parseColor("#FF43A047"))
+        }
+
+        // Pre-bolus 3 — pending / gate status
+        // preBolus3StatusText returns "" when PB3 was never requested, so this is safe
+        if (d.pb3Status.isNotEmpty()) {
+            val isActive3 = d.pb3Status.contains("active")
+            val pb3Primary = when {
+                d.pb3Status.contains("waiting for PB2") -> "Pre-bolus 3 — waiting for PB2 to fire"
+                d.pb3Status.contains("due")             -> "Pre-bolus 3 — ready to deliver now"
+                Regex("""(\d+)m""").containsMatchIn(d.pb3Status) -> {
+                    val mins = Regex("""(\d+)m""").find(d.pb3Status)?.groupValues?.get(1)
+                    "Pre-bolus 3 — delivers in ${mins}m"
+                }
+                else -> "Pre-bolus 3 — waiting for safety gates"
+            }
+            val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
+                "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
+            else null
+            addRow(c, pb3Primary, pb3Sub,
+                   primaryColor = if (isActive3) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+        }
     }
 
     // ── TIR bars ──────────────────────────────────────────────────────────────
