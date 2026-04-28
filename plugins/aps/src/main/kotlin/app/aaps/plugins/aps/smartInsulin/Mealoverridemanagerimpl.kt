@@ -210,6 +210,20 @@ class MealOverrideManagerImpl @Inject constructor(
             )
         }
 
+    override val pb3GateData: MealOverrideManager.Pb2GateData?
+        get() {
+            if (_state == null || lastPb3MaxIob <= 0.0) return null
+            return MealOverrideManager.Pb2GateData(
+                isMmol            = false,
+                profileTargetMgdl = lastPb3TargetMgdl,
+                bgMgdl            = lastPb3BgMgdl,
+                maxIobU           = lastPb3MaxIob,
+                iobU              = lastPb3Iob,
+                deltaMgdl         = lastPb3Delta,
+                shortAvgDeltaMgdl = lastPb3ShortAvgDelta
+            )
+        }
+
     override val preBolus2StatusText: String get() {
         val s   = _state ?: return ""
         if (s.preBolus2U <= 0.0) return ""  // PB2 never requested
@@ -543,7 +557,7 @@ class MealOverrideManagerImpl @Inject constructor(
         lastPb3MaxIob        = maxIobU
         lastPb3TargetMgdl    = profileTarget
         lastPb3Delta         = glucoseStatus.delta
-        lastShortAvgDelta = glucoseStatus.shortAvgDelta
+        lastPb3ShortAvgDelta = glucoseStatus.shortAvgDelta
 
         val reasons = safetyBlockReasons(
             bgMgdl        = currentBgMgdl,

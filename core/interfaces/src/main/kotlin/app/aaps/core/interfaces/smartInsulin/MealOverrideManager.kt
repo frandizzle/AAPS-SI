@@ -99,6 +99,9 @@ interface MealOverrideManager {
     /** Last known safety-gate values for PB2; null if no active session or no gate check run yet */
     val pb2GateData: Pb2GateData?
 
+    /** Last known safety-gate values for PB3; null if no active session or PB3 never pending */
+    val pb3GateData: Pb2GateData?
+
     companion object {
         const val MIN_BG_FOR_PB2_MGDL        = 90.0   // ~5.0 mmol — don't fire PB2 if below this
         const val MAX_IOB_HEADROOM_RATIO      = 0.75   // IOB must be < 75% of maxIob to allow PB2
