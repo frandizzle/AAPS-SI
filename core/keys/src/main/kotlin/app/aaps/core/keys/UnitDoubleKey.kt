@@ -23,13 +23,13 @@ enum class UnitDoubleKey(
     OverviewHypoTarget("hypo_target", 160.0, 108, 180, defaultedBySM = true),
     OverviewLowMark("low_mark", 72.0, 25, 160, showInNsClientMode = false, hideParentScreenIfHidden = true),
     OverviewHighMark("high_mark", 180.0, 90, 250, showInNsClientMode = false),
-    ApsLgsThreshold("lgsThreshold", 65.0, 60, 100, defaultedBySM = true, dependency = BooleanKey.ApsUseDynamicSensitivity),
 
     // ── SmartInsulin ─────────────────────────────────────────────────────────
     // All values stored in mg/dL. AdaptiveUnitPreference (fixed version using
     // fromMgdlToUnits) handles display conversion correctly for all ranges.
 
     // BG guards
+    ApsLgsThreshold("lgsThreshold", 65.0, 60, 100, defaultedBySM = true),
     ApsSmartInsulinLowGuard( "si_low_guard",  72.0, 54,  90, defaultedBySM = true),
     ApsSmartInsulinWarnGuard("si_warn_guard", 86.0, 63, 108, defaultedBySM = true),
 
