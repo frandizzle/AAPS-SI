@@ -18,20 +18,11 @@ interface SmartInsulinOverview {
         val modeLine: String,
         /** "PB2 active: 30m" or null if no PB2 pending */
         val pb2Line: String?,
-        /** "PB3 active: 25m" or null if no PB3 pending. PB3 will show "waiting for PB2"
-         *  until PB2 fires, then count down its own delay relative to PB2's fire time. */
-        val pb3Line: String?,
         /** null = full learning active
          *  "limited" = meal mode (only DIA/peak learning)
          *  "off: <reason>" = fully suppressed */
-        val learningState: String,
-        /** True when in FASTING mode (no meal overrides active) */
-        val isFasting: Boolean = true,
-        /** True when the algorithm is actively learning (Fasting + no other blocks) */
-        val isLearning: Boolean = true
+        val learningState: String
     )
 
     fun overviewState(): OverviewState
-
-    val overviewStateFlow: kotlinx.coroutines.flow.StateFlow<OverviewState?>
 }
