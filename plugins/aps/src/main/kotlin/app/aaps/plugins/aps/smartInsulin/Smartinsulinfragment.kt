@@ -30,6 +30,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     // Circadian day selector — defaults to today, resets when fragment resumes
     private var selectedCircadianDow: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+    private var showFfDebug = false
 
     private val handler = Handler(Looper.getMainLooper())
     private val updater = object : Runnable {
@@ -82,7 +83,7 @@ class SmartInsulinFragment : DaggerFragment() {
         updateUamCard(d)
         updateStftCard(d)
         updateCircadianTable("")
-        updateProfilesCard(d.profilesRawStatus, d.mealMode)
+        updateProfilesCard(d)
     }
 
     // ── Layout helpers ────────────────────────────────────────────────────────
@@ -159,12 +160,11 @@ class SmartInsulinFragment : DaggerFragment() {
             // SMB countdown
             if (smbUnlockIn > 0) {
                 addRow(c, "SMBs blocked — unlocks in ~${smbUnlockIn}min",
-                       "SMBs are held back for the first ${smbGateMins.toInt()} minutes of recovery (75% of ${windowMins.toInt()}min window)\n" +
-                           "to avoid over-correcting while the low is still resolving.",
+                       "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
                        Color.parseColor("#FFE53935"))
             } else {
                 addRow(c, "SMBs restored ✓",
-                       "Corrections are running normally again. TBR taper still active for ${minsLeft}min.",
+                       "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
                        Color.parseColor("#FF43A047"))
             }
 
@@ -177,9 +177,9 @@ class SmartInsulinFragment : DaggerFragment() {
                     else -> "Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min"
                 }
                 addRow(c, extLabel,
-                       "Base window: ${baseMins.toInt()}min + ${extMins}min extension = ${windowInt}min total.\n" +
-                           "Extension increases with each consecutive rollercoaster (max +45min).\n" +
-                           "Resets automatically after 2h with no further rollercoasters.",
+                       "Base: ${baseMins.toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\n" +
+                           "Extension grows with each consecutive rollercoaster (max +45min).\n" +
+                           "Resets after 2h with no further rollercoasters.",
                        Color.parseColor("#FFFB8C00"))
             }
 
@@ -187,7 +187,7 @@ class SmartInsulinFragment : DaggerFragment() {
             if (d.mealMode != "Fasting") {
                 addRow(c, "Meal mode active — low recovery bypassed until window finishes",
                        "Recovery protection (TBR taper, SMB gate) continues running in the background.\n" +
-                           "Meal mode ISF and dosing are applied on top. Recovery ends at ${minsLeft}min.",
+                           "Meal mode ISF and dosing are applied on top. Recovery ends in ${minsLeft}min.",
                        Color.parseColor("#FF64B5F6"))
             }
 
@@ -211,8 +211,7 @@ class SmartInsulinFragment : DaggerFragment() {
         } else if (d.bgWentLow) {
             // BG is currently below low guard
             addRow(c, "⚠ BG is below low guard — waiting for recovery",
-                   "Once BG rises back above the low guard, the ${d.totalReboundWindowMins}-minute\n" +
-                       "recovery window will start automatically." +
+                   "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
                        if (d.consecutiveRollercoasters >= 1) {
                            val extMins = d.totalReboundWindowMins - d.reboundWindowMins
                            "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
@@ -220,7 +219,7 @@ class SmartInsulinFragment : DaggerFragment() {
                    Color.parseColor("#FFE53935"))
             if (d.mealMode != "Fasting") {
                 addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
-                       "Meal mode ISF and dosing are running normally.\nRecovery window will activate automatically when BG crosses back above the low guard.",
+                       "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
                        Color.parseColor("#FF43A047"))
             }
             if (d.minBgDuringLow < Double.MAX_VALUE) {
@@ -335,28 +334,6 @@ class SmartInsulinFragment : DaggerFragment() {
             else -> aggrColor
         })
 
-        val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
-        val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
-        val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
-        addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
-               "Profile ${"%.1f".format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
-                   "Higher multiplier = higher ISF = less aggressive. Lower multiplier = more aggressive.\n" +
-                   "How much 1U of insulin lowers your BG.")
-
-        // Convert drift signal units if user is in mmol
-        val basalSignalDisplay = if (d.isMmol && d.lastBasalSignal.contains("mgdlhr")) {
-            d.lastBasalSignal.replace(Regex("([\\-\\d.]+) mgdlhr")) { mr ->
-                val mgdl = mr.groupValues[1].toDoubleOrNull() ?: 0.0
-                "${"%.2f".format(mgdl / 18.0)} mmol/L/hr"
-            }
-        } else {
-            d.lastBasalSignal.replace("mgdlhr", "mg/dL/hr")
-        }
-        addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
-               "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
-                   "Background insulin rate keeping BG stable between meals.\n" +
-                   "Last basal learning: $basalSignalDisplay")
-
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
             addRow(c, "Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
@@ -468,6 +445,27 @@ class SmartInsulinFragment : DaggerFragment() {
                            "Blocked below ${fmtDelta3(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk3)
             }
         }
+
+        val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
+        val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
+        val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
+        addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
+               "Profile ${"%.1f".format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
+                   "Lower ISF = more insulin delivered per BG gap. Multiplier >1 reduces ISF, <1 raises ISF.")
+
+        // Convert drift signal units if user is in mmol
+        val basalSignalDisplay = if (d.isMmol && d.lastBasalSignal.contains("mgdlhr")) {
+            d.lastBasalSignal.replace(Regex("([\\-\\d.]+) mgdlhr")) { mr ->
+                val mgdl = mr.groupValues[1].toDoubleOrNull() ?: 0.0
+                "${"%.2f".format(mgdl / 18.0)} mmol/L/hr"
+            }
+        } else {
+            d.lastBasalSignal.replace("mgdlhr", "mg/dL/hr")
+        }
+        addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
+               "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
+                   "Background insulin rate keeping BG stable between meals.\n" +
+                   "Last basal learning: $basalSignalDisplay")
     }
 
     // ── TIR bars ──────────────────────────────────────────────────────────────
@@ -525,11 +523,12 @@ class SmartInsulinFragment : DaggerFragment() {
 
     private fun updateLearningCard(d: SmartInsulinPlugin.FragmentData) {
         val c = _binding?.learningRows ?: return; c.removeAllViews()
+        addRow(c, "SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FF888888"))
         val (primary, color) = when {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
                 Pair("Learning paused — ${d.learningState.removePrefix("off: ").trim().ifEmpty{"unknown"}}", Color.parseColor("#FFFB8C00"))
             d.learningState == "limited" || d.learningState.startsWith("Limited") ->
-                Pair("State: Limited — meal mode active, only learning Peak/DIA", Color.parseColor("#FFFB8C00"))
+                Pair("Limited — meal mode active, only learning Peak/DIA", Color.parseColor("#FFFB8C00"))
             else -> Pair("Learning active", Color.parseColor("#FF43A047"))
         }
         addRow(c, primary,
@@ -570,25 +569,56 @@ class SmartInsulinFragment : DaggerFragment() {
                                 "Day-1 readings can be noisy. Learning resumes automatically after 24h.", Color.parseColor("#FFFB8C00"))
 
         // Aggression nudge status
-        // Parse structured nudge status
         val nudgeParts      = d.lastAggrNudgeStatus.split("|")
         val nudgeState      = nudgeParts.getOrNull(0) ?: "INACTIVE"
-        val nudgeActiveHigh = nudgeState == "ACTIVE_HIGH"   // too much insulin
-        val nudgeActiveLow  = nudgeState == "ACTIVE_LOW"    // not enough insulin
+        val nudgeActiveHigh = nudgeState == "ACTIVE_HIGH"
+        val nudgeActiveLow  = nudgeState == "ACTIVE_LOW"
         val nudgeActive     = nudgeActiveHigh || nudgeActiveLow
         val nudgePaused     = nudgeState == "PAUSED"
-        val nudgeColor      = when {
-            nudgeActiveHigh                      -> Color.parseColor("#FFFB8C00")  // amber — reducing insulin
-            nudgeActiveLow                       -> Color.parseColor("#FF4CAF50")  // green — adding insulin
-            nudgePaused                          -> Color.parseColor("#FF64B5F6")  // blue — paused
-            d.inReboundWindow || d.bgWentLow     -> Color.parseColor("#FFFB8C00")  // amber — low recovery
-            else                                 -> Color.parseColor("#FF888888")  // grey — inactive
+        val nudgeTrim       = nudgeState == "TRIM"
+        val trimDirection   = nudgeParts.getOrNull(1) ?: ""
+        val trimPct         = nudgeParts.getOrNull(2) ?: "0%"
+
+        // ISF/basal comparison helpers — used for both colour and detail text
+        val bgBelowTarget        = d.currentBgMgdl > 0.0 && d.profileTargetMgdl > 0.0 && d.currentBgMgdl < d.profileTargetMgdl
+        val basalLessThanProfile = d.finalBasalU > 0.0 && d.profileBasalU > 0.0 && d.finalBasalU < d.profileBasalU * 0.98
+        val basalMoreThanProfile = d.finalBasalU > 0.0 && d.profileBasalU > 0.0 && d.finalBasalU > d.profileBasalU * 1.02
+        val isfHigherThanProfile = d.isfMultiplier < 0.97
+        val isfLowerThanProfile  = d.isfMultiplier > 1.03
+        val allMoreInsulin = (isfLowerThanProfile && !basalLessThanProfile) || (basalMoreThanProfile && !isfHigherThanProfile)
+        val allLessInsulin = (isfHigherThanProfile && !basalMoreThanProfile) || (basalLessThanProfile && !isfLowerThanProfile)
+        val mixed          = (isfLowerThanProfile && basalLessThanProfile) || (isfHigherThanProfile && basalMoreThanProfile)
+        val predTrimActive = d.lastBasalSignal.contains("PredTrim") && d.lastBasalSignal.contains("proj=-")
+        val showingDefensive = !nudgeActive && !nudgePaused && !nudgeTrim &&
+            !(d.inReboundWindow || d.bgWentLow) && (predTrimActive || allLessInsulin)
+
+        val nudgeColor = when {
+            nudgeActiveHigh                              -> Color.parseColor("#FFFB8C00")
+            nudgeActiveLow                               -> Color.parseColor("#FF4CAF50")
+            nudgePaused                                  -> Color.parseColor("#FF64B5F6")
+            nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color.parseColor("#FF43A047")
+            nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color.parseColor("#FFFB8C00")
+            d.inReboundWindow || d.bgWentLow             -> Color.parseColor("#FFFB8C00")
+            showingDefensive                             -> Color.parseColor("#FFFB8C00")
+            else                                         -> Color.parseColor("#FF888888")
         }
 
         val nudgeHeadline: String
         val nudgeDetail: String
 
         when {
+            nudgeTrim -> {
+                val adding     = trimDirection == "ACTIVE_HIGH"
+                val trimPctVal = trimPct.removeSuffix("%").toFloatOrNull() ?: 0f
+                val shortTerm  = if (adding) "adding ~${"%.0f".format(trimPctVal)}% insulin" else "removing ~${"%.0f".format(trimPctVal)}% insulin"
+                val longTerm   = if (adding) "feeding +${"%.0f".format(trimPctVal * 0.5f)}% long-term" else "feeding -${"%.0f".format(trimPctVal * 0.5f)}% long-term"
+                val wasIsf     = if (d.nudgeSessionIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.nudgeSessionIsfMgdl)} mg/dL/U" else "?"
+                val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U" else "?"
+                val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
+                val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
+                nudgeHeadline  = "⚡ Fuel trim: $shortTerm (BG off target for full peak window)"
+                nudgeDetail    = "ISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortTerm short-term (ceiling moved)\n$longTerm into ISF & basal at this hour\nDecays automatically once BG returns to target."
+            }
             nudgeActive -> {
                 val deviation    = nudgeParts.getOrNull(1) ?: "?"
                 val day          = nudgeParts.getOrNull(2) ?: "?"
@@ -702,13 +732,73 @@ class SmartInsulinFragment : DaggerFragment() {
                         hardLowNote +
                         longTermNote
                 } else {
-                    nudgeHeadline = "Insulin levels look right for this hour"
-                    nudgeDetail   = "No consistent over- or under-delivery detected.\n" +
-                        "ISF and basal learning running on observed BG patterns."
+                    // Full ISF/basal comparison — shows what learned values are doing vs profile
+                    val curIsf  = if (d.isMmol) "${"%.1f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.0f".format(d.finalIsfMgdl)} mg/dL/U"
+                    val profIsf = if (d.isMmol) "${"%.1f".format(d.profileIsfMgdl / 18.0)} mmol/U" else "${"%.0f".format(d.profileIsfMgdl)} mg/dL/U"
+                    val curBas  = "${"%.3f".format(d.finalBasalU)} U/h"
+                    val profBas = "${"%.3f".format(d.profileBasalU)} U/h"
+                    val isfLine = when {
+                        isfLowerThanProfile  -> "ISF: $curIsf (profile $profIsf) — lower than profile → more insulin per BG gap"
+                        isfHigherThanProfile -> "ISF: $curIsf (profile $profIsf) — higher than profile → less insulin per BG gap"
+                        else                 -> "ISF: $curIsf (profile $profIsf) — at profile"
+                    }
+                    val basalLine = when {
+                        basalMoreThanProfile -> "Basal: $curBas (profile $profBas) — higher than profile → more continuous insulin"
+                        basalLessThanProfile -> "Basal: $curBas (profile $profBas) — lower than profile → less continuous insulin"
+                        else                 -> "Basal: $curBas (profile $profBas) — at profile"
+                    }
+                    when {
+                        predTrimActive && bgBelowTarget -> {
+                            nudgeHeadline = "⬇ Cutting basal — BG below target"
+                            nudgeDetail   = "Immediate defensive action (PredTrim) is running:\n• $basalLine\n• $isfLine\n• Signal: ${d.lastBasalSignal}\n\nLong-term aggression learner is neutral for this hour (${"%.3f".format(d.aggressiveness)}) — it tracks 24h patterns, not single readings. Short-term trim is handling the current dip."
+                        }
+                        predTrimActive -> {
+                            nudgeHeadline = "⬇ Pre-emptive basal cut — projected drop detected"
+                            nudgeDetail   = "PredTrim is cutting basal based on projected BG trend:\n• $basalLine\n• $isfLine\n• Signal: ${d.lastBasalSignal}"
+                        }
+                        allMoreInsulin -> {
+                            nudgeHeadline = "Delivering more insulin than profile this hour"
+                            nudgeDetail   = "Learned values at this hour call for more insulin than the base profile:\n• $isfLine\n• $basalLine\n\nPattern detected — BG typically needs more correction at this hour. Aggression learner neutral — this has matched the long-term pattern."
+                        }
+                        allLessInsulin -> {
+                            nudgeHeadline = "Delivering less insulin than profile this hour"
+                            nudgeDetail   = "Learned values at this hour call for less insulin than the base profile:\n• $isfLine\n• $basalLine\n\nAggression learner neutral — delivery has matched this hour's long-term pattern."
+                        }
+                        mixed -> {
+                            val mixedNote = when {
+                                isfLowerThanProfile && basalLessThanProfile ->
+                                    "ISF is pulling for more insulin per BG gap, but basal is running below profile. Net effect: more correction when BG drifts up, less continuous insulin when BG is steady."
+                                isfHigherThanProfile && basalMoreThanProfile ->
+                                    "ISF is pulling for less insulin per BG gap, but basal is running above profile. Net effect: less correction when BG drifts up, more continuous insulin when BG is steady."
+                                else -> ""
+                            }
+                            nudgeHeadline = "Mixed learning at this hour"
+                            nudgeDetail   = "• $isfLine\n• $basalLine\n\n$mixedNote"
+                        }
+                        else -> {
+                            nudgeHeadline = "Insulin levels look right for this hour"
+                            nudgeDetail   = "Current values at profile:\n• $isfLine\n• $basalLine\n\nNo consistent over- or under-delivery detected."
+                        }
+                    }
                 }
             }
         }
         addRow(c, nudgeHeadline, nudgeDetail, nudgeColor)
+
+        // ── Feed-forward debug toggle ─────────────────────────────────────────
+        val ffCtx = context ?: return
+        c.addView(android.widget.TextView(ffCtx).apply {
+            text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)"
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF888888"))
+            setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
+            setOnClickListener { showFfDebug = !showFfDebug; refreshStatus() }
+        })
+        if (showFfDebug) {
+            addRow(c, "Acceleration (2nd derivative)", d.lastAccelDebug.ifEmpty { "(no data)" })
+            addRow(c, "Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
+            addRow(c, "Last basal signal", d.lastBasalSignal.ifEmpty { "(no data)" })
+        }
     }
 
     // ── UAM card ──────────────────────────────────────────────────────────────
@@ -727,16 +817,19 @@ class SmartInsulinFragment : DaggerFragment() {
         } else {
             // ── UAM detection status ──────────────────────────────────────────
             val uamPart = line.substringBefore(" | P/F:").trim()
+            val cleanUamPart = uamPart.removePrefix("[dirty] ").trim()
 
             val (primary, color) = when {
-                uamPart.contains("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
-                uamPart.contains("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
-                uamPart.contains("high temp target") -> Pair("Auto-detection off — high temp target set", Color.parseColor("#FF888888"))
-                uamPart.contains("off")      -> Pair("Auto-detection off — outside hours or new sensor", Color.parseColor("#FF888888"))
-                uamPart.contains("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
-                else                         -> Pair("UAM status", Color.WHITE)
+                cleanUamPart.startsWith("watching") -> Pair("BG rising — building confirmation streak ↑", Color.parseColor("#FFFB8C00"))
+                cleanUamPart.startsWith("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
+                cleanUamPart.startsWith("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
+                cleanUamPart.startsWith("off")      -> {
+                    val reason = cleanUamPart.substringAfter("off").removePrefix(" (").removeSuffix(")").trim()
+                    Pair("Auto-detection off — $reason", Color.parseColor("#FF888888"))
+                }
+                else -> Pair("UAM status", Color.WHITE)
             }
-            addRow(c, primary, if (uamPart.contains("high temp target")) "UAM: Off" else uamPart.ifEmpty { null }, color)
+            addRow(c, primary, uamPart.ifEmpty { null }, color)
         }
 
         // UAM thresholds — strip leading spaces for clean alignment
@@ -745,10 +838,12 @@ class SmartInsulinFragment : DaggerFragment() {
             .filter { !it.trimStart().startsWith("P/F") }
             .joinToString("\n") { it.trimStart() }
             .trim()
-        addRow(c, "Detection thresholds",
-               debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.\n\n" +
-                   "Clean window = fasting, normal thresholds apply.\n" +
-                   "Dirty window = post-meal lockout active — thresholds are raised (~1.5×) to avoid\ndetecting fat/protein tail rises as a new meal.")
+        if (debugClean.isNotEmpty()) {
+            addRow(c, "Detection thresholds",
+                   debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.\n\n" +
+                       "Clean window = fasting, normal thresholds apply.\n" +
+                       "Dirty window = post-meal lockout active — thresholds are raised (~1.5×) to avoid\ndetecting fat/protein tail rises as a new meal.")
+        }
 
         // ── P/F subheading ────────────────────────────────────────────────
         addDivider(c)
@@ -829,7 +924,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     private data class CircRow(val hour: Int, val isfVal: Float, val basVal: Float, val ceil: Float, val confPct: Int)
 
-    private fun parseCircRows(raw: String) = Regex("""[►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
+    private fun parseCircRows(raw: String) = Regex("""[▶►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
         .findAll(raw).mapNotNull { m -> CircRow(
             m.groupValues[1].toIntOrNull()   ?: return@mapNotNull null,
             m.groupValues[2].toFloatOrNull() ?: return@mapNotNull null,
@@ -905,6 +1000,12 @@ class SmartInsulinFragment : DaggerFragment() {
                 else          -> Color.parseColor("#FF888888")  // at profile = grey
             }
         }
+        cont.addView(TextView(ctx).apply {
+            text = "Hourly multipliers learned from your BG patterns.\nISF and Bas = values the loop actually delivers for that hour.\nCeil = aggressiveness cap — lower = more conservative.\nConf = confidence — how much real data collected. Green ≥60%, amber ≥30%, red <30%."
+            textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = (8 * dp).toInt() }
+        })
         val isfHeader  = if (isMmolUnit) "ISF mmol" else "ISF mg/dL"
         val basHeader  = "Basal U/h"
         val headerRow  = LinearLayout(ctx).apply {
@@ -953,13 +1054,40 @@ class SmartInsulinFragment : DaggerFragment() {
 
     // ── Profiles card ─────────────────────────────────────────────────────────
 
-    private fun updateProfilesCard(raw: String, activeMealMode: String) {
+    private fun updateProfilesCard(d: SmartInsulinPlugin.FragmentData) {
         val b = _binding ?: return; val c = b.profileRows; c.removeAllViews(); val ctx = context ?: return
-        raw.lines().filter { it.isNotBlank() }.forEach { line ->
+
+        addRow(c, "Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FF888888"))
+        // ── Tracker status row (#27) ──────────────────────────────────────────
+        val (profStatusPrimary, profStatusColor) = when {
+            d.profileLearningStatus.startsWith("off") ->
+                "Learning paused" to Color.parseColor("#FFFB8C00")
+            d.profileLearningStatus.contains("tracker=idle") ->
+                "Watching for new bolus" to Color.parseColor("#FF43A047")
+            else ->
+                "Tracking active bolus curve" to Color.parseColor("#FF64B5F6")
+        }
+        val profStatusDetail = d.profileLearningStatus
+            .replace("off: ", "")
+            .replace("tracker=idle", "Waiting for IOB spike (≥0.3U) to begin tracking kinetics.")
+            .replace("tracker=waiting_peak", "Tracking: waiting for IOB to peak...")
+            .replace("tracker=tracking_nadir", "Tracking: waiting for BG nadir...")
+            .replace("tracker=confirming", "Tracking: confirming recovery from nadir...")
+        addRow(c, profStatusPrimary, profStatusDetail, profStatusColor)
+        addDivider(c)
+
+        d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
             val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
-            val name     = parts[0].trim(); val info = parts[1].trim()
+            val name     = parts[0].trim(); val info = parts.drop(1).joinToString(":").trim()
             val n        = Regex("""n=(\d+)""").find(info)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val isActive = name.trim().equals(activeMealMode.trim(), ignoreCase = true)
+            val activeMealMode = d.mealMode
+            val isActive = if (activeMealMode.contains("(UAM)", ignoreCase = true)) {
+                name.contains("(UAM)", ignoreCase = true) &&
+                    activeMealMode.contains(name.substringBefore(" ("), ignoreCase = true)
+            } else {
+                !name.contains("(UAM)", ignoreCase = true) &&
+                    activeMealMode.contains(name, ignoreCase = true)
+            }
             // Colour from learning status regardless of active state
             val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
             val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
