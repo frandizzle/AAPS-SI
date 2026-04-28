@@ -126,7 +126,7 @@ class TreatmentViewModel @Inject constructor(
         val profile = profileFunction.getProfile()
         val profileName = profileFunction.getProfileName()
         val pump = activePlugin.activePump
-        val runningMode = loop.runningMode
+        val runningMode = loop.runningMode()
 
         return activeEntries.map { entry ->
             when (entry.mode()) {
