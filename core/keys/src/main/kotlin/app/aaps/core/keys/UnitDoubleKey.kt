@@ -57,6 +57,7 @@ enum class UnitDoubleKey(
     ApsSmartInsulinUamAfternoonIsf( "si_uam_afternoon_isf2",  0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     ApsSmartInsulinUamProteinFatIsf("si_uam_proteinfat_isf2", 0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
     // P/F time-of-day ISF overrides — 0.0 = fall back to ApsSmartInsulinUamProteinFatIsf
-    ApsSmartInsulinUamProteinFatDayIsf(  "si_uam_proteinfat_day_isf",   0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
-    ApsSmartInsulinUamProteinFatNightIsf("si_uam_proteinfat_night_isf", 0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
+    ApsSmartInsulinUamProteinFatDayIsf(      "si_uam_proteinfat_day_isf",       0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatNightIsf(    "si_uam_proteinfat_night_isf",     0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+    ApsSmartInsulinUamProteinFatOvernightIsf("si_uam_proteinfat_overnight_isf", 0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled)
 }

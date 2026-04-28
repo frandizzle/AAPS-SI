@@ -371,6 +371,9 @@
     <string name="si_uam_proteinfat_night_isf_title">P/F Night ISF (0 = use fallback)</string>
     <string name="si_uam_proteinfat_night_start_title">P/F Night window start hour (inclusive). For clean handover set day end=16, night start=17</string>
     <string name="si_uam_proteinfat_night_end_title">P/F Night window end hour (inclusive). Hours outside both windows use fallback ISF</string>
+    <string name="si_uam_proteinfat_overnight_isf_title">P/F Overnight ISF (0 = use fallback)</string>
+    <string name="si_uam_proteinfat_overnight_start_title">P/F Overnight window start hour (inclusive)</string>
+    <string name="si_uam_proteinfat_overnight_end_title">P/F Overnight window end hour (inclusive)</string>
 
     <!-- SmartInsulin sub-screen titles -->
     <string name="si_meal_modes_title">Meal Modes</string>

@@ -676,6 +676,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatNightStartHour, null, null, R.string.si_uam_proteinfat_night_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatNightEndHour, null, null, R.string.si_uam_proteinfat_night_end_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_night_isf_title))
+                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour, null, null, R.string.si_uam_proteinfat_overnight_start_title))
+                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour, null, null, R.string.si_uam_proteinfat_overnight_end_title))
+                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_overnight_isf_title))
             })
         }
     }
