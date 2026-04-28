@@ -311,11 +311,15 @@ open class SmartInsulinPlugin @Inject constructor(
         val livePb2Line = when {
             mealOverrideManager.activePb2DoseU != null -> {
                 val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-                "PB2 active: ${mins}m"
+                "PB2: active ${mins}m"
             }
             mealOverrideManager.preBolus2Pending -> {
                 val secs = mealOverrideManager.preBolus2SecondsRemaining ?: 0L
-                if (secs >= 60) "PB2: in ${secs / 60}m" else "PB2: in ${secs}s"
+                when {
+                    secs >= 60 -> "PB2: in ${secs / 60}m"
+                    secs > 0 -> "PB2: in ${secs}s"
+                    else -> "PB2: waiting for gates"
+                }
             }
             else -> null
         }
@@ -323,14 +327,17 @@ open class SmartInsulinPlugin @Inject constructor(
         val livePb3Line = when {
             mealOverrideManager.activePb3DoseU != null -> {
                 val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-                "PB3 active: ${mins}m"
+                "PB3: active ${mins}m"
             }
             mealOverrideManager.preBolus3Pending -> {
-                val secs = mealOverrideManager.preBolus3SecondsRemaining ?: 0L
-                if (secs > 0) {
-                    if (secs >= 60) "PB3: in ${secs / 60}m" else "PB3: in ${secs}s"
-                } else if (mealOverrideManager.preBolus2Pending) "PB3: waiting for PB2"
-                else "PB3: waiting"
+                val secs = mealOverrideManager.preBolus3SecondsRemaining
+                when {
+                    secs != null && secs >= 60 -> "PB3: in ${secs / 60}m"
+                    secs != null && secs > 0 -> "PB3: in ${secs}s"
+                    secs != null && secs <= 0 -> "PB3: waiting for gates"
+                    mealOverrideManager.preBolus2Pending -> "PB3: waiting for PB2"
+                    else -> "PB3: waiting"
+                }
             }
             else -> null
         }

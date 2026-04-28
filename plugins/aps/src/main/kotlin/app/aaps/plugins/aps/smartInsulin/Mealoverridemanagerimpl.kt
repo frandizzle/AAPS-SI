@@ -144,7 +144,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val preBolus2SecondsRemaining: Long? get() {
         val s = _state?.takeIf { it.preBolus2Pending } ?: return null
-        return s.preBolus2FireAtMs - System.currentTimeMillis()  // negative = overdue/waiting on safety
+        return (s.preBolus2FireAtMs - System.currentTimeMillis()) / 1000
     }
 
     /** PB3 seconds remaining — returns null if PB2 hasn't fired yet (PB3 timer hasn't started).
@@ -153,7 +153,7 @@ class MealOverrideManagerImpl @Inject constructor(
     override val preBolus3SecondsRemaining: Long? get() {
         val s = _state?.takeIf { it.preBolus3Pending } ?: return null
         val fireAt = s.preBolus3FireAtMs ?: return null  // null when PB2 not fired yet
-        return fireAt - System.currentTimeMillis()
+        return (fireAt - System.currentTimeMillis()) / 1000
     }
 
     /** Evaluate current safety blocks without needing glucoseStatus (uses last known values). */
