@@ -294,8 +294,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val liveModeLine = activeMode?.let { mode ->
             val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            if (mode.isUam) {
-                val uamLabel = when (mode) {
+            val label = if (mode.isUam) {
+                when (mode) {
                     MealMode.UAM_BREAKFAST    -> "Breakfast"
                     MealMode.UAM_LUNCH        -> "Lunch"
                     MealMode.UAM_DINNER       -> "Dinner"
@@ -304,11 +304,36 @@ open class SmartInsulinPlugin @Inject constructor(
                     MealMode.UAM_AFTERNOON    -> "Afternoon"
                     else                      -> mode.label
                 }
-                "Meal: UAM ($uamLabel) ${mins}m left"
-            } else {
-                "Meal: ${mode.label} ${mins}m left"
-            }
+            } else mode.label
+            "Meal: $label ${mins}m"
         } ?: "Meal: Fasting"
+
+        val livePb2Line = when {
+            mealOverrideManager.activePb2DoseU != null -> {
+                val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
+                "PB2 active: ${mins}m"
+            }
+            mealOverrideManager.preBolus2Pending -> {
+                val secs = mealOverrideManager.preBolus2SecondsRemaining ?: 0L
+                if (secs >= 60) "PB2: in ${secs / 60}m" else "PB2: in ${secs}s"
+            }
+            else -> null
+        }
+
+        val livePb3Line = when {
+            mealOverrideManager.activePb3DoseU != null -> {
+                val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
+                "PB3 active: ${mins}m"
+            }
+            mealOverrideManager.preBolus3Pending -> {
+                val secs = mealOverrideManager.preBolus3SecondsRemaining ?: 0L
+                if (secs > 0) {
+                    if (secs >= 60) "PB3: in ${secs / 60}m" else "PB3: in ${secs}s"
+                } else if (mealOverrideManager.preBolus2Pending) "PB3: waiting for PB2"
+                else "PB3: waiting"
+            }
+            else -> null
+        }
 
         val isMealModeActive = activeMode != null
         val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
@@ -324,15 +349,6 @@ open class SmartInsulinPlugin @Inject constructor(
             activeMode == MealMode.UAM_PROTEIN_FAT   -> "limited: P/F mode"
             isMealModeActive                         -> "limited: meal mode"
             else                                     -> "Learning"
-        }
-
-        val livePb2Line = mealOverrideManager.activePb2DoseU?.let {
-            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-            "PB2 active: ${mins}m"
-        }
-        val livePb3Line = mealOverrideManager.activePb3DoseU?.let {
-            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-            "PB3 active: ${mins}m"
         }
 
         return cachedOverviewState.copy(
