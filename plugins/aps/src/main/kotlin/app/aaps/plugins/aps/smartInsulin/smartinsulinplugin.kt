@@ -602,7 +602,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
-            uamSmbFraction           = 1.0,
+            uamSmbFraction           = uamSmbFraction,
             targetRespectEnabled     = true,
             reboundWindowMins        = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue).toDouble(),
             circCeil                 = circadianLearner.aggrCeiling(),
