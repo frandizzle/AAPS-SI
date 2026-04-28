@@ -1817,7 +1817,7 @@ open class SmartInsulinPlugin @Inject constructor(
             .store(UnitDoubleKey.ApsSmartInsulinWarnGuard, preferences)
     }
 
-    override fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
+    override suspend fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
         if (isEnabled()) {
             val maxIobPref = preferences.get(DoubleKey.ApsSmbMaxIob)
             maxIob.setIfSmaller(maxIobPref, rh.gs(R.string.limiting_iob, maxIobPref, rh.gs(R.string.maxvalueinpreferences)), this)
@@ -1842,7 +1842,7 @@ open class SmartInsulinPlugin @Inject constructor(
         return absoluteRate
     }
 
-    override fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
+    override suspend fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
         if (!preferences.get(BooleanKey.ApsUseSmb))
             value.set(false, rh.gs(R.string.smb_disabled_in_preferences), this)
         return value
