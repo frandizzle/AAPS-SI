@@ -1022,7 +1022,7 @@ open class SmartInsulinPlugin @Inject constructor(
             TDD                             = 0.0
         )
 
-        val learningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
+        val learningEnabled   = sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue)
         // UAM modes share peak/DIA learning with their parent mode — they accumulate
         // separate observations but start from the same profile. This means UAM_LUNCH
         // uses LUNCH's learned peak/DIA until it has its own samples.
@@ -1040,7 +1040,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
-        val restingHrBpm = preferences.get(DoubleKey.ApsSmartInsulinRestingHrBpm)
+        val restingHrBpm = sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue)
         activityMonitor.recompute(nowMs = now, restingHrBpm = restingHrBpm)
 
         // Update configurable rebound window — inReboundWindow uses this
@@ -1073,7 +1073,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val activityLightTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue)    / 18.0
         val activityModerateTarget = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue) / 18.0
         val activityHeavyTarget    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue)    / 18.0
-        val activityTargetEnabled    = preferences.get(BooleanKey.ApsSmartInsulinActivityTargetEnabled)
+        val activityTargetEnabled    = sp.getBoolean(BooleanKey.ApsSmartInsulinActivityTargetEnabled.key, BooleanKey.ApsSmartInsulinActivityTargetEnabled.defaultValue)
         val activityTargetOffsetMmol = if (activityTargetEnabled) {
             activityMonitor.targetOffsetMmol(
                 lightMmol    = activityLightTarget,
