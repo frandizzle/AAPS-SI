@@ -424,8 +424,9 @@ class SmartInsulinFragment : DaggerFragment() {
         }
 
         // Pre-bolus 3 — pending / gate status
-        // preBolus3StatusText returns "" when PB3 was never requested, so this is safe
-        if (d.pb3Status.isNotEmpty()) {
+        // preBolus3StatusText returns "" when PB3 was never requested, so this guard is safe
+        if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
+            val gate3    = d.pb3GateData
             val isActive3 = d.pb3Status.contains("active")
             val pb3Primary = when {
                 d.pb3Status.contains("waiting for PB2") -> "Pre-bolus 3 — waiting for PB2 to fire"
@@ -434,13 +435,44 @@ class SmartInsulinFragment : DaggerFragment() {
                     val mins = Regex("""(\d+)m""").find(d.pb3Status)?.groupValues?.get(1)
                     "Pre-bolus 3 — delivers in ${mins}m"
                 }
-                else -> "Pre-bolus 3 — waiting for safety gates"
+                gate3 != null -> "Pre-bolus 3 — waiting for safety gates"
+                else          -> "Pre-bolus 3"
             }
             val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
                 "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
             else null
             addRow(c, pb3Primary, pb3Sub,
                    primaryColor = if (isActive3) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+
+            if (gate3 != null) {
+                val isMmol3 = gate3.isMmol
+                fun fmtBg3(mgdl: Double)    = if (isMmol3) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
+                fun fmtDelta3(mgdl: Double) = if (isMmol3) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
+                fun fmtIob3(u: Double)      = "%.2fU".format(u)
+
+                val minBgMgdl3   = MealOverrideManager.MIN_BG_FOR_PB2_MGDL
+                val targetMgdl3  = gate3.profileTargetMgdl
+                val effectiveMin3 = maxOf(minBgMgdl3, targetMgdl3)
+                val bgOk3        = gate3.bgMgdl > effectiveMin3
+                val bgDiff3      = if (bgOk3) "(+${fmtBg3(gate3.bgMgdl - effectiveMin3)} above target)"
+                else "(${fmtBg3(effectiveMin3 - gate3.bgMgdl)} below target — waiting)"
+                addGateRow(c, "BG: ${fmtBg3(gate3.bgMgdl)}  $bgDiff3",
+                           "Must be above profile target ${fmtBg3(targetMgdl3)}", bgOk3)
+
+                val maxAllowedIob3 = gate3.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+                val iobOk3         = gate3.iobU < maxAllowedIob3
+                val iobDetail3     = if (iobOk3) "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (${fmtIob3(maxAllowedIob3 - gate3.iobU)} headroom)"
+                else "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (IOB too high — waiting)"
+                addGateRow(c, "IOB: $iobDetail3", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob3(maxAllowedIob3)})", iobOk3)
+
+                val deltaOk3 = gate3.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+                addGateRow(c, "Delta: ${fmtDelta3(gate3.deltaMgdl)}  (${if (deltaOk3) "not falling fast" else "falling — waiting"})",
+                           "Blocked below ${fmtDelta3(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk3)
+
+                val shortOk3 = gate3.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+                addGateRow(c, "15min avg: ${fmtDelta3(gate3.shortAvgDeltaMgdl)}  (${if (shortOk3) "trend stable" else "sustained fall — waiting"})",
+                           "Blocked below ${fmtDelta3(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk3)
+            }
         }
     }
 
