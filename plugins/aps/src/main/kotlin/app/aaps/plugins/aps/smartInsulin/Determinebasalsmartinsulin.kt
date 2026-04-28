@@ -13,6 +13,7 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -51,7 +52,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
                               profile.current_basal_safety_multiplier * profile.current_basal))
         val r = rate.coerceIn(0.0, maxSafe)
-        if (profile.skip_neutral_temps && r == profile.current_basal) {
+        // Epsilon comparison — exact double equality is fragile against any upstream arithmetic
+        // drift (e.g. rate=1.0000000001 would silently bypass neutral-temp skip, causing
+        // redundant TBR commands to the pump).
+        if (profile.skip_neutral_temps && abs(r - profile.current_basal) < NEUTRAL_TEMP_EPSILON) {
             if (currentTemp.duration > 0) { rT.duration = 0; rT.rate = 0.0 }
             return
         }
@@ -94,16 +98,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
         uamSmbFraction:           Double = 1.0,
         targetRespectEnabled:     Boolean = false,
         reboundWindowMins:        Double = 60.0,
+        circCeil:                 Double = 1.0,
+        fuelTrimStrength:         Double = 0.0,
         isMmol:                   Boolean = true
     ): APSResult {
 
         val result = apsResultProvider.get()
-        var rT = RT(
+        val rT = RT(
             algorithm = APSResult.Algorithm.SMB,
             runningDynamicIsf = false,
             timestamp = currentTime,
             consoleLog = mutableListOf(),
-            consoleError = mutableListOf()
+            consoleError = mutableListOf(),
+            fuelTrim = fuelTrimStrength * 100.0
         )
 
         val currentBg      = glucoseStatus.glucose
@@ -142,6 +149,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val lowGuardMgdl  = lowGuardMmol * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
+        val systemDiaMins = (profile.dia ?: 6.0) * 60.0
+
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
         val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
@@ -153,7 +162,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5
+            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+            systemDiaMins  = systemDiaMins
         )
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -235,7 +245,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         fun suspendDurationMins(worstBgMgdl: Double): Int {
             val bgUndershoot    = targetBg - worstBgMgdl  // how far below target worst case goes
             val insulinReqU     = bgUndershoot / dosingIsfMgdl
-            val durationHours   = insulinReqU / profileBasal
+            // Defensive floor on profileBasal — prevents Inf/NaN from profileBasal=0
+            // (pump-off, misconfigured profile, or near-zero basalMultiplier).
+            // 0.01 U/hr is well below any realistic basal rate but non-zero.
+            val effectiveBasal  = profileBasal.coerceAtLeast(0.01)
+            val durationHours   = insulinReqU / effectiveBasal
             val durationMins    = (durationHours * 60.0).coerceIn(30.0, 90.0)
             return (Math.round(durationMins / 30.0) * 30).toInt().coerceIn(30, 90)
         }
@@ -272,8 +286,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val guardGap   = warnGuardMgdl - predictedMinSafety
                 val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
+                // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
+                // an already-scaled-down caution TBR to near zero while BG is heading toward the
+                // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
+                // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
+                val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
                 sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(warnGuardMgdl, isMmol)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
-                setTempBasal(cautionTbr * reboundTaperFraction, 30, oapsProfile, rT, currentTemp)
+                setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
             // ── Normal dosing ─────────────────────────────────────────────────
@@ -388,12 +407,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         isfMgdl:        Double,
         learnedProfile: LearnedInsulinProfile,
-        ticks:          Int
+        ticks:          Int,
+        systemDiaMins:  Double
     ): List<Double> {
         var bg           = startBg
         val predictions  = mutableListOf<Double>()
         for (tick in 1..ticks) {
-            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile)
+            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
             val iobDelta   = -(activity * isfMgdl * 5.0)
             val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
             bg += iobDelta + predDev
@@ -405,22 +425,41 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private fun getActivityAtMinute(
         minutes:        Int,
         iobArray:       Array<IobTotal>,
-        learnedProfile: LearnedInsulinProfile
+        learnedProfile: LearnedInsulinProfile,
+        systemDiaMins:  Double
     ): Double {
-        val idx = minutes / 5
-        if (idx < iobArray.size) return max(0.0, iobArray[idx].activity)
-        val lastActivity = iobArray.lastOrNull()?.activity ?: return 0.0
-        val extraTicks = idx - iobArray.size + 1
-        return max(0.0, lastActivity * Math.exp(-extraTicks * 0.05))
+        val learnedDiaMins = learnedProfile.safeDiaMinutes
+        // timeScale > 1 means learned insulin is FASTER (shorter DIA)
+        // timeScale < 1 means learned insulin is SLOWER (longer DIA)
+        val timeScale = systemDiaMins / learnedDiaMins
+
+        val scaledMinutes = minutes * timeScale
+        val idx = (scaledMinutes / 5.0).toInt()
+
+        val baseActivity = if (idx < iobArray.size) {
+            iobArray[idx].activity
+        } else {
+            // Exponential decay from the end of the array if we ran off
+            val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
+            val extraTicks = idx - iobArray.size + 1
+            lastActivity * Math.exp(-extraTicks * 0.05)
+        }
+
+        // Multiply by timeScale to preserve AUC.
+        // e.g. if DIA is half as long, activity at each point must be twice as high.
+        return max(0.0, baseActivity * timeScale)
     }
 
     companion object {
         private const val MMOL_TO_MGDL           = 18.0
-        private const val SMB_DELIVERY_FRACTION  = 0.5
         private const val TBR_WINDOW_HOURS       = 0.5
-        private const val REBOUND_WINDOW_MINS_DEFAULT = 60.0   // default, overridden by user setting
         private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
-        private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL / 5.0
+        // delta is mg/dL per 5-min CGM cycle — threshold is 2.0 mmol in a single reading.
+        private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL  // 36 mg/dL = 2.0 mmol per 5-min cycle
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
+        private const val NEUTRAL_TEMP_EPSILON       = 1e-6  // floating-point tolerance for neutral-temp detection
+        // Floor for rebound taper in caution zone — prevents delivering near-zero basal
+        // while BG is already heading toward the warn guard.
+        private const val CAUTION_REBOUND_TAPER_FLOOR = 0.5
     }
 }

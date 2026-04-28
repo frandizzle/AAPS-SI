@@ -75,6 +75,14 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = false
     ),
+    ApsSmartInsulinLastMealEndedMs(
+        "si_last_meal_ended_ms",
+        defaultValue          = "0",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = false
+    ),
     ApsSmartInsulinProfileFasting(
         "si_profile_fasting",
         defaultValue          = "",

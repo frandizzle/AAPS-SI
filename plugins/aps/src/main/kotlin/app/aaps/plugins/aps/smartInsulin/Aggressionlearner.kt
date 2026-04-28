@@ -14,40 +14,20 @@ import javax.inject.Singleton
 
 /**
  * Adaptive aggressiveness learner.
- *
- * Maintains TWO sample sets:
- *
- *  - [fastingSamples] — fasting-only samples. Drives score calculation + fasting TIR display.
- *  - [mealSamples]    — meal-mode samples. Display TIR only — post-meal highs don't affect scoring.
- *  - [allSamples]     — all modes combined. Used only for pruning/persistence, not displayed.
- *
- * Why separate? A post-dinner spike at 6pm looks like "too much time high" to a naive
- * TIR-based score, pushing aggressiveness up. Next day at 6pm (pre-dinner, still fasting)
- * that inflated score causes over-dosing. By scoring only on fasting samples, meal-related
- * highs don't pollute the aggressiveness signal. Meal bolus tuning belongs in BolusCurveTracker.
- *
- * Score range: [1/aggressionMax .. aggressionMax]
- *   - 1.0 = neutral
- *   - > 1.0 = more aggressive — fasting BG spending too much time high
- *   - < 1.0 = more conservative — fasting BG spending too much time low
- *
- * Learning is asymmetric: lows pull score down faster than highs push it up.
  */
 @Singleton
 class AggressionLearner @Inject constructor(
-    private val sp: SP,
+    private val sp:          SP,
     private val aapsLogger:  AAPSLogger
 ) {
     private data class BgSample(val timestampMs: Long, val zone: Zone, val fasting: Boolean)
-
     private enum class Zone { LOW, IN_RANGE, HIGH }
 
     // ── State ─────────────────────────────────────────────────────────────────
-    private val allSamples     = ArrayDeque<BgSample>()  // all modes — pruning/persistence only
-    private val fastingSamples = ArrayDeque<BgSample>()  // fasting only — drives score + display
-    private val mealSamples    = ArrayDeque<BgSample>()  // meal modes only — display TIR only
+    private val allSamples     = ArrayDeque<BgSample>()
+    private val fastingSamples = ArrayDeque<BgSample>()
+    private val mealSamples    = ArrayDeque<BgSample>()
 
-    // Day-of-week aware scores: [0=Sun..6=Sat] + global fallback
     private val dayScores      = DoubleArray(7) { 1.0 }
     private val daySampleCount = IntArray(7) { 0 }
     private var globalScore    = 1.0
@@ -58,7 +38,7 @@ class AggressionLearner @Inject constructor(
     companion object {
         private const val WINDOW_MS            = 24 * 60 * 60 * 1000L
         private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
-        private const val MIN_SAMPLES_TO_LEARN = 24   // ~2h of fasting data
+        private const val MIN_SAMPLES_TO_LEARN = 24
 
         private const val TARGET_TIR_PCT       = 70.0
         private const val MAX_LOW_PCT          = 4.0
@@ -66,7 +46,7 @@ class AggressionLearner @Inject constructor(
 
         private const val STEP_UP              = 0.02
         private const val STEP_DOWN            = 0.05
-        private const val MIN_DAY_SAMPLES_FOR_BLEND = 20  // samples on a given day before blending in
+        private const val MIN_DAY_SAMPLES_FOR_BLEND = 20
         val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
         private const val K_SCORE        = "score"
@@ -77,8 +57,6 @@ class AggressionLearner @Inject constructor(
         private const val K_FASTING      = "fasting"
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
-
     val aggressiveness: Double
         get() {
             val max   = sp.getDouble(DoubleKey.ApsSmartInsulinAggressionMax.key, DoubleKey.ApsSmartInsulinAggressionMax.defaultValue)
@@ -88,11 +66,6 @@ class AggressionLearner @Inject constructor(
             return score.coerceIn(1.0 / max, max)
         }
 
-    /**
-     * TIR summary shows fasting and meal TIR separately for display.
-     * Fasting TIR also drives the aggressiveness score.
-     * Meal TIR is display-only — post-meal highs are expected and don't affect scoring.
-     */
     val tirSummary: String
         get() {
             val fasting = computeTir(fastingSamples)
@@ -104,20 +77,19 @@ class AggressionLearner @Inject constructor(
             return "tir=$fastStr $mealStr global=${"%.2f".format(globalScore)} today=${"%.2f".format(dayScores[currentDow()])}"
         }
 
-    /**
-     * Record current BG zone.
-     * @param mealMode         Current meal mode — non-fasting samples excluded from score.
-     * @param suppressScoring  If true, sample is recorded for TIR display but does not
-     *                         update the aggressiveness score. Use during activity or other
-     *                         events where lows/highs are not caused by insulin dosing.
-     */
-    fun recordBg(bgMgdl: Double, lowThreshMgdl: Double, highThreshMgdl: Double, mealMode: MealMode, suppressScoring: Boolean = false) {
+    fun recordBg(
+        bgMgdl: Double,
+        lowThreshMgdl: Double,
+        highThreshMgdl: Double,
+        mealMode: MealMode,
+        suppressScoring: Boolean = false,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
         val zone = when {
             bgMgdl < lowThreshMgdl  -> Zone.LOW
             bgMgdl > highThreshMgdl -> Zone.HIGH
             else                    -> Zone.IN_RANGE
         }
-        val nowMs   = System.currentTimeMillis()
         val isFasting = mealMode == MealMode.FASTING
         val sample  = BgSample(nowMs, zone, isFasting)
 
@@ -139,7 +111,17 @@ class AggressionLearner @Inject constructor(
         saveState()
     }
 
-    // ── Score update — fasting samples only ───────────────────────────────────
+    private data class TirStats(val inRangePct: Double, val highPct: Double, val lowPct: Double)
+
+    private fun stepScore(current: Double, stats: TirStats, floor: Double, ceil: Double): Double = when {
+        stats.lowPct > MAX_LOW_PCT                              -> (current - STEP_DOWN).coerceAtLeast(floor)
+        stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
+        stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
+        else                                                    -> {
+            val decayAlpha = if (current < 1.0) 0.10 else 0.03
+            current + (1.0 - current) * decayAlpha
+        }
+    }
 
     private fun updateScore() {
         val stats = computeTir(fastingSamples) ?: run {
@@ -151,52 +133,23 @@ class AggressionLearner @Inject constructor(
         val ceil  = max
         val dow   = currentDow()
 
-        // Update global score — uses all fasting samples regardless of day
-        val prevGlobal = globalScore
-        globalScore = when {
-            stats.lowPct > MAX_LOW_PCT           -> (globalScore - STEP_DOWN).coerceAtLeast(floor)
-            stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0
-                                                 -> (globalScore + STEP_UP).coerceAtMost(ceil)
-            stats.highPct > MAX_HIGH_PCT         -> (globalScore + STEP_UP * 1.5).coerceAtMost(ceil)
-            else                                 -> globalScore + (1.0 - globalScore) * 0.05
-        }
+        globalScore = stepScore(globalScore, stats, floor, ceil)
 
-        // Update today's day score — uses only today's fasting samples
-        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dow) }))
+        val dayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        val dayEnd = dayStart + 24 * 60 * 60 * 1000L
+        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dayStart, dayEnd) }))
         if (todayStats != null) {
-            val prev = dayScores[dow]
-            dayScores[dow] = when {
-                todayStats.lowPct > MAX_LOW_PCT           -> (dayScores[dow] - STEP_DOWN).coerceAtLeast(floor)
-                todayStats.inRangePct >= TARGET_TIR_PCT && todayStats.highPct > 0
-                                                          -> (dayScores[dow] + STEP_UP).coerceAtMost(ceil)
-                todayStats.highPct > MAX_HIGH_PCT         -> (dayScores[dow] + STEP_UP * 1.5).coerceAtMost(ceil)
-                else                                      -> dayScores[dow] + (1.0 - dayScores[dow]) * 0.05
-            }
+            dayScores[dow] = stepScore(dayScores[dow], todayStats, floor, ceil)
             daySampleCount[dow] = (daySampleCount[dow] + 1).coerceAtMost(999)
-            if (dayScores[dow] != prev)
-                aapsLogger.debug(LTag.APS,
-                                 "AggressionLearner: day[${DAY_LABELS[dow]}] score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%% (n=${daySampleCount[dow]})".format(
-                                     prev, dayScores[dow], todayStats.inRangePct, todayStats.highPct, todayStats.lowPct))
         }
-
-        if (globalScore != prevGlobal)
-            aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: global score %.3f→%.3f fasting tir=%.0f%% high=%.0f%% low=%.0f%% (n=${fastingSamples.size})".format(
-                                 prevGlobal, globalScore, stats.inRangePct, stats.highPct, stats.lowPct))
     }
 
-    /** True if sample's day-of-week matches [dow] */
-    private fun isSameDay(timestampMs: Long, dow: Int): Boolean {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestampMs
-        return (cal.get(Calendar.DAY_OF_WEEK) - 1) == dow
-    }
+    private fun isSameDay(timestampMs: Long, dayStartMs: Long, dayEndMs: Long): Boolean =
+        timestampMs in dayStartMs until dayEndMs
 
     private fun currentDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
-
-    // ── TIR calculation ───────────────────────────────────────────────────────
-
-    private data class TirStats(val inRangePct: Double, val highPct: Double, val lowPct: Double)
 
     private fun computeTir(sampleSet: ArrayDeque<BgSample>): TirStats? {
         if (sampleSet.size < MIN_SAMPLES_TO_LEARN) return null
@@ -213,8 +166,6 @@ class AggressionLearner @Inject constructor(
         while (mealSamples.isNotEmpty()    && nowMs - mealSamples.first().timestampMs    > WINDOW_MS) mealSamples.removeFirst()
     }
 
-    // ── Reset ─────────────────────────────────────────────────────────────────
-
     fun reset() {
         allSamples.clear()
         fastingSamples.clear()
@@ -226,12 +177,9 @@ class AggressionLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
     }
 
-    // ── Persistence ───────────────────────────────────────────────────────────
-
     private fun saveState() {
         try {
             val arr    = JSONArray()
-            // Save all samples (capped at 288 = 24h at 5 min intervals)
             val toSave = if (allSamples.size > 288) allSamples.takeLast(288) else allSamples
             toSave.forEach { s ->
                 arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting))
@@ -272,14 +220,12 @@ class AggressionLearner @Inject constructor(
                 val ts       = obj.getLong(K_TS)
                 if (nowMs - ts > WINDOW_MS) continue
                 val zone     = Zone.valueOf(obj.getString(K_ZONE))
-                val isFasting = obj.optBoolean(K_FASTING, true)  // legacy: assume fasting if missing
+                val isFasting = obj.optBoolean(K_FASTING, true)
                 val sample   = BgSample(ts, zone, isFasting)
                 allSamples.addLast(sample)
                 if (isFasting) fastingSamples.addLast(sample)
                 else mealSamples.addLast(sample)
             }
-            aapsLogger.debug(LTag.APS,
-                             "AggressionLearner: restored globalScore=$globalScore all=${allSamples.size} fasting=${fastingSamples.size} meal=${mealSamples.size}")
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: restore failed: ${e.message}")
             globalScore = 1.0
