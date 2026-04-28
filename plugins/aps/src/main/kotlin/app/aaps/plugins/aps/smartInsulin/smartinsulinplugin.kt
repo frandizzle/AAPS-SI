@@ -501,11 +501,42 @@ open class SmartInsulinPlugin @Inject constructor(
 
         uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date)
 
-        val latestMealMode = uamController.justFiredThisCycle ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
+        // ── UAM entry SMB fraction ───────────────────────────────────────────
+        // For the first N SMBs after a UAM mode fires, use a reduced fraction
+        // (entrySmbFraction) to soften the front-end response and avoid stacking
+        // before existing IOB has had time to affect predictions.
+        // P/F excluded — it's a tail correction, not a meal entry event.
+        var currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+        if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+            uamEntryModeStartMs   = now
+            uamEntrySmbsDelivered = 0
+            aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking started for ${mealMode.label}")
+        } else if (!currentModeIsUam) {
+            uamEntryModeStartMs   = 0L
+            uamEntrySmbsDelivered = 0
+        }
+        val entrySmbCount    = sp.getInt(IntKey.ApsSmartInsulinUamEntrySmbCount.key, IntKey.ApsSmartInsulinUamEntrySmbCount.defaultValue)
+        val entrySmbFraction = sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFraction.key, DoubleKey.ApsSmartInsulinUamEntrySmbFraction.defaultValue)
+        var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+            entrySmbFraction else SMB_DELIVERY_FRACTION
+
+        // Re-evaluate UAM entry tracking if UAM fired this cycle (justFiredThisCycle)
+        val justFiredMode = uamController.justFiredThisCycle
+        val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
         if (latestMealMode != mealMode) {
             val lModeIsf = modeIsfMgdl(latestMealMode, currentHour)
             mealMode = latestMealMode
             if (lModeIsf > 0.0) dosingIsfMgdl = lModeIsf
+            // Re-evaluate UAM entry tracking now that mealMode is correct for this cycle
+            currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+            if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+                uamEntryModeStartMs   = now
+                uamEntrySmbsDelivered = 0
+                aapsLogger.debug(LTag.APS, "SmartInsulin: UAM entry tracking armed (same-cycle fire) for ${mealMode.label}")
+            }
+            // Recompute fraction — first-cycle SMBs should be reduced even when UAM fires this cycle
+            uamSmbFraction = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+                entrySmbFraction else SMB_DELIVERY_FRACTION
         }
 
         val stftAdjusted = stftController.onLoopCycle(profile.getTargetMgdl(), glucoseStatus.glucose, glucoseStatus.delta, glucoseStatus.shortAvgDelta, mealMode, isTempTarget, bgWentLow, inReboundWindow, cgmState.inWarmup, glucoseStatus.date)
@@ -524,14 +555,85 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalMultiplier = (if (sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue)) basalLearner.multiplierClamped else 1.0) * circadianLearner.basalMultiplier()
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
+
+        // 1) BG below lowGuard — mark real low, capture conditions for soft landing
         if (glucoseStatus.glucose < REBOUND_LOW_THRESHOLD_MGDL) {
-            if (!bgWentLow) { iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
-            else if (softLandingBypass && reboundWindowStartMs > 0L) { secondLowOccurred = true; softLandingBypass = false }
+            if (!bgWentLow) {
+                iobAtLowTime       = iobArray.firstOrNull()?.iob ?: 0.0
+                shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: BG went low (${glucoseStatus.glucose / 18.0}mmol) " +
+                                     "iob=${String.format(java.util.Locale.ROOT, "%.2f", iobAtLowTime)}U " +
+                                     "shortAvgΔ=${String.format(java.util.Locale.ROOT, "%.2f", shortAvgDeltaAtLow)}mmol")
+                if (mealMode.isUam) {
+                    aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
+                    mealOverrideManager.cancelOverride()
+                }
+            } else if (softLandingBypass && reboundWindowStartMs > 0L) {
+                secondLowOccurred = true
+                softLandingBypass = false
+                aapsLogger.debug(LTag.APS, "SmartInsulin: second low — bypass revoked, full lockout")
+            }
             if (glucoseStatus.glucose < minBgDuringLow) minBgDuringLow = glucoseStatus.glucose
-            bgWentLow = true; if (reboundWindowStartMs > 0L) reboundWindowStartMs = 0L
+            bgWentLow = true
+            if (reboundWindowStartMs > 0L) reboundWindowStartMs = 0L
         }
-        if (bgWentLow && reboundWindowStartMs == 0L && glucoseStatus.glucose >= REBOUND_LOW_THRESHOLD_MGDL) reboundWindowStartMs = now
-        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) { reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false }
+
+        // ── UAM / P/F auto-cancel when BG returns to target or below ─────────
+        // Gate: BG at or below profile target AND not rising fast.
+        // Do NOT cancel if: BG below low guard, or mode is still in early window.
+        if (mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED) {
+            val shortAvgMmol      = glucoseStatus.shortAvgDelta / 18.0
+            val currentBgMgdl     = glucoseStatus.glucose
+            val profileTargetMgdl = profile.getTargetMgdl()
+            val bgAtOrBelowTarget = currentBgMgdl <= profileTargetMgdl
+            val notStillRising    = shortAvgMmol < UAM_EXIT_MAX_DELTA_MMOL
+            val bgBelowLowGuard   = currentBgMgdl < REBOUND_LOW_THRESHOLD_MGDL
+            val modeWindowMins    = sp.getInt(IntKey.ApsSmartInsulinModeWindowMins.key, IntKey.ApsSmartInsulinModeWindowMins.defaultValue)
+            val modeAgeMs         = if (mealOverrideManager.modeStartMs > 0L)
+                now - mealOverrideManager.modeStartMs else Long.MAX_VALUE
+            val inEarlyWindow     = modeAgeMs < modeWindowMins * 60_000L
+            if (bgAtOrBelowTarget && notStillRising && !bgBelowLowGuard && !inEarlyWindow) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: BG ${currentBgMgdl / 18.0}mmol at/below target " +
+                                     "${profileTargetMgdl / 18.0}mmol and not rising (Δ=${String.format("%.2f", shortAvgMmol)} mmol) " +
+                                     "— auto-cancelling ${mealMode.label}")
+                mealOverrideManager.cancelOverride()
+            } else if (bgAtOrBelowTarget && notStillRising) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin: auto-cancel suppressed — " +
+                                     "bgBelowLowGuard=$bgBelowLowGuard inEarlyWindow=$inEarlyWindow (${modeAgeMs / 60_000}min < ${modeWindowMins}min)")
+            }
+        }
+
+        // 2) BG recovered above lowGuard — arm rebound window
+        if (bgWentLow && reboundWindowStartMs == 0L && glucoseStatus.glucose >= REBOUND_LOW_THRESHOLD_MGDL) {
+            reboundWindowStartMs = now
+        }
+
+        // 3) Full rebound window elapsed — clear all state
+        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
+            reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE
+            secondLowOccurred = false; softLandingBypass = false
+        }
+
+        // ── Soft landing bypass ───────────────────────────────────────────────
+        // Allow UAM detection during rebound if the low was borderline (not a crash).
+        // All 5 conditions must be met; revoked permanently on second low.
+        val lowGuardMmol             = REBOUND_LOW_THRESHOLD_MGDL / 18.0
+        val softLandingDepthMgdl     = (lowGuardMmol - 0.3) * 18.0  // 4.7 mmol if lowGuard=5.0
+        val bypassDayStart           = sp.getInt(IntKey.ApsSmartInsulinUamDayStartHour.key, IntKey.ApsSmartInsulinUamDayStartHour.defaultValue)
+        val bypassNightCutoff        = sp.getInt(IntKey.ApsSmartInsulinUamNightCutoffHour.key, IntKey.ApsSmartInsulinUamNightCutoffHour.defaultValue)
+        val inMealHoursForBypass     = if (bypassNightCutoff > bypassDayStart)
+            currentHour in bypassDayStart until bypassNightCutoff
+        else
+            currentHour >= bypassDayStart || currentHour < bypassNightCutoff
+        softLandingBypass = bgWentLow &&
+            !secondLowOccurred &&
+            minBgDuringLow >= softLandingDepthMgdl &&
+            shortAvgDeltaAtLow > -0.15 &&
+            iobAtLowTime < 1.0 &&
+            inMealHoursForBypass
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
         val apsResult = determineBasalSmartInsulin.determine_basal(
@@ -566,7 +668,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
-            uamSmbFraction           = 1.0,
+            uamSmbFraction           = uamSmbFraction,
             targetRespectEnabled     = true,
             reboundWindowMins        = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue).toDouble(),
             circCeil                 = circadianLearner.aggrCeiling(),
@@ -575,6 +677,17 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         lastAPSResult = apsResult; lastAPSRun = now
+
+        // Increment UAM entry SMB counter if an SMB was delivered this cycle
+        val fractionUsed = uamSmbFraction  // capture before increment
+        val wasEntrySmb = currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount
+        if (wasEntrySmb) {
+            uamEntrySmbsDelivered++
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: UAM entry SMB ${uamEntrySmbsDelivered}/$entrySmbCount " +
+                                 "at ${(fractionUsed * 100).toInt()}% fraction")
+            apsResult.reason += " | UAMEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
+        }
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) && glucoseStatus.noise <= 1.5 && activityMonitor.level == ActivityMonitor.ActivityLevel.SEDENTARY) bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
 
         // Snapshot state for Overview (re-computed live in overviewState() for time-sensitive parts)
@@ -599,6 +712,21 @@ open class SmartInsulinPlugin @Inject constructor(
             pb3Line = pb3Line,
             learningState = if (highTempTarget) "off: High temp target" else getLearningState()
         )
+
+        // UKF first-day status tag
+        val ukfFirstDaySuffix: String = run {
+            val ukfSelected = activePlugin.activeSmoothing.javaClass.simpleName == "UnscentedKalmanFilterPlugin"
+            val firstDayOn  = sp.getBoolean(BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing.key, BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing.defaultValue)
+            if (ukfSelected && firstDayOn && cachedSensorInsertTimeMs > 0L) {
+                val remainingMs = 24L * 60 * 60 * 1000L - (now - cachedSensorInsertTimeMs)
+                if (remainingMs > 0L) {
+                    val remainingH   = remainingMs / 3_600_000L
+                    val remainingMin = (remainingMs % 3_600_000L) / 60_000L
+                    " | UKF active ${remainingH}h${remainingMin}m left"
+                } else ""
+            } else ""
+        }
+        if (ukfFirstDaySuffix.isNotEmpty()) apsResult.reason += ukfFirstDaySuffix
 
         rxBus.send(EventOpenAPSUpdateGui())
     }
