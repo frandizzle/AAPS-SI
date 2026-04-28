@@ -368,9 +368,7 @@ class SmartInsulinFragment : DaggerFragment() {
             addRow(c, "Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
                    "Second bolus delivered as scheduled.",
                    Color.parseColor("#FF43A047"))
-        }
-
-        if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
+        } else if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
             val pb2Primary = when {
@@ -421,11 +419,7 @@ class SmartInsulinFragment : DaggerFragment() {
             addRow(c, "Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
                    "Third bolus delivered (late-meal cover).",
                    Color.parseColor("#FF43A047"))
-        }
-
-        // Pre-bolus 3 — pending / gate status
-        // preBolus3StatusText returns "" when PB3 was never requested, so this guard is safe
-        if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
+        } else if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
             val gate3    = d.pb3GateData
             val isActive3 = d.pb3Status.contains("active")
             val pb3Primary = when {
