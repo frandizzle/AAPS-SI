@@ -537,11 +537,41 @@ open class SmartInsulinPlugin @Inject constructor(
 
         uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date)
 
-        val latestMealMode = uamController.justFiredThisCycle ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
+        val justFiredMode = uamController.justFiredThisCycle
+        val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
         if (latestMealMode != mealMode) {
             val lModeIsf = modeIsfMgdl(latestMealMode, currentHour)
             mealMode = latestMealMode
             if (lModeIsf > 0.0) dosingIsfMgdl = lModeIsf
+        }
+
+        // ── UAM entry SMB fraction ────────────────────────────────────────────
+        // For the first N SMBs after a UAM mode fires, use a reduced fraction
+        // to soften the front-end response and avoid stacking before IOB propagates.
+        // P/F excluded — it's a tail correction, not a meal entry event.
+        // In FASTING mode, uamSmbFraction = SMB_DELIVERY_FRACTION (0.5).
+        var currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+        if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+            uamEntryModeStartMs   = now
+            uamEntrySmbsDelivered = 0
+        } else if (!currentModeIsUam) {
+            uamEntryModeStartMs   = 0L
+            uamEntrySmbsDelivered = 0
+        }
+        val entrySmbCount    = sp.getInt(IntKey.ApsSmartInsulinUamEntrySmbCount.key, IntKey.ApsSmartInsulinUamEntrySmbCount.defaultValue)
+        val entrySmbFraction = sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFraction.key, DoubleKey.ApsSmartInsulinUamEntrySmbFraction.defaultValue)
+        var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+            entrySmbFraction else SMB_DELIVERY_FRACTION
+
+        // Re-evaluate if UAM fired this cycle
+        if (justFiredMode != null && latestMealMode != mealMode) {
+            currentModeIsUam = mealMode.isUam && mealMode != MealMode.UAM_PROTEIN_FAT
+            if (currentModeIsUam && uamEntryModeStartMs == 0L) {
+                uamEntryModeStartMs   = now
+                uamEntrySmbsDelivered = 0
+            }
+            uamSmbFraction = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
+                entrySmbFraction else SMB_DELIVERY_FRACTION
         }
 
         val stftAdjusted = stftController.onLoopCycle(profile.getTargetMgdl(), glucoseStatus.glucose, glucoseStatus.delta, glucoseStatus.shortAvgDelta, mealMode, isTempTarget, bgWentLow, inReboundWindow, cgmState.inWarmup, glucoseStatus.date)
@@ -611,6 +641,14 @@ open class SmartInsulinPlugin @Inject constructor(
         )
 
         lastAPSResult = apsResult; lastAPSRun = now
+
+        // Increment UAM entry SMB counter if an entry-fraction SMB was delivered
+        val fractionUsed = uamSmbFraction
+        val wasEntrySmb = currentModeIsUam && apsResult.smb > 0.0 && uamEntrySmbsDelivered < entrySmbCount
+        if (wasEntrySmb) {
+            uamEntrySmbsDelivered++
+            apsResult.reason += " | UAMEntry: SMB ${uamEntrySmbsDelivered}/$entrySmbCount @${(fractionUsed * 100).toInt()}%"
+        }
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) && glucoseStatus.noise <= 1.5 && activityMonitor.level == ActivityMonitor.ActivityLevel.SEDENTARY) bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
 
         // Snapshot state for Overview (re-computed live in overviewState() for time-sensitive parts)
