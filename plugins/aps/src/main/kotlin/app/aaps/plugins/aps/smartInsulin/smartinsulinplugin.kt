@@ -309,7 +309,10 @@ open class SmartInsulinPlugin @Inject constructor(
         } ?: "Meal: Fasting"
 
         val livePb2Line = when {
-            mealOverrideManager.activePb2DoseU != null -> {
+            // BUG FIX: must check > 0.0 not just != null. activePb2DoseU can be set to 0.0
+            // when a meal mode is activated without PB2 selected, which was incorrectly
+            // displaying "PB2: active 70m" on the overview (matches cached check at line 581).
+            (mealOverrideManager.activePb2DoseU ?: 0.0) > 0.0 -> {
                 val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
                 "PB2: active ${mins}m"
             }
@@ -325,7 +328,8 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val livePb3Line = when {
-            mealOverrideManager.activePb3DoseU != null -> {
+            // Same fix as PB2 above — must check > 0.0 not just != null.
+            (mealOverrideManager.activePb3DoseU ?: 0.0) > 0.0 -> {
                 val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
                 "PB3: active ${mins}m"
             }
