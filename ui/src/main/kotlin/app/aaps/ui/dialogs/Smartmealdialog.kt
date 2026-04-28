@@ -197,6 +197,29 @@ class SmartMealDialog : DialogFragmentWithDate() {
             false, binding.okcancel.ok, null
         )
 
+        // ── Pre-bolus 3 toggle ────────────────────────────────────────────────
+        // PB3 fires N minutes after PB2 has actually delivered — same safety gates apply
+        binding.preBolus3Switch.isChecked = false
+        binding.preBolus3Layout.visibility = View.GONE
+        binding.preBolus3Switch.setOnCheckedChangeListener { _, checked ->
+            binding.preBolus3Layout.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+
+        // ── Pre-bolus 3 delay picker (minutes after PB2 fires) ────────────────
+        binding.preBolus3DelayMins.setParams(
+            savedInstanceState?.getDouble("pb3DelayMins") ?: 30.0,
+            5.0, 120.0, 5.0,
+            DecimalFormat("0"), false, binding.okcancel.ok, null
+        )
+
+        // ── Pre-bolus 3 amount picker ─────────────────────────────────────────
+        binding.preBolus3Amount.setParams(
+            savedInstanceState?.getDouble("pb3Amount") ?: defaultPb2U,
+            0.5, maxPreBolus, bolusStep,
+            decimalFormatter.pumpSupportedBolusFormat(bolusStep),
+            false, binding.okcancel.ok, null
+        )
+
         // ── Cancel active mode button ─────────────────────────────────────────
         val activeMode = mealOverrideManager.activeMealMode
         if (activeMode != null) {
@@ -261,6 +284,26 @@ class SmartMealDialog : DialogFragmentWithDate() {
             binding.cancelPb2Button.visibility = View.GONE
         }
 
+        // ── Cancel PB3 button (shown only when PB3 is pending) ───────────────
+        if (mealOverrideManager.preBolus3Pending) {
+            binding.cancelPb3Button.visibility = View.VISIBLE
+            val pb3Status = mealOverrideManager.preBolus3StatusText
+            binding.cancelPb3Button.text = "Cancel  |  $pb3Status"
+            binding.cancelPb3Button.setOnClickListener {
+                activity?.let { act ->
+                    OKDialog.showConfirmation(act,
+                                              rh.gs(R.string.si_dialog_title),
+                                              "Cancel the scheduled pre-bolus 3? The meal mode will stay active.", {
+                                                  mealOverrideManager.cancelPreBolus3()
+                                                  ToastUtils.okToast(ctx, "Pre-bolus 3 cancelled")
+                                                  dismiss()
+                                              })
+                }
+            }
+        } else {
+            binding.cancelPb3Button.visibility = View.GONE
+        }
+
         // ── OK / Cancel ───────────────────────────────────────────────────────
         binding.okcancel.ok.setOnClickListener { submit() }
         binding.okcancel.cancel.setOnClickListener { dismiss() }
@@ -274,14 +317,19 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val wantsPb2      = binding.preBolus2Switch.isChecked
         val pb2U          = if (wantsPb2) binding.preBolus2Amount.value else 0.0
         val pb2DelayMins  = if (wantsPb2) binding.preBolus2DelayMins.value.roundToInt() else 0
+        val wantsPb3      = binding.preBolus3Switch.isChecked
+        val pb3U          = if (wantsPb3) binding.preBolus3Amount.value else 0.0
+        val pb3DelayMins  = if (wantsPb3) binding.preBolus3DelayMins.value.roundToInt() else 0
         val pb2DelayMs    = TimeUnit.MINUTES.toMillis(pb2DelayMins.toLong())
         val bolusStep     = activePlugin.activePump.pumpDescription.bolusStep
         val maxPreBolus   = preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)
         val isfValue      = binding.isfAmount.value
         val isMmol        = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
 
+        val pb3DelayMs    = TimeUnit.MINUTES.toMillis(pb3DelayMins.toLong())
         val pb1Clamped = if (preBolus > 0.0) maxPreBolus.coerceAtMost(preBolus) else 0.0
         val pb2Clamped = if (pb2U > 0.0)     maxPreBolus.coerceAtMost(pb2U)     else 0.0
+        val pb3Clamped = if (pb3U > 0.0)     maxPreBolus.coerceAtMost(pb3U)     else 0.0
 
         val actions: LinkedList<String?> = LinkedList()
         actions.add(
@@ -319,6 +367,15 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor)
             )
         }
+        if (pb3Clamped > 0.0) {
+            actions.add(
+                "Pre-bolus 3 (${pb3DelayMins}min after PB2): " +
+                    decimalFormatter.toPumpSupportedBolus(pb3Clamped, bolusStep)
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.bolusColor) +
+                    " — fires after PB2 delivers if BG > target &amp; IOB has headroom"
+                        .formatColor(context, rh, app.aaps.core.ui.R.attr.warningColor)
+            )
+        }
 
         activity?.let { activity ->
             OKDialog.showConfirmation(
@@ -336,14 +393,16 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         sp.putDouble(key.key, isfMgdl)
                     }
 
-                    // Activate meal mode — PB2 params passed to manager for scheduled delivery
+                    // Activate meal mode — PB2/PB3 params passed to manager for scheduled delivery
                     mealOverrideManager.activateOverride(
                         mode             = selectedMode,
                         doseU            = if (pb1Clamped > 0.0) pb1Clamped else null,
                         carbsG           = 0,
                         modeWindowMs     = durationMs,
                         preBolus2U       = pb2Clamped,
-                        preBolus2DelayMs = pb2DelayMs
+                        preBolus2DelayMs = pb2DelayMs,
+                        preBolus3U       = pb3Clamped,
+                        preBolus3DelayMs = pb3DelayMs
                     )
 
                     // Deliver pre-bolus 1 immediately if requested
@@ -365,9 +424,9 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         })
                     }
 
-                    val pb2Summary = if (pb2Clamped > 0.0)
-                        " + PB2 ${pb2Clamped}U in ${pb2DelayMins}min (safety-gated)" else ""
-                    ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins) + pb2Summary)
+                    val pb2Summary = if (pb2Clamped > 0.0) " + PB2 ${pb2Clamped}U in ${pb2DelayMins}min (safety-gated)" else ""
+                    val pb3Summary = if (pb3Clamped > 0.0) " + PB3 ${pb3Clamped}U ${pb3DelayMins}min after PB2" else ""
+                    ToastUtils.okToast(ctx, rh.gs(R.string.si_mode_activated, selectedMode.label, durationMins) + pb2Summary + pb3Summary)
                     dismiss()
                 }
             )
@@ -383,6 +442,8 @@ class SmartMealDialog : DialogFragmentWithDate() {
         outState.putDouble("isfAmount",    binding.isfAmount.value)
         outState.putDouble("pb2DelayMins", binding.preBolus2DelayMins.value)
         outState.putDouble("pb2Amount",    binding.preBolus2Amount.value)
+        outState.putDouble("pb3DelayMins", binding.preBolus3DelayMins.value)
+        outState.putDouble("pb3Amount",    binding.preBolus3Amount.value)
     }
 
     override fun onResume() {

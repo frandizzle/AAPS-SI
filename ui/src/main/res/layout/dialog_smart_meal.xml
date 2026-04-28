@@ -201,6 +201,88 @@
 
         </LinearLayout>
 
+        <!-- Pre-bolus 3 — fires N min after PB2 has actually delivered, same safety gates -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Pre-bolus 3 (after PB2)"
+                    android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Fires N min after PB2 delivers, same safety checks"
+                    android:textSize="12sp"
+                    android:alpha="0.6" />
+
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/pre_bolus3_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus 3 controls (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/pre_bolus3_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Delay (mins after PB2 fires)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus3_delay_mins"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Amount (units)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus3_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Same safety checks as PB2: BG above target, not falling, IOB has headroom"
+                android:textSize="11sp"
+                android:alpha="0.55"
+                android:layout_marginBottom="4dp" />
+
+        </LinearLayout>
+
         <!-- UAM active banner — shown when UAM auto-detected mode is active -->
         <TextView
             android:id="@+id/uam_active_banner"
@@ -232,6 +314,16 @@
             android:layout_marginBottom="8dp"
             android:backgroundTint="?attr/warningColor"
             android:text="Cancel pre-bolus 2"
+            android:visibility="gone" />
+
+        <!-- Cancel PB3 button (shown only when PB3 pending) -->
+        <Button
+            android:id="@+id/cancel_pb3_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:backgroundTint="?attr/warningColor"
+            android:text="Cancel pre-bolus 3"
             android:visibility="gone" />
 
         <!-- OK / Cancel -->
