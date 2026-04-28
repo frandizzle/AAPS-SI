@@ -410,6 +410,17 @@ class MealOverrideManagerImpl @Inject constructor(
 
         val now = System.currentTimeMillis()
 
+        // ── Cache glucose/IOB values every cycle so gate data is visible during countdown ──
+        val currentBgMgdl = glucoseStatus.glucose
+        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
+        val profileTarget = profile?.getTargetMgdl() ?: 108.0
+        lastBgMgdl        = currentBgMgdl
+        lastIob           = currentIob
+        lastMaxIob        = maxIobU
+        lastTargetMgdl    = profileTarget
+        lastDelta         = glucoseStatus.delta
+        lastShortAvgDelta = glucoseStatus.shortAvgDelta
+
         // Not time yet
         if (now < s.preBolus2FireAtMs) {
             val minsLeft = (s.preBolus2FireAtMs - now) / 60_000
@@ -418,17 +429,6 @@ class MealOverrideManagerImpl @Inject constructor(
         }
 
         // ── Safety checks ─────────────────────────────────────────────────────
-        val currentBgMgdl = glucoseStatus.glucose
-        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
-        val profileTarget = profile?.getTargetMgdl() ?: 108.0
-
-        // Cache for preBolus2StatusText so dialog can show live block reasons between cycles
-        lastBgMgdl        = currentBgMgdl
-        lastIob           = currentIob
-        lastMaxIob        = maxIobU
-        lastTargetMgdl    = profileTarget
-        lastDelta         = glucoseStatus.delta
-        lastShortAvgDelta = glucoseStatus.shortAvgDelta
 
         val reasons = safetyBlockReasons(
             bgMgdl        = currentBgMgdl,
@@ -539,6 +539,17 @@ class MealOverrideManagerImpl @Inject constructor(
         val fireAt = s.preBolus3FireAtMs ?: return  // should be non-null once PB2 fired successfully
         val now    = System.currentTimeMillis()
 
+        // ── Cache glucose/IOB values every cycle so gate data is visible during countdown ──
+        val currentBgMgdl = glucoseStatus.glucose
+        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
+        val profileTarget = profile?.getTargetMgdl() ?: 108.0
+        lastPb3BgMgdl        = currentBgMgdl
+        lastPb3Iob           = currentIob
+        lastPb3MaxIob        = maxIobU
+        lastPb3TargetMgdl    = profileTarget
+        lastPb3Delta         = glucoseStatus.delta
+        lastPb3ShortAvgDelta = glucoseStatus.shortAvgDelta
+
         // Not time yet
         if (now < fireAt) {
             val minsLeft = (fireAt - now) / 60_000
@@ -547,17 +558,6 @@ class MealOverrideManagerImpl @Inject constructor(
         }
 
         // ── Safety checks (identical gates to PB2) ───────────────────────────
-        val currentBgMgdl = glucoseStatus.glucose
-        val currentIob    = iobArray.firstOrNull()?.iob ?: 0.0
-        val profileTarget = profile?.getTargetMgdl() ?: 108.0
-
-        // Cache for preBolus3StatusText — separate from PB2 cache so both stay accurate
-        lastPb3BgMgdl        = currentBgMgdl
-        lastPb3Iob           = currentIob
-        lastPb3MaxIob        = maxIobU
-        lastPb3TargetMgdl    = profileTarget
-        lastPb3Delta         = glucoseStatus.delta
-        lastPb3ShortAvgDelta = glucoseStatus.shortAvgDelta
 
         val reasons = safetyBlockReasons(
             bgMgdl        = currentBgMgdl,
