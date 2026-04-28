@@ -1024,6 +1024,7 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
                 text = buildString {
                     append(s.modeLine)
                     if (s.pb2Line != null) append("\n${s.pb2Line}")
+                    if (s.pb3Line != null) append("\n${s.pb3Line}")
                     append("\n$stateLabel")
                 }
             }

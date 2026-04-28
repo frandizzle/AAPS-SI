@@ -18,6 +18,8 @@ interface SmartInsulinOverview {
         val modeLine: String,
         /** "PB2 active: 30m" or null if no PB2 pending */
         val pb2Line: String?,
+        /** "PB3 active: 30m" or null if no PB3 pending */
+        val pb3Line: String?,
         /** null = full learning active
          *  "limited" = meal mode (only DIA/peak learning)
          *  "off: <reason>" = fully suppressed */

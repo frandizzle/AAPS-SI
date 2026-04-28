@@ -135,6 +135,10 @@ open class SmartInsulinPlugin @Inject constructor(
     var reboundWindowStartMs: Long = 0L
     @Volatile var reboundGuardMs: Long = REBOUND_GUARD_MS
 
+    @Volatile private var cachedLearningEnabled: Boolean = false
+    @Volatile private var cachedCgmSuppressLearning: Boolean = false
+    @Volatile private var cachedOverviewState: SmartInsulinOverview.OverviewState = SmartInsulinOverview.OverviewState("Meal: Fasting", null, null, "Learning")
+
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L && bgWentLow && msSinceLastSuspend < reboundGuardMs
 
@@ -283,22 +287,59 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     override fun overviewState(): SmartInsulinOverview.OverviewState {
+        // Recompute modeLine and learningState live so they're always current.
+        // Avoids stale display between loop cycles (e.g. mode expired but state still shows P/F).
         val activeMode = mealOverrideManager.activeMealMode
-        val modeLine = if (activeMode != null) {
-            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-            "Meal: ${activeMode.label} ${mins}m"
-        } else {
-            "Meal: Fasting"
+        val now        = System.currentTimeMillis()
+
+        val liveModeLine = activeMode?.let { mode ->
+            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
+            if (mode.isUam) {
+                val uamLabel = when (mode) {
+                    MealMode.UAM_BREAKFAST    -> "Breakfast"
+                    MealMode.UAM_LUNCH        -> "Lunch"
+                    MealMode.UAM_DINNER       -> "Dinner"
+                    MealMode.UAM_SNACK        -> "Snack"
+                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
+                    MealMode.UAM_AFTERNOON    -> "Afternoon"
+                    else                      -> mode.label
+                }
+                "Meal: UAM ($uamLabel) ${mins}m left"
+            } else {
+                "Meal: ${mode.label} ${mins}m left"
+            }
+        } ?: "Meal: Fasting"
+
+        val isMealModeActive = activeMode != null
+        val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
+        val liveLearningState = when {
+            !cachedLearningEnabled                   -> "off: Learning disabled"
+            activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
+            cachedCgmSuppressLearning                -> "off: CGM warmup"
+            effectivePostMealLockout                 -> {
+                val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
+                "off: Post-meal ${minsLeft}m left"
+            }
+            cachedOverviewState.learningState.startsWith("off: High temp") -> cachedOverviewState.learningState
+            activeMode == MealMode.UAM_PROTEIN_FAT   -> "limited: P/F mode"
+            isMealModeActive                         -> "limited: meal mode"
+            else                                     -> "Learning"
         }
-        val pb2DoseU = mealOverrideManager.activePb2DoseU
-        val pb2Line = if (pb2DoseU != null && pb2DoseU > 0.0) {
+
+        val livePb2Line = mealOverrideManager.activePb2DoseU?.let {
             val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
             "PB2 active: ${mins}m"
-        } else null
-        return SmartInsulinOverview.OverviewState(
-            modeLine = modeLine,
-            pb2Line = pb2Line,
-            learningState = getLearningState()
+        }
+        val livePb3Line = mealOverrideManager.activePb3DoseU?.let {
+            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
+            "PB3 active: ${mins}m"
+        }
+
+        return cachedOverviewState.copy(
+            modeLine = liveModeLine,
+            pb2Line = livePb2Line,
+            pb3Line = livePb3Line,
+            learningState = liveLearningState
         )
     }
 
@@ -508,6 +549,30 @@ open class SmartInsulinPlugin @Inject constructor(
 
         lastAPSResult = apsResult; lastAPSRun = now
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) && glucoseStatus.noise <= 1.5 && activityMonitor.level == ActivityMonitor.ActivityLevel.SEDENTARY) bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray)
+
+        // Snapshot state for Overview (re-computed live in overviewState() for time-sensitive parts)
+        cachedLearningEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue)
+        cachedCgmSuppressLearning = cgmState.suppressLearning
+
+        val pb2DoseU = mealOverrideManager.activePb2DoseU
+        val pb2Line = if (pb2DoseU != null && pb2DoseU > 0.0) {
+            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
+            "PB2 active: ${mins}m"
+        } else null
+
+        val pb3DoseU = mealOverrideManager.activePb3DoseU
+        val pb3Line = if (pb3DoseU != null && pb3DoseU > 0.0) {
+            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
+            "PB3 active: ${mins}m"
+        } else null
+
+        cachedOverviewState = SmartInsulinOverview.OverviewState(
+            modeLine = "Meal: ${mealMode.label}", // Re-computed in overviewState()
+            pb2Line = pb2Line,
+            pb3Line = pb3Line,
+            learningState = if (highTempTarget) "off: High temp target" else getLearningState()
+        )
+
         rxBus.send(EventOpenAPSUpdateGui())
     }
 
