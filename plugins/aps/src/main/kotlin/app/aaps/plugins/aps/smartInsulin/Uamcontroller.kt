@@ -234,7 +234,13 @@ class UamController @Inject constructor(
         val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
         if (burstThresholdPref > 0.0 && burstAnchorBgMmol > 0.0 && freshCycle && lastBurstRiseMmol >= burstThresholdPref - 0.01) {
             triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
-            resetStreak(); burstPrevBgMmol = 0.0; burstPrevBgTimestampMs = 0L; burstAnchorBgMmol = 0.0; return
+            resetStreak()
+            // Clear all burst state so we don't immediately re-fire on the next reading.
+            // Without this, burstAnchorBgMmol stays at the pre-burst value and the
+            // accumulated rise carries over — potentially re-triggering next cycle.
+            burstPrevBgMmol = 0.0; burstPrevBgTimestampMs = 0L; burstAnchorBgMmol = 0.0
+            lastBurstRiseMmol = 0.0; lastBurstDeltaMmol = 0.0
+            return
         }
         burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs
 
@@ -330,28 +336,68 @@ class UamController @Inject constructor(
     }
 
     fun statusString(): String? {
+        val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
         val msSincePostRebound   = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
         val inPostReboundLockout = msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L
         val effectiveBypass      = inPostReboundLockout && lastEpisodeWasSoftLanding
+
         val uamLine = when {
             currentlyInMealMode        -> null
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
-            inPostReboundLockout && !effectiveBypass && consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0 -> "UAM: off (post-rebound lockout — ${POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L}min left)"
+            inPostReboundLockout && !effectiveBypass &&
+                consecutiveRiseReadings == 0 && bgAtStreakStart == 0.0 -> {
+                val leftMins = POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L
+                "UAM: off (post-rebound lockout — ${leftMins}min left)"
+            }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-                "UAM: ${if (currentlyInPostMealLockout) "[dirty] " else ""}watching ($consecutiveRiseReadings/$needed rising)"
+                val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+                // Show burst breakdown once there's a prior accumulated rise (2+ readings)
+                val burstNote = if (burstThreshold > 0.0) {
+                    val burstLast = lastBurstDeltaMmol
+                    val burstPrev = lastBurstRiseMmol - burstLast
+                    val breakdown = if (burstPrev > 0.01) " (${fmtDelta(burstPrev)}, ${fmtDelta(burstLast)})" else ""
+                    " | Burst: ${fmtDelta(lastBurstRiseMmol)}/${fmtDelta(burstThreshold)}$unitLabel$breakdown"
+                } else ""
+                "UAM: ${dirtyTag}watching ($consecutiveRiseReadings/$needed rising$threshNote$burstNote)"
             }
-            lastUamMode != null && lastUamTimeMs > 0L && (System.currentTimeMillis() - lastUamTimeMs) < LAST_UAM_DISPLAY_WINDOW_MS -> {
+            lastUamMode != null && lastUamTimeMs > 0L &&
+                (System.currentTimeMillis() - lastUamTimeMs) < LAST_UAM_DISPLAY_WINDOW_MS -> {
                 val cal = Calendar.getInstance().also { it.timeInMillis = lastUamTimeMs }
                 "UAM: last ${lastUamMode!!.label} ${"%02d:%02d".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE))}${if (lastUamTriggerCount > 1) " (×$lastUamTriggerCount)" else ""}"
             }
-            else -> "UAM: armed"
+            else -> {
+                val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
+                val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
+                val dirtyNote = if (currentlyInPostMealLockout) " [dirty]" else ""
+                "UAM: ${dirtyTag}armed (0/$needed >=${fmtBg(triggerThresholdMmol)}$unitLabel$dirtyNote)"
+            }
         }
-        val pfLine = if (!sp.getBoolean(BooleanKey.ApsSmartInsulinUamProteinFatEnabled.key, BooleanKey.ApsSmartInsulinUamProteinFatEnabled.defaultValue)) null
-        else if (lastMealEndedMs == 0L) "P/F: waiting for first meal today"
-        else "P/F: armed"
+
+        val pfLine = when {
+            !sp.getBoolean(BooleanKey.ApsSmartInsulinUamProteinFatEnabled.key, BooleanKey.ApsSmartInsulinUamProteinFatEnabled.defaultValue) -> null
+            currentlyHighTempTarget  -> "P/F: off (high temp target set)"
+            currentlyCgmWarmup       -> "P/F: off (new sensor <24h)"
+            currentlyPastNightCutoff -> "P/F: off (outside hours)"
+            inPostReboundLockout && !effectiveBypass -> {
+                val leftMins = POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L
+                "P/F: off (rebound lockout — ${leftMins}min left)"
+            }
+            currentlyInMealMode      -> "P/F: armed (after meal expires)"
+            lastMealEndedMs == 0L    -> "P/F: waiting for first meal today"
+            else -> {
+                val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
+                val stuckNeeded = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatStuckReadings.key, IntKey.ApsSmartInsulinUamProteinFatStuckReadings.defaultValue)
+                if (stuckHighReadings > 0)
+                    "P/F: $stuckHighReadings/$stuckNeeded stuck ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
+                else
+                    "P/F: 0/$stuckNeeded below ≥${fmtBg(triggerThresholdMmol)}$unitLabel"
+            }
+        }
+
         return listOfNotNull(uamLine, pfLine).joinToString(" | ").ifEmpty { null }
     }
 
