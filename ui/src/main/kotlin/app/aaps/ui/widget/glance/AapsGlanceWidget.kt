@@ -37,7 +37,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextDecoration
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
+import androidx.glance.color.ColorProvider
 import app.aaps.core.ui.compose.DarkGeneralColors
 import app.aaps.core.ui.compose.navigation.DarkElementColors
 import dagger.hilt.android.EntryPointAccessors
@@ -95,7 +95,7 @@ private fun WidgetContent(state: WidgetRenderState) {
     val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
     val root = GlanceModifier
         .fillMaxSize()
-        .background(ColorProvider(Color(state.backgroundColor)))
+        .background(ColorProvider(Color(state.backgroundColor), Color(state.backgroundColor)))
         .padding(6.dp)
         .let { if (launchIntent != null) it.clickable(actionStartActivity(launchIntent)) else it }
 
@@ -117,7 +117,7 @@ private fun BgPanel(state: WidgetRenderState, modifier: GlanceModifier) {
             Text(
                 text = state.deltaText,
                 style = TextStyle(
-                    color = ColorProvider(TextMuted),
+                    color = ColorProvider(TextMuted, TextMuted),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -132,7 +132,7 @@ private fun BgPanel(state: WidgetRenderState, modifier: GlanceModifier) {
                 Text(
                     text = state.bgText,
                     style = TextStyle(
-                        color = ColorProvider(bgColor),
+                        color = ColorProvider(bgColor, bgColor),
                         fontSize = 44.sp,
                         fontWeight = FontWeight.Bold,
                         textDecoration = if (state.strikeThrough) TextDecoration.LineThrough else TextDecoration.None
@@ -144,7 +144,7 @@ private fun BgPanel(state: WidgetRenderState, modifier: GlanceModifier) {
                         provider = ImageProvider(state.arrowResId),
                         contentDescription = null,
                         modifier = GlanceModifier.size(30.dp),
-                        colorFilter = ColorFilter.tint(ColorProvider(bgColor))
+                        colorFilter = ColorFilter.tint(ColorProvider(bgColor, bgColor))
                     )
                 }
             }
@@ -157,7 +157,7 @@ private fun BgPanel(state: WidgetRenderState, modifier: GlanceModifier) {
             Text(
                 text = state.timeAgoText,
                 style = TextStyle(
-                    color = ColorProvider(TextMuted),
+                    color = ColorProvider(TextMuted, TextMuted),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
@@ -254,7 +254,7 @@ private fun Chip(
     Box(
         modifier = modifier
             .cornerRadius(ChipCorner)
-            .background(ColorProvider(background))
+            .background(ColorProvider(background, background))
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -263,13 +263,13 @@ private fun Chip(
                 provider = ImageProvider(iconResId),
                 contentDescription = null,
                 modifier = GlanceModifier.size(ChipIconSize),
-                colorFilter = ColorFilter.tint(ColorProvider(accentColor))
+                colorFilter = ColorFilter.tint(ColorProvider(accentColor, accentColor))
             )
             Spacer(modifier = GlanceModifier.width(6.dp))
             Text(
                 text = text,
                 style = TextStyle(
-                    color = ColorProvider(textColor),
+                    color = ColorProvider(textColor, textColor),
                     fontSize = ChipTextSize,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Start
@@ -289,7 +289,7 @@ private fun TbrChip(
     Box(
         modifier = modifier
             .cornerRadius(ChipCorner)
-            .background(ColorProvider(accentColor.copy(alpha = 0.2f)))
+            .background(ColorProvider(accentColor.copy(alpha = 0.2f), accentColor.copy(alpha = 0.2f)))
             .padding(horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -297,7 +297,7 @@ private fun TbrChip(
             provider = ImageProvider(iconResId),
             contentDescription = null,
             modifier = GlanceModifier.size(ChipIconSize),
-            colorFilter = ColorFilter.tint(ColorProvider(accentColor))
+            colorFilter = ColorFilter.tint(ColorProvider(accentColor, accentColor))
         )
     }
 }
@@ -305,12 +305,12 @@ private fun TbrChip(
 @Composable
 private fun LoadingContent() {
     Box(
-        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black)),
+        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black, Color.Black)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = "",
-            style = TextStyle(color = ColorProvider(Color.White), fontSize = 12.sp)
+            style = TextStyle(color = ColorProvider(Color.White, Color.White), fontSize = 12.sp)
         )
     }
 }

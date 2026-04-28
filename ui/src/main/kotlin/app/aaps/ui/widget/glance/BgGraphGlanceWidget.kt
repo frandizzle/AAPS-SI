@@ -31,7 +31,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextDecoration
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
+import androidx.glance.color.ColorProvider
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
@@ -81,7 +81,7 @@ private fun BgGraphContent(state: BgGraphRenderState) {
     }
     val rootModifier = GlanceModifier
         .fillMaxSize()
-        .background(ColorProvider(Color(state.backgroundColor)))
+        .background(ColorProvider(Color(state.backgroundColor), Color(state.backgroundColor)))
         .let { if (launchIntent != null) it.clickable(actionStartActivity(launchIntent)) else it }
     Box(modifier = rootModifier, contentAlignment = Alignment.TopCenter) {
         Image(
@@ -93,7 +93,7 @@ private fun BgGraphContent(state: BgGraphRenderState) {
             Text(
                 text = state.bgText,
                 style = TextStyle(
-                    color = ColorProvider(Color(state.bgColor)),
+                    color = ColorProvider(Color(state.bgColor), Color(state.bgColor)),
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
                     textDecoration = if (state.strikeThrough) TextDecoration.LineThrough else TextDecoration.None
@@ -105,7 +105,7 @@ private fun BgGraphContent(state: BgGraphRenderState) {
                     provider = ImageProvider(state.arrowResId),
                     contentDescription = null,
                     modifier = GlanceModifier.size(14.dp),
-                    colorFilter = ColorFilter.tint(ColorProvider(Color(state.bgColor)))
+                    colorFilter = ColorFilter.tint(ColorProvider(Color(state.bgColor), Color(state.bgColor)))
                 )
             }
         }
@@ -115,12 +115,12 @@ private fun BgGraphContent(state: BgGraphRenderState) {
 @Composable
 private fun LoadingContent() {
     Box(
-        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black)),
+        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black, Color.Black)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = "",
-            style = TextStyle(color = ColorProvider(Color.White), fontSize = 12.sp)
+            style = TextStyle(color = ColorProvider(Color.White, Color.White), fontSize = 12.sp)
         )
     }
 }

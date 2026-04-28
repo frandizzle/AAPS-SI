@@ -28,7 +28,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextDecoration
 import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
+import androidx.glance.color.ColorProvider
 import app.aaps.core.ui.compose.navigation.DarkElementColors
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.flow.first
@@ -78,7 +78,7 @@ private fun CompactContent(state: WidgetRenderState) {
 
     val rootModifier = GlanceModifier
         .fillMaxSize()
-        .background(ColorProvider(Color(state.backgroundColor)))
+        .background(ColorProvider(Color(state.backgroundColor), Color(state.backgroundColor)))
         .padding(horizontal = 4.dp)
         .let { if (launchIntent != null) it.clickable(actionStartActivity(launchIntent)) else it }
 
@@ -90,7 +90,7 @@ private fun CompactContent(state: WidgetRenderState) {
         Text(
             text = state.bgText,
             style = TextStyle(
-                color = ColorProvider(bgColor),
+                color = ColorProvider(bgColor, bgColor),
                 fontSize = TEXT_SIZE,
                 fontWeight = FontWeight.Bold,
                 textDecoration = if (state.strikeThrough) TextDecoration.LineThrough else TextDecoration.None
@@ -101,19 +101,19 @@ private fun CompactContent(state: WidgetRenderState) {
                 provider = ImageProvider(state.arrowResId),
                 contentDescription = null,
                 modifier = GlanceModifier.size(ICON_SIZE).padding(start = 3.dp),
-                colorFilter = ColorFilter.tint(ColorProvider(bgColor))
+                colorFilter = ColorFilter.tint(ColorProvider(bgColor, bgColor))
             )
         }
         Image(
             provider = ImageProvider(state.iobIconResId),
             contentDescription = null,
             modifier = GlanceModifier.size(ICON_SIZE).padding(start = SECTION_GAP),
-            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.insulin))
+            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.insulin, DarkElementColors.insulin))
         )
         Text(
             text = state.iobText,
             style = TextStyle(
-                color = ColorProvider(if (state.iobActive) DarkElementColors.insulin else TextMuted),
+                color = ColorProvider(if (state.iobActive) DarkElementColors.insulin else TextMuted, if (state.iobActive) DarkElementColors.insulin else TextMuted),
                 fontSize = TEXT_SIZE
             ),
             modifier = GlanceModifier.padding(start = ICON_TEXT_GAP)
@@ -122,12 +122,12 @@ private fun CompactContent(state: WidgetRenderState) {
             provider = ImageProvider(state.cobIconResId),
             contentDescription = null,
             modifier = GlanceModifier.size(ICON_SIZE).padding(start = SECTION_GAP),
-            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.cob))
+            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.cob, DarkElementColors.cob))
         )
         Text(
             text = state.cobText,
             style = TextStyle(
-                color = ColorProvider(if (state.cobActive) DarkElementColors.cob else TextMuted),
+                color = ColorProvider(if (state.cobActive) DarkElementColors.cob else TextMuted, if (state.cobActive) DarkElementColors.cob else TextMuted),
                 fontSize = TEXT_SIZE
             ),
             modifier = GlanceModifier.padding(start = ICON_TEXT_GAP),
@@ -137,7 +137,7 @@ private fun CompactContent(state: WidgetRenderState) {
             provider = ImageProvider(state.tbrIconResId),
             contentDescription = null,
             modifier = GlanceModifier.size(ICON_SIZE).padding(start = SECTION_GAP),
-            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.tempBasal))
+            colorFilter = ColorFilter.tint(ColorProvider(DarkElementColors.tempBasal, DarkElementColors.tempBasal))
         )
     }
 }
@@ -145,12 +145,12 @@ private fun CompactContent(state: WidgetRenderState) {
 @Composable
 private fun LoadingContent() {
     Box(
-        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black)),
+        modifier = GlanceModifier.fillMaxSize().background(ColorProvider(Color.Black, Color.Black)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = "",
-            style = TextStyle(color = ColorProvider(Color.White), fontSize = 12.sp)
+            style = TextStyle(color = ColorProvider(Color.White, Color.White), fontSize = 12.sp)
         )
     }
 }
