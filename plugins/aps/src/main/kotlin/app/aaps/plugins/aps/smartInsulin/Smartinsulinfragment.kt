@@ -209,14 +209,27 @@ class SmartInsulinFragment : DaggerFragment() {
             }
 
         } else if (d.bgWentLow) {
-            // BG is currently below low guard
-            addRow(c, "⚠ BG is below low guard — waiting for recovery",
-                   "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
-                       if (d.consecutiveRollercoasters >= 1) {
-                           val extMins = d.totalReboundWindowMins - d.reboundWindowMins
-                           "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
-                       } else "",
-                   Color.parseColor("#FFE53935"))
+            // bgWentLow=true but inReboundWindow=false means BG went low but hasn't yet
+            // triggered the rebound window start (BG still below or just crossed threshold).
+            // Check actual current BG to show correct message.
+            val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
+            if (actuallyBelowGuard) {
+                addRow(c, "⚠ BG is below low guard — waiting for recovery",
+                       "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
+                           if (d.consecutiveRollercoasters >= 1) {
+                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                               "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
+                           } else "",
+                       Color.parseColor("#FFE53935"))
+            } else {
+                addRow(c, "⚠ BG recovering — rebound window starting",
+                       "BG has crossed back above the low guard. The ${d.totalReboundWindowMins}-minute recovery window is activating." +
+                           if (d.consecutiveRollercoasters >= 1) {
+                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                               "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
+                           } else "",
+                       Color.parseColor("#FFFB8C00"))
+            }
             if (d.mealMode != "Fasting") {
                 addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
                        "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
@@ -285,6 +298,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 "SMBs: ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ✓"}" +
                 hardLowNote + longTermLine + rollerNote
         } else if (d.bgWentLow) {
+            val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
             val hardLowNote  = if (d.hardLowPenaltyActive)
                 "\nAggressiveness ceiling cut by 20% — recovers as BG stabilises near target."
             else ""
@@ -292,10 +306,18 @@ class SmartInsulinFragment : DaggerFragment() {
                 "\nLong term: basal & ISF reduced by ~${longTermAbs}% at this hour — will ease back as BG stabilises"
             else
                 "\nLong term: learning paused — resumes once recovery window completes"
-            "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                "⚠ BG is below low guard — insulin delivery limited\n" +
-                "Short term: holding insulin until BG recovers above low guard" +
-                hardLowNote + longTermLine
+            if (actuallyBelowGuard) {
+                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                    "⚠ BG is below low guard — insulin delivery limited\n" +
+                    "Short term: holding insulin until BG recovers above low guard" +
+                    hardLowNote + longTermLine
+            } else {
+                "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
+                    "⚠ BG recovering — waiting for rebound window to activate\n" +
+                    "Short term: insulin delivery resuming as BG stabilises above low guard" +
+                    hardLowNote + longTermLine
+            }
+            hardLowNote + longTermLine
         } else if (shortTermAbs < 5 && longTermAbs < 5) {
             "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
                 "Insulin levels look balanced at this hour.\n" +
@@ -324,8 +346,9 @@ class SmartInsulinFragment : DaggerFragment() {
         }
         val aggrPrimary = when {
             !isFasting          -> "Aggressiveness locked — meal mode active"
-            d.inReboundWindow   -> "⚠ Below low guard — insulin held back"
-            d.bgWentLow         -> "⚠ Below low guard — waiting for recovery"
+            d.inReboundWindow   -> "⚠ Recovering from low — insulin held back"
+            d.bgWentLow && d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl -> "⚠ Below low guard — waiting for recovery"
+            d.bgWentLow         -> "⚠ BG recovered — rebound window activating"
             else                -> aggrDesc(d.aggressiveness)
         }
         addRow(c, aggrPrimary, aggrDetail, when {
@@ -712,7 +735,7 @@ class SmartInsulinFragment : DaggerFragment() {
                         val extMins = d.totalReboundWindowMins - d.reboundWindowMins
                         "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                     } else ""
-                    nudgeHeadline = "⚠ BG is below low guard — reducing insulin"
+                    nudgeHeadline = "⚠ Recovering from low — insulin held back"
                     nudgeDetail   = "BG crossed below low guard — holding back to avoid stacking.\n" +
                         "Short term: TBR at ${taperPct}% of normal — ramps up over ${windowMins}min window\n" +
                         "Short term: SMBs ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ✓"}" +
@@ -720,17 +743,26 @@ class SmartInsulinFragment : DaggerFragment() {
                         longTermNote +
                         rollerNote
                 } else if (d.bgWentLow) {
+                    val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
                     val hardLowNote = if (d.hardLowPenaltyActive)
                         "\nShort term: aggressiveness ceiling cut by 20% — resets as BG stabilises near target."
                     else ""
                     val longTermNote = if (d.hardLowPenaltyActive)
                         "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
                     else "\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
-                    nudgeHeadline = "⚠ BG is below low guard — waiting for recovery"
-                    nudgeDetail   = "BG is below the low guard threshold. Insulin delivery limited.\n" +
-                        "Short term: insulin being held back until BG recovers above low guard" +
-                        hardLowNote +
-                        longTermNote
+                    if (actuallyBelowGuard) {
+                        nudgeHeadline = "⚠ BG is below low guard — waiting for recovery"
+                        nudgeDetail   = "BG is below the low guard threshold. Insulin delivery limited.\n" +
+                            "Short term: insulin being held back until BG recovers above low guard" +
+                            hardLowNote +
+                            longTermNote
+                    } else {
+                        nudgeHeadline = "⚠ BG recovering — rebound window activating"
+                        nudgeDetail   = "BG has crossed back above the low guard. Recovery window is activating.\n" +
+                            "Short term: insulin delivery resuming as BG stabilises" +
+                            hardLowNote +
+                            longTermNote
+                    }
                 } else {
                     // Full ISF/basal comparison — shows what learned values are doing vs profile
                     val curIsf  = if (d.isMmol) "${"%.1f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.0f".format(d.finalIsfMgdl)} mg/dL/U"

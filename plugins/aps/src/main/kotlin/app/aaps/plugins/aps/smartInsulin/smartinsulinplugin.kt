@@ -197,7 +197,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val estimatedHba1c: Double, val bgWindowHours: Int, val activeDoseU: Double?,
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val pb2Status: String, val pb3Status: String,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
-        val pb3GateData: MealOverrideManager.Pb2GateData?
+        val pb3GateData: MealOverrideManager.Pb2GateData?,
+        val lowGuardMgdl: Double
     )
 
     fun fragmentData(): FragmentData {
@@ -271,7 +272,8 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb3DoseU = mealOverrideManager.activePb3DoseU,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
-            pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol)
+            pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
+            lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         )
     }
 
