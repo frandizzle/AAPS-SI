@@ -1016,6 +1016,10 @@ class OverviewFragment : DaggerFragment(), View.OnClickListener, OnLongClickList
             val stateLabel = when {
                 s.learningState == "Learning" -> "State: Learning"
                 s.learningState.startsWith("limited") -> "State: Learning limited"
+                s.learningState.startsWith("off: Post-meal") -> {
+                    val minsLeft = s.learningState.removePrefix("off: Post-meal").trim().removeSuffix("m left").trim()
+                    "State: Post meal lockout ${minsLeft}m left"
+                }
                 else -> "State: Not Learning"
             }
             binding.infoLayout.cob.apply {
