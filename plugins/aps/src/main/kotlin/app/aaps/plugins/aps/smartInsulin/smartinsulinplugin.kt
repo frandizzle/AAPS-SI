@@ -476,7 +476,11 @@ open class SmartInsulinPlugin @Inject constructor(
         var mealMode = MealModeDetector.detect(mealOverrideManager)
 
         if (!lockoutTrackerInitialized) { previousMealModeForLockout = mealMode; lockoutTrackerInitialized = true }
-        if (previousMealModeForLockout != MealMode.FASTING && previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT && mealMode == MealMode.FASTING) {
+        // P/F (UAM_PROTEIN_FAT) previously excluded from post-meal lockout — meaning learning
+        // resumed immediately after P/F expired. P/F typically runs 2-4h after a meal during
+        // fat/protein digestion; the BG signal during this period is not clean fasting data.
+        // Including P/F here ensures the lockout fires when P/F → FASTING, just like any other mode.
+        if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
             val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
             if (lockoutMins > 0) { learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60000L); sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) } }
         }

@@ -133,6 +133,7 @@ class AggressionLearner @Inject constructor(
         val ceil  = max
         val dow   = currentDow()
 
+        val prevGlobal = globalScore
         globalScore = stepScore(globalScore, stats, floor, ceil)
 
         val dayStart = Calendar.getInstance().apply {
@@ -141,9 +142,19 @@ class AggressionLearner @Inject constructor(
         val dayEnd = dayStart + 24 * 60 * 60 * 1000L
         val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dayStart, dayEnd) }))
         if (todayStats != null) {
+            val prev = dayScores[dow]
             dayScores[dow] = stepScore(dayScores[dow], todayStats, floor, ceil)
             daySampleCount[dow] = (daySampleCount[dow] + 1).coerceAtMost(999)
+            if (dayScores[dow] != prev)
+                aapsLogger.debug(LTag.APS,
+                                 "AggressionLearner: day[${DAY_LABELS[dow]}] score %.3f→%.3f tir=%.0f%% high=%.0f%% low=%.0f%% (n=${daySampleCount[dow]})".format(
+                                     prev, dayScores[dow], todayStats.inRangePct, todayStats.highPct, todayStats.lowPct))
         }
+
+        if (globalScore != prevGlobal)
+            aapsLogger.debug(LTag.APS,
+                             "AggressionLearner: global score %.3f→%.3f fasting tir=%.0f%% high=%.0f%% low=%.0f%% (n=${fastingSamples.size})".format(
+                                 prevGlobal, globalScore, stats.inRangePct, stats.highPct, stats.lowPct))
     }
 
     private fun isSameDay(timestampMs: Long, dayStartMs: Long, dayEndMs: Long): Boolean =
@@ -226,6 +237,8 @@ class AggressionLearner @Inject constructor(
                 if (isFasting) fastingSamples.addLast(sample)
                 else mealSamples.addLast(sample)
             }
+            aapsLogger.debug(LTag.APS,
+                             "AggressionLearner: restored globalScore=$globalScore all=${allSamples.size} fasting=${fastingSamples.size} meal=${mealSamples.size}")
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "AggressionLearner: restore failed: ${e.message}")
             globalScore = 1.0
