@@ -792,11 +792,19 @@ class CircadianLearner @Inject constructor(
             val isNewLowEvent = msSinceLastHardLow > HARD_LOW_BASAL_GATE_MS
             lastHardLowPenaltyMs = nowMs
             lastPenaltyWasFasting = isFasting
+            // Reset lowGuardPenaltyFired on each new low event so the ISF/basal penalty
+            // fires once per episode (gated by HARD_LOW_BASAL_GATE_MS), not just once ever.
+            // Without this reset, lowGuardPenaltyFired stays true after the first event
+            // and subsequent new events skip the ISF/basal nudge entirely.
+            if (isNewLowEvent) lowGuardPenaltyFired = false
 
             if (isNewLowEvent) {
-                // Short term: 20% ceiling cut — once per event
+                // Short term: ceiling cut — applied directly (alpha=1.0), not EWMA-softened.
+                // Using AGGR_ALPHA_PENALTY=0.25 here only moved the ceiling by ~2.5% which
+                // is invisible in the table and has no meaningful effect on dosing.
+                // Direct write ensures the penalty is actually felt this cycle.
                 val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
-                aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+                aggrState = aggrState.updatedDayOnly(dow, hour, penalised, 1.0)
                 // Basal: mult DOWN — less background insulin
                 val d = dow.coerceIn(0, 6)
                 val prevBasVal   = basalState.days[d].get(hour)
