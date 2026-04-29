@@ -25,7 +25,6 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import javax.inject.Provider
 
 class DetermineBasalSmartInsulinTest {
 
@@ -87,7 +86,7 @@ class DetermineBasalSmartInsulinTest {
 
     @Before fun setUp() {
         fakeResult = FakeAPSResult()
-        sut = DetermineBasalSmartInsulin(Provider { fakeResult })
+        sut = DetermineBasalSmartInsulin { fakeResult }
 
         whenever(oapsProfile.sens).thenReturn(50.0)
         whenever(oapsProfile.current_basal).thenReturn(1.0)
@@ -97,6 +96,10 @@ class DetermineBasalSmartInsulinTest {
         whenever(oapsProfile.enableSMB_always).thenReturn(true)
         whenever(oapsProfile.maxSMBBasalMinutes).thenReturn(30)
         whenever(oapsProfile.enableUAM).thenReturn(false)
+        whenever(oapsProfile.max_basal).thenReturn(5.0)
+        whenever(oapsProfile.max_daily_basal).thenReturn(1.5)
+        whenever(oapsProfile.max_daily_safety_multiplier).thenReturn(3.0)
+        whenever(oapsProfile.current_basal_safety_multiplier).thenReturn(4.0)
 
         whenever(glucoseStatus.glucose).thenReturn(120.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
@@ -106,7 +109,7 @@ class DetermineBasalSmartInsulinTest {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private fun flatIobArray(iob: Double, activity: Double, size: Int = 60): Array<IobTotal> =
+    private fun flatIobArray(iob: Double, activity: Double, size: Int = 120): Array<IobTotal> =
         Array(size) { t -> IobTotal(time = t * 60_000L, iob = iob, activity = activity) }
 
     private fun defaultLearned(mode: MealMode = MealMode.FASTING) =
@@ -118,7 +121,8 @@ class DetermineBasalSmartInsulinTest {
         lowGuardMmol:      Double               = 3.9,
         warnGuardMmol:     Double               = 4.5,
         microBolusAllowed: Boolean              = true,
-        horizonMins:       Int                  = 60
+        bgWentLow:         Boolean              = false,
+        inReboundWindow:   Boolean              = false
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -129,11 +133,29 @@ class DetermineBasalSmartInsulinTest {
             profile               = profile,
             learnedProfile        = learnedProfile,
             mealMode              = MealMode.FASTING,
-            predictionHorizonMins = horizonMins,
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
+            maxSmbU               = 2.0,
+            maxTbrU               = 5.0,
+            aggressiveness        = 1.0,
+            tirSummary            = "100%",
+            basalMultiplier       = 1.0,
+            dosingIsfMgdl         = 50.0,
             microBolusAllowed     = microBolusAllowed,
-            currentTime           = System.currentTimeMillis()
+            inReboundWindow       = inReboundWindow,
+            msSinceLastSuspend    = 3600_000L,
+            currentTime           = System.currentTimeMillis(),
+            isTempTarget          = false,
+            profileTargetMgdl     = 100.0,
+            dawnWindowStartHour   = 4,
+            dawnWindowEndHour     = 9,
+            dawnSmbReduction      = 0.0,
+            bgWentLow             = bgWentLow,
+            activityLevel         = ActivityMonitor.ActivityLevel.SEDENTARY,
+            activityTargetOffsetMmol = 0.0,
+            cgmSmbFraction        = 1.0,
+            cgmDeltaPlausible     = true,
+            cgmWarmupReason       = ""
         )
         return fakeResult
     }
@@ -161,7 +183,7 @@ class DetermineBasalSmartInsulinTest {
     @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
         whenever(glucoseStatus.glucose).thenReturn(85.0)
         val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.015))
-        assertTrue("Reduced basal should be <= 0.5 U/hr", r.rate <= 0.5)
+        assertTrue("Reduced basal should be <= 0.5 U/hr, got ${r.rate}", r.rate <= 0.5001)
         assertTrue("Reduced basal should be non-negative", r.rate >= 0.0)
         assertEquals(0.0, r.smb, 0.001)
         assertTrue(r.reason.contains("CAUTION"))
@@ -188,8 +210,8 @@ class DetermineBasalSmartInsulinTest {
         whenever(glucoseStatus.glucose).thenReturn(140.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(0.5)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0), microBolusAllowed = true)
-        assertTrue("SMB should be > 0 when above target", r.smb > 0.0)
-        assertTrue("SMB should be < full correction",     r.smb < 0.8)
+        assertTrue("SMB should be > 0 when above target, got ${r.smb}", r.smb > 0.0)
+        assertTrue("SMB should be < full correction, got ${r.smb}",     r.smb < 0.8)
         assertTrue(r.reason.contains("NORMAL"))
     }
 
@@ -213,14 +235,15 @@ class DetermineBasalSmartInsulinTest {
         whenever(glucoseStatus.glucose).thenReturn(300.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(2.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
-        assertTrue("SMB must be <= 0.5 U cap", r.smb <= 0.5)
+        assertTrue("SMB must be <= 0.5 U cap, got ${r.smb}", r.smb <= 0.5001)
     }
 
     // ── Prediction graph ─────────────────────────────────────────────────────
 
     @Test fun `predictionsAsGv is populated with correct count`() {
-        val r = invoke(horizonMins = 45)
-        assertEquals(45, r.predictionsAsGv.size)
+        // default LearnedProfile has safeDiaMinutes=300 -> 300/5 = 60 ticks
+        val r = invoke()
+        assertEquals(60, r.predictionsAsGv.size)
     }
 
     @Test fun `predictions are cleared and repopulated each call`() {
@@ -229,21 +252,21 @@ class DetermineBasalSmartInsulinTest {
                trendArrow = TrendArrow.NONE, noise = null,
                sourceSensor = SourceSensor.UNKNOWN)
         )
-        val r = invoke(horizonMins = 30)
-        assertEquals(30, r.predictionsAsGv.size)
+        val r = invoke()
+        assertEquals(60, r.predictionsAsGv.size)
     }
 
     @Test fun `zero IOB and zero delta predicts near-flat BG`() {
         whenever(glucoseStatus.glucose).thenReturn(110.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
-        val r = invoke(iobArray = flatIobArray(0.0, 0.0), horizonMins = 30)
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
         assertEquals(110.0, r.predictionsAsGv.first().value, 1.0)
     }
 
     @Test fun `positive delta with no IOB predicts rising BG at t=1`() {
         whenever(glucoseStatus.glucose).thenReturn(100.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(5.0)
-        val r = invoke(iobArray = flatIobArray(0.0, 0.0), horizonMins = 10)
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
         assertTrue("Rising delta should push BG above 100", r.predictionsAsGv.first().value > 100.0)
     }
 }

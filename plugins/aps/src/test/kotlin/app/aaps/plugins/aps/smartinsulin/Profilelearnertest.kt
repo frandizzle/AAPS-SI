@@ -10,19 +10,20 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import app.aaps.core.interfaces.logging.AAPSLogger
-import app.aaps.core.keys.interfaces.Preferences
-import app.aaps.core.keys.StringKey
+import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.profile.ProfileFunction
 
 class ProfileLearnerTest {
 
     private val logger: AAPSLogger = mock()
-    private val preferences: Preferences = mock()
+    private val sp: SP = mock()
+    private val profileFunction: ProfileFunction = mock()
     private lateinit var learner: ProfileLearner
 
     @Before fun setUp() {
         // Return empty string for all profile keys → triggers defaultFor() fallback
-        whenever(preferences.get(any<StringKey>())).thenReturn("")
-        learner = ProfileLearner(logger, preferences)
+        whenever(sp.getString(any<String>(), any<String>())).thenAnswer { it.getArgument<String>(1) }
+        learner = ProfileLearner(logger, sp, profileFunction)
     }
 
     // ── Default profiles ─────────────────────────────────────────────────────
@@ -41,13 +42,13 @@ class ProfileLearnerTest {
         val before = learner.getProfile(MealMode.FASTING).peakMinutes
         learner.observeBolusCurve(
             mode             = MealMode.FASTING,
-            observedPeakMins = 50.0,   // faster than the prior of 65
+            observedPeakMins = 50.0,   // faster than the prior of 75 (FALLBACK_PEAK_MINS)
             observedDiaMins  = 220.0,
-            learningRate     = 0.15
+            learningRate     = 0.15,
         )
         val after = learner.getProfile(MealMode.FASTING).peakMinutes
-        // Peak should have moved toward 50 from 65
-        assertTrue("Peak should decrease toward 50", after < before)
+        // Peak should have moved toward 50 from 75
+        assertTrue("Peak should decrease toward 50 (before=$before after=$after)", after < before)
         assertTrue("Peak should not jump all the way to 50", after > 50.0)
     }
 
@@ -57,7 +58,7 @@ class ProfileLearnerTest {
                 mode             = MealMode.FASTING,
                 observedPeakMins = 55.0,
                 observedDiaMins  = 210.0,
-                learningRate     = 0.15
+                learningRate     = 0.15,
             )
         }
         val profile = learner.getProfile(MealMode.FASTING)
@@ -81,7 +82,7 @@ class ProfileLearnerTest {
             mode             = MealMode.EXTENDED,
             observedPeakMins = 85.0,
             observedDiaMins  = 400.0,   // very different — should be ignored
-            learningRate     = 0.15
+            learningRate     = 0.15,
         )
         val diaAfter = learner.getProfile(MealMode.EXTENDED).diaMinutes
         assertEquals("DIA should not change in EXTENDED mode", diaBefore, diaAfter, 0.001)
@@ -91,12 +92,12 @@ class ProfileLearnerTest {
         val peakBefore = learner.getProfile(MealMode.EXTENDED).peakMinutes
         learner.observeBolusCurve(
             mode             = MealMode.EXTENDED,
-            observedPeakMins = 75.0,   // different from prior of 90
+            observedPeakMins = 60.0,   // different from default of 75
             observedDiaMins  = 350.0,
-            learningRate     = 0.15
+            learningRate     = 0.15,
         )
         val peakAfter = learner.getProfile(MealMode.EXTENDED).peakMinutes
-        assertTrue("Peak should update even in EXTENDED mode", peakAfter != peakBefore)
+        assertTrue("Peak should update even in EXTENDED mode (before=$peakBefore, after=$peakAfter)", peakAfter != peakBefore)
     }
 
     // ── Rejection of implausible observations ────────────────────────────────
@@ -107,7 +108,7 @@ class ProfileLearnerTest {
             mode             = MealMode.FASTING,
             observedPeakMins = 200.0,  // peak > DIA — nonsensical
             observedDiaMins  = 150.0,
-            learningRate     = 0.15
+            learningRate     = 0.15,
         )
         val after = learner.getProfile(MealMode.FASTING)
         assertEquals(before.peakMinutes, after.peakMinutes, 0.001)
@@ -120,7 +121,7 @@ class ProfileLearnerTest {
             mode             = MealMode.FASTING,
             observedPeakMins = 5.0,
             observedDiaMins  = 240.0,
-            learningRate     = 0.15
+            learningRate     = 0.15,
         )
         val after = learner.getProfile(MealMode.FASTING)
         // Peak should have moved toward 35 (clamped value), not 5
@@ -169,7 +170,6 @@ class ProfileLearnerTest {
             mode          = MealMode.LUNCH,
             peakMinutes   = 72.3,
             diaMinutes    = 255.7,
-            confidence    = 0.65,
             sampleCount   = 12,
             lastUpdatedMs = 1_700_000_000_000L
         )
@@ -177,7 +177,6 @@ class ProfileLearnerTest {
         assertEquals(original.mode,          restored.mode)
         assertEquals(original.peakMinutes,   restored.peakMinutes,   0.001)
         assertEquals(original.diaMinutes,    restored.diaMinutes,    0.001)
-        assertEquals(original.confidence,    restored.confidence,    0.001)
         assertEquals(original.sampleCount,   restored.sampleCount)
         assertEquals(original.lastUpdatedMs, restored.lastUpdatedMs)
     }
