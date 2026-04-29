@@ -37,12 +37,12 @@ class UamControllerBurstTest {
     @BeforeEach
     fun setup() {
         // Mock default SP behavior to return the provided default values
-        whenever(sp.getBoolean(any<String>(), any())).thenAnswer { it.arguments[1] as Boolean }
-        whenever(sp.getInt(any<String>(), any())).thenAnswer { it.arguments[1] as Int }
-        whenever(sp.getString(any<String>(), any())).thenAnswer { it.arguments[1] as String }
-        whenever(sp.getDouble(any<String>(), any())).thenAnswer { it.arguments[1] as Double }
+        whenever(sp.getBoolean(any<String>(), any<Boolean>())).thenAnswer { invocation -> invocation.getArgument<Boolean>(1) }
+        whenever(sp.getInt(any<String>(), any<Int>())).thenAnswer { invocation -> invocation.getArgument<Int>(1) }
+        whenever(sp.getString(any<String>(), any<String>())).thenAnswer { invocation -> invocation.getArgument<String>(1) }
+        whenever(sp.getDouble(any<String>(), any<Double>())).thenAnswer { invocation -> invocation.getArgument<Double>(1) }
 
-        whenever(sp.getBoolean(eq(BooleanKey.ApsSmartInsulinUamEnabled.key), any())).thenReturn(true)
+        whenever(sp.getBoolean(eq(BooleanKey.ApsSmartInsulinUamEnabled.key), any<Boolean>())).thenReturn(true)
         whenever(sp.getInt(eq(IntKey.ApsSmartInsulinUamDayStartHour.key), any())).thenReturn(0)
         whenever(sp.getInt(eq(IntKey.ApsSmartInsulinUamNightCutoffHour.key), any())).thenReturn(24)
         whenever(profileUtil.units).thenReturn(app.aaps.core.data.model.GlucoseUnit.MMOL)
