@@ -107,6 +107,13 @@ class UamControllerBurstTest {
     }
 
     @Test
+    fun `burst fires in single reading when rise exceeds threshold in one step`() {
+        cycle(bgMmol = 5.5, tMs = 1_000L)   // anchor at 5.5
+        cycle(bgMmol = 6.6, tMs = 301_000L, delta = 1.1, avgDelta = 1.1)  // +1.1 ≥ 1.0 → FIRE
+        verifyFired()
+    }
+
+    @Test
     fun `burst does not fire on second step when total is still below threshold`() {
         cycle(bgMmol = 6.0, tMs = 1_000L)
         cycle(bgMmol = 6.4, tMs = 301_000L)   // total = 0.4 — not enough
