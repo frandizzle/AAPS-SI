@@ -635,16 +635,16 @@ class SmartInsulinFragment : DaggerFragment() {
                 val trimPctVal = trimPct.removeSuffix("%").toFloatOrNull() ?: 0f
                 val shortTerm  = if (adding) "adding ~${"%.0f".format(trimPctVal)}% insulin" else "removing ~${"%.0f".format(trimPctVal)}% insulin"
                 val longTerm   = if (adding) "feeding +${"%.0f".format(trimPctVal * 0.5f)}% long-term into ISF & basal" else "feeding -${"%.0f".format(trimPctVal * 0.5f)}% long-term into ISF & basal"
-                val wasIsf     = if (d.nudgeSessionIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.nudgeSessionIsfMgdl)} mg/dL/U" else "?"
-                val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U" else "?"
-                val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
-                val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
-                // ISF is inverted: lower mmol/U = more aggressive = more insulin.
-                // When adding insulin: ISF mmol/U goes DOWN, basal goes UP.
-                // When removing insulin: ISF mmol/U goes UP, basal goes DOWN.
-                val isfNote    = if (adding) "(↓ lower ISF = more insulin per BG gap)" else "(↑ higher ISF = less insulin per BG gap)"
+                // Show current ISF and basal with direction arrow rather than unreliable was→now
+                // (session baseline can be stale after restarts). Arrow shows what the trim is doing.
+                val curIsf = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U" else "?"
+                val curBas = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
+                // Adding insulin: ISF mult ↑ → dosingISF mmol/U ↓ (more aggressive)
+                // Removing insulin: ISF mult ↓ → dosingISF mmol/U ↑ (less aggressive)
+                val isfArrow = if (adding) "↓ trimming ISF lower (more insulin per BG gap)" else "↑ trimming ISF higher (less insulin per BG gap)"
+                val basArrow = if (adding) "↑ trimming basal higher" else "↓ trimming basal lower"
                 nudgeHeadline  = "⚡ Fuel trim: $shortTerm (BG off target for full peak window)"
-                nudgeDetail    = "ISF was $wasIsf → now $nowIsf $isfNote\nBasal was $wasBas → now $nowBas\n$shortTerm short-term (ceiling moved)\n$longTerm\nDecays automatically once BG returns to target."
+                nudgeDetail    = "Current ISF: $curIsf — $isfArrow\nCurrent basal: $curBas — $basArrow\n$shortTerm short-term (ceiling moved)\n$longTerm\nDecays automatically once BG returns to target."
             }
             nudgeActive -> {
                 val deviation    = nudgeParts.getOrNull(1) ?: "?"
@@ -663,23 +663,16 @@ class SmartInsulinFragment : DaggerFragment() {
                     } else "%02d:00".format(hour)
                 } else "?"
 
-                // "Was" = full composite ISF/basal at start of this hour (same values loop was delivering)
-                // "Now" = current full composite (finalIsfMgdl / finalBasalU) — exactly what loop delivers now
-                val wasIsf = if (d.nudgeSessionIsfMgdl > 0)
-                    if (d.isMmol) "${"%.2f".format(d.nudgeSessionIsfMgdl / 18.0)} mmol/U"
-                    else "${"%.1f".format(d.nudgeSessionIsfMgdl)} mg/dL/U"
-                else "?"
-                val nowIsf = if (d.finalIsfMgdl > 0)
+                // Current ISF and basal with direction context
+                // nudgeActiveHigh = too much insulin (tooMuch=true): ISF mult ↓ → dosingISF mmol/U ↑, basal ↓
+                // !nudgeActiveHigh = not enough insulin (notEnough=true): ISF mult ↑ → dosingISF mmol/U ↓, basal ↑
+                val curIsf = if (d.finalIsfMgdl > 0)
                     if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U"
                     else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U"
                 else "?"
-
-                val wasBas = if (d.nudgeSessionBasalU > 0)
-                    "${"%.3f".format(d.nudgeSessionBasalU)} U/h"
-                else "?"
-                val nowBas = if (d.finalBasalU > 0)
-                    "${"%.3f".format(d.finalBasalU)} U/h"
-                else "?"
+                val curBas = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
+                val isfDir = if (nudgeActiveHigh) "↑ ISF raised (less insulin per BG gap)" else "↓ ISF lowered (more insulin per BG gap)"
+                val basDir = if (nudgeActiveHigh) "↓ basal reduced" else "↑ basal increased"
 
                 // Short term % from ceiling, long term % from basal multiplier
                 val shortPct  = ((1.0 - d.circCeil) * 100).roundToInt()
@@ -708,13 +701,9 @@ class SmartInsulinFragment : DaggerFragment() {
                 } else {
                     nudgeHeadline = "⚡ Not enough insulin — adjusting$cooldownNote"
                 }
-                // ISF is inverted: lower mmol/U = more aggressive = more insulin.
-                // "Not enough insulin" (nudgeActiveHigh=false, ACTIVE_HIGH): ISF mmol/U goes DOWN, basal goes UP.
-                // "Too much insulin" (nudgeActiveHigh=true, ACTIVE_LOW): ISF mmol/U goes UP, basal goes DOWN.
-                val isfNote = if (!nudgeActiveHigh) "(↓ lower = more insulin)" else "(↑ higher = less insulin)"
                 nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
-                    "ISF was $wasIsf → now $nowIsf $isfNote\n" +
-                    "Basal was $wasBas → now $nowBas\n" +
+                    "ISF: $curIsf — $isfDir\n" +
+                    "Basal: $curBas — $basDir\n" +
                     "$shortLine\n" +
                     "$longLine\n" +
                     statusLine
