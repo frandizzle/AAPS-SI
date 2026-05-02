@@ -580,12 +580,15 @@ class CircadianLearner @Inject constructor(
                                  "(would have nudged ${"%.3f".format(prevBasMult)}→${"%.3f".format(nudgedBas)})")
         }
 
-        // Store status
+        // Store status — include whether physics learner overrode the nudge this cycle
+        val isfApplied  = !isfPhysicsFired
+        val basApplied  = !basalPhysicsFired
         val direction = if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
             "${"%.4f".format(nudgeSessionBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
-            "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason"
+            "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason|" +
+            "${if (isfApplied) "ISF_APPLIED" else "ISF_SKIPPED"}|${if (basApplied) "BAS_APPLIED" else "BAS_SKIPPED"}"
         // Only overwrite lastBasalSignal if the nudge actually applied — otherwise
         // preserve the drift/negIOB/predTrim signal message set by updateBasalLearner.
         if (!basalPhysicsFired) {

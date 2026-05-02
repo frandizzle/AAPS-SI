@@ -616,8 +616,8 @@ class SmartInsulinFragment : DaggerFragment() {
             !(d.inReboundWindow || d.bgWentLow) && (predTrimActive || allLessInsulin)
 
         val nudgeColor = when {
-            nudgeActiveHigh                              -> Color.parseColor("#FFFB8C00")
-            nudgeActiveLow                               -> Color.parseColor("#FF4CAF50")
+            nudgeActiveLow                               -> Color.parseColor("#FFFB8C00")  // too much insulin — amber
+            nudgeActiveHigh                              -> Color.parseColor("#FF4CAF50")  // not enough insulin — green
             nudgePaused                                  -> Color.parseColor("#FF64B5F6")
             nudgeTrim && trimDirection == "ACTIVE_HIGH"  -> Color.parseColor("#FF43A047")
             nudgeTrim && trimDirection == "ACTIVE_LOW"   -> Color.parseColor("#FFFB8C00")
@@ -659,32 +659,36 @@ class SmartInsulinFragment : DaggerFragment() {
                     } else "%02d:00".format(hour)
                 } else "?"
 
-                // Use session mults from the status string (positions 4-7) — these are captured
-                // by CircadianLearner at the start of each hour/day combo, making them more
-                // reliable than the plugin's direction-change-based session capture.
-                // Format: ACTIVE_LOW|dev|day|hour|sessionIsfMult|currentIsfMult|sessionBasMult|currentBasMult|...
+                // Use session mults from status string (positions 4-7) — captured by CircadianLearner
+                // at session start, more reliable than plugin's direction-change-based capture.
+                // Positions 10-11 tell us if physics learner overrode the nudge this cycle.
+                // Format: ACTIVE_LOW|dev|day|hour|sessionIsfMult|currentIsfMult|sessionBasMult|currentBasMult|COOLDOWN|reason|ISF_APPLIED|BAS_APPLIED
                 val sessionIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull() ?: 0.0
                 val currentIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: 0.0
                 val sessionBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 0.0
                 val currentBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: 0.0
+                val isfApplied     = nudgeParts.getOrNull(10) != "ISF_SKIPPED"
+                val basApplied     = nudgeParts.getOrNull(11) != "BAS_SKIPPED"
 
-                // dosingISF = profileISF / isfMult → convert to mmol/U or mg/dL/U
+                // dosingISF = profileISF / isfMult
                 val wasIsf = if (sessionIsfMult > 0 && d.profileIsfMgdl > 0) {
-                    val dosingIsf = d.profileIsfMgdl / sessionIsfMult
-                    if (d.isMmol) "${"%.2f".format(dosingIsf / 18.0)} mmol/U" else "${"%.1f".format(dosingIsf)} mg/dL/U"
+                    val v = d.profileIsfMgdl / sessionIsfMult
+                    if (d.isMmol) "${"%.2f".format(v / 18.0)} mmol/U" else "${"%.1f".format(v)} mg/dL/U"
                 } else "?"
                 val nowIsf = if (currentIsfMult > 0 && d.profileIsfMgdl > 0) {
-                    val dosingIsf = d.profileIsfMgdl / currentIsfMult
-                    if (d.isMmol) "${"%.2f".format(dosingIsf / 18.0)} mmol/U" else "${"%.1f".format(dosingIsf)} mg/dL/U"
+                    val v = d.profileIsfMgdl / currentIsfMult
+                    if (d.isMmol) "${"%.2f".format(v / 18.0)} mmol/U" else "${"%.1f".format(v)} mg/dL/U"
                 } else "?"
-
-                // basal = profileBasal * basalMult
                 val wasBas = if (sessionBasMult > 0 && d.profileBasalU > 0)
-                    "${"%.3f".format(d.profileBasalU * sessionBasMult)} U/h"
-                else "?"
+                    "${"%.3f".format(d.profileBasalU * sessionBasMult)} U/h" else "?"
                 val nowBas = if (currentBasMult > 0 && d.profileBasalU > 0)
-                    "${"%.3f".format(d.profileBasalU * currentBasMult)} U/h"
-                else "?"
+                    "${"%.3f".format(d.profileBasalU * currentBasMult)} U/h" else "?"
+                val physicsNote = when {
+                    !isfApplied && !basApplied -> " (physics learner active this cycle)"
+                    !isfApplied -> " (ISF held — physics learner active)"
+                    !basApplied -> " (basal held — physics learner active)"
+                    else -> ""
+                }
 
                 // Short term % from ceiling, long term % from basal multiplier
                 val shortPct  = ((1.0 - d.circCeil) * 100).roundToInt()
@@ -692,14 +696,14 @@ class SmartInsulinFragment : DaggerFragment() {
                 val shortAbs  = Math.abs(shortPct)
                 val longAbs   = Math.abs(longPct)
 
-                val shortLine = if (nudgeActiveHigh)
+                val shortLine = if (nudgeActiveLow)
                     "Short term: pulling out ~${shortAbs}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
                 else
                     "Short term: adding ~${shortAbs}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
 
                 val longLine = when {
-                    longAbs < 2  -> "Long term: still building — less than 2% change so far"
-                    nudgeActiveHigh -> "Long term: permanently reduced by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
+                    longAbs < 2     -> "Long term: still building — less than 2% change so far"
+                    nudgeActiveLow  -> "Long term: permanently reduced by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
                     else            -> "Long term: permanently increased by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
                 }
 
@@ -708,13 +712,13 @@ class SmartInsulinFragment : DaggerFragment() {
                 else
                     "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
 
-                if (nudgeActiveHigh) {
+                if (nudgeActiveLow) {
                     nudgeHeadline = "⚡ Too much insulin — adjusting$cooldownNote"
                 } else {
                     nudgeHeadline = "⚡ Not enough insulin — adjusting$cooldownNote"
                 }
                 nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
-                    "ISF was $wasIsf → now $nowIsf\n" +
+                    "ISF was $wasIsf → now $nowIsf$physicsNote\n" +
                     "Basal was $wasBas → now $nowBas\n" +
                     "$shortLine\n" +
                     "$longLine\n" +
