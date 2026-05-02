@@ -412,16 +412,32 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     private fun pfIsfMgdl(hour: Int): Double {
-        val dayStart = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)
-        val dayEnd = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayEndHour.key, IntKey.ApsSmartInsulinUamProteinFatDayEndHour.defaultValue)
-        val nightStart = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatNightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatNightStartHour.defaultValue)
-        val nightEnd = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatNightEndHour.key, IntKey.ApsSmartInsulinUamNightCutoffHour.defaultValue)
-        val inDay = if (dayStart <= dayEnd) hour in dayStart..dayEnd else hour >= dayStart || hour <= dayEnd
-        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd else hour >= nightStart || hour <= nightEnd
-        val dayIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
-        val nightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
-        val fallback = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
-        return when { inDay && dayIsf > 0.0 -> dayIsf; inNight && nightIsf > 0.0 -> nightIsf; else -> fallback }
+        val dayStart      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)
+        val dayEnd        = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayEndHour.key, IntKey.ApsSmartInsulinUamProteinFatDayEndHour.defaultValue)
+        val nightStart    = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatNightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatNightStartHour.defaultValue)
+        val nightEnd      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatNightEndHour.key, IntKey.ApsSmartInsulinUamProteinFatNightEndHour.defaultValue)
+        val overnightStart = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.defaultValue)
+        val overnightEnd   = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.defaultValue)
+
+        fun inWindow(start: Int, end: Int) =
+            if (start <= end) hour in start..end else hour >= start || hour <= end
+
+        val inDay       = inWindow(dayStart, dayEnd)
+        val inNight     = inWindow(nightStart, nightEnd)
+        val inOvernight = inWindow(overnightStart, overnightEnd)
+
+        val dayIsf       = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
+        val nightIsf     = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
+        val overnightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
+        val fallback     = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+
+        // Overnight takes priority over night when both match (overnight is more specific)
+        return when {
+            inOvernight && overnightIsf > 0.0 -> overnightIsf
+            inDay       && dayIsf       > 0.0 -> dayIsf
+            inNight     && nightIsf     > 0.0 -> nightIsf
+            else                              -> fallback
+        }
     }
 
     private fun modeIsfMgdl(mode: MealMode, hour: Int): Double = when (mode) {
