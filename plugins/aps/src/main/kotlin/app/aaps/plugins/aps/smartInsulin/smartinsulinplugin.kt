@@ -662,16 +662,38 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedCgmSuppressLearning = cgmState.suppressLearning
 
         val pb2DoseU = mealOverrideManager.activePb2DoseU
-        val pb2Line = if (pb2DoseU != null && pb2DoseU > 0.0) {
-            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-            "PB2 active: ${mins}m"
-        } else null
+        val pb2Line = when {
+            // PB2 pending — not yet delivered, show it's coming
+            mealOverrideManager.preBolus2Pending -> {
+                val secsLeft = mealOverrideManager.preBolus2SecondsRemaining ?: 0L
+                when {
+                    secsLeft > 60  -> "PB2 in ${secsLeft / 60}m"
+                    secsLeft > 0   -> "PB2 in ${secsLeft}s"
+                    else           -> "PB2 waiting for gates"
+                }
+            }
+            // PB2 delivered — show delivered amount briefly then clear
+            pb2DoseU != null && pb2DoseU > 0.0 && !mealOverrideManager.preBolus2Pending -> {
+                "PB2 delivered ${"%.2f".format(pb2DoseU)}U"
+            }
+            else -> null
+        }
 
         val pb3DoseU = mealOverrideManager.activePb3DoseU
-        val pb3Line = if (pb3DoseU != null && pb3DoseU > 0.0) {
-            val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-            "PB3 active: ${mins}m"
-        } else null
+        val pb3Line = when {
+            mealOverrideManager.preBolus3Pending -> {
+                val secsLeft = mealOverrideManager.preBolus3SecondsRemaining
+                when {
+                    secsLeft != null && secsLeft > 60 -> "PB3 in ${secsLeft / 60}m"
+                    secsLeft != null && secsLeft > 0  -> "PB3 in ${secsLeft}s"
+                    else                              -> "PB3 waiting for gates"
+                }
+            }
+            pb3DoseU != null && pb3DoseU > 0.0 && !mealOverrideManager.preBolus3Pending -> {
+                "PB3 delivered ${"%.2f".format(pb3DoseU)}U"
+            }
+            else -> null
+        }
 
         cachedOverviewState = SmartInsulinOverview.OverviewState(
             modeLine = "Meal: ${mealMode.label}", // Re-computed in overviewState()
