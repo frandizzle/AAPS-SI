@@ -198,7 +198,10 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val pb2GateData: MealOverrideManager.Pb2GateData?
         get() {
-            if (_state == null || lastMaxIob <= 0.0) return null
+            val s = _state ?: return null
+            // Only show PB2 gate data if PB2 was actually requested (dose > 0 and pending)
+            if (s.preBolus2U <= 0.0 || !s.preBolus2Pending) return null
+            if (lastMaxIob <= 0.0) return null
             return MealOverrideManager.Pb2GateData(
                 isMmol            = false,
                 profileTargetMgdl = lastTargetMgdl,
@@ -212,7 +215,10 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val pb3GateData: MealOverrideManager.Pb2GateData?
         get() {
-            if (_state == null || lastPb3MaxIob <= 0.0) return null
+            val s = _state ?: return null
+            // Only show PB3 gate data if PB3 was actually requested (dose > 0 and pending)
+            if (s.preBolus3U <= 0.0 || !s.preBolus3Pending) return null
+            if (lastPb3MaxIob <= 0.0) return null
             return MealOverrideManager.Pb2GateData(
                 isMmol            = false,
                 profileTargetMgdl = lastPb3TargetMgdl,
