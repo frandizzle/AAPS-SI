@@ -86,7 +86,6 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
         constraintChecker: ConstraintsChecker,
         profileFunction: ProfileFunction,
         activePlugin: ActivePlugin,
-        context: Context,
         config: Config,
         dateUtil: DateUtil,
         fabricPrivacy: FabricPrivacy,
@@ -101,7 +100,7 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
         bolusProgressData: BolusProgressData
     ) : CommandQueueImplementation(
         injector, aapsLogger, rxBus, rh, constraintChecker, profileFunction,
-        activePlugin, context, config, dateUtil, fabricPrivacy,
+        activePlugin, config, dateUtil, fabricPrivacy,
         uiInteraction, notificationManager, persistenceLayer, decimalFormatter, pumpEnactResultProvider, jobName, workManager, appScope, bolusProgressData
     ) {
 
@@ -199,7 +198,7 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
         runTest {
             whenever(persistenceLayer.observeChanges(anyOrNull<Class<*>>())).thenReturn(emptyFlow())
             commandQueue = CommandQueueMocked(
-                injector, aapsLogger, rxBus, rh, constraintChecker, profileFunction, activePlugin, context,
+                injector, aapsLogger, rxBus, rh, constraintChecker, profileFunction, activePlugin,
                 config, dateUtil, fabricPrivacy, uiInteraction, notificationManager, persistenceLayer, decimalFormatter, pumpEnactResultProvider, jobName, workManager, testScope, bolusProgressData
             )
             testPumpPlugin.pumpDescription.basalMinimumRate = 0.1
@@ -246,7 +245,7 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
     fun commandIsPickedUp() {
         commandQueue = CommandQueueImplementation(
             injector, aapsLogger, rxBus, rh,
-            constraintChecker, profileFunction, activePlugin, context,
+            constraintChecker, profileFunction, activePlugin,
             config, dateUtil, fabricPrivacy, uiInteraction, notificationManager, persistenceLayer, decimalFormatter, pumpEnactResultProvider, jobName, workManager, testScope, bolusProgressData
         )
         val handler: Handler = mock()
@@ -677,7 +676,7 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
     // --- Running-mode gate tests ---
     //
     // These verify the queue rejects commands when the active running mode forbids them.
-    // The gate itself is exhaustively tested in TbrGateTest; here we only verify the queue
+    // The gate itself is exhaustively tested in PumpCommandGateTest; here we only verify the queue
     // calls the gate and propagates its decision to the callback.
 
     @Test

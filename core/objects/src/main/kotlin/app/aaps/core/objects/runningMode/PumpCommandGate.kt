@@ -22,7 +22,7 @@ import app.aaps.core.data.model.RM
  * quiet snackbar / reply and never reach the queue. The queue-level gate catches anything that
  * slips past those checks.
  */
-object TbrGate {
+object PumpCommandGate {
 
     enum class CommandKind {
         /** Absolute rate > 0 or percent != 0 / != 100 in some drivers; any "active" TBR. */

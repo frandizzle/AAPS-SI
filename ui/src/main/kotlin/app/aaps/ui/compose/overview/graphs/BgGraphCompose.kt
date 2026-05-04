@@ -45,6 +45,7 @@ import com.patrykandpatrick.vico.compose.cartesian.axis.VerticalAxis
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianChartModelProducer
 import com.patrykandpatrick.vico.compose.cartesian.data.CartesianLayerRangeProvider
 import com.patrykandpatrick.vico.compose.cartesian.data.lineSeries
+import com.patrykandpatrick.vico.compose.cartesian.decoration.HorizontalBox
 import com.patrykandpatrick.vico.compose.cartesian.layer.LineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
 import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
@@ -366,7 +367,19 @@ fun BgGraphCompose(
 // 8. Marker & Range Providers
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
-    val decorations = remember(nowLine) { listOf(nowLine) }
+
+    // In-range belt — translucent band between lowMark and highMark on the BG axis
+    val lowMark = chartConfig.lowMark
+    val highMark = chartConfig.highMark
+    val inRangeBox = remember(lowMark, highMark, inRangeColor) {
+        HorizontalBox(
+            y = { lowMark..highMark },
+            box = ShapeComponent(fill = Fill(inRangeColor.copy(alpha = 0.2f))),
+            verticalAxisPosition = Axis.Position.Vertical.Start
+        )
+    }
+
+    val decorations = remember(inRangeBox, nowLine) { listOf(inRangeBox, nowLine) }
 
     val scrubbing by viewModel.isScrubbing.collectAsStateWithLifecycle()
     val marker = rememberMarker(minTimestamp, scrubbing, getBgDetails)

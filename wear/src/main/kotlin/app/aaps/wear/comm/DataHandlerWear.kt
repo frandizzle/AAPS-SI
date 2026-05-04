@@ -1,20 +1,16 @@
 package app.aaps.wear.comm
 
-import app.aaps.wear.interaction.actions.WizardResultActivity
-import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.core.content.ContextCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.wear.tiles.TileService
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
@@ -37,7 +33,6 @@ import app.aaps.wear.complications.BrCobIobComplicationExt2
 import app.aaps.wear.complications.BrComplication
 import app.aaps.wear.complications.BrIobComplication
 import app.aaps.wear.complications.BrTtComplication
-import app.aaps.wear.complications.TargetComplication
 import app.aaps.wear.complications.CobDetailedComplication
 import app.aaps.wear.complications.CobIconComplication
 import app.aaps.wear.complications.CobIobComplication
@@ -49,17 +44,19 @@ import app.aaps.wear.complications.SgvComplication
 import app.aaps.wear.complications.SgvComplicationExt1
 import app.aaps.wear.complications.SgvComplicationExt2
 import app.aaps.wear.complications.SgvLargeComplication
+import app.aaps.wear.complications.TargetComplication
 import app.aaps.wear.complications.UploaderBatteryComplication
 import app.aaps.wear.data.ComplicationDataRepository
 import app.aaps.wear.interaction.WatchfaceConfigurationActivity
 import app.aaps.wear.interaction.actions.AcceptActivity
 import app.aaps.wear.interaction.actions.ProfileSwitchActivity
+import app.aaps.wear.interaction.actions.WizardResultActivity
 import app.aaps.wear.tile.ActionsTileService
 import app.aaps.wear.tile.BgGraphTileService
-import app.aaps.wear.tile.RunningModeTileService
 import app.aaps.wear.tile.QuickWizardTileService
-import app.aaps.wear.tile.TempTargetTileService
+import app.aaps.wear.tile.RunningModeTileService
 import app.aaps.wear.tile.SceneTileService
+import app.aaps.wear.tile.TempTargetTileService
 import app.aaps.wear.tile.UserActionTileService
 import com.google.android.gms.wearable.WearableListenerService
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -316,6 +313,17 @@ class DataHandlerWear @Inject constructor(
                 }
             }
         disposable += rxBus
+            .toObservable(EventData.ActiveSceneState::class.java)
+            .observeOn(aapsSchedulers.io)
+            .subscribe {
+                aapsLogger.debug(LTag.WEAR, "ActiveSceneState received from ${it.sourceNodeId} active=${it.active}")
+                val serialized = it.serialize()
+                if (serialized != sp.getString(R.string.key_active_scene_state, "")) {
+                    sp.putString(R.string.key_active_scene_state, serialized)
+                    TileService.getUpdater(context).requestUpdate(SceneTileService::class.java)
+                }
+            }
+        disposable += rxBus
             .toObservable(EventData.RunningModeList::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe {
@@ -399,11 +407,7 @@ class DataHandlerWear @Inject constructor(
                 .setOnlyAlertOnce(true)
                 .addAction(R.drawable.ic_cancel, context.getString(R.string.cancel_bolus), cancelPendingIntent)
         val notificationManager = NotificationManagerCompat.from(context)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationManager.notify(DataLayerListenerServiceWear.BOLUS_PROGRESS_NOTIF_ID, notificationBuilder.build())
-        }
+        notificationManager.notify(DataLayerListenerServiceWear.BOLUS_PROGRESS_NOTIF_ID, notificationBuilder.build())
         notificationManager.cancel(DataLayerListenerServiceWear.CONFIRM_NOTIF_ID) // multiple watch setup
         if (bolusProgress.percent == 100) {
             scheduleDismissBolusProgress(5)
@@ -469,13 +473,9 @@ class DataHandlerWear @Inject constructor(
         }
         val resultPendingIntent = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         builder = builder.setContentIntent(resultPendingIntent)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        ) {
-            val mNotificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // mId allows you to update the notification later on.
-            mNotificationManager.notify(DataLayerListenerServiceWear.CHANGE_NOTIF_ID, builder.build())
-        }
+        val mNotificationManager = context.getSystemService(WearableListenerService.NOTIFICATION_SERVICE) as NotificationManager
+        // mId allows you to update the notification later on.
+        mNotificationManager.notify(DataLayerListenerServiceWear.CHANGE_NOTIF_ID, builder.build())
     }
 
     @Suppress("SameParameterValue")
