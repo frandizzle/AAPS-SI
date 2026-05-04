@@ -164,7 +164,12 @@ class UamController @Inject constructor(
             return
         }
 
-        if (currentMealMode != MealMode.FASTING || highTempTarget) {
+        // Block detection when already in a UAM mode (no point re-detecting)
+        // but ALLOW detection during manual meal modes — BG can still rise unexpectedly
+        // during a manual bolus meal (e.g. extra carbs, faster absorption) and UAM
+        // should be able to fire to cover additional rises.
+        // Also block when high temp target is set.
+        if (currentMealMode.isUam || highTempTarget) {
             resetStreak(); stuckHighReadings = 0; return
         }
 
@@ -195,7 +200,11 @@ class UamController @Inject constructor(
         else if (!inPostReboundLockout) lastEpisodeWasSoftLanding = false
 
         val effectiveBypass = softLandingBypass || (inPostReboundLockout && lastEpisodeWasSoftLanding)
-        val blockedByLow = (bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || inPostReboundLockout) && !effectiveBypass
+        // msSinceLow < LOW_BLOCK_MINS must ALSO be bypassed for soft landing —
+        // previously it was a separate condition that stayed true for 90 min
+        // regardless of bypass, blocking UAM even when the low was shallow.
+        val blockedByLow = if (effectiveBypass) false
+        else (bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || inPostReboundLockout)
 
         if (blockedByLow) {
             resetStreak(); return
@@ -296,9 +305,9 @@ class UamController @Inject constructor(
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
         val msSincePostRebound = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
         val effectiveBypass = (msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L) && lastEpisodeWasSoftLanding
-        if ((bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || (msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L)) && !effectiveBypass) {
-            stuckHighReadings = 0; return
-        }
+        val blockedByLow = if (effectiveBypass) false
+        else (bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || (msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L))
+        if (blockedByLow) { stuckHighReadings = 0; return }
         val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
         if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
             stuckHighReadings = 0; return
