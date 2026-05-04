@@ -164,12 +164,7 @@ class UamController @Inject constructor(
             return
         }
 
-        // Block detection when already in a UAM mode (no point re-detecting)
-        // but ALLOW detection during manual meal modes — BG can still rise unexpectedly
-        // during a manual bolus meal (e.g. extra carbs, faster absorption) and UAM
-        // should be able to fire to cover additional rises.
-        // Also block when high temp target is set.
-        if (currentMealMode.isUam || highTempTarget) {
+        if (currentMealMode != MealMode.FASTING || highTempTarget) {
             resetStreak(); stuckHighReadings = 0; return
         }
 
