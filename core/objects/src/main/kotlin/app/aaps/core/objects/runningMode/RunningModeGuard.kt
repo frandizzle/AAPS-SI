@@ -60,7 +60,6 @@ class RunningModeGuard @Inject constructor(
 
     private fun PumpCommandGate.Reason.toStringRes(): Int = when (this) {
         PumpCommandGate.Reason.PUMP_DISCONNECTED       -> R.string.pump_disconnected
-        PumpCommandGate.Reason.LOOP_SUSPENDED_USER,
         PumpCommandGate.Reason.LOOP_SUSPENDED_DST,
         PumpCommandGate.Reason.SUPER_BOLUS_ACTIVE      -> R.string.loopsuspended
 

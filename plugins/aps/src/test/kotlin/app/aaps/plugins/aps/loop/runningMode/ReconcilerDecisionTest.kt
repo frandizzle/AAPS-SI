@@ -10,9 +10,9 @@ class ReconcilerDecisionTest : TestBase() {
     private val working = listOf(
         RM.Mode.OPEN_LOOP, RM.Mode.CLOSED_LOOP, RM.Mode.CLOSED_LOOP_LGS, RM.Mode.RESUME
     )
-    private val stopped = listOf(RM.Mode.DISABLED_LOOP)
+    private val stopped = listOf(RM.Mode.DISABLED_LOOP, RM.Mode.SUSPENDED_BY_USER)
     private val zeroDelivery = listOf(RM.Mode.DISCONNECTED_PUMP, RM.Mode.SUPER_BOLUS)
-    private val suspendedNoTbr = listOf(RM.Mode.SUSPENDED_BY_USER, RM.Mode.SUSPENDED_BY_DST)
+    private val suspendedNoTbr = listOf(RM.Mode.SUSPENDED_BY_DST)
     private val pumpReported = listOf(RM.Mode.SUSPENDED_BY_PUMP)
 
     // --- Bucket classification ---
@@ -39,7 +39,7 @@ class ReconcilerDecisionTest : TestBase() {
     }
 
     @Test
-    fun `disabled loop maps to Stopped bucket`() {
+    fun `stopped modes map to Stopped bucket`() {
         stopped.forEach {
             assertThat(ReconcilerDecision.bucketOf(it)).isEqualTo(ReconcilerDecision.Bucket.Stopped)
         }

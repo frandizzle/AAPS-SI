@@ -913,11 +913,12 @@ class LoopPlugin @Inject constructor(
     }
 
     /**
-     * Enter a suspended running mode (SUSPENDED_BY_USER / SUSPENDED_BY_PUMP). Pure DB write:
-     * the RunningModeReconciler observes the change and cancels any active TBR on the pump side.
+     * Enter a suspended running mode (SUSPENDED_BY_USER / SUSPENDED_BY_PUMP / SUSPENDED_BY_DST).
+     * Pure DB write: the RunningModeReconciler observes the change and cancels any active TBR
+     * on the pump side.
      */
     suspend fun suspendLoop(mode: RM.Mode, autoForced: Boolean, reasons: String?, durationInMinutes: Int, action: Action, source: Sources, note: String? = null, listValues: List<ValueWithUnit> = emptyList()) {
-        assert(mode == RM.Mode.SUSPENDED_BY_PUMP || mode == RM.Mode.SUSPENDED_BY_USER)
+        assert(mode == RM.Mode.SUSPENDED_BY_PUMP || mode == RM.Mode.SUSPENDED_BY_USER || mode == RM.Mode.SUSPENDED_BY_DST)
         @SuppressLint("CheckResult")
         persistenceLayer.insertOrUpdateRunningMode(
             runningMode = RM(timestamp = dateUtil.now(), duration = T.mins(durationInMinutes.toLong()).msecs(), mode = mode, autoForced = autoForced, reasons = reasons),

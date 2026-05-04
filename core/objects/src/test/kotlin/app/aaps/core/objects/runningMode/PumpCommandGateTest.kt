@@ -108,25 +108,12 @@ class PumpCommandGateTest : TestBase() {
             .isEqualTo(PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.SUPER_BOLUS_ACTIVE))
     }
 
-    // --- SUSPENDED_BY_USER: only cancel allowed ---
+    // --- SUSPENDED_BY_USER: temporary DISABLED_LOOP — all commands allowed ---
 
     @Test
-    fun `suspended by user allows only cancel TBR`() {
-        assertThat(PumpCommandGate.check(RM.Mode.SUSPENDED_BY_USER, PumpCommandGate.CommandKind.CANCEL_TEMP_BASAL))
-            .isEqualTo(PumpCommandGate.Decision.Allow)
-    }
-
-    @Test
-    fun `suspended by user rejects every other command kind`() {
-        val rejected = listOf(
-            PumpCommandGate.CommandKind.TEMP_BASAL_ZERO,
-            PumpCommandGate.CommandKind.TEMP_BASAL_NONZERO,
-            PumpCommandGate.CommandKind.BOLUS,
-            PumpCommandGate.CommandKind.EXTENDED_BOLUS
-        )
-        rejected.forEach { kind ->
-            assertThat(PumpCommandGate.check(RM.Mode.SUSPENDED_BY_USER, kind))
-                .isEqualTo(PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.LOOP_SUSPENDED_USER))
+    fun `suspended by user allows all command kinds`() {
+        PumpCommandGate.CommandKind.entries.forEach { kind ->
+            assertThat(PumpCommandGate.check(RM.Mode.SUSPENDED_BY_USER, kind)).isEqualTo(PumpCommandGate.Decision.Allow)
         }
     }
 
@@ -184,7 +171,6 @@ class PumpCommandGateTest : TestBase() {
                 assertThat(d).isAnyOf(
                     PumpCommandGate.Decision.Allow,
                     PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.PUMP_DISCONNECTED),
-                    PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.LOOP_SUSPENDED_USER),
                     PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.LOOP_SUSPENDED_DST),
                     PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.PUMP_REPORTED_SUSPENDED),
                     PumpCommandGate.Decision.Reject(PumpCommandGate.Reason.SUPER_BOLUS_ACTIVE)

@@ -42,7 +42,6 @@ object PumpCommandGate {
 
     enum class Reason {
         PUMP_DISCONNECTED,
-        LOOP_SUSPENDED_USER,
         LOOP_SUSPENDED_DST,
         PUMP_REPORTED_SUSPENDED,
         SUPER_BOLUS_ACTIVE
@@ -54,6 +53,7 @@ object PumpCommandGate {
             RM.Mode.CLOSED_LOOP,
             RM.Mode.CLOSED_LOOP_LGS,
             RM.Mode.DISABLED_LOOP,
+            RM.Mode.SUSPENDED_BY_USER,
             RM.Mode.RESUME            -> Decision.Allow
 
             RM.Mode.DISCONNECTED_PUMP -> when (kind) {
@@ -72,11 +72,6 @@ object PumpCommandGate {
 
                 CommandKind.TEMP_BASAL_NONZERO,
                 CommandKind.EXTENDED_BOLUS -> Decision.Reject(Reason.SUPER_BOLUS_ACTIVE)
-            }
-
-            RM.Mode.SUSPENDED_BY_USER -> when (kind) {
-                CommandKind.CANCEL_TEMP_BASAL -> Decision.Allow
-                else                          -> Decision.Reject(Reason.LOOP_SUSPENDED_USER)
             }
 
             RM.Mode.SUSPENDED_BY_DST  -> when (kind) {

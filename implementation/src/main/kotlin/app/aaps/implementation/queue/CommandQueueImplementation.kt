@@ -182,7 +182,6 @@ class CommandQueueImplementation @Inject constructor(
         if (decision is PumpCommandGate.Decision.Reject) {
             val commentRes = when (decision.reason) {
                 PumpCommandGate.Reason.PUMP_DISCONNECTED       -> app.aaps.core.ui.R.string.pump_disconnected
-                PumpCommandGate.Reason.LOOP_SUSPENDED_USER,
                 PumpCommandGate.Reason.LOOP_SUSPENDED_DST,
                 PumpCommandGate.Reason.SUPER_BOLUS_ACTIVE      -> app.aaps.core.ui.R.string.loopsuspended
 

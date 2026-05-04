@@ -743,18 +743,20 @@ class CommandQueueImplementationTest : TestBaseWithProfile() {
     }
 
     @Test
-    fun `tempBasalAbsolute non-zero is rejected during SUSPENDED_BY_USER`() = runTest {
+    fun `tempBasalAbsolute non-zero is allowed during SUSPENDED_BY_USER`() = runTest {
+        // SUSPENDED_BY_USER is the temporary counterpart of DISABLED_LOOP — manual delivery stays
+        // available; the gate does not block TBR / bolus / EB.
         stubActiveMode(app.aaps.core.data.model.RM.Mode.SUSPENDED_BY_USER)
         val queued = commandQueue.tempBasalAbsolute(1.5, 30, true, validProfile, PumpSync.TemporaryBasalType.NORMAL, null)
-        assertThat(queued).isFalse()
+        assertThat(queued).isTrue()
     }
 
     @Test
-    fun `tempBasalAbsolute rate zero is also rejected during SUSPENDED_BY_USER`() = runTest {
-        // SUSPENDED_BY_* means "no TBR" — even zero-rate TBR is rejected.
+    fun `bolus is allowed during SUSPENDED_BY_USER`() = runTest {
         stubActiveMode(app.aaps.core.data.model.RM.Mode.SUSPENDED_BY_USER)
-        val queued = commandQueue.tempBasalAbsolute(0.0, 30, true, validProfile, PumpSync.TemporaryBasalType.EMULATED_PUMP_SUSPEND, null)
-        assertThat(queued).isFalse()
+        val info = DetailedBolusInfo().also { it.insulin = 1.0 }
+        val queued = commandQueue.bolus(info, null)
+        assertThat(queued).isTrue()
     }
 
     @Test

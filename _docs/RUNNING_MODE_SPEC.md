@@ -54,7 +54,7 @@ fix it.
 | `SUPER_BOLUS`       | no         | yes (¹)    | no              | ZeroDelivery   | CANCEL_TBR, TBR_ZERO, BOLUS | IssueZeroTbr + cancelExtendedBolus       |
 | `DISCONNECTED_PUMP` | no         | yes        | yes             | ZeroDelivery   | CANCEL_TBR, TBR_ZERO        | IssueZeroTbr + cancelExtendedBolus       |
 | `SUSPENDED_BY_PUMP` | no         | yes        | yes             | PumpReported   | CANCEL_TBR                  | NoOp (handled by `runningModePreCheck`)  |
-| `SUSPENDED_BY_USER` | no         | yes        | no              | SuspendedNoTbr | CANCEL_TBR                  | CancelTbr                                |
+| `SUSPENDED_BY_USER` | no         | yes        | no              | Stopped        | all                         | CancelTbr                                |
 | `SUSPENDED_BY_DST`  | no         | yes        | no              | SuspendedNoTbr | CANCEL_TBR                  | CancelTbr                                |
 | `RESUME`            | n/a        | n/a        | n/a             | Working        | all                         | NoOp / CancelTbr if exiting ZeroDelivery |
 
@@ -150,7 +150,7 @@ when `treatment.duration > 0`, permanent `DISABLED_LOOP` substitutes a long dura
 | `SUPER_BOLUS`       | no (PumpCommandGate allows BOLUS) |   no (only `isDisconnected`/`pump.isSuspended()` hide; super bolus leaves them visible)    |            no            |
 | `DISCONNECTED_PUMP` |                yes                |                                            yes                                             |            no            |
 | `SUSPENDED_BY_PUMP` |                yes                |                               yes (via `pump.isSuspended()`)                               |            no            |
-| `SUSPENDED_BY_USER` |                yes                | no (only `pump.isSuspended()` and `isDisconnected` hide; user-suspend leaves them visible) |            no            |
+| `SUSPENDED_BY_USER` |                no                 | no (only `pump.isSuspended()` and `isDisconnected` hide; user-suspend leaves them visible) |            no            |
 | `SUSPENDED_BY_DST`  |                yes                |                                             no                                             |            no            |
 
 ¹ Unified rule across `InsulinDialog`, `TreatmentDialog`, and `WizardDialog`:
@@ -209,6 +209,13 @@ not issue insulin directly.
   `Loop.applyMaxIOBConstraints` (LoopPlugin.kt:428).
 - `DISABLED_LOOP` (Stopped bucket): reconciler issues `cancelTempBasal` on entry,
   same as SUSPENDED_BY_USER. User-triggered and constraint-forced behave identically.
+- `SUSPENDED_BY_USER` is the temporary counterpart of `DISABLED_LOOP`: loop algorithm
+  is paused (`pausesLoopExecution = true`) and the entry-side TBR cancel runs, but the
+  pump remains fully usable for manual delivery — `PumpCommandGate` allows BOLUS, TBR,
+  and EB the same as in `DISABLED_LOOP`. The two differ only in `mustBeTemporary`
+  (SUSPENDED_BY_USER must carry a duration) and the loop-pause guard
+  (`pausesLoopExecution` is set for SUSPENDED_BY_USER, unset for DISABLED_LOOP — both
+  prevent algorithm execution but via different short-circuits in `LoopPlugin.invoke()`).
 - Zero-delivery modes (`DISCONNECTED_PUMP`, `SUPER_BOLUS`) issue a zero-TBR with
   `tbrType = EMULATED_PUMP_SUSPEND` via the reconciler. `RunningModeExpiryWorker`
   cleans this TBR up at the natural RM end if no earlier change cancels it.

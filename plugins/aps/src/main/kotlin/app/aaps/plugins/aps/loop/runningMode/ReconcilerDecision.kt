@@ -13,10 +13,11 @@ import app.aaps.core.data.model.RM
  *  - Working        — OPEN_LOOP / CLOSED_LOOP / CLOSED_LOOP_LGS / RESUME: APS drives the pump;
  *                     reconciler does not interfere.
  *  - ZeroDelivery   — DISCONNECTED_PUMP / SUPER_BOLUS: pump must deliver zero (zero-TBR, no EB).
- *  - SuspendedNoTbr — SUSPENDED_BY_USER / SUSPENDED_BY_DST: pump must have no active TBR.
- *  - Stopped        — DISABLED_LOOP: APS is off, no APS-driven TBR should remain. Pump is
- *                     otherwise usable for manual delivery; treated identically to
- *                     SuspendedNoTbr at the gate (cancel any active TBR on entry).
+ *  - SuspendedNoTbr — SUSPENDED_BY_DST: pump must have no active TBR.
+ *  - Stopped        — DISABLED_LOOP / SUSPENDED_BY_USER: APS is off, no APS-driven TBR should
+ *                     remain. Pump is otherwise usable for manual delivery; treated identically
+ *                     to SuspendedNoTbr at the gate (cancel any active TBR on entry).
+ *                     SUSPENDED_BY_USER is the temporary counterpart of DISABLED_LOOP.
  *  - PumpReported   — SUSPENDED_BY_PUMP: LoopPlugin.runningModePreCheck owns this; reconciler
  *                     stays out of its way.
  */
@@ -62,12 +63,12 @@ object ReconcilerDecision {
         RM.Mode.CLOSED_LOOP_LGS,
         RM.Mode.RESUME            -> Bucket.Working
 
-        RM.Mode.DISABLED_LOOP     -> Bucket.Stopped
+        RM.Mode.DISABLED_LOOP,
+        RM.Mode.SUSPENDED_BY_USER -> Bucket.Stopped
 
         RM.Mode.DISCONNECTED_PUMP,
         RM.Mode.SUPER_BOLUS       -> Bucket.ZeroDelivery
 
-        RM.Mode.SUSPENDED_BY_USER,
         RM.Mode.SUSPENDED_BY_DST  -> Bucket.SuspendedNoTbr
 
         RM.Mode.SUSPENDED_BY_PUMP -> Bucket.PumpReported
