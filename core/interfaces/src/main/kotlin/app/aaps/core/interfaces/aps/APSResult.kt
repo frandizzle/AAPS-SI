@@ -65,6 +65,6 @@ interface APSResult {
         AMA,
         SMB,
         AUTO_ISF,
-        AIMI
+        SI
     }
 }
