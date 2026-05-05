@@ -45,6 +45,6 @@ data class APSResult(
         AMA,
         SMB,
         AUTO_ISF,
-        AIMI
+        SI
     }
 }

@@ -133,7 +133,7 @@ open class SmartInsulinPlugin @Inject constructor(
 ), APS, PluginConstraints, app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview {
 
     override var lastAPSRun: Long = 0
-    override val algorithm = APSResult.Algorithm.SMB
+    override val algorithm = APSResult.Algorithm.SI
     override var lastAPSResult: APSResult? = null
 
     // ── Suspend / rebound tracking ────────────────────────────────────────────

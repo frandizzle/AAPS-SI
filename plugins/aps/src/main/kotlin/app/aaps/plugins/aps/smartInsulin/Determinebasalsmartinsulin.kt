@@ -105,7 +105,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val result = apsResultProvider.get()
         val rT = RT(
-            algorithm = APSResult.Algorithm.SMB,
+            algorithm = APSResult.Algorithm.SI,
             runningDynamicIsf = false,
             timestamp = currentTime,
             consoleLog = mutableListOf(),
