@@ -118,12 +118,7 @@ class Converters {
     fun fromAlgorithm(algorithm: APSResult.Algorithm?) = algorithm?.name
 
     @TypeConverter
-    fun toAlgorithm(algorithm: String?): APSResult.Algorithm? {
-        return algorithm?.let {
-            if (it == "AIMI") return APSResult.Algorithm.SI
-            APSResult.Algorithm.entries.firstOrNull { enumValue -> enumValue.name == it } ?: APSResult.Algorithm.UNKNOWN
-        }
-    }
+    fun toAlgorithm(algorithm: String?) = algorithm?.let { APSResult.Algorithm.valueOf(it) }
 
     @TypeConverter
     fun fromListOfBlocks(blocks: List<Block>?): String? {
