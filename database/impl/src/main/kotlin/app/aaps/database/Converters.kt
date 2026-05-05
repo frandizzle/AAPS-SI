@@ -26,15 +26,7 @@ class Converters {
     fun fromAction(action: Action?) = action?.name
 
     @TypeConverter
-    fun toAction(action: String?): Action? {
-        return action?.let {
-            try {
-                Action.valueOf(it)
-            } catch (ignored: IllegalArgumentException) {
-                null
-            }
-        }
-    }
+    fun toAction(action: String?) = action?.let { Action.valueOf(it) }
 
     @TypeConverter
     fun fromSource(source: Sources?) = source?.name
@@ -56,29 +48,13 @@ class Converters {
     fun fromBolusType(bolusType: Bolus.Type?) = bolusType?.name
 
     @TypeConverter
-    fun toBolusType(bolusType: String?): Bolus.Type? {
-        return bolusType?.let {
-            try {
-                Bolus.Type.valueOf(it)
-            } catch (ignored: IllegalArgumentException) {
-                null
-            }
-        }
-    }
+    fun toBolusType(bolusType: String?) = bolusType?.let { Bolus.Type.valueOf(it) }
 
     @TypeConverter
     fun fromTrendArrow(trendArrow: GlucoseValue.TrendArrow?) = trendArrow?.name
 
     @TypeConverter
-    fun toTrendArrow(trendArrow: String?): GlucoseValue.TrendArrow? {
-        return trendArrow?.let {
-            try {
-                GlucoseValue.TrendArrow.valueOf(it)
-            } catch (ignored: IllegalArgumentException) {
-                null
-            }
-        }
-    }
+    fun toTrendArrow(trendArrow: String?) = trendArrow?.let { GlucoseValue.TrendArrow.valueOf(it) }
 
     @TypeConverter
     fun fromSourceSensor(sourceSensor: GlucoseValue.SourceSensor?) = sourceSensor?.name
@@ -142,15 +118,7 @@ class Converters {
     fun fromAlgorithm(algorithm: APSResult.Algorithm?) = algorithm?.name
 
     @TypeConverter
-    fun toAlgorithm(algorithm: String?): APSResult.Algorithm? {
-        return algorithm?.let {
-            try {
-                APSResult.Algorithm.valueOf(it)
-            } catch (ignored: IllegalArgumentException) {
-                APSResult.Algorithm.UNKNOWN
-            }
-        }
-    }
+    fun toAlgorithm(algorithm: String?) = algorithm?.let { APSResult.Algorithm.valueOf(it) }
 
     @TypeConverter
     fun fromListOfBlocks(blocks: List<Block>?): String? {
