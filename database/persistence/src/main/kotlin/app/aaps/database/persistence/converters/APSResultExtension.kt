@@ -25,7 +25,7 @@ fun app.aaps.database.entities.APSResult.fromDb(apsResultProvider: Provider<APSR
     when (algorithm) {
         app.aaps.database.entities.APSResult.Algorithm.AMA,
         app.aaps.database.entities.APSResult.Algorithm.SMB,
-        app.aaps.database.entities.APSResult.Algorithm.AIMI,
+        app.aaps.database.entities.APSResult.Algorithm.SI,
         app.aaps.database.entities.APSResult.Algorithm.UNKNOWN  ->
             apsResultProvider.get().with(rtJson.decodeFromString(this.resultJson)).also { result ->
                 result.date = this.timestamp
@@ -95,7 +95,7 @@ fun app.aaps.database.entities.APSResult.Algorithm.fromDb(): APSResult.Algorithm
         app.aaps.database.entities.APSResult.Algorithm.AMA      -> APSResult.Algorithm.AMA
         app.aaps.database.entities.APSResult.Algorithm.SMB      -> APSResult.Algorithm.SMB
         app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF -> APSResult.Algorithm.AUTO_ISF
-        app.aaps.database.entities.APSResult.Algorithm.AIMI     -> APSResult.Algorithm.SI
+        app.aaps.database.entities.APSResult.Algorithm.SI       -> APSResult.Algorithm.SI
         app.aaps.database.entities.APSResult.Algorithm.UNKNOWN  -> APSResult.Algorithm.UNKNOWN
     }
 
@@ -104,6 +104,6 @@ fun APSResult.Algorithm.toDb(): app.aaps.database.entities.APSResult.Algorithm =
         APSResult.Algorithm.AMA      -> app.aaps.database.entities.APSResult.Algorithm.AMA
         APSResult.Algorithm.SMB      -> app.aaps.database.entities.APSResult.Algorithm.SMB
         APSResult.Algorithm.AUTO_ISF -> app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF
-        APSResult.Algorithm.SI       -> app.aaps.database.entities.APSResult.Algorithm.AIMI
+        APSResult.Algorithm.SI       -> app.aaps.database.entities.APSResult.Algorithm.SI
         APSResult.Algorithm.UNKNOWN  -> app.aaps.database.entities.APSResult.Algorithm.UNKNOWN
     }
