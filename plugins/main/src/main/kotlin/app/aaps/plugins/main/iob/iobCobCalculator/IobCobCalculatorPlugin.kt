@@ -117,6 +117,7 @@ class IobCobCalculatorPlugin @Inject constructor(
     private val dataLock = Any()
     private var thread: Thread? = null
 
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
     override fun onStart() {
         super.onStart()
         val newScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
