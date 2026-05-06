@@ -221,7 +221,6 @@ class GraphViewModel @AssistedInject constructor(
     val varSensGraphFlow = cache.varSensGraphFlow
     val heartRateGraphFlow = cache.heartRateGraphFlow
     val stepsGraphFlow = cache.stepsGraphFlow
-    val fuelTrimGraphFlow = cache.fuelTrimGraphFlow
     val treatmentGraphFlow = cache.treatmentGraphFlow
     val epsGraphFlow = cache.epsGraphFlow
     val basalGraphFlow = cache.basalGraphFlow

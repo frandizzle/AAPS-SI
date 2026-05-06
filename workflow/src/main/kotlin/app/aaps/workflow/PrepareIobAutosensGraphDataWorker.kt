@@ -19,7 +19,6 @@ import app.aaps.core.interfaces.overview.graph.DevSlopeGraphData
 import app.aaps.core.interfaces.overview.graph.DeviationDataPoint
 import app.aaps.core.interfaces.overview.graph.DeviationType
 import app.aaps.core.interfaces.overview.graph.DeviationsGraphData
-import app.aaps.core.interfaces.overview.graph.FuelTrimGraphData
 import app.aaps.core.interfaces.overview.graph.GraphDataPoint
 import app.aaps.core.interfaces.overview.graph.IobGraphData
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
@@ -85,34 +84,8 @@ class PrepareIobAutosensGraphDataWorker(
         val ratioListCompose: MutableList<GraphDataPoint> = ArrayList()
         val dsMaxListCompose: MutableList<GraphDataPoint> = ArrayList()
         val dsMinListCompose: MutableList<GraphDataPoint> = ArrayList()
-        val fuelTrimListCompose: MutableList<GraphDataPoint> = ArrayList()
 
         val adsData = data.iobCobCalculator.ads.clone()
-
-        // Pre-fetch APS results once; we sample fuelTrim onto the 5-min grid below
-        // so the TRIM line has the same density as IOB/BGI/etc. and renders smoothly
-        // instead of as sparse flat plateaus between loop cycles.
-        val apsResults = persistenceLayer.getApsResults(fromTime, endTime).sortedBy { it.date }
-        var apsIdx = 0
-
-        // Seed currentTrim from the most recent APS result BEFORE the visible window so the
-        // line starts at the chart's left edge instead of only appearing once the first
-        // non-null fuelTrim lands inside the window. Look back a conservative 6h.
-        val seedResults = persistenceLayer.getApsResults(fromTime - 6 * 60 * 60 * 1000L, fromTime)
-        var currentTrim: Double? = seedResults
-            .asReversed()
-            .firstNotNullOfOrNull { it.fuelTrim }
-
-        aapsLogger.debug(
-            LTag.AUTOSENS,
-            "FuelTrim debug: fromTime=${dateUtil.dateAndTimeAndSecondsString(fromTime)} " +
-                "endTime=${dateUtil.dateAndTimeAndSecondsString(endTime)} " +
-                "apsResultsInWindow=${apsResults.size} " +
-                "nonNullTrimInWindow=${apsResults.count { it.fuelTrim != null }} " +
-                "seedResultsBefore=${seedResults.size} " +
-                "nonNullSeedTrim=${seedResults.count { it.fuelTrim != null }} " +
-                "seededTrim=$currentTrim"
-        )
 
         while (time <= endTime) {
             if (isStopped) return Result.failure(workDataOf("Error" to "stopped"))
@@ -171,17 +144,6 @@ class PrepareIobAutosensGraphDataWorker(
             if (iob.activity > maxActivity) maxActivity = iob.activity
             else if (-iob.activity > maxActivity) maxActivity = -iob.activity
 
-            // Fuel Trim: advance through APS results up to current tick, hold most recent value.
-            // Emitting one point per 5-min tick gives the line the same density as BGI/IOB so
-            // Smooth interpolation produces a flowing curve instead of sparse plateaus.
-            // Only emit up to 'now' — trim is a historical/current measurement, not a forecast,
-            // so the line must stop at the now-marker like BGI/activity do.
-            while (apsIdx < apsResults.size && apsResults[apsIdx].date <= time) {
-                apsResults[apsIdx].fuelTrim?.let { currentTrim = it }
-                apsIdx++
-            }
-            if (time <= now) currentTrim?.let { fuelTrimListCompose.add(GraphDataPoint(time, it)) }
-
             time += 5 * 60 * 1000L
         }
 
@@ -197,8 +159,8 @@ class PrepareIobAutosensGraphDataWorker(
         aapsLogger.debug(LTag.AUTOSENS, "IOB prediction for AS=" + decimalFormatter.to2Decimal(lastAutosensResult.ratio) + ": " + data.iobCobCalculator.iobArrayToString(iobPredictionArray))
 
         // ========== MIGRATION: KEEP - VarSens for Compose ==========
-        // Note: apsResults was fetched above the main loop for fuelTrim grid sampling; reuse it here.
         val varSensListCompose: MutableList<GraphDataPoint> = ArrayList()
+        val apsResults = persistenceLayer.getApsResults(fromTime, endTime)
         apsResults.forEach {
             it.variableSens?.let { variableSens ->
                 val varSens = profileUtil.fromMgdlToUnits(variableSens)
@@ -256,11 +218,6 @@ class PrepareIobAutosensGraphDataWorker(
         data.cache.updateVarSensGraph(
             VarSensGraphData(
                 varSens = varSensListCompose
-            )
-        )
-        data.cache.updateFuelTrimGraph(
-            FuelTrimGraphData(
-                fuelTrim = fuelTrimListCompose
             )
         )
 

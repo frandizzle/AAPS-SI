@@ -205,13 +205,6 @@ data class StepsGraphData(
 )
 
 /**
- * Fuel Trim graph data: short-term learning deviation percentage line
- */
-data class FuelTrimGraphData(
-    val fuelTrim: List<GraphDataPoint>
-)
-
-/**
  * Basal graph data for BG graph overlay (dual Y-axis).
  * Profile basal: dashed step line (scheduled profile rate).
  * Actual basal: solid step line with area fill (profile rate when no temp, temp absolute when temp active).

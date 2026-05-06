@@ -100,10 +100,6 @@ interface OverviewDataCache {
     val stepsGraphFlow: StateFlow<StepsGraphData>
     fun updateStepsGraph(data: StepsGraphData)
 
-    // Fuel Trim graph: short-term learning deviation percentage line
-    val fuelTrimGraphFlow: StateFlow<FuelTrimGraphData>
-    fun updateFuelTrimGraph(data: FuelTrimGraphData)
-
     // =========================================================================
     // Treatment graph flows (main graph overlays)
     // Populated reactively by observing database changes — no worker needed.
