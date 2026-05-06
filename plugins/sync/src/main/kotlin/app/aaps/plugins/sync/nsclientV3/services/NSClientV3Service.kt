@@ -247,7 +247,7 @@ class NSClientV3Service : DaggerService() {
             "devicestatus" -> docString.toNSDeviceStatus().let { nsDeviceStatusHandler.handleNewData(arrayOf(it)) }
             "entries"      -> docString.toNSSgvV3()?.let {
                 nsIncomingDataProcessor.processSgvs(listOf(it), doFullSync = false)
-                storeDataForDb.storeGlucoseValuesToDb()
+                storeDataForDb.requestStoreGlucoseValues()
             }
 
             "profile"      ->
@@ -255,12 +255,12 @@ class NSClientV3Service : DaggerService() {
 
             "treatments"   -> docString.toNSTreatment()?.let {
                 nsIncomingDataProcessor.processTreatments(listOf(it), doFullSync = false)
-                storeDataForDb.storeTreatmentsToDb(fullSync = false)
+                storeDataForDb.requestStoreTreatments(fullSync = false)
             }
 
             "foods"        -> docString.toNSFood()?.let {
                 nsIncomingDataProcessor.processFood(listOf(it))
-                storeDataForDb.storeFoodsToDb()
+                storeDataForDb.requestStoreFoods()
             }
 
             "settings"     -> { /* nothing to do for now */
@@ -276,11 +276,11 @@ class NSClientV3Service : DaggerService() {
         nsClientRepository.addLog("◄ WS DELETE", "$collection $identifier")
         if (collection == "treatments") {
             storeDataForDb.addToDeleteTreatment(identifier)
-            storeDataForDb.updateDeletedTreatmentsInDb()
+            storeDataForDb.requestUpdateDeletedTreatments()
         }
         if (collection == "entries") {
             storeDataForDb.addToDeleteGlucoseValue(identifier)
-            storeDataForDb.updateDeletedGlucoseValuesInDb()
+            storeDataForDb.requestUpdateDeletedGlucoseValues()
         }
     }
 
