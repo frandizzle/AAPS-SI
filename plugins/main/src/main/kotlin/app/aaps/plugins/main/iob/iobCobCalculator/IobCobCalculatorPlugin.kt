@@ -125,12 +125,19 @@ class IobCobCalculatorPlugin @Inject constructor(
             .toObservable(EventConfigBuilderChange::class.java)
             .observeOn(aapsSchedulers.io)
             .subscribe({ resetDataAndRunCalculation("onEventConfigBuilderChange") }, fabricPrivacy::logException)
-        // EffectiveProfileSwitch changes
-        persistenceLayer.observeChanges(EPS::class.java)
-            .onEach { epsList ->
-                epsList.minOfOrNull { it.timestamp }?.let { timestamp ->
-                    newHistoryData(timestamp, bgDataReload = false, triggeredByNewBG = false)
-                }
+        // Consolidated database changes
+        merge(
+            persistenceLayer.observeChanges(EPS::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
+            persistenceLayer.observeChanges(GV::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, true, true) },
+            persistenceLayer.observeChanges(CA::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
+            persistenceLayer.observeChanges(BS::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
+            persistenceLayer.observeChanges(BCR::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
+            persistenceLayer.observeChanges(TB::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
+            persistenceLayer.observeChanges(EB::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) }
+        )
+            .debounce(300L)
+            .onEach { (timestamp, reloadBg, triggeredByBg) ->
+                timestamp?.let { scheduleHistoryDataChange(it, reloadBgData = reloadBg, triggeredByNewBG = triggeredByBg) }
             }.launchIn(newScope)
         // Preference changes
         merge(
@@ -142,30 +149,9 @@ class IobCobCalculatorPlugin @Inject constructor(
             preferences.observe(DoubleKey.AbsorptionCutOff).drop(1).map {},
             preferences.observe(DoubleKey.AutosensMax).drop(1).map {},
             preferences.observe(DoubleKey.AutosensMin).drop(1).map {},
-        ).onEach { resetDataAndRunCalculation("onPreferenceChange") }.launchIn(newScope)
-        // GlucoseValue changes → reload BG data + trigger loop
-        persistenceLayer.observeChanges(GV::class.java)
-            .onEach { gvList ->
-                gvList.minOfOrNull { it.timestamp }?.let { timestamp ->
-                    scheduleHistoryDataChange(timestamp, reloadBgData = true, triggeredByNewBG = true)
-                }
-            }.launchIn(newScope)
-        // Treatment changes → invalidate caches
-        persistenceLayer.observeChanges(CA::class.java)
-            .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
-            .launchIn(newScope)
-        persistenceLayer.observeChanges(BS::class.java)
-            .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
-            .launchIn(newScope)
-        persistenceLayer.observeChanges(BCR::class.java)
-            .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
-            .launchIn(newScope)
-        persistenceLayer.observeChanges(TB::class.java)
-            .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
-            .launchIn(newScope)
-        persistenceLayer.observeChanges(EB::class.java)
-            .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
-            .launchIn(newScope)
+        )
+            .debounce(300L)
+            .onEach { resetDataAndRunCalculation("onPreferenceChange") }.launchIn(newScope)
         // Units change
         preferences.observe(StringKey.GeneralUnits).drop(1)
             .onEach {

@@ -54,6 +54,7 @@ import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 /** Series identifiers */
 /** Basal on BG graph — deprecated, now shown as flipped overlay on IOB graph. Set to true to restore. */
@@ -93,19 +94,19 @@ fun BgGraphCompose(
     nowTimestamp: Long,
     modifier: Modifier = Modifier
 ) {
-    // 1. Collect flows
-    val bgReadings by viewModel.bgReadingsFlow.collectAsStateWithLifecycle()
-    val bucketedData by viewModel.bucketedDataFlow.collectAsStateWithLifecycle()
+    // 1. Collect flows with distinctUntilChanged to prevent redundant recompositions
+    val bgReadings by remember(viewModel.bgReadingsFlow) { viewModel.bgReadingsFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.bgReadingsFlow.value)
+    val bucketedData by remember(viewModel.bucketedDataFlow) { viewModel.bucketedDataFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.bucketedDataFlow.value)
     val showPredictions = SeriesType.PREDICTIONS in bgOverlays
-    val rawPredictions by viewModel.predictionsFlow.collectAsStateWithLifecycle()
+    val rawPredictions by remember(viewModel.predictionsFlow) { viewModel.predictionsFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.predictionsFlow.value)
     val predictions = if (showPredictions) rawPredictions else emptyList()
-    val rawBasalData by viewModel.basalGraphFlow.collectAsStateWithLifecycle()
-    val targetData by viewModel.targetLineFlow.collectAsStateWithLifecycle()
-    val iobData by viewModel.iobGraphFlow.collectAsStateWithLifecycle()
-    val epsPoints by viewModel.epsGraphFlow.collectAsStateWithLifecycle()
+    val rawBasalData by remember(viewModel.basalGraphFlow) { viewModel.basalGraphFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.basalGraphFlow.value)
+    val targetData by remember(viewModel.targetLineFlow) { viewModel.targetLineFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.targetLineFlow.value)
+    val iobData by remember(viewModel.iobGraphFlow) { viewModel.iobGraphFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.iobGraphFlow.value)
+    val epsPoints by remember(viewModel.epsGraphFlow) { viewModel.epsGraphFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.epsGraphFlow.value)
     val showActivity = SeriesType.ACTIVITY in bgOverlays
-    val activityData by viewModel.activityGraphFlow.collectAsStateWithLifecycle()
-    val chartConfig by viewModel.chartConfigFlow.collectAsStateWithLifecycle()
+    val activityData by remember(viewModel.activityGraphFlow) { viewModel.activityGraphFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.activityGraphFlow.value)
+    val chartConfig by remember(viewModel.chartConfigFlow) { viewModel.chartConfigFlow.distinctUntilChanged() }.collectAsStateWithLifecycle(viewModel.chartConfigFlow.value)
 
     // 2. Derived time range
     val (minTimestamp, maxTimestamp) = derivedTimeRange ?: run {
