@@ -236,9 +236,9 @@ class CircadianLearner @Inject constructor(
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
         val isFasting = mealMode == MealMode.FASTING
-        val isfPhysicsFired = if (!suppressAdaptiveLearning)
+        val isfPhysicsDirection: Int = if (!suppressAdaptiveLearning)
             updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl)
-        else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
+        else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); 0 }
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
         val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness)
@@ -257,7 +257,7 @@ class CircadianLearner @Inject constructor(
 
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
                                                       bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = nowMs,
-                                                      isfPhysicsFired = isfPhysicsFired,
+                                                      isfPhysicsDirection = isfPhysicsDirection,
                                                       basalPhysicsFired = basalPhysicsFired)
 
         // Only persist if any EWMA state was actually updated this cycle
@@ -279,18 +279,24 @@ class CircadianLearner @Inject constructor(
         aggressiveness:    Double,
         bg:                Double  = 0.0,
         lowGuardMgdl:      Double  = 90.0
-    ): Boolean {
+    ): Int {
+        // Returns direction the ISF multiplier moved this cycle:
+        //  -1 = mult DOWN (dosingISF = profileISF/mult → UP, less aggressive)
+        //   0 = didn't fire / no net change
+        //  +1 = mult UP (dosingISF DOWN, more aggressive)
+        // Used by applyAggrNudge for direction-aware mutual exclusion.
+
         // Only train ISF from clean fasting signal — meal/UAM/P/F BG changes are food-driven
         if (!isFasting || inPostMealLockout) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: not fasting or post-meal lockout")
-            return false
+            return 0
         }
         val activity = iobArray.firstOrNull()?.activity ?: run {
-            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return false
+            aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: no iobArray"); return 0
         }
         if (abs(activity) < MIN_ACTIVITY) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity=${"%.5f".format(activity)} < $MIN_ACTIVITY")
-            return false
+            return 0
         }
         // In AAPS, normal active insulin produces POSITIVE activity.
         // Negative activity = pump withholding insulin (negative IOB / TBR cut) — inverted signal.
@@ -299,7 +305,7 @@ class CircadianLearner @Inject constructor(
         // negation is required because activity is positive when insulin is actively working.
         if (activity < 0.0) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: activity < 0 (negative IOB / TBR reduction — inverted signal)")
-            return false
+            return 0
         }
 
         // Multiply by -1: positive activity means insulin pulling BG DOWN → negative expected delta
@@ -308,7 +314,7 @@ class CircadianLearner @Inject constructor(
 
         if (abs(expectedDelta) < MIN_EXPECTED_DELTA_MGDL) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: expectedΔ=${"%.2f".format(expectedDelta)} < $MIN_EXPECTED_DELTA_MGDL")
-            return false
+            return 0
         }
 
         val deviation     = actualDelta - expectedDelta
@@ -326,16 +332,25 @@ class CircadianLearner @Inject constructor(
         val conf  = isfState.getConfidence(dow, hour)
         val alpha = (ISF_ALPHA * (1.5 - conf)).coerceIn(ISF_ALPHA * 0.5, ISF_ALPHA * 1.5)
 
+        val prevMult = isfState.get(dow, hour)
         // Write to both day bucket AND global so the blended output actually reflects
         // what the learner has observed. updatedDayOnly left global at 1.0 permanently,
         // causing get() to return 1.0 regardless of day bucket learnings until day
         // confidence crossed DAY_CONFIDENCE_THRESHOLD.
         isfState = isfState.updated(dow, hour, multTarget, alpha)
+        val newMult = isfState.get(dow, hour)
+
+        // Signed direction for applyAggrNudge direction-aware mutual exclusion.
+        val direction = when {
+            newMult > prevMult + 1e-6 ->  1
+            newMult < prevMult - 1e-6 -> -1
+            else                      ->  0
+        }
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f α=%.3f → mult=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, isfState.get(dow, hour)))
-        return true
+                         "CircadianLearner ISF h=$hour expectedΔ=%.1f actualΔ=%.1f dev=%.2f normDev=%.2f target=%.3f α=%.3f → mult=%.3f dir=$direction"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, newMult))
+        return direction
     }
 
     // ── Aggression nudge — independent of activity gate ──────────────────────
@@ -368,7 +383,7 @@ class CircadianLearner @Inject constructor(
         targetMgdl:        Double  = 99.0,
         lowGuardMgdl:      Double  = 90.0,
         now:               Long    = System.currentTimeMillis(),
-        isfPhysicsFired:   Boolean = false,
+        isfPhysicsDirection: Int   = 0,
         basalPhysicsFired: Boolean = false
     ) {
         // --- CALCULATE COOLDOWN ONCE AT THE TOP ---
@@ -413,12 +428,17 @@ class CircadianLearner @Inject constructor(
 
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
-                            isfState   = isfState.updatedDayOnly(dow, hour,
-                                                                 (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
+                            // aboveBand = need more insulin → mult UP → dosingISF DOWN → more aggressive ✓
+                            // Skip only if physics ALSO moved mult UP (same direction — redundant).
+                            // If physics moved DOWN (conflict), apply trim to counteract.
+                            if (isfPhysicsDirection != 1) {
+                                isfState = isfState.updatedDayOnly(dow, hour,
+                                                                   (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
+                            } else {
+                                aapsLogger.debug(LTag.APS, "FuelTrim[+] ISF nudge skipped — physics already moved mult UP (dir=$isfPhysicsDirection)")
+                            }
                             basalState = basalState.updatedDayOnly(dow, hour,
                                                                    (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
-
-                            lastTrimActionMs = now // Reset the timer. We wait 90 mins from NOW before pushing harder.
 
                             aapsLogger.debug(LTag.APS,
                                              "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
@@ -443,12 +463,17 @@ class CircadianLearner @Inject constructor(
 
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
-                            isfState   = isfState.updatedDayOnly(dow, hour,
-                                                                 (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
+                            // belowBand = too much insulin → mult DOWN → dosingISF UP → less aggressive ✓
+                            // Skip only if physics ALSO moved mult DOWN (same direction — redundant).
+                            // If physics moved UP (conflict), apply trim to counteract.
+                            if (isfPhysicsDirection != -1) {
+                                isfState = isfState.updatedDayOnly(dow, hour,
+                                                                   (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
+                            } else {
+                                aapsLogger.debug(LTag.APS, "FuelTrim[-] ISF nudge skipped — physics already moved mult DOWN (dir=$isfPhysicsDirection)")
+                            }
                             basalState = basalState.updatedDayOnly(dow, hour,
                                                                    (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
-
-                            lastTrimActionMs = now // Reset the timer.
 
                             aapsLogger.debug(LTag.APS,
                                              "FuelTrim[STEP -] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
@@ -542,22 +567,31 @@ class CircadianLearner @Inject constructor(
             nudgeSessionBlendedBasMult = basalMultiplier(hour, dow)
         }
 
-        // ISF nudge — skip if physics learner already updated ISF this cycle.
-        // Both push isfState based on different signals and can disagree; mutual exclusion
-        // prevents them cancelling each other out. Basal nudge still fires independently.
+        // ISF nudge — direction-aware mutual exclusion with the physics ISF learner.
+        // OLD: skip nudge if physics fired at ALL (blunt Boolean).
+        // BUG: if physics and nudge conflict in direction, physics wins and moves ISF the
+        // wrong way — e.g. tooMuch wants mult DOWN but physics pushes UP → nudge skipped,
+        // ISF becomes more aggressive when it should be less.
+        // NEW: skip only when physics moved the SAME direction. Conflicting physics gets
+        // both applied — partial cancellation beats physics fully overriding wrong direction.
         val nudgedIsf = if (tooMuch)
             (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         else
             (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        if (!isfPhysicsFired) {
+        val isfNudgeDir      = if (tooMuch) -1 else 1
+        val isfPhysicsAgrees = isfPhysicsDirection != 0 && isfPhysicsDirection == isfNudgeDir
+        val isfApplied       = !isfPhysicsAgrees
+        if (isfApplied) {
             isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, 1.0)
+            val conflictNote = if (isfPhysicsDirection != 0 && !isfPhysicsAgrees)
+                " [physics conflicted dir=$isfPhysicsDirection — nudge applied anyway]" else ""
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
+                             "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$conflictNote$cooldownNote " +
                                  "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
                                  "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} → mult=${"%.3f".format(isfState.days[d].get(hour))}")
         } else {
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner ISF[aggrNudge] SKIPPED — physics learner already fired this cycle " +
+                             "CircadianLearner ISF[aggrNudge] SKIPPED — physics moved same direction (dir=$isfPhysicsDirection) " +
                                  "(would have nudged ${"%.3f".format(prevIsfMult)}→${"%.3f".format(nudgedIsf)})")
         }
 
@@ -580,12 +614,14 @@ class CircadianLearner @Inject constructor(
                                  "(would have nudged ${"%.3f".format(prevBasMult)}→${"%.3f".format(nudgedBas)})")
         }
 
-        // Store status
+        // Store status — isfApplied computed above in direction-aware block
+        val basApplied = !basalPhysicsFired
         val direction = if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
             "${"%.4f".format(nudgeSessionBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
-            "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason"
+            "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason|" +
+            "${if (isfApplied) "ISF_APPLIED" else "ISF_SKIPPED(physicsAgrees)"}|${if (basApplied) "BAS_APPLIED" else "BAS_SKIPPED"}"
         // Only overwrite lastBasalSignal if the nudge actually applied — otherwise
         // preserve the drift/negIOB/predTrim signal message set by updateBasalLearner.
         if (!basalPhysicsFired) {
