@@ -59,6 +59,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -126,7 +128,7 @@ class IobCobCalculatorPlugin @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({ resetDataAndRunCalculation("onEventConfigBuilderChange") }, fabricPrivacy::logException)
         // Consolidated database changes
-        merge(
+        merge<Triple<Long?, Boolean, Boolean>>(
             persistenceLayer.observeChanges(EPS::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
             persistenceLayer.observeChanges(GV::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, true, true) },
             persistenceLayer.observeChanges(CA::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
@@ -140,15 +142,15 @@ class IobCobCalculatorPlugin @Inject constructor(
                 timestamp?.let { scheduleHistoryDataChange(it, reloadBgData = reloadBg, triggeredByNewBG = triggeredByBg) }
             }.launchIn(newScope)
         // Preference changes
-        merge(
-            preferences.observe(IntKey.AutosensPeriod).drop(1).map {},
-            preferences.observe(StringKey.SafetyAge).drop(1).map {},
-            preferences.observe(DoubleKey.AbsorptionMaxTime).drop(1).map {},
-            preferences.observe(DoubleKey.ApsAmaMin5MinCarbsImpact).drop(1).map {},
-            preferences.observe(DoubleKey.ApsSmbMin5MinCarbsImpact).drop(1).map {},
-            preferences.observe(DoubleKey.AbsorptionCutOff).drop(1).map {},
-            preferences.observe(DoubleKey.AutosensMax).drop(1).map {},
-            preferences.observe(DoubleKey.AutosensMin).drop(1).map {},
+        merge<Unit>(
+            preferences.observe(IntKey.AutosensPeriod).drop(1).map { },
+            preferences.observe(StringKey.SafetyAge).drop(1).map { },
+            preferences.observe(DoubleKey.AbsorptionMaxTime).drop(1).map { },
+            preferences.observe(DoubleKey.ApsAmaMin5MinCarbsImpact).drop(1).map { },
+            preferences.observe(DoubleKey.ApsSmbMin5MinCarbsImpact).drop(1).map { },
+            preferences.observe(DoubleKey.AbsorptionCutOff).drop(1).map { },
+            preferences.observe(DoubleKey.AutosensMax).drop(1).map { },
+            preferences.observe(DoubleKey.AutosensMin).drop(1).map { },
         )
             .debounce(300L)
             .onEach { resetDataAndRunCalculation("onPreferenceChange") }.launchIn(newScope)
