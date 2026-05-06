@@ -149,6 +149,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val lowGuardMgdl  = lowGuardMmol * MMOL_TO_MGDL
         val warnGuardMgdl = warnGuardMmol * MMOL_TO_MGDL
 
+        // When a high temp target is active, raise the effective suspend/caution thresholds
+        // to the temp target. Without this, pred_min=6.9 with TT=7.5 falls through to normal
+        // dosing and only gets a weak proportional basal reduction instead of a suspend.
+        val effectiveSuspendMgdl = if (highTempTargetActive) targetBg else lowGuardMgdl
+        val effectiveCautionMgdl = if (highTempTargetActive)
+            targetBg + (warnGuardMgdl - lowGuardMgdl)
+        else
+            warnGuardMgdl
+
         val systemDiaMins = (profile.iCfg?.dia ?: 6.0) * 60.0
 
         // ── Build prediction curve ────────────────────────────────────────────
@@ -258,7 +267,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val lgsThresholdMgdl = (oapsProfile.lgsThreshold ?: 0).toDouble()
 
         val fallingFast    = delta < -FALLING_FAST_MGDL_PER_5MIN
-        val fallingIntoLow = fallingFast && predictedAt30 < warnGuardMgdl
+        val fallingIntoLow = fallingFast && predictedAt30 < effectiveCautionMgdl
 
         var smbOut = 0.0
 
@@ -270,28 +279,28 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
-            predictedMinSafety < lowGuardMgdl || fallingIntoLow -> {
+            predictedMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < lowGuard=${fmt(lowGuardMgdl, isMmol)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
-            predictedMinSafety < warnGuardMgdl -> {
-                val guardGap   = warnGuardMgdl - predictedMinSafety
-                val warnFrac   = 1.0 - (guardGap / (warnGuardMgdl - lowGuardMgdl)).coerceIn(0.0, 1.0)
+            predictedMinSafety < effectiveCautionMgdl -> {
+                val guardGap   = effectiveCautionMgdl - predictedMinSafety
+                val warnFrac   = 1.0 - (guardGap / (effectiveCautionMgdl - effectiveSuspendMgdl).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
                 // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
                 // an already-scaled-down caution TBR to near zero while BG is heading toward the
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(warnGuardMgdl, isMmol)} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
