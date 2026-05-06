@@ -59,7 +59,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
@@ -128,7 +127,6 @@ class IobCobCalculatorPlugin @Inject constructor(
             .subscribe({ resetDataAndRunCalculation("onEventConfigBuilderChange") }, fabricPrivacy::logException)
         // EffectiveProfileSwitch changes
         persistenceLayer.observeChanges(EPS::class.java)
-            .debounce(500L)
             .onEach { epsList ->
                 epsList.minOfOrNull { it.timestamp }?.let { timestamp ->
                     newHistoryData(timestamp, bgDataReload = false, triggeredByNewBG = false)
@@ -144,12 +142,9 @@ class IobCobCalculatorPlugin @Inject constructor(
             preferences.observe(DoubleKey.AbsorptionCutOff).drop(1).map {},
             preferences.observe(DoubleKey.AutosensMax).drop(1).map {},
             preferences.observe(DoubleKey.AutosensMin).drop(1).map {},
-        )
-            .debounce(1000L)
-            .onEach { resetDataAndRunCalculation("onPreferenceChange") }.launchIn(newScope)
+        ).onEach { resetDataAndRunCalculation("onPreferenceChange") }.launchIn(newScope)
         // GlucoseValue changes → reload BG data + trigger loop
         persistenceLayer.observeChanges(GV::class.java)
-            .debounce(500L)
             .onEach { gvList ->
                 gvList.minOfOrNull { it.timestamp }?.let { timestamp ->
                     scheduleHistoryDataChange(timestamp, reloadBgData = true, triggeredByNewBG = true)
@@ -157,23 +152,18 @@ class IobCobCalculatorPlugin @Inject constructor(
             }.launchIn(newScope)
         // Treatment changes → invalidate caches
         persistenceLayer.observeChanges(CA::class.java)
-            .debounce(500L)
             .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
             .launchIn(newScope)
         persistenceLayer.observeChanges(BS::class.java)
-            .debounce(500L)
             .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
             .launchIn(newScope)
         persistenceLayer.observeChanges(BCR::class.java)
-            .debounce(500L)
             .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
             .launchIn(newScope)
         persistenceLayer.observeChanges(TB::class.java)
-            .debounce(500L)
             .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
             .launchIn(newScope)
         persistenceLayer.observeChanges(EB::class.java)
-            .debounce(500L)
             .onEach { list -> list.minOfOrNull { it.timestamp }?.let { scheduleHistoryDataChange(it, reloadBgData = false) } }
             .launchIn(newScope)
         // Units change
