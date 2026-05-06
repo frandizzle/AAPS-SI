@@ -25,7 +25,6 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import javax.inject.Provider
 
 class DetermineBasalSmartInsulinTest {
 
@@ -50,14 +49,14 @@ class DetermineBasalSmartInsulinTest {
         override var scriptDebug: List<String>?          = null
         override val predictionsAsGv: MutableList<GV>   = mutableListOf()
         override val latestPredictionsTime: Long         = 0
-        override val isChangeRequested: Boolean          = false
+        override suspend fun isChangeRequested(): Boolean = false
         override var isTempBasalRequested: Boolean       = false
         override val carbsRequiredText: String           = ""
         override var inputConstraints: Constraint<Double>?  = null
         override var rateConstraint: Constraint<Double>?    = null
         override var percentConstraint: Constraint<Int>?    = null
         override var smbConstraint: Constraint<Double>?     = null
-        override var algorithm: APSResult.Algorithm      = APSResult.Algorithm.SMB
+        override var algorithm: APSResult.Algorithm      = APSResult.Algorithm.SI
         override var autosensResult: AutosensResult?     = null
         override var iobData: Array<IobTotal>?           = null
         override var glucoseStatus: GlucoseStatus?       = null
@@ -67,9 +66,9 @@ class DetermineBasalSmartInsulinTest {
         override var mealData: MealData?                 = null
 
         override fun with(result: RT): APSResult         = this
-        override fun resultAsString(): String            = reason
-        override fun resultAsSpanned(): Spanned          = mock()
-        override fun resultAsHtmlString(): String        = ""
+        override suspend fun resultAsString(): String            = reason
+        override suspend fun resultAsSpanned(): Spanned          = mock()
+        override suspend fun resultAsHtmlString(): String        = ""
         override fun newAndClone(): APSResult            = FakeAPSResult()
         override fun json(): JSONObject?                 = null
         override fun predictions(): Predictions?         = null
