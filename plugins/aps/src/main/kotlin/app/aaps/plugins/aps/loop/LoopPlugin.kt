@@ -610,7 +610,6 @@ class LoopPlugin @Inject constructor(
                         if (resultAfterConstraints.isTempBasalRequested) lastRun.tbrSetByPump = waiting
                         if (resultAfterConstraints.isBolusRequested) lastRun.smbSetByPump =
                             waiting
-                        rxBus.send(EventLoopUpdateGui())
                         fabricPrivacy.logCustom("APSRequest")
                         // TBR request must be applied first to prevent situation where
                         // SMB was executed and zero TBR afterward failed
@@ -623,7 +622,6 @@ class LoopPlugin @Inject constructor(
                                     // deliverAt is used to prevent executing too old SMB request (older than 1 min)
                                     // executing TBR may take some time thus give more time to SMB
                                     resultAfterConstraints.deliverAt = lastRun.lastTBREnact
-                                    rxBus.send(EventLoopUpdateGui())
                                     if (resultAfterConstraints.isBolusRequested)
                                         applySMBRequest(resultAfterConstraints, object : Callback() {
                                             override fun run() {
@@ -636,7 +634,6 @@ class LoopPlugin @Inject constructor(
                                                 } else {
                                                     handler?.postDelayed({ runBlocking { invoke("tempBasalFallback", allowNotification, true) } }, 1000)
                                                 }
-                                                rxBus.send(EventLoopUpdateGui())
                                             }
                                         })
                                     else {
@@ -647,7 +644,6 @@ class LoopPlugin @Inject constructor(
                                     lastRun.tbrSetByPump = result
                                     lastRun.lastTBRRequest = lastRun.lastAPSRun
                                 }
-                                rxBus.send(EventLoopUpdateGui())
                             }
                         })
                     } else {

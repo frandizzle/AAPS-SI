@@ -40,14 +40,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -254,7 +258,7 @@ class GraphViewModel @AssistedInject constructor(
         ticker30s,
         rxBus.toFlow(EventLoopUpdateGui::class.java).map { System.currentTimeMillis() },
         rxBus.toFlow(EventRefreshOverview::class.java).map { System.currentTimeMillis() }
-    )
+    ).debounce(500L)
 
     /** Current time updated every 30s or on loop — use as key for now line position */
     val nowTimestamp: StateFlow<Long> = refreshFlow.stateIn(
@@ -272,11 +276,13 @@ class GraphViewModel @AssistedInject constructor(
             bgInfo = bgInfo,
             timeAgoText = dateUtil.minOrSecAgo(rh, bgInfo?.timestamp)
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = BgInfoUiState(bgInfo = null, timeAgoText = "")
-    )
+    }
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = BgInfoUiState(bgInfo = null, timeAgoText = "")
+        )
 
     // =========================================================================
     // IOB / COB current values (updated every 2.5 minutes or on loop)
@@ -291,7 +297,7 @@ class GraphViewModel @AssistedInject constructor(
         },
         rxBus.toFlow(EventLoopUpdateGui::class.java).map { Unit },
         rxBus.toFlow(EventRefreshOverview::class.java).map { Unit }
-    )
+    ).debounce(500L)
 
     val iobUiState: StateFlow<IobUiState> = iobCobTicker.combine(cache.iobGraphFlow) { _, _ ->
         val bolusIob = iobCobCalculator.calculateIobFromBolus().round()
@@ -301,11 +307,14 @@ class GraphViewModel @AssistedInject constructor(
             text = rh.gs(R.string.format_insulin_units, total),
             iobTotal = total
         )
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = IobUiState()
-    )
+    }
+        .flowOn(Dispatchers.IO)
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = IobUiState()
+        )
 
     val cobUiState: StateFlow<CobUiState> = iobCobTicker.combine(cache.cobGraphFlow) { _, _ ->
         val cobInfo = iobCobCalculator.getCobInfo("GraphViewModel COB")
@@ -326,11 +335,14 @@ class GraphViewModel @AssistedInject constructor(
         }
 
         CobUiState(text = cobText, carbsReq = carbsReq, cobValue = cobInfo.displayCob ?: 0.0)
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = CobUiState()
-    )
+    }
+        .flowOn(Dispatchers.IO)
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = CobUiState()
+        )
 
     // =========================================================================
     // Sensitivity / SMB / TBR status (updated every 30 seconds or on loop)
@@ -338,11 +350,14 @@ class GraphViewModel @AssistedInject constructor(
 
     val sensitivityUiState: StateFlow<SensitivityUiState> = refreshFlow.map {
         buildSensitivityUiState()
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = SensitivityUiState()
-    )
+    }
+        .flowOn(Dispatchers.IO)
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = SensitivityUiState()
+        )
 
     val smbUiState: StateFlow<SmbUiState> = refreshFlow.map {
         val lastSmbBolus = persistenceLayer.getNewestBolusOfType(app.aaps.core.data.model.BS.Type.SMB)
@@ -355,11 +370,14 @@ class GraphViewModel @AssistedInject constructor(
         } else {
             SmbUiState(hasData = false)
         }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = SmbUiState()
-    )
+    }
+        .flowOn(Dispatchers.IO)
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = SmbUiState()
+        )
 
     val tbrUiState: StateFlow<TbrUiState> = combine(refreshFlow, nowTimestamp) { _, now ->
         val currentTbr = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
@@ -392,11 +410,14 @@ class GraphViewModel @AssistedInject constructor(
                 arrow = arrow
             )
         }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = TbrUiState()
-    )
+    }
+        .flowOn(Dispatchers.IO)
+        .distinctUntilChanged()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = TbrUiState()
+        )
 
     private suspend fun buildSensitivityUiState(): SensitivityUiState {
         val lastAutosensData = iobCobCalculator.ads.getLastAutosensData("Overview", aapsLogger, dateUtil)
