@@ -78,7 +78,7 @@ class BolusCurveTracker @Inject constructor(
     }
 
     companion object {
-        private const val MIN_TRACK_IOB_U        = 0.6
+        private const val MIN_TRACK_IOB_U        = 0.3
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
         private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
         // Minimum drop below bgAtStart for the nadir to count as a real insulin trough.
