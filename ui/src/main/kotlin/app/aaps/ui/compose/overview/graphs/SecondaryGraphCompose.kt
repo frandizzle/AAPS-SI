@@ -12,14 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.graph.vico.AdaptiveStep
-import app.aaps.core.graph.vico.Smooth
 import app.aaps.core.graph.vico.Square
 import app.aaps.core.interfaces.overview.graph.BolusType
 import app.aaps.core.interfaces.overview.graph.DeviationType
@@ -45,9 +43,7 @@ import com.patrykandpatrick.vico.compose.common.Position
 import com.patrykandpatrick.vico.compose.common.component.LineComponent
 import com.patrykandpatrick.vico.compose.common.component.ShapeComponent
 import com.patrykandpatrick.vico.compose.common.component.TextComponent
-import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
-import kotlin.math.abs
 
 /**
  * General-purpose secondary graph composable.
@@ -108,7 +104,6 @@ fun SecondaryGraphCompose(
 
     val hasIob = primaryType == SeriesType.IOB
     val hasCob = primaryType == SeriesType.COB
-    val hasFuelTrim = primaryType == SeriesType.FUEL_TRIM
 
     // Collect flows for primary series
     val iobData = if (hasIob) viewModel.iobGraphFlow.collectAsStateWithLifecycle().value else null
@@ -122,7 +117,6 @@ fun SecondaryGraphCompose(
     val devSlopeData = if (primaryType == SeriesType.DEV_SLOPE) viewModel.devSlopeGraphFlow.collectAsStateWithLifecycle().value else null
     val hrData = if (primaryType == SeriesType.HEART_RATE) viewModel.heartRateGraphFlow.collectAsStateWithLifecycle().value else null
     val stepsData = if (primaryType == SeriesType.STEPS) viewModel.stepsGraphFlow.collectAsStateWithLifecycle().value else null
-    val fuelTrimData = if (primaryType == SeriesType.FUEL_TRIM) viewModel.fuelTrimGraphFlow.collectAsStateWithLifecycle().value else null
     // Activity data: either as primary series OR as overlay (on IOB graph)
     val needsActivity = primaryType == SeriesType.ACTIVITY || (activityOverlay && hasIob)
     val activityData = if (needsActivity) viewModel.activityGraphFlow.collectAsStateWithLifecycle().value else null
@@ -147,7 +141,6 @@ fun SecondaryGraphCompose(
         SeriesType.DEV_SLOPE       -> viewModel.devSlopeGraphFlow.collectAsStateWithLifecycle().value.dsMax
         SeriesType.HEART_RATE      -> viewModel.heartRateGraphFlow.collectAsStateWithLifecycle().value.heartRates
         SeriesType.STEPS           -> viewModel.stepsGraphFlow.collectAsStateWithLifecycle().value.steps
-        SeriesType.FUEL_TRIM       -> viewModel.fuelTrimGraphFlow.collectAsStateWithLifecycle().value.fuelTrim
         SeriesType.ACTIVITY        -> viewModel.activityGraphFlow.collectAsStateWithLifecycle().value.activity
         SeriesType.PREDICTIONS     -> emptyList() // UI-only overlay flag, not a secondary series
         null                       -> emptyList()
@@ -165,7 +158,7 @@ fun SecondaryGraphCompose(
 
     // Simple line series processing (excludes BASAL — it's a fixed flipped overlay on IOB)
     val processedSimpleSeries = remember(
-        stableTimeRange, absIobData, bgiData, ratioData, varSensData, devSlopeData, hrData, stepsData, fuelTrimData, activityData
+        stableTimeRange, absIobData, bgiData, ratioData, varSensData, devSlopeData, hrData, stepsData, activityData
     ) {
         if (!hasRealTimeRange) return@remember emptyList()
         buildList {
@@ -194,9 +187,6 @@ fun SecondaryGraphCompose(
             }
             stepsData?.steps?.takeIf { it.isNotEmpty() }?.let {
                 add(SeriesType.STEPS to processPoints(it, minTimestamp, minX, maxX))
-            }
-            fuelTrimData?.fuelTrim?.takeIf { it.isNotEmpty() }?.let {
-                add(SeriesType.FUEL_TRIM to processPoints(it, minTimestamp, minX, maxX))
             }
             if (primaryType == SeriesType.ACTIVITY) {
                 activityData?.let {
@@ -242,10 +232,6 @@ fun SecondaryGraphCompose(
     val processedIob = remember(iobData, stableTimeRange) {
         if (!hasRealTimeRange || iobData == null) return@remember emptyList()
         processPoints(iobData.iob, minTimestamp, minX, maxX)
-    }
-    val processedIobPredictions = remember(iobData, stableTimeRange) {
-        if (!hasRealTimeRange || iobData == null || iobData.predictions.isEmpty()) return@remember emptyList()
-        processPoints(iobData.predictions, minTimestamp, minX, maxX)
     }
 
     // IOB treatment overlays processing
@@ -322,7 +308,6 @@ fun SecondaryGraphCompose(
         processedDevSlopeMin,
         processedDeviationLines,
         processedIob,
-        processedIobPredictions,
         processedIobTreatments,
         processedCob,
         processedCarbs,
@@ -350,12 +335,6 @@ fun SecondaryGraphCompose(
                 if (processedIob.isNotEmpty()) {
                     series(x = processedIob.map { it.first }, y = processedIob.map { it.second })
                     slots.add(SeriesSlot.IobLine)
-                }
-
-                // IOB predictions
-                if (processedIobPredictions.isNotEmpty()) {
-                    series(x = processedIobPredictions.map { it.first }, y = processedIobPredictions.map { it.second })
-                    slots.add(SeriesSlot.IobPrediction)
                 }
 
                 // IOB overlays: SMBs (small, medium, large), normal boluses, extended boluses
@@ -471,7 +450,6 @@ fun SecondaryGraphCompose(
                     when (slot) {
                         is SeriesSlot.DeviationLine -> createDeviationLine(slot.type)
                         SeriesSlot.IobLine          -> iobLineStyle.iobLine
-                        SeriesSlot.IobPrediction    -> iobLineStyle.iobPredictionLine
                         SeriesSlot.SmallSmb         -> iobLineStyle.smallSmbLine
                         SeriesSlot.MediumSmb        -> iobLineStyle.mediumSmbLine
                         SeriesSlot.LargeSmb         -> iobLineStyle.largeSmbLine
@@ -525,38 +503,20 @@ fun SecondaryGraphCompose(
     val bottomAxisItemPlacer = rememberBottomAxisItemPlacer(minTimestamp)
     val nowLineColor = MaterialTheme.colorScheme.onSurface
     val nowLine = rememberNowLine(minTimestamp, nowTimestamp, nowLineColor)
-    
-    val zeroLineColor = nowLineColor.copy(alpha = 0.3f)
-    val zeroLine = remember(hasFuelTrim, zeroLineColor) {
-        if (!hasFuelTrim) null
-        else HorizontalBaseline(y = 0.0, color = zeroLineColor, strokeWidthPx = 2f)
-    }
-
-    val decorations = remember(nowLine, zeroLine) { 
-        listOfNotNull(nowLine, zeroLine) 
-    }
-
-    // When basal overlay or fuel trim is active, custom primary Y range is needed
-    val primaryYMax = remember(hasBasalLayer, hasFuelTrim, processedIob, processedSimpleSeries, processedCob) {
-        if (!hasBasalLayer && !hasFuelTrim) return@remember null // auto-range
+    val decorations = remember(nowLine) { listOf(nowLine) }
+    // When basal overlay is active, reserve top 25% for basal by extending primary Y range
+    val primaryYMax = remember(hasBasalLayer, processedIob, processedSimpleSeries, processedCob) {
+        if (!hasBasalLayer) return@remember null // auto-range when no basal
         val allY = buildList {
             addAll(processedIob.map { it.second })
             for ((_, pts) in processedSimpleSeries) addAll(pts.map { it.second })
             addAll(processedCob.first.map { it.second })
         }
-        if (allY.isEmpty()) {
-            if (hasFuelTrim) -5.0 to 5.0 else null
-        } else {
+        if (allY.isEmpty()) null
+        else {
             val dataMax = allY.max().coerceAtLeast(0.1)
             val dataMin = allY.min().coerceAtMost(0.0)
-            
-            if (hasFuelTrim) {
-                // Symmetric range around 0 for Fuel Trim, at least [-5, 5]
-                val limit = maxOf(abs(dataMax), abs(dataMin), 5.0)
-                -limit to limit
-            } else {
-                dataMin to (dataMax / 0.75) // extend so data fills 75%, top 25% reserved for basal
-            }
+            dataMin to (dataMax / 0.75) // extend so data fills 75%, top 25% reserved for basal
         }
     }
     // Dual-axis zero alignment.
@@ -694,7 +654,6 @@ fun SecondaryGraphCompose(
 private sealed class SeriesSlot {
     data class DeviationLine(val type: DeviationType) : SeriesSlot()
     data object IobLine : SeriesSlot()
-    data object IobPrediction : SeriesSlot()
     data object SmallSmb : SeriesSlot()
     data object MediumSmb : SeriesSlot()
     data object LargeSmb : SeriesSlot()
@@ -808,8 +767,7 @@ data class SeriesColors(
     val devSlope: Color,
     val heartRate: Color,
     val steps: Color,
-    val activity: Color,
-    val fuelTrim: Color
+    val activity: Color
 ) {
 
     fun colorFor(type: SeriesType): Color = when (type) {
@@ -824,7 +782,6 @@ data class SeriesColors(
         SeriesType.HEART_RATE      -> heartRate
         SeriesType.STEPS           -> steps
         SeriesType.ACTIVITY        -> activity
-        SeriesType.FUEL_TRIM       -> fuelTrim
         SeriesType.PREDICTIONS     -> activity // unused — PREDICTIONS is a BG overlay flag, not a secondary series
     }
 }
@@ -846,8 +803,7 @@ fun rememberSeriesColors(): SeriesColors {
             devSlope = Color(0xFFFFFF00),            // yellow (matches @color/devSlopePos)
             heartRate = Color(0xFFFFFF66),           // pale yellow (matches @color/heartRate #FFFFFF66)
             steps = Color(0xFF66FFB8),              // mint green (matches @color/steps)
-            activity = Color(0xFFD3F166),           // lime green (matches @color/activity)
-            fuelTrim = Color(0xFFFF5252)             // Red (approx matches the user's diagram)
+            activity = Color(0xFFD3F166)            // lime green (matches @color/activity)
         )
     }
 }
@@ -877,19 +833,6 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
             fill = LineCartesianLayer.LineFill.single(Fill(color)),
             areaFill = null
         )
-// Fuel Trim: Fluent line with dots
-        SeriesType.FUEL_TRIM                                                     -> LineCartesianLayer.Line(
-            fill = LineCartesianLayer.LineFill.single(Fill(color)),
-            stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),
-            areaFill = null,
-            pointProvider = LineCartesianLayer.PointProvider.single(
-                LineCartesianLayer.Point(
-                    component = ShapeComponent(fill = Fill(color), shape = CircleShape),
-                    size = 4.dp
-                )
-            ),
-            interpolator = Smooth
-        )
         // Points/dots only — no connecting line
         SeriesType.HEART_RATE, SeriesType.STEPS                                  -> LineCartesianLayer.Line(
             fill = LineCartesianLayer.LineFill.single(Fill(Color.Transparent)),
@@ -917,7 +860,6 @@ fun createSeriesLine(type: SeriesType, colors: SeriesColors): LineCartesianLayer
 
 data class IobLineStyles(
     val iobLine: LineCartesianLayer.Line,
-    val iobPredictionLine: LineCartesianLayer.Line,
     val smallSmbLine: LineCartesianLayer.Line,
     val mediumSmbLine: LineCartesianLayer.Line,
     val largeSmbLine: LineCartesianLayer.Line,
@@ -950,14 +892,6 @@ fun rememberIobLineStyles(): IobLineStyles {
                 fill = LineCartesianLayer.LineFill.single(Fill(iobColor)),
                 areaFill = LineCartesianLayer.AreaFill.single(
                     Fill(Brush.verticalGradient(listOf(iobColor.copy(alpha = 1f), Color.Transparent)))
-                ),
-                interpolator = Square
-            ),
-            iobPredictionLine = LineCartesianLayer.Line(
-                fill = LineCartesianLayer.LineFill.single(Fill(iobColor)),
-                stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),
-                areaFill = LineCartesianLayer.AreaFill.single(
-                    Fill(Brush.verticalGradient(listOf(iobColor.copy(alpha = 0.5f), Color.Transparent)))
                 ),
                 interpolator = Square
             ),
@@ -1151,4 +1085,3 @@ private fun alignZeros(aMin: Double, aMax: Double, bMin: Double, bMax: Double): 
         else                 -> null
     }
 }
-
