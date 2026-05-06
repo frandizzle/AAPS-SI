@@ -436,6 +436,7 @@
     <string name="revert_to_defaults">Revert to defaults</string>
     <string name="confirm_cancel_temp_target">Cancel active temporary target?</string>
     <string name="loop">Loop</string>
+    <string name="loop_desc">Open/Close loop</string>
     <string name="ns">NS</string>
     <string name="record">Record</string>
     <string name="location_front_right_upper_chest">Right Chest</string>

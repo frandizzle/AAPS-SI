@@ -181,9 +181,9 @@ fun QuickLauchConfigScreen(
                 }
             }
 
-            // ── Available: Care Portal ──
+            // ── Available: Care Portal & Management ──
             val careItems = state.availableStaticItems.filter {
-                it.action.elementType?.category in setOf(ElementCategory.CAREPORTAL, ElementCategory.DEVICE)
+                it.action.elementType?.category in setOf(ElementCategory.CAREPORTAL, ElementCategory.DEVICE, ElementCategory.MANAGEMENT)
             }
             item(key = "divider_care") {
                 HorizontalDivider()

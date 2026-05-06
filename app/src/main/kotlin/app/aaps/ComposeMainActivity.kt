@@ -1116,8 +1116,13 @@ class ComposeMainActivity : AppCompatActivity() {
             ElementType.COB,
             ElementType.SENSITIVITY,
             ElementType.USER_ENTRY,
-            ElementType.LOOP,
             ElementType.AAPS                    -> {
+            }
+
+            ElementType.LOOP                    -> {
+                val plugin = activePlugin.getPluginsList()
+                    .find { it.javaClass.simpleName == "LoopPlugin" }
+                if (plugin != null) handlePluginClick(plugin)
             }
         }
     }

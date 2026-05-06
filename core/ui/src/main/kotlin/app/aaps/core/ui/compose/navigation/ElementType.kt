@@ -83,7 +83,7 @@ enum class ElementType(
     // Running mode / loop (used by UserEntry)
     RUNNING_MODE(category = ElementCategory.MANAGEMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
     USER_ENTRY,
-    LOOP,
+    LOOP(category = ElementCategory.MANAGEMENT, searchable = true, protection = ProtectionCheck.Protection.BOLUS),
     AAPS,
 
     // App lifecycle

@@ -260,6 +260,7 @@ fun ElementType.descriptionResId(): Int = when (this) {
     ElementType.QUICK_LAUNCH_CONFIG     -> R.string.quick_launch_configure_desc
     ElementType.SCENE                   -> R.string.scene_desc
     ElementType.SCENE_MANAGEMENT        -> R.string.scene_management_desc
+    ElementType.LOOP                    -> R.string.loop_desc
     ElementType.SMART_MEAL,
     ElementType.QUICK_WIZARD,
     ElementType.RUNNING_MODE,
@@ -269,7 +270,6 @@ fun ElementType.descriptionResId(): Int = when (this) {
     ElementType.COB,
     ElementType.SENSITIVITY,
     ElementType.USER_ENTRY,
-    ElementType.LOOP,
     ElementType.AAPS,
     ElementType.EXIT                    -> 0
 }
