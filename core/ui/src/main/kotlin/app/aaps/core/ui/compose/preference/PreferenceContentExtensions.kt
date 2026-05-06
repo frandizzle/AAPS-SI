@@ -54,21 +54,24 @@ fun LazyListScope.addPreferenceSubScreenDef(
         val isExpanded = sectionState?.isExpanded(sectionKey) ?: false
         // Get visibility context from CompositionLocal
         val visibilityContext = LocalVisibilityContext.current
-        CollapsibleCardSectionContent(
-            titleResId = def.titleResId,
-            summaryItems = def.effectiveSummaryItems(),
-            expanded = isExpanded,
-            onToggle = { sectionState?.toggle(sectionKey, SectionLevel.TOP_LEVEL) },
-            icon = def.icon
-        ) {
-            // Render items in order, preserving the original structure
-            RenderPreferenceItems(
-                items = def.items,
-                parentKey = def.key,
-                onShowMessage = onShowMessage,
-                sectionState = sectionState,
-                visibilityContext = visibilityContext
-            )
+
+        if (shouldShowSubScreenInline(def, visibilityContext)) {
+            CollapsibleCardSectionContent(
+                titleResId = def.titleResId,
+                summaryItems = getVisibleSummaryItems(def, visibilityContext),
+                expanded = isExpanded,
+                onToggle = { sectionState?.toggle(sectionKey, SectionLevel.TOP_LEVEL) },
+                icon = def.icon
+            ) {
+                // Render items in order, preserving the original structure
+                RenderPreferenceItems(
+                    items = def.items,
+                    parentKey = def.key,
+                    onShowMessage = onShowMessage,
+                    sectionState = sectionState,
+                    visibilityContext = visibilityContext
+                )
+            }
         }
     }
 }
@@ -97,12 +100,7 @@ private fun RenderPreferenceItems(
             }
 
             is PreferenceSubScreenDef -> {
-                val shouldShow = shouldShowSubScreenInline(
-                    subScreen = item,
-                    visibilityContext = visibilityContext
-                )
-
-                if (shouldShow) {
+                if (shouldShowSubScreenInline(item, visibilityContext)) {
                     // Render nested subscreen as simple collapsible section (no extra card)
                     val subSectionKey = "${parentKey}_${item.key}"
                     val isSubExpanded = sectionState?.isExpanded(subSectionKey) ?: false
@@ -110,10 +108,11 @@ private fun RenderPreferenceItems(
                     // Header without card (no icon for nested subscreens)
                     ClickablePreferenceCategoryHeader(
                         titleResId = item.titleResId,
-                        summaryItems = item.effectiveSummaryItems(),
+                        summaryItems = getVisibleSummaryItems(item, visibilityContext),
                         expanded = isSubExpanded,
                         onToggle = { sectionState?.toggle(subSectionKey, SectionLevel.SUB_SECTION, parentKey = parentKey) },
-                        insideCard = true
+                        insideCard = true,
+                        icon = item.icon
                     )
 
                     // Content without card wrapper
@@ -139,7 +138,62 @@ private fun RenderPreferenceItems(
 }
 
 /**
- * Determines if a subscreen should be shown based on hideParentScreenIfHidden logic.
+ * Helper composable to calculate visibility state for any PreferenceItem.
+ */
+@Composable
+private fun calculateItemVisibility(
+    item: Any,
+    visibilityContext: PreferenceVisibilityContext?
+): PreferenceVisibilityState {
+    return when (item) {
+        is PreferenceKey          -> {
+            if (item is IntentPreferenceKey) {
+                calculateIntentPreferenceVisibility(item, visibilityContext)
+            } else {
+                val engineeringModeOnly = when (item) {
+                    is BooleanPreferenceKey -> item.engineeringModeOnly
+                    is IntPreferenceKey     -> item.engineeringModeOnly
+                    is LongPreferenceKey    -> item.engineeringModeOnly
+                    else                    -> false
+                }
+                calculatePreferenceVisibility(item, engineeringModeOnly, visibilityContext)
+            }
+        }
+
+        is PreferenceSubScreenDef -> {
+            PreferenceVisibilityState(
+                visible = shouldShowSubScreenInline(item, visibilityContext),
+                enabled = true
+            )
+        }
+
+        else                      -> PreferenceVisibilityState(visible = true, enabled = true)
+    }
+}
+
+/**
+ * Helper composable to get visible summary items for a subscreen.
+ */
+@Composable
+private fun getVisibleSummaryItems(
+    subScreen: PreferenceSubScreenDef,
+    visibilityContext: PreferenceVisibilityContext?
+): List<Int> {
+    return subScreen.items.mapNotNull { item ->
+        val visibility = calculateItemVisibility(item, visibilityContext)
+        if (visibility.visible) {
+            when (item) {
+                is PreferenceKey          -> item.titleResId.takeIf { it != 0 }
+                is PreferenceSubScreenDef -> item.titleResId.takeIf { it != 0 }
+                else                      -> null
+            }
+        } else null
+    }
+}
+
+/**
+ * Determines if a subscreen should be shown based on hideParentScreenIfHidden logic
+ * and whether it has any visible items.
  * Used in inline rendering context (AllPreferencesScreen).
  */
 @Composable
@@ -147,38 +201,23 @@ private fun shouldShowSubScreenInline(
     subScreen: PreferenceSubScreenDef,
     visibilityContext: PreferenceVisibilityContext?
 ): Boolean {
-    // Find items with hideParentScreenIfHidden = true
+    var anyItemVisible = false
+
+    // First check mandatory items (hideParentScreenIfHidden)
     for (item in subScreen.items) {
-        if (item is PreferenceKey && item.hideParentScreenIfHidden) {
-            val visibility = if (item is IntentPreferenceKey) {
-                // Check visibility of intent item
-                calculateIntentPreferenceVisibility(
-                    intentKey = item,
-                    visibilityContext = visibilityContext
-                )
-            } else {
-                // Get engineeringModeOnly based on specific type
-                val engineeringModeOnly = when (item) {
-                    is BooleanPreferenceKey -> item.engineeringModeOnly
-                    is IntPreferenceKey     -> item.engineeringModeOnly
-                    is LongPreferenceKey    -> item.engineeringModeOnly
-                    else                    -> false
-                }
-                // Check visibility of regular preference item
-                calculatePreferenceVisibility(
-                    preferenceKey = item,
-                    engineeringModeOnly = engineeringModeOnly,
-                    visibilityContext = visibilityContext
-                )
-            }
-            // If this controlling item is hidden, hide the parent subscreen
-            if (!visibility.visible) {
-                return false
-            }
+        val visibility = calculateItemVisibility(item, visibilityContext)
+
+        if (visibility.visible) {
+            anyItemVisible = true
+        }
+
+        if (item is PreferenceKey && item.hideParentScreenIfHidden && !visibility.visible) {
+            return false
         }
     }
-    // No hideParentScreenIfHidden items found, or all are visible
-    return true
+
+    // If no hideParentScreenIfHidden items found, only show if at least one item is visible
+    return anyItemVisible
 }
 
 /**
