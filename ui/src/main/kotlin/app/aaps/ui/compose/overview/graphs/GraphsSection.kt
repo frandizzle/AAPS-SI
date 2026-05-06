@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -48,6 +49,7 @@ import app.aaps.core.interfaces.overview.graph.GraphConfig
 import app.aaps.core.interfaces.overview.graph.SecondaryGraph
 import app.aaps.core.interfaces.overview.graph.SeriesType
 import app.aaps.core.ui.compose.NumberInputRow
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import com.patrykandpatrick.vico.compose.cartesian.Scroll
 import com.patrykandpatrick.vico.compose.cartesian.Zoom
 import com.patrykandpatrick.vico.compose.cartesian.rememberVicoScrollState
@@ -95,23 +97,47 @@ private val CONFIGURABLE_SERIES = SeriesType.entries.filter {
 fun GraphsSection(
     graphViewModel: GraphViewModel,
     isSimpleMode: Boolean,
+    siOverviewState: SmartInsulinOverview.OverviewState? = null,
     modifier: Modifier = Modifier
 ) {
+    val isLearning = siOverviewState?.isLearning ?: true
     val savedGraphConfig by graphViewModel.graphConfigFlow.collectAsStateWithLifecycle()
     // In simple mode: fixed layout (BG, IOB+BAS, COB — no overlays, no editing)
     val graphConfig = if (isSimpleMode) SIMPLE_MODE_CONFIG else savedGraphConfig
 
-    // BG graph - primary interactive
-    val bgScrollState = rememberVicoScrollState(
-        scrollEnabled = true,
-        initialScroll = Scroll.Absolute.End
-    )
     val bgZoomState = rememberVicoZoomState(
         zoomEnabled = true,
         initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES),
         minZoom = Zoom.x(Constants.GRAPH_TIME_RANGE_HOURS * 60.0),
         maxZoom = Zoom.x(MIN_GRAPH_ZOOM_MINUTES)
     )
+
+    // Collect nowTimestamp ONCE so all graphs use the same value (avoids separate recompositions every 30s)
+    val nowTimestamp by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
+
+    val scrubbing by graphViewModel.isScrubbing.collectAsStateWithLifecycle()
+
+    // 1. REVERT to the simple, stable scroll state (This fixes the stuck-in-the-past bug instantly!)
+    val bgScrollState = rememberVicoScrollState(
+        initialScroll = Scroll.Absolute.End
+    )
+
+    val lockedScroll = remember { mutableStateOf(0f) }
+
+    LaunchedEffect(scrubbing) {
+        if (scrubbing) {
+            // 1. Freeze the exact pixel position the moment you touch
+            lockedScroll.value = bgScrollState.value
+
+            // 2. Kill any residual fling momentum instantly
+            while (true) {
+                if (kotlin.math.abs(bgScrollState.value - lockedScroll.value) > 0.5f) {
+                    bgScrollState.scroll(Scroll.Absolute.pixels(lockedScroll.value))
+                }
+                kotlinx.coroutines.delay(16)
+            }
+        }
+    }
 
     // Pre-allocate secondary graph scroll/zoom states (up to MAX_SECONDARY_GRAPHS)
     // These are always created to keep Compose's remember slots stable
@@ -125,9 +151,6 @@ fun GraphsSection(
     val sec3zoom = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES))
     val sec4scroll = rememberVicoScrollState(scrollEnabled = false, initialScroll = Scroll.Absolute.End)
     val sec4zoom = rememberVicoZoomState(zoomEnabled = false, initialZoom = Zoom.x(DEFAULT_GRAPH_ZOOM_MINUTES))
-
-    // Collect nowTimestamp ONCE so all graphs use the same value (avoids separate recompositions every 30s)
-    val nowTimestamp by graphViewModel.nowTimestamp.collectAsStateWithLifecycle()
 
     // Collect time range ONCE so all graphs use the exact same values in the same frame.
     // Without this, each graph independently collects derivedTimeRange via

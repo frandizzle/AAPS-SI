@@ -199,7 +199,7 @@ fun OverviewScreenSplit(
                 }
             }
 
-            // Right column — graphs, own scroll
+            // Right column ΓÇö graphs, own scroll
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -207,7 +207,7 @@ fun OverviewScreenSplit(
                     .verticalScroll(rememberScrollState())
                     .padding(start = 4.dp)
             ) {
-                GraphsSection(graphViewModel = graphViewModel, isSimpleMode = isSimpleMode)
+                GraphsSection(graphViewModel = graphViewModel, isSimpleMode = isSimpleMode, siOverviewState = siOverviewState)
             }
         }
     }
