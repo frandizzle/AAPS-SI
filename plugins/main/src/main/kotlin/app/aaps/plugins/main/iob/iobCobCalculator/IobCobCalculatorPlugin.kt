@@ -59,7 +59,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.launchIn
@@ -128,7 +127,7 @@ class IobCobCalculatorPlugin @Inject constructor(
             .observeOn(aapsSchedulers.io)
             .subscribe({ resetDataAndRunCalculation("onEventConfigBuilderChange") }, fabricPrivacy::logException)
         // Consolidated database changes
-        merge<Triple<Long?, Boolean, Boolean>>(
+        kotlinx.coroutines.flow.merge(
             persistenceLayer.observeChanges(EPS::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
             persistenceLayer.observeChanges(GV::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, true, true) },
             persistenceLayer.observeChanges(CA::class.java).map { list -> Triple(list.minOfOrNull { it.timestamp }, false, false) },
@@ -142,7 +141,7 @@ class IobCobCalculatorPlugin @Inject constructor(
                 timestamp?.let { scheduleHistoryDataChange(it, reloadBgData = reloadBg, triggeredByNewBG = triggeredByBg) }
             }.launchIn(newScope)
         // Preference changes
-        merge<Unit>(
+        kotlinx.coroutines.flow.merge(
             preferences.observe(IntKey.AutosensPeriod).drop(1).map { },
             preferences.observe(StringKey.SafetyAge).drop(1).map { },
             preferences.observe(DoubleKey.AbsorptionMaxTime).drop(1).map { },
