@@ -956,7 +956,9 @@ fun rememberIobLineStyles(): IobLineStyles {
             iobPredictionLine = LineCartesianLayer.Line(
                 fill = LineCartesianLayer.LineFill.single(Fill(iobColor)),
                 stroke = LineCartesianLayer.LineStroke.Continuous(thickness = 2.dp),
-                areaFill = null,
+                areaFill = LineCartesianLayer.AreaFill.single(
+                    Fill(Brush.verticalGradient(listOf(iobColor.copy(alpha = 0.5f), Color.Transparent)))
+                ),
                 interpolator = Square
             ),
             smallSmbLine = LineCartesianLayer.Line(
