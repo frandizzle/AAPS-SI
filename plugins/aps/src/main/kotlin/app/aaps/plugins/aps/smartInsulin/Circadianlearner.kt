@@ -1124,9 +1124,9 @@ class CircadianLearner @Inject constructor(
         // and pre-emptively adjusts basal multiplier if projection is off target.
         // Fires INSTEAD of waiting for full drift window to confirm — faster convergence.
         private const val PRED_TRIM_HORIZON_HRS   = 1.0    // project 60 min ahead
-        private const val PRED_TRIM_DEAD_BAND_MGDL = 9.0   // ~0.5 mmol — ignore small projected errors
-        private const val PRED_TRIM_MAX_ADJUST     = 0.06  // cap at 6% per firing
-        private const val PRED_TRIM_SENSITIVITY    = 36.0  // 2 mmol projected error → full adjustment
+        private const val PRED_TRIM_DEAD_BAND_MGDL = 3.6   // ~0.5 mmol — ignore small projected errors
+        private const val PRED_TRIM_MAX_ADJUST     = 0.12  // cap at 6% per firing
+        private const val PRED_TRIM_SENSITIVITY    = 18.0  // 2 mmol projected error → full adjustment
         private const val PRED_MIN_WINDOW_SAMPLES  = 6     // ~30 min of data before projecting
 
         // Negative IOB compensation signal
