@@ -59,7 +59,7 @@ class AggressionLearner @Inject constructor(
     init { restoreState() }
 
     companion object {
-        private const val WINDOW_MS            = 24 * 60 * 60 * 1000L
+        private const val WINDOW_MS            = 16 * 60 * 60 * 1000L  // 16h rolling — tighter window makes day-of-week blend meaningful earlier in the day
         private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
         private const val MIN_SAMPLES_TO_LEARN = 24   // ~2h of fasting data
 
@@ -158,11 +158,20 @@ class AggressionLearner @Inject constructor(
         stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
         stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
         else                                                    -> {
-            // Asymmetric decay back to 1.0 (neutral)
-            // If current < 1.0 (conservative), return to neutral faster (10% per hour)
-            // If current > 1.0 (aggressive), return to neutral slower (3% per hour)
-            val decayAlpha = if (current < 1.0) 0.10 else 0.03
-            current + (1.0 - current) * decayAlpha
+            // Only decay back toward 1.0 when genuinely in a good state —
+            // both low time acceptable AND high time minimal.
+            // If high pct is still meaningful, hold position rather than
+            // decaying and undoing hard-earned aggressiveness.
+            if (stats.highPct < 10.0 && stats.lowPct < 2.0) {
+                // Asymmetric decay back to 1.0 (neutral)
+                // If current < 1.0 (conservative), return to neutral faster (10% per hour)
+                // If current > 1.0 (aggressive), return to neutral slower (3% per hour)
+                val decayAlpha = if (current < 1.0) 0.10 else 0.03
+                current + (1.0 - current) * decayAlpha
+            } else {
+                // Still running meaningful high time — hold position, don't decay
+                current
+            }
         }
     }
 
