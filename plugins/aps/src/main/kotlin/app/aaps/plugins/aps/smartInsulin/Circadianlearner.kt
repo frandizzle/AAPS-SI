@@ -731,33 +731,34 @@ class CircadianLearner @Inject constructor(
         if (!driftFired && !inPostMealLockout) {
             val projectedBg = projectBg60min(targetMgdl)
             if (projectedBg == null) {
-                // Check if the blocker is the sample count or the 12-minute time spread
-                if (basalDriftWindow.size < PRED_MIN_WINDOW_SAMPLES) {
-                    lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
+                // Your previous fix to distinguish the 12-min time gate
+                val elapsed = if (basalDriftWindow.size >= PRED_MIN_WINDOW_SAMPLES) {
+                    val e = (basalDriftWindow.last().first - basalDriftWindow.first().first) / 3_600_000.0
+                    "elapsed ${(e * 60).toInt()}/12min"
                 } else {
-                    val oldest = basalDriftWindow.first().first
-                    val newest = basalDriftWindow.last().first
-                    val elapsedMins = ((newest - oldest) / 60_000.0).toInt()
-
-                    // This explains why "7/6 samples" previously said "waiting"
-                    lastPredTrimDebug = "waiting — elapsed ${elapsedMins}/12min spread"
+                    "${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
                 }
+                lastPredTrimDebug = "waiting — $elapsed"
             } else {
                 val projectedError = projectedBg - targetMgdl  // positive = projected high
-                lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | ${if (abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
-                if (abs(projectedError) > PRED_TRIM_DEAD_BAND_MGDL) {
-                    // Scale adjustment to projected error magnitude, capped at PRED_TRIM_MAX_ADJUST
+
+                // NEW SUCCESS GATE: Only cut basal if we are ALREADY at or below target.
+                // If we are high (> target) and dropping, let the correction finish!
+                val isCuttingBasal = projectedError < 0
+                val currentlyAboveTarget = bg > targetMgdl
+
+                if (isCuttingBasal && currentlyAboveTarget) {
+                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${"%.1f".format(projectedError / 18.0)}mmol | suppressed: BG > target"
+                } else if (abs(projectedError) > PRED_TRIM_DEAD_BAND_MGDL) {
+                    // Scale adjustment to projected error magnitude
                     val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
-                    val adjustment = 1.0 + rawAdjust  // >1 = more basal needed, <1 = less
-                    val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                    basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
+                    val adjustment = 1.0 + rawAdjust
+                    basalState = basalState.updated(dow, hour, (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
                     predTrimFired = true
                     lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
-                        "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA α=0.03 — slow)"
-                    aapsLogger.debug(LTag.APS,
-                                     "CircadianLearner Basal[predTrim] h=$hour projectedBg=${"%.1f".format(projectedBg)} " +
-                                         "target=${"%.1f".format(targetMgdl)} error=${"%.1f".format(projectedError)} rawAdjust=${"%.3f".format(rawAdjust)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | active"
+                } else {
+                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | dead-band"
                 }
             }
         }
