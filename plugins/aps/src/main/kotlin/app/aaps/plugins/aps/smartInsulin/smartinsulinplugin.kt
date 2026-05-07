@@ -94,6 +94,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val uamController: UamController,
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
+    private val mealPhaseTracker: MealPhaseTracker,
     private val aggressionLearner: AggressionLearner,
     private val basalLearner: BasalLearner,
     private val circadianLearner: CircadianLearner,
@@ -1744,6 +1745,22 @@ open class SmartInsulinPlugin @Inject constructor(
                 else -> "Blocked"
             }
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: paused ($trackerPauseReason)")
+        }
+
+        // ── Meal phase tracker — detection only, no dosing influence yet ──────
+        // Runs every cycle regardless of noise/activity gates — we want to track
+        // the full meal shape even if BolusCurveTracker is paused.
+        // Only skips when sensor is completely unreliable (warmup).
+        if (!cgmInWarmup) {
+            val lastBolusTime = iobArray.firstOrNull()?.lastBolusTime ?: 0L
+            mealPhaseTracker.onLoopCycle(
+                now           = now,
+                mealMode      = mealMode,
+                bgMmol        = glucoseStatus.glucose / 18.0,
+                shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
+                targetBgMmol  = profile.getTargetMgdl() / 18.0,
+                lastBolusTime = lastBolusTime
+            )
         }
 
 
