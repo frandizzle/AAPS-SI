@@ -605,7 +605,7 @@ fun SmartInsulinScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim + ISF Episode)",
+                    text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -621,7 +621,6 @@ fun SmartInsulinScreen(
                         .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // Acceleration
                     Text("Acceleration (2nd derivative)",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
@@ -630,8 +629,6 @@ fun SmartInsulinScreen(
                          fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
-
-                    // Predictive Basal Trim
                     Text("Predictive Basal Trim (60min projection)",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
@@ -640,18 +637,6 @@ fun SmartInsulinScreen(
                          fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
-
-                    // ISF Episode learner
-                    Text("ISF Episode Learner (slow-path)",
-                         style = MaterialTheme.typography.labelMedium,
-                         color = MaterialTheme.colorScheme.primary)
-                    Text(d.lastIsfEpisodeDebug,
-                         style = MaterialTheme.typography.bodySmall,
-                         fontFamily = FontFamily.Monospace,
-                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-
-                    // Last basal signal
                     Text("Last basal signal",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
@@ -1037,6 +1022,37 @@ private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
                  fontFamily = FontFamily.Monospace,
                  fontSize   = 11.sp,
                  color      = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        // ── Transition gate debug — shows why CARB→P/F hasn't fired ───────
+        if (d.mealPhaseActive && d.mealPhaseTransitionDebug.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text("Transition gates", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Spacer(Modifier.height(4.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(8.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                d.mealPhaseTransitionDebug.lines().forEach { line ->
+                    val isPass = line.contains("✓")
+                    val isFail = line.contains("✗")
+                    val color  = when {
+                        isPass -> StatusGood
+                        isFail -> StatusBad
+                        else   -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text(line,
+                         fontFamily = FontFamily.Monospace,
+                         fontSize   = 11.sp,
+                         color      = color)
+                }
+            }
         }
 
         // ── Detection thresholds (debug reference) ─────────────────────

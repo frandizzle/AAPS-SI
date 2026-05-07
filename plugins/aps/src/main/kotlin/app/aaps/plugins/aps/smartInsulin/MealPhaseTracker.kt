@@ -132,6 +132,10 @@ class MealPhaseTracker @Inject constructor(
     var lastPhaseDebug: String = "No session active"
         private set
 
+    /** Per-cycle transition gate debug — shows exactly why CARB→P/F hasn't fired yet */
+    var lastTransitionDebug: String = ""
+        private set
+
     // ── Completed session callback ────────────────────────────────────────────
     // Set by MealPhaseProfileLearner once it's ready to consume sessions.
     // Null until learner is wired in — detection still runs, sessions are just logged.
@@ -371,6 +375,27 @@ class MealPhaseTracker @Inject constructor(
                                          "instant=${"%.3f".format(delta)} " +
                                          "avgLow=$avgDeltaLow instLow=$instantDeltaLow slowing=$deltaSlowing " +
                                          "hasHistory=$hasEarlyHistory confirm=$transitionCandidateCount/$TRANSITION_CONFIRM_READINGS")
+                    lastTransitionDebug = buildString {
+                        append("CARB→P/F gates (${phaseElapsedMs/60_000}min elapsed):\n")
+                        append("  avgΔ ${"%.2f".format(avgRecentDelta)} mmol  ")
+                        append(if (avgDeltaLow) "✓ <0.15" else "✗ need <0.15")
+                        append("\n")
+                        append("  instΔ ${"%.2f".format(delta)} mmol  ")
+                        append(if (instantDeltaLow) "✓ <0.20" else "✗ need <0.20")
+                        append("\n")
+                        if (hasEarlyHistory) {
+                            append("  slowing ${"%.2f".format(avgRecentDelta)}<${"%.2f".format(avgEarlyDelta)}-0.05  ")
+                            append(if (deltaSlowing) "✓" else "✗")
+                            append("\n")
+                        } else {
+                            append("  slowing — skip (history building ${deltaHistory.size}/6)\n")
+                        }
+                        val confirmStr = if (transitionCandidateCount > 0)
+                            "  confirm $transitionCandidateCount/$TRANSITION_CONFIRM_READINGS readings"
+                        else
+                            "  waiting for first confirm"
+                        append(confirmStr)
+                    }
                 }
             }
 
@@ -461,6 +486,7 @@ class MealPhaseTracker @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
         lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
+        lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
     }
 
     private fun confirmTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
@@ -478,9 +504,9 @@ class MealPhaseTracker @Inject constructor(
     private fun executeTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
         val fromPhase = currentPhase
         when (fromPhase) {
-            MealPhase.CARB        -> carbPhaseDurationMs = phaseElapsedMs
-            MealPhase.PROTEIN_FAT -> pfPhaseDurationMs   = phaseElapsedMs
-            MealPhase.TAIL        -> { /* shouldn't happen */ }
+            MealPhase.CARB        -> { carbPhaseDurationMs = phaseElapsedMs; lastTransitionDebug = "✓ Transitioned to P/F at ${phaseElapsedMs/60_000}min" }
+            MealPhase.PROTEIN_FAT -> { pfPhaseDurationMs   = phaseElapsedMs; lastTransitionDebug = "" }
+            MealPhase.TAIL        -> { lastTransitionDebug = "" }
         }
         currentPhase             = target
         phaseStartMs             = now
