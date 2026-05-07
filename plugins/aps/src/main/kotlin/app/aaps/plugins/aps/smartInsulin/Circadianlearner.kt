@@ -731,7 +731,17 @@ class CircadianLearner @Inject constructor(
         if (!driftFired && !inPostMealLockout) {
             val projectedBg = projectBg60min(targetMgdl)
             if (projectedBg == null) {
-                lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
+                // Check if the blocker is the sample count or the 12-minute time spread
+                if (basalDriftWindow.size < PRED_MIN_WINDOW_SAMPLES) {
+                    lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
+                } else {
+                    val oldest = basalDriftWindow.first().first
+                    val newest = basalDriftWindow.last().first
+                    val elapsedMins = ((newest - oldest) / 60_000.0).toInt()
+
+                    // This explains why "7/6 samples" previously said "waiting"
+                    lastPredTrimDebug = "waiting — elapsed ${elapsedMins}/12min spread"
+                }
             } else {
                 val projectedError = projectedBg - targetMgdl  // positive = projected high
                 lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | ${if (abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
