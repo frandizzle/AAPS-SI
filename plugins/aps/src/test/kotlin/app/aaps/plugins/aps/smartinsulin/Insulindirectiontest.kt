@@ -60,15 +60,18 @@ class InsulinDirectionTest {
     private fun deliveredBasalUh() = PROFILE_BASAL * learner.basalMultiplier(HOUR, DOW)
 
     private fun tick(
-        bg:       Double,
-        delta:    Double = 0.0,
-        activity: Double = 0.0,
-        iob:      Double = 0.1,
-        basalIob: Double = -0.05,
-        nowMs:    Long   = BASE_MS,
-        target:   Double = 99.0,
-        lowGuard: Double = 90.0,
-        mealMode: MealMode = MealMode.FASTING
+        bg:           Double,
+        delta:        Double  = 0.0,
+        activity:     Double  = 0.0,
+        iob:          Double  = 0.1,
+        basalIob:     Double  = -0.05,
+        nowMs:        Long    = BASE_MS,
+        target:       Double  = 99.0,
+        lowGuard:     Double  = 90.0,
+        mealMode:     MealMode = MealMode.FASTING,
+        smbU:         Double  = 0.0,
+        profileBasal: Double  = PROFILE_BASAL,
+        actualBasal:  Double  = PROFILE_BASAL
     ) = learner.update(
         glucoseStatus            = glucoseStatus(glucose = bg, delta = delta, shortAvgDelta = delta),
         iobArray                 = iobArray(iob = iob, activity = activity, basaliob = basalIob),
@@ -81,7 +84,10 @@ class InsulinDirectionTest {
         suppressAdaptiveLearning = false,
         hour                     = HOUR,
         dow                      = DOW,
-        nowMs                    = nowMs
+        nowMs                    = nowMs,
+        smbDeliveredU            = smbU,
+        profileBasalU            = profileBasal,
+        actualBasalU             = actualBasal
     )
 
     // ── ISF direction — physics learner ───────────────────────────────────────
@@ -430,5 +436,188 @@ class InsulinDirectionTest {
         assertTrue(bothAgree,
                    "Under less-insulin signal: ISF and basal should not both point MORE. " +
                        "ISF Δ=${"%+.3f".format(isfChanged)} basalΔ=${"%+.3f".format(basalChanged)}")
+
+        // ── ISF Episode learner (slow-path outcome learner) ───────────────────────
+        //
+        // The episode learner opens when an SMB fires, accumulates BG movement
+        // over time, and on close computes: impliedISF = bgDrop / totalInsulin
+        // then sets isfMult = profileISF / impliedISF.
+        //
+        // Direction rules:
+        //   bgDrop LARGE relative to insulin → impliedISF HIGH → mult < 1 → dosingISF UP (less aggressive) ✓
+        //   bgDrop SMALL relative to insulin → impliedISF LOW  → mult > 1 → dosingISF DOWN (more aggressive) ✓
+
+        /**
+         * Episode: 1 unit delivered, BG drops 72 mg/dL (4 mmol).
+         * impliedISF = 72/1 = 72 mg/dL/U — STRONGER than profile (50).
+         * → mult = 50/72 = 0.69 → dosingISF = 50/0.69 = 72 → ISF UP → less aggressive ✓
+         */
+        @Test
+        fun `episode — large BG drop per unit delivered increases dosingISF (less aggressive)`() {
+            val isfBefore = dosingIsfMgdl()
+
+            // Open episode with SMB
+            tick(bg = 162.0, iob = 1.0, smbU = 1.0, nowMs = BASE_MS)
+
+            // Simulate BG falling 72 mg/dL over 10 cycles — strong insulin response
+            for (i in 1..10) {
+                tick(bg = 162.0 - i * 7.2, delta = -7.2, iob = 0.8 - i * 0.05,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            // Trigger full resolution: stable near target (99) for 6+ cycles (30 min)
+            val resolvedBg = 162.0 - 10 * 7.2  // ~90 mg/dL, within EPISODE_FULL_RESOLVE_BAND of 99
+            for (i in 11..17) {
+                tick(bg = resolvedBg, delta = 0.0, iob = 0.1,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            val isfAfter = dosingIsfMgdl()
+            assertTrue(isfAfter > isfBefore,
+                       "Episode: large drop per unit → insulin stronger than profile → dosingISF should INCREASE. " +
+                           "Got ${"%.2f".format(isfBefore)} → ${"%.2f".format(isfAfter)} mg/dL/U")
+        }
+
+        /**
+         * Episode: 1 unit delivered, BG drops only 18 mg/dL (1 mmol).
+         * impliedISF = 18/1 = 18 mg/dL/U — WEAKER than profile (50).
+         * → mult = 50/18 = 2.78 → clamped to MAX 1.5 → dosingISF = 50/1.5 = 33 → ISF DOWN → more aggressive ✓
+         */
+        @Test
+        fun `episode — small BG drop per unit delivered decreases dosingISF (more aggressive)`() {
+            val isfBefore = dosingIsfMgdl()
+
+            // Open episode with SMB
+            tick(bg = 162.0, iob = 1.0, smbU = 1.0, nowMs = BASE_MS)
+
+            // BG barely moves despite insulin — weak response
+            for (i in 1..10) {
+                tick(bg = 162.0 - i * 1.8, delta = -1.8, iob = 0.8,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            // Partial resolution: stable for 12+ cycles (60 min) even though above target
+            val stuckBg = 162.0 - 10 * 1.8  // ~144 mg/dL — above target, episode closes as partial_resolve
+            for (i in 11..25) {
+                tick(bg = stuckBg, delta = 0.0, iob = 0.3,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            val isfAfter = dosingIsfMgdl()
+            assertTrue(isfAfter < isfBefore,
+                       "Episode: small drop per unit → insulin weaker than profile → dosingISF should DECREASE. " +
+                           "Got ${"%.2f".format(isfBefore)} → ${"%.2f".format(isfAfter)} mg/dL/U")
+        }
+
+        /**
+         * Episode timeout: no resolution after 4 hours.
+         * BG stays stuck high — insulin clearly insufficient.
+         * Timeout force-closes and should learn that ISF was too high (more insulin needed).
+         */
+        @Test
+        fun `episode — timeout force-close with stuck-high BG decreases dosingISF (more aggressive)`() {
+            val isfBefore = dosingIsfMgdl()
+
+            tick(bg = 162.0, iob = 1.0, smbU = 0.5, nowMs = BASE_MS)
+
+            // BG never resolves — stuck at 144 for 4+ hours
+            val timeoutCycles = (4 * 60 * 60_000L / CYCLE_MS).toInt() + 2
+            for (i in 1..timeoutCycles) {
+                tick(bg = 144.0, delta = 0.0, iob = 0.3,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            val isfAfter = dosingIsfMgdl()
+            assertTrue(isfAfter < isfBefore,
+                       "Episode timeout with stuck-high BG: dosingISF should DECREASE (more aggressive). " +
+                           "Got ${"%.2f".format(isfBefore)} → ${"%.2f".format(isfAfter)} mg/dL/U")
+        }
+
+        /**
+         * Episode invalidation: meal mode mid-episode discards learning.
+         * No ISF change should occur.
+         */
+        @Test
+        fun `episode — invalidated by meal mode mid-episode produces no ISF change`() {
+            val isfBefore = dosingIsfMgdl()
+
+            // Open episode
+            tick(bg = 162.0, iob = 1.0, smbU = 0.5, nowMs = BASE_MS)
+
+            // Mid-episode: meal mode fires — should invalidate
+            tick(bg = 150.0, iob = 0.9, mealMode = MealMode.DINNER,
+                 nowMs = BASE_MS + CYCLE_MS)
+
+            // Back to fasting — episode was discarded, no learning should occur from prior drop
+            for (i in 2..20) {
+                tick(bg = 99.0, delta = 0.0, iob = 0.1,
+                     nowMs = BASE_MS + i * CYCLE_MS)
+            }
+
+            // ISF may have moved from the fast-path physics learner but the episode
+            // itself was invalidated — assert no large jump from episode close
+            val isfAfter = dosingIsfMgdl()
+            val episodeSwing = kotlin.math.abs(isfAfter - isfBefore)
+            assertTrue(episodeSwing < 10.0,
+                       "Invalidated episode should not cause a large ISF jump. " +
+                           "Got swing of ${"%.2f".format(episodeSwing)} mg/dL/U")
+        }
+
+        /**
+         * Episode: basal deviation accounted for correctly.
+         * Loop ran 50% TBR (0.5 U/h actual vs 1.0 profile) — negative deviation reduces
+         * effective insulin attributed, making implied ISF lower → more aggressive correction.
+         */
+        @Test
+        fun `episode — negative basal deviation reduces effective insulin and lowers implied ISF`() {
+            // With half-basal running, loop withheld 0.5 U/h — episode should account for this
+            // and attribute LESS total insulin to the drop, implying a weaker ISF
+
+            // Baseline: same drop, full basal
+            val fullBasalLearner = CircadianLearner(logger, FakePreferences())
+            fullBasalLearner.update(
+                glucoseStatus = glucoseStatus(glucose = 162.0, delta = 0.0, shortAvgDelta = 0.0),
+                iobArray = iobArray(iob = 1.0, activity = 0.0, basaliob = 0.0),
+                mealMode = MealMode.FASTING, cobG = 0.0, profileIsfMgdl = PROFILE_ISF,
+                targetMgdl = 99.0, hour = HOUR, dow = DOW, nowMs = BASE_MS,
+                smbDeliveredU = 1.0, profileBasalU = PROFILE_BASAL, actualBasalU = PROFILE_BASAL
+            )
+            for (i in 1..17) {
+                fullBasalLearner.update(
+                    glucoseStatus = glucoseStatus(glucose = 99.0, delta = 0.0, shortAvgDelta = 0.0),
+                    iobArray = iobArray(iob = 0.1, activity = 0.0, basaliob = 0.0),
+                    mealMode = MealMode.FASTING, cobG = 0.0, profileIsfMgdl = PROFILE_ISF,
+                    targetMgdl = 99.0, hour = HOUR, dow = DOW, nowMs = BASE_MS + i * CYCLE_MS,
+                    smbDeliveredU = 0.0, profileBasalU = PROFILE_BASAL, actualBasalU = PROFILE_BASAL
+                )
+            }
+            val isfFullBasal = PROFILE_ISF / fullBasalLearner.isfMultiplier(HOUR, DOW)
+
+            // Half-basal learner: same drop but loop ran 50% TBR throughout
+            val halfBasalLearner = CircadianLearner(logger, FakePreferences())
+            halfBasalLearner.update(
+                glucoseStatus = glucoseStatus(glucose = 162.0, delta = 0.0, shortAvgDelta = 0.0),
+                iobArray = iobArray(iob = 1.0, activity = 0.0, basaliob = 0.0),
+                mealMode = MealMode.FASTING, cobG = 0.0, profileIsfMgdl = PROFILE_ISF,
+                targetMgdl = 99.0, hour = HOUR, dow = DOW, nowMs = BASE_MS,
+                smbDeliveredU = 1.0, profileBasalU = PROFILE_BASAL, actualBasalU = PROFILE_BASAL * 0.5
+            )
+            for (i in 1..17) {
+                halfBasalLearner.update(
+                    glucoseStatus = glucoseStatus(glucose = 99.0, delta = 0.0, shortAvgDelta = 0.0),
+                    iobArray = iobArray(iob = 0.1, activity = 0.0, basaliob = 0.0),
+                    mealMode = MealMode.FASTING, cobG = 0.0, profileIsfMgdl = PROFILE_ISF,
+                    targetMgdl = 99.0, hour = HOUR, dow = DOW, nowMs = BASE_MS + i * CYCLE_MS,
+                    smbDeliveredU = 0.0, profileBasalU = PROFILE_BASAL, actualBasalU = PROFILE_BASAL * 0.5
+                )
+            }
+            val isfHalfBasal = PROFILE_ISF / halfBasalLearner.isfMultiplier(HOUR, DOW)
+
+            // Half-basal run = less total insulin attributed to the drop
+            // → lower impliedISF → mult higher → dosingISF LOWER (more aggressive)
+            assertTrue(isfHalfBasal <= isfFullBasal,
+                       "With half-basal (less effective insulin), dosingISF should be lower (more aggressive) " +
+                           "than full-basal run. Got fullBasal=${"%.2f".format(isfFullBasal)} halfBasal=${"%.2f".format(isfHalfBasal)}")
+        }
     }
 }
