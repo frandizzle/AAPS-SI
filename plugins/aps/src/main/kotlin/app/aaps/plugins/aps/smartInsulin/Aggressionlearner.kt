@@ -63,11 +63,11 @@ class AggressionLearner @Inject constructor(
         private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
         private const val MIN_SAMPLES_TO_LEARN = 24   // ~2h of fasting data
 
-        private const val TARGET_TIR_PCT       = 70.0
+        private const val TARGET_TIR_PCT       = 60.0
         private const val MAX_LOW_PCT          = 4.0
-        private const val MAX_HIGH_PCT         = 26.0
+        private const val MAX_HIGH_PCT         = 18.0
 
-        private const val STEP_UP              = 0.02
+        private const val STEP_UP              = 0.03
         private const val STEP_DOWN            = 0.05
         private const val MIN_DAY_SAMPLES_FOR_BLEND = 20  // samples on a given day before blending in
         val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
