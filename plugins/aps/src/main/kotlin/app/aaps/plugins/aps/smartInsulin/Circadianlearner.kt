@@ -253,7 +253,7 @@ class CircadianLearner @Inject constructor(
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
         val isFasting = mealMode == MealMode.FASTING
         val isfPhysicsDirection: Int = if (!suppressAdaptiveLearning)
-            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, mealMode, smbDeliveredU, profileBasalU, actualBasalU, nowMs)
+            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, mealMode, smbDeliveredU, profileBasalU, actualBasalU, nowMs, targetMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); 0 }
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
@@ -299,7 +299,8 @@ class CircadianLearner @Inject constructor(
         smbDeliveredU:     Double  = 0.0,
         profileBasalU:     Double  = 0.0,
         actualBasalU:      Double  = 0.0,
-        nowMs:             Long    = System.currentTimeMillis()
+        nowMs:             Long    = System.currentTimeMillis(),
+        targetMgdl:        Double  = 99.0
     ): Int {
         // ── Invalidate episode if conditions contaminated ─────────────────────
         activeIsfEpisode?.let { ep ->
