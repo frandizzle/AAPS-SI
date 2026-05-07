@@ -812,23 +812,36 @@ open class SmartInsulinPlugin @Inject constructor(
      * Both windows support midnight crossing (start > end).
      */
     private fun pfIsfMgdl(hour: Int): Double {
-        val dayStart   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayStartHour)
-        val dayEnd     = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayEndHour)
-        val nightStart = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightStartHour)
-        val nightEnd   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightEndHour)
-        // Inclusive end hour — dayEnd=17 means 17:xx is still in the day window.
+        val dayStart       = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayStartHour)
+        val dayEnd         = preferences.get(IntKey.ApsSmartInsulinUamProteinFatDayEndHour)
+        val nightStart     = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightStartHour)
+        val nightEnd       = preferences.get(IntKey.ApsSmartInsulinUamProteinFatNightEndHour)
+        val overnightStart = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour)
+        val overnightEnd   = preferences.get(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour)
+
+        // Exclusive end hour — start=10, end=16 means hours 10,11,12,13,14,15 are in window.
         // Supports midnight crossing (start > end).
-        val inDay   = if (dayStart   <= dayEnd)   hour in dayStart..dayEnd
-        else hour >= dayStart   || hour <= dayEnd
-        val inNight = if (nightStart <= nightEnd) hour in nightStart..nightEnd
-        else hour >= nightStart || hour <= nightEnd
-        val dayIsf   = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key,   UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
-        val nightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
-        val fallback = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key,      UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+        fun inWindow(start: Int, end: Int): Boolean =
+            if (start <= end) hour >= start && hour < end
+            else hour >= start || hour < end
+
+        val inDay       = inWindow(dayStart,       dayEnd)
+        val inNight     = inWindow(nightStart,     nightEnd)
+        val inOvernight = inWindow(overnightStart, overnightEnd)
+
+        val dayIsf       = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key,       UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
+        val nightIsf     = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key,     UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
+        val overnightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
+        val fallback     = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key,          UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+
+        // Priority: overnight > night > day > fallback
+        // Overnight is checked first — it's the most specific window (deep sleep hours)
+        // and should always win if it overlaps with the night window edges.
         return when {
-            inDay   && dayIsf   > 0.0 -> dayIsf
-            inNight && nightIsf > 0.0 -> nightIsf
-            else                      -> fallback
+            inOvernight && overnightIsf > 0.0 -> overnightIsf
+            inNight     && nightIsf     > 0.0 -> nightIsf
+            inDay       && dayIsf       > 0.0 -> dayIsf
+            else                              -> fallback
         }
     }
 
