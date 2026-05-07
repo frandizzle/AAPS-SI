@@ -95,6 +95,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
     private val mealPhaseTracker: MealPhaseTracker,
+    private val mealPhaseProfileLearner: MealPhaseProfileLearner,
     private val aggressionLearner: AggressionLearner,
     private val basalLearner: BasalLearner,
     private val circadianLearner: CircadianLearner,
@@ -1775,7 +1776,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 mealMode      = mealMode,
                 bgMmol        = glucoseStatus.glucose / 18.0,
                 shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
-                targetBgMmol  = profile.getTargetMgdl() / 18.0
+                targetBgMmol  = profile.getTargetMgdl() / 18.0,
+                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
             )
         }
 

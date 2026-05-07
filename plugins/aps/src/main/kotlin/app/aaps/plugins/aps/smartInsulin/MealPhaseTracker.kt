@@ -103,11 +103,29 @@ class MealPhaseTracker @Inject constructor(
     private var transitionCandidatePhase: MealPhase? = null
 
     // Session outcome tracking
-    private var carbPhasePeakBgMmol  = 0.0   // highest BG during carb phase
-    private var pfPhasePeakBgMmol    = 0.0   // highest BG during P/F phase
-    private var tailPhaseNadirBgMmol = Double.MAX_VALUE  // lowest BG during tail
-    private var manualBolusDetected  = false // true if manual bolus fired during session
-    private var manualBolusU         = 0.0   // total manual bolus units during session
+    private var carbPhasePeakBgMmol   = 0.0
+    private var pfPhasePeakBgMmol     = 0.0
+    private var tailPhaseNadirBgMmol  = Double.MAX_VALUE
+    private var manualBolusDetected   = false
+    private var manualBolusU          = 0.0
+
+    // Per-phase low flags — low in any phase = unambiguous over-delivery signal
+    // Gate: carb-phase low only counted after CARB_LOW_GATE_MS to avoid blaming
+    // pre-meal IOB for an early dip that wasn't caused by meal-mode SMBs.
+    private var carbPhaseWentLow      = false
+    private var pfPhaseWentLow        = false
+    private var tailPhaseWentLow      = false
+
+    // P/F phase high — sustained elevated BG deep into plateau = under-delivery signal
+    // Requires PFHIGH_CONFIRM_READINGS consecutive readings above threshold before flagging.
+    // NOT tracked for carb phase (expected to exceed 10 mmol without prebolus).
+    private var pfHighConsecutive     = 0
+    private var pfPhaseWentHigh       = false
+
+    // Time gates
+    private val CARB_LOW_GATE_MS       = 20 * 60_000L  // ignore lows in first 20 min of carb phase
+    private val PF_HIGH_THRESHOLD_MMOL = 10.0           // sustained above this = under-delivery
+    private val PFHIGH_CONFIRM_READINGS = 3             // 3 consecutive readings = 15 min sustained
 
     // ── Display / debug ───────────────────────────────────────────────────────
 
@@ -131,10 +149,18 @@ class MealPhaseTracker @Inject constructor(
         val carbPhasePeakBgMmol: Double,
         val pfPhasePeakBgMmol:   Double,
         val tailNadirBgMmol:     Double,
-        val manualBolusDetected: Boolean,   // session valid but needed manual top-up
-        val manualBolusU:        Double,    // how much manual insulin was added
-        val targetBgMmol:        Double,    // what target was during this session
-        val isClean: Boolean                // true = no confounders, best for learning
+        val manualBolusDetected: Boolean,
+        val manualBolusU:        Double,
+        val targetBgMmol:        Double,
+        // ── Per-phase outcome flags ───────────────────────────────────────────
+        // Low flags: unambiguous — BG crossed below low guard during that phase
+        val carbPhaseWentLow:    Boolean,   // SMB fraction too high in carb window
+        val pfPhaseWentLow:      Boolean,   // ISF too aggressive during plateau
+        val tailPhaseWentLow:    Boolean,   // tail taper too slow / ISF too aggressive
+        // High flag: P/F only — sustained (3+ readings) above PF_HIGH_THRESHOLD_MMOL
+        // Carb phase high is normal without prebolus — not tracked
+        val pfPhaseWentHigh:     Boolean,   // ISF too conservative during plateau
+        val isClean:             Boolean    // true = no confounders, best for learning
     ) {
         val totalDurationMs: Long get() = sessionEndMs - sessionStartMs
         val totalDurationMins: Double get() = totalDurationMs / 60_000.0
@@ -159,7 +185,8 @@ class MealPhaseTracker @Inject constructor(
         mealMode:      MealMode,
         bgMmol:        Double,
         shortAvgDelta: Double,
-        targetBgMmol:  Double
+        targetBgMmol:  Double,
+        lowGuardMmol:  Double = 4.0
     ) {
         val wasFasting    = lastMealMode == MealMode.FASTING
         val isFasting     = mealMode    == MealMode.FASTING
@@ -242,11 +269,57 @@ class MealPhaseTracker @Inject constructor(
             return
         }
 
-        // ── Track per-phase BG extremes ───────────────────────────────────────
+        // ── Track per-phase BG extremes and outcome flags ─────────────────────
+        val carbPhaseElapsed = if (currentPhase == MealPhase.CARB) now - phaseStartMs else Long.MAX_VALUE
         when (currentPhase) {
-            MealPhase.CARB        -> if (bgMmol > carbPhasePeakBgMmol)  carbPhasePeakBgMmol  = bgMmol
-            MealPhase.PROTEIN_FAT -> if (bgMmol > pfPhasePeakBgMmol)    pfPhasePeakBgMmol    = bgMmol
-            MealPhase.TAIL        -> if (bgMmol < tailPhaseNadirBgMmol) tailPhaseNadirBgMmol = bgMmol
+            MealPhase.CARB -> {
+                if (bgMmol > carbPhasePeakBgMmol) carbPhasePeakBgMmol = bgMmol
+                // Low gate: ignore first 20 min — could be pre-meal IOB, not carb-phase SMBs
+                if (!carbPhaseWentLow &&
+                    carbPhaseElapsed > CARB_LOW_GATE_MS &&
+                    bgMmol < lowGuardMmol) {
+                    carbPhaseWentLow = true
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseTracker: LOW during CARB phase at ${carbPhaseElapsed / 60_000}min " +
+                                         "bg=${"%.1f".format(bgMmol)} < lowGuard=${"%.1f".format(lowGuardMmol)} " +
+                                         "— SMB fraction was too high")
+                }
+            }
+            MealPhase.PROTEIN_FAT -> {
+                if (bgMmol > pfPhasePeakBgMmol) pfPhasePeakBgMmol = bgMmol
+                // Low detection
+                if (!pfPhaseWentLow && bgMmol < lowGuardMmol) {
+                    pfPhaseWentLow = true
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseTracker: LOW during P/F phase " +
+                                         "bg=${"%.1f".format(bgMmol)} < lowGuard=${"%.1f".format(lowGuardMmol)} " +
+                                         "— ISF too aggressive during plateau")
+                }
+                // High detection — requires PFHIGH_CONFIRM_READINGS consecutive readings
+                // above threshold to confirm sustained elevation (not just a transient spike)
+                if (bgMmol > PF_HIGH_THRESHOLD_MMOL) {
+                    pfHighConsecutive++
+                    if (!pfPhaseWentHigh && pfHighConsecutive >= PFHIGH_CONFIRM_READINGS) {
+                        pfPhaseWentHigh = true
+                        aapsLogger.debug(LTag.APS,
+                                         "MealPhaseTracker: SUSTAINED HIGH during P/F phase " +
+                                             "bg=${"%.1f".format(bgMmol)} > ${PF_HIGH_THRESHOLD_MMOL}mmol " +
+                                             "for $pfHighConsecutive readings — ISF too conservative during plateau")
+                    }
+                } else {
+                    pfHighConsecutive = 0  // reset on any reading below threshold
+                }
+            }
+            MealPhase.TAIL -> {
+                if (bgMmol < tailPhaseNadirBgMmol) tailPhaseNadirBgMmol = bgMmol
+                if (!tailPhaseWentLow && bgMmol < lowGuardMmol) {
+                    tailPhaseWentLow = true
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseTracker: LOW during TAIL phase " +
+                                         "bg=${"%.1f".format(bgMmol)} < lowGuard=${"%.1f".format(lowGuardMmol)} " +
+                                         "— tail ISF needs raising (taper too slow)")
+                }
+            }
         }
 
         // ── Phase transition logic ────────────────────────────────────────────
@@ -345,6 +418,11 @@ class MealPhaseTracker @Inject constructor(
         tailPhaseNadirBgMmol   = Double.MAX_VALUE
         manualBolusDetected    = false
         manualBolusU           = 0.0
+        carbPhaseWentLow       = false
+        pfPhaseWentLow         = false
+        tailPhaseWentLow       = false
+        pfHighConsecutive      = 0
+        pfPhaseWentHigh        = false
         carbPhaseDurationMs    = 0L
         pfPhaseDurationMs      = 0L
         deltaHistory.clear()
@@ -404,14 +482,18 @@ class MealPhaseTracker @Inject constructor(
             manualBolusDetected = manualBolusDetected,
             manualBolusU        = manualBolusU,
             targetBgMmol        = targetBgMmol,
+            carbPhaseWentLow    = carbPhaseWentLow,
+            pfPhaseWentLow      = pfPhaseWentLow,
+            tailPhaseWentLow    = tailPhaseWentLow,
+            pfPhaseWentHigh     = pfPhaseWentHigh,
             isClean             = !manualBolusDetected
         )
 
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session COMPLETE mode=${session.mode.label} " +
-                             "carb=${session.carbPhaseMins.toInt()}min(peak=${"%.1f".format(session.carbPhasePeakBgMmol)}mmol) " +
-                             "pf=${session.pfPhaseMins.toInt()}min(peak=${"%.1f".format(session.pfPhasePeakBgMmol)}mmol) " +
-                             "tail=${session.tailPhaseMins.toInt()}min(nadir=${"%.1f".format(session.tailNadirBgMmol)}mmol) " +
+                             "carb=${session.carbPhaseMins.toInt()}min(peak=${"%.1f".format(session.carbPhasePeakBgMmol)}mmol${if (session.carbPhaseWentLow) " ⚠LOW" else ""}) " +
+                             "pf=${session.pfPhaseMins.toInt()}min(peak=${"%.1f".format(session.pfPhasePeakBgMmol)}mmol${if (session.pfPhaseWentLow) " ⚠LOW" else ""}${if (session.pfPhaseWentHigh) " ↑HIGH" else ""}) " +
+                             "tail=${session.tailPhaseMins.toInt()}min(nadir=${"%.1f".format(session.tailNadirBgMmol)}mmol${if (session.tailPhaseWentLow) " ⚠LOW" else ""}) " +
                              "clean=${session.isClean}" +
                              if (session.manualBolusDetected) " manualBolus=${"%+.2f".format(session.manualBolusU)}U" else "")
 
@@ -427,6 +509,18 @@ class MealPhaseTracker @Inject constructor(
         sessionActive            = false
         sessionMode              = MealMode.FASTING
         currentPhase             = MealPhase.CARB
+        carbPhasePeakBgMmol      = 0.0
+        pfPhasePeakBgMmol        = 0.0
+        tailPhaseNadirBgMmol     = Double.MAX_VALUE
+        manualBolusDetected      = false
+        manualBolusU             = 0.0
+        carbPhaseWentLow         = false
+        pfPhaseWentLow           = false
+        tailPhaseWentLow         = false
+        pfHighConsecutive        = 0
+        pfPhaseWentHigh          = false
+        carbPhaseDurationMs      = 0L
+        pfPhaseDurationMs        = 0L
         deltaHistory.clear()
         transitionCandidateCount = 0
         transitionCandidatePhase = null
@@ -473,11 +567,17 @@ class MealPhaseTracker @Inject constructor(
             " [transition confirm: $transitionCandidateCount/$TRANSITION_CONFIRM_READINGS → $transitionCandidatePhase]" else ""
 
         val manualStr  = if (manualBolusDetected) " | manualBolus=${"%+.2f".format(manualBolusU)}U" else ""
+        val lowStr     = buildString {
+            if (carbPhaseWentLow)  append(" | ⚠LOW:carb")
+            if (pfPhaseWentLow)    append(" | ⚠LOW:pf")
+            if (tailPhaseWentLow)  append(" | ⚠LOW:tail")
+            if (pfPhaseWentHigh)   append(" | ↑HIGH:pf")
+        }
 
         lastPhaseDebug = "$phaseName | mode=${sessionMode.label} | " +
             "bg=${"%.1f".format(bgMmol)}mmol | Δ=${"%+.2f".format(delta)}mmol/5min | " +
             "phase=${phaseElapsedMin}min | session=${sessionElapsedMin}min" +
-            waitingStr + confirmStr + manualStr
+            waitingStr + confirmStr + manualStr + lowStr
     }
 
     private fun buildCompleteSummary(session: CompletedMealSession): String {
