@@ -520,7 +520,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeDoseU:        Double?,
         val activePb2DoseU:     Double?,
         val activePb3DoseU:     Double?,
-        val pb3Status:          String
+        val pb3Status:          String,
+        // ── Meal Phase Tracker ────────────────────────────────────────────────
+        val mealPhaseActive:       Boolean,
+        val mealPhaseLabel:        String,
+        val mealPhaseDebug:        String,
+        val mealPhaseSessionMode:  String,
+        val mealPhaseElapsedMins:  Long,
+        val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
+        val mealPhasePF:           MealPhaseTracker.PhaseStatus,
+        val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
     )
 
     fun fragmentData(): FragmentData {
@@ -668,6 +677,15 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb2DoseU     = mealOverrideManager.activePb2DoseU,
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
             pb3Status          = cachedOverviewState.pb3Line ?: "",
+            // ── Meal Phase Tracker fields ─────────────────────────────────────
+            mealPhaseActive      = mealPhaseTracker.sessionActive,
+            mealPhaseLabel       = mealPhaseTracker.phaseLabel,
+            mealPhaseDebug       = mealPhaseTracker.lastPhaseDebug,
+            mealPhaseSessionMode = mealPhaseTracker.sessionMode.label,
+            mealPhaseElapsedMins = if (mealPhaseTracker.sessionActive) (System.currentTimeMillis() - mealPhaseTracker.sessionStartMs) / 60_000L else 0L,
+            mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
+            mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
+            mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
             fuelTrimStrength   = circadianLearner.trimStrength
         )
     }
@@ -1752,14 +1770,12 @@ open class SmartInsulinPlugin @Inject constructor(
         // the full meal shape even if BolusCurveTracker is paused.
         // Only skips when sensor is completely unreliable (warmup).
         if (!cgmInWarmup) {
-            val lastBolusTime = iobArray.firstOrNull()?.lastBolusTime ?: 0L
             mealPhaseTracker.onLoopCycle(
                 now           = now,
                 mealMode      = mealMode,
                 bgMmol        = glucoseStatus.glucose / 18.0,
                 shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
-                targetBgMmol  = profile.getTargetMgdl() / 18.0,
-                lastBolusTime = lastBolusTime
+                targetBgMmol  = profile.getTargetMgdl() / 18.0
             )
         }
 

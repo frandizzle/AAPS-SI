@@ -41,7 +41,7 @@ import kotlin.math.abs
  */
 @Singleton
 class MealPhaseTracker @Inject constructor(
-    private val aapsLogger: AAPSLogger,
+    private val aapsLogger:  AAPSLogger,
     private val preferences: Preferences
 ) {
 
@@ -85,7 +85,8 @@ class MealPhaseTracker @Inject constructor(
     var sessionMode: MealMode = MealMode.FASTING
         private set
 
-    private var sessionStartMs      = 0L
+    var sessionStartMs: Long = 0L
+        private set
     private var phaseStartMs        = 0L
     private var lastMealMode        = MealMode.FASTING
 
@@ -152,17 +153,13 @@ class MealPhaseTracker @Inject constructor(
      * @param bgMmol        Current smoothed BG in mmol/L
      * @param shortAvgDelta Current short-average delta in mmol/L per 5-min interval
      * @param targetBgMmol  Current dosing target in mmol/L
-     * @param lastBolusTime Epoch ms of the most recent bolus from iobArray.firstOrNull()?.lastBolusTime
-     *                      Used to auto-detect manual boluses during an active session.
-     *                      Pass 0L if unavailable.
      */
     fun onLoopCycle(
         now:           Long,
         mealMode:      MealMode,
         bgMmol:        Double,
         shortAvgDelta: Double,
-        targetBgMmol:  Double,
-        lastBolusTime: Long = 0L
+        targetBgMmol:  Double
     ) {
         val wasFasting    = lastMealMode == MealMode.FASTING
         val isFasting     = mealMode    == MealMode.FASTING
@@ -218,16 +215,10 @@ class MealPhaseTracker @Inject constructor(
         while (deltaHistory.size > 12) deltaHistory.removeFirst()
 
         // ── Auto-detect manual bolus during session ───────────────────────────
-        // iobArray.firstOrNull()?.lastBolusTime gives epoch ms of most recent bolus.
-        // If that bolus occurred after session start, user topped up manually —
-        // flag the session so learner knows SMB fraction may have been too low.
-        if (!manualBolusDetected && lastBolusTime > sessionStartMs) {
-            manualBolusDetected = true
-            aapsLogger.debug(LTag.APS,
-                             "MealPhaseTracker: manual bolus detected during $currentPhase phase " +
-                                 "(bolus at ${(lastBolusTime - sessionStartMs) / 60_000}min into session) " +
-                                 "— session flagged: SMB fraction may have been too low")
-        }
+        // Manual boluses are flagged via onManualBolus(units) called externally.
+        // We can't query the persistence layer here (suspend function) and we can't
+        // use iobArray.lastBolusTime because it includes SMBs (would false-flag every session).
+        // Future: hook onManualBolus() into the AAPS bolus wizard event bus.
 
         // ── Meal stacking detection ───────────────────────────────────────────
         // If we're in P/F or TAIL phase and delta surges back to carb-level spike,
@@ -502,16 +493,6 @@ class MealPhaseTracker @Inject constructor(
     /** True if currently in TAIL phase — used by dosing to gate crash-protection ISF scaling */
     val isInTailPhase: Boolean get() = sessionActive && currentPhase == MealPhase.TAIL
 
-    /** Elapsed time in current phase as a fraction of the expected phase duration (0.0–1.0+) */
-    val tailPhaseProgress: Double
-        get() {
-            if (!isInTailPhase) return 0.0
-            val elapsed = System.currentTimeMillis() - phaseStartMs
-            // Expected tail duration — starts conservative at 60 min until learner has data
-            val expectedMs = 60 * 60_000L
-            return (elapsed.toDouble() / expectedMs).coerceIn(0.0, 1.5)
-        }
-
     /** Human-readable current phase for display in SmartInsulinScreen */
     val phaseLabel: String
         get() = when {
@@ -521,5 +502,48 @@ class MealPhaseTracker @Inject constructor(
                 MealPhase.PROTEIN_FAT -> "Protein/Fat plateau"
                 MealPhase.TAIL        -> "Tail — tapering"
             }
+        }
+
+    /** Status of an individual meal phase — mirrors FragmentData.PhaseStatus for UI */
+    data class PhaseStatus(
+        val state:           PhaseState,
+        val durationMins:    Int    = 0,
+        val peakOrNadirMmol: Double = 0.0
+    ) {
+        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE }
+    }
+
+    fun carbPhaseStatus(): PhaseStatus = when {
+        !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
+        carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
+        else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+    }
+
+    fun pfPhaseStatus(): PhaseStatus = when {
+        !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase == MealPhase.PROTEIN_FAT -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = pfPhasePeakBgMmol)
+        pfPhaseDurationMs > 0                 -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (pfPhaseDurationMs / 60_000).toInt(), pfPhasePeakBgMmol)
+        else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+    }
+
+    fun tailPhaseStatus(): PhaseStatus = when {
+        !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase != MealPhase.TAIL        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        else                                  -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS,
+                                                             peakOrNadirMmol = if (tailPhaseNadirBgMmol == Double.MAX_VALUE) 0.0 else tailPhaseNadirBgMmol)
+    }
+
+    // ── End of MealPhaseTracker ───────────────────────────────────────────────
+
+    /** Elapsed time in current phase as a fraction of the expected phase duration (0.0–1.0+) */
+    val tailPhaseProgress: Double
+        get() {
+            if (!isInTailPhase) return 0.0
+            val elapsed = System.currentTimeMillis() - phaseStartMs
+            // Expected tail duration — starts conservative at 60 min until learner has data
+            val expectedMs = 60 * 60_000L
+            return (elapsed.toDouble() / expectedMs).coerceIn(0.0, 1.5)
         }
 }
