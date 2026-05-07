@@ -78,6 +78,8 @@ class CircadianLearner @Inject constructor(
         private set
     var lastPredTrimDebug: String = "No data"
         private set
+    var lastIsfEpisodeDebug: String = "No episode yet"
+        private set
 
     // Tracks when the last aggressiveness penalty fired (rollercoaster or soft-low).
     // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
@@ -311,6 +313,7 @@ class CircadianLearner @Inject constructor(
                 else                         -> null
             }
             if (inv != null) {
+                lastIsfEpisodeDebug = "Episode invalidated: $inv"
                 aapsLogger.debug(LTag.APS, "ISF Episode invalidated: $inv — discarding")
                 activeIsfEpisode = null
             }
@@ -320,7 +323,8 @@ class CircadianLearner @Inject constructor(
         if (activeIsfEpisode == null && isFasting && !inPostMealLockout &&
             bg > lowGuardMgdl && smbDeliveredU >= EPISODE_MIN_CORRECTION_U) {
             activeIsfEpisode = IsfEpisode(startBgMgdl = bg, startTimeMs = nowMs, hour = hour, dow = dow)
-            aapsLogger.debug(LTag.APS, "ISF Episode OPENED: startBg=${"%.1f".format(bg)} h=$hour smb=${"%.2f".format(smbDeliveredU)}U")
+            lastIsfEpisodeDebug = "Episode open — startBg=${"%.1f".format(bg)} h=$hour | correction=${"%.2f".format(smbDeliveredU)}U | waiting for resolution"  // ← HERE
+            aapsLogger.debug(LTag.APS, "ISF Episode OPENED: ...")
         }
 
         // ── Accumulate + attempt close ────────────────────────────────────────
@@ -337,6 +341,8 @@ class CircadianLearner @Inject constructor(
             if (isStable && nearTarget) ep.stableMinutes     += 5 else ep.stableMinutes     = 0
             if (isStable)               ep.partialStableMins += 5 else ep.partialStableMins = 0
 
+            lastIsfEpisodeDebug = "Episode active — drop=${"%.1f".format(ep.startBgMgdl - bg)}mg/dL | corrU=${"%.2f".format(ep.correctionU)} basalDev=${"%.2f".format(ep.basalDeviationU)} | stableMins=${ep.stableMinutes}/${EPISODE_FULL_STABLE_MINS} partialMins=${ep.partialStableMins}/${EPISODE_PARTIAL_STABLE_MINS} | elapsed=${(nowMs - ep.startTimeMs)/60_000}/${EPISODE_TIMEOUT_MS/60_000}min"
+
             val closeReason = when {
                 ep.stableMinutes     >= EPISODE_FULL_STABLE_MINS    -> "full_resolve"
                 ep.partialStableMins >= EPISODE_PARTIAL_STABLE_MINS -> "partial_resolve"
@@ -346,6 +352,7 @@ class CircadianLearner @Inject constructor(
             if (closeReason != null) {
                 val bgDrop = ep.startBgMgdl - bg
                 if (bgDrop < EPISODE_MIN_BG_DROP) {
+                    lastIsfEpisodeDebug = "Episode discarded ($closeReason) — bgDrop=${"%.1f".format(bgDrop)} < min gate"
                     aapsLogger.debug(LTag.APS, "ISF Episode closed ($closeReason) bgDrop=${"%.1f".format(bgDrop)} < gate — discarding")
                     activeIsfEpisode = null
                 } else {
@@ -356,6 +363,7 @@ class CircadianLearner @Inject constructor(
                     val alpha = (ISF_ALPHA_SLOW * (1.5 - conf)).coerceIn(ISF_ALPHA_SLOW * 0.5, ISF_ALPHA_SLOW * 1.5)
                     val prevMult = isfState.get(ep.dow, ep.hour)
                     isfState = isfState.updated(ep.dow, ep.hour, impliedMult, alpha)
+                    lastIsfEpisodeDebug = "Episode closed ($closeReason) — impliedISF=${"%.1f".format(impliedIsfMgdl)} profileISF=${"%.1f".format(profileIsfMgdl)} → mult ${"%.3f".format(prevMult)}→${"%.3f".format(isfState.get(ep.dow, ep.hour))}"
                     aapsLogger.debug(LTag.APS,
                                      "ISF Episode CLOSED ($closeReason) h=${ep.hour} drop=${"%.1f".format(bgDrop)} " +
                                          "corrU=${"%.2f".format(ep.correctionU)} basalDev=${"%.2f".format(ep.basalDeviationU)} " +

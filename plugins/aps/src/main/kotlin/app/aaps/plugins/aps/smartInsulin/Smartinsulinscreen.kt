@@ -605,7 +605,7 @@ fun SmartInsulinScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)",
+                    text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim + ISF Episode)",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -621,6 +621,7 @@ fun SmartInsulinScreen(
                         .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // Acceleration
                     Text("Acceleration (2nd derivative)",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
@@ -629,6 +630,8 @@ fun SmartInsulinScreen(
                          fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
+
+                    // Predictive Basal Trim
                     Text("Predictive Basal Trim (60min projection)",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)
@@ -637,6 +640,18 @@ fun SmartInsulinScreen(
                          fontFamily = FontFamily.Monospace,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
+
+                    // ISF Episode learner
+                    Text("ISF Episode Learner (slow-path)",
+                         style = MaterialTheme.typography.labelMedium,
+                         color = MaterialTheme.colorScheme.primary)
+                    Text(d.lastIsfEpisodeDebug,
+                         style = MaterialTheme.typography.bodySmall,
+                         fontFamily = FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+
+                    // Last basal signal
                     Text("Last basal signal",
                          style = MaterialTheme.typography.labelMedium,
                          color = MaterialTheme.colorScheme.primary)

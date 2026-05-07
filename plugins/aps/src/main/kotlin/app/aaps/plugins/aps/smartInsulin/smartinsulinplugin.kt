@@ -496,6 +496,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val minBgDuringLow:     Double,
         val iobAtLowTime:       Double,
         val pb2Status:          String,
+        val lastIsfEpisodeDebug: String,
         val isMmol:             Boolean,
         val learningState:      String,
         val activityLevel:      String,
@@ -603,6 +604,7 @@ open class SmartInsulinPlugin @Inject constructor(
             nudgeSessionIsfMgdl = nudgeDisplaySessionIsfMgdl,
             nudgeSessionBasalU  = nudgeDisplaySessionBasalU,
             profileIsfMgdl     = profileIsf,
+            lastIsfEpisodeDebug = circadianLearner.lastIsfEpisodeDebug,
             // finalIsfMgdl = profileISF / isfMult — matches OapsProfile.sens exactly.
             // aggrCeiling acts on the aggressiveness score (SMB sizing), not on sens/ISF.
             // Including ceiling here would show numbers that don't match actual delivery.
