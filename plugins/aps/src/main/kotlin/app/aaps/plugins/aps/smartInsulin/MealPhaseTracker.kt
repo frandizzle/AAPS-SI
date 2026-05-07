@@ -177,14 +177,20 @@ class MealPhaseTracker @Inject constructor(
      * @param now           Current timestamp ms
      * @param mealMode      Current meal mode from MealModeDetector
      * @param bgMmol        Current smoothed BG in mmol/L
-     * @param shortAvgDelta Current short-average delta in mmol/L per 5-min interval
+     * @param shortAvgDelta Smoothed short-average delta mmol/L per 5-min interval
+     *                      (lagging — used for history/stacking detection)
+     * @param delta         Instantaneous point-to-point delta mmol/L per 5-min interval
+     *                      (current — used alongside shortAvgDelta for transition detection
+     *                      to avoid lagging average preventing plateau recognition)
      * @param targetBgMmol  Current dosing target in mmol/L
+     * @param lowGuardMmol  Low guard threshold in mmol/L
      */
     fun onLoopCycle(
         now:           Long,
         mealMode:      MealMode,
         bgMmol:        Double,
         shortAvgDelta: Double,
+        delta:         Double  = shortAvgDelta,   // defaults to shortAvgDelta if not supplied
         targetBgMmol:  Double,
         lowGuardMmol:  Double = 4.0
     ) {
@@ -324,38 +330,61 @@ class MealPhaseTracker @Inject constructor(
 
         // ── Phase transition logic ────────────────────────────────────────────
         val phaseElapsedMs = now - phaseStartMs
-        val avgRecentDelta = recentAvgDelta(3)   // avg of last 3 readings (~15 min)
-        val avgEarlyDelta  = earlyAvgDelta(3)    // avg of readings 4-6 back (~30 min ago)
+        val avgRecentDelta = recentAvgDelta(3)   // smoothed avg of last 3 readings (~15 min)
+        val avgEarlyDelta  = earlyAvgDelta(3)    // smoothed avg of readings 4-6 back (~30 min ago)
 
         when (currentPhase) {
 
             MealPhase.CARB -> {
                 // Transition to P/F when:
                 // 1. Minimum carb phase time elapsed (40 min)
-                // 2. Delta is slowing — recent avg < early avg
-                // 3. Recent delta below carb exit threshold
-                // 4. N consecutive readings confirm the slowdown
+                // 2. Delta is slowing — recent smoothed avg < early avg (history-based)
+                // 3. BOTH smoothed avg AND instantaneous delta below exit threshold
+                //
+                // WHY both signals: shortAvgDelta is a weighted average that lags behind
+                // the current reading. During a gradual Low Carb rise, shortAvgDelta can
+                // remain above 0.15 for many readings after BG has truly plateaued because
+                // it still reflects the earlier rising readings. Requiring the instantaneous
+                // delta to also be below the threshold ensures we detect the plateau as
+                // soon as it actually happens, not 15-20 min later.
                 if (phaseElapsedMs >= CARB_MIN_MS) {
-                    val deltaSlowing = avgRecentDelta < avgEarlyDelta - 0.05
-                    val deltaLow     = avgRecentDelta < CARB_EXIT_DELTA_MMOL
+                    val deltaSlowing    = avgRecentDelta < avgEarlyDelta - 0.05
+                    val avgDeltaLow     = avgRecentDelta < CARB_EXIT_DELTA_MMOL
+                    val instantDeltaLow = delta < CARB_EXIT_DELTA_MMOL + 0.05  // slightly more lenient for instantaneous
 
-                    if (deltaSlowing && deltaLow) {
+                    // Both smoothed AND instantaneous must agree — prevents single noisy
+                    // reading from triggering transition, while also not blocking when the
+                    // smoothed average lags behind a genuine plateau.
+                    // deltaSlowing only required when earlyAvgDelta is meaningful (>= 6 history entries).
+                    val hasEarlyHistory = deltaHistory.size >= 6
+                    val transitionReady = avgDeltaLow && instantDeltaLow &&
+                        (!hasEarlyHistory || deltaSlowing)
+
+                    if (transitionReady) {
                         confirmTransition(MealPhase.PROTEIN_FAT, now, phaseElapsedMs)
                     } else {
                         resetTransitionCandidate()
                     }
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseTracker CARB check: elapsed=${phaseElapsedMs/60_000}min " +
+                                         "avgRecent=${"%.3f".format(avgRecentDelta)} avgEarly=${"%.3f".format(avgEarlyDelta)} " +
+                                         "instant=${"%.3f".format(delta)} " +
+                                         "avgLow=$avgDeltaLow instLow=$instantDeltaLow slowing=$deltaSlowing " +
+                                         "hasHistory=$hasEarlyHistory confirm=$transitionCandidateCount/$TRANSITION_CONFIRM_READINGS")
                 }
             }
 
             MealPhase.PROTEIN_FAT -> {
                 // Transition to TAIL when:
                 // 1. Minimum P/F time elapsed (60 min)
-                // 2. Delta has turned negative (BG falling)
+                // 2. Delta has turned negative — BOTH smoothed avg AND instantaneous
                 // 3. BG still above target (natural descent, not a crash)
                 // 4. N consecutive readings confirm
                 if (phaseElapsedMs >= PF_MIN_MS) {
-                    val deltaNegative = avgRecentDelta < PF_EXIT_DELTA_MMOL
-                    val bgAboveTarget = bgMmol > targetBgMmol
+                    val avgNegative     = avgRecentDelta < PF_EXIT_DELTA_MMOL
+                    val instantNegative = delta < PF_EXIT_DELTA_MMOL + 0.05   // slightly lenient for instantaneous
+                    val bgAboveTarget   = bgMmol > targetBgMmol
+                    val deltaNegative   = avgNegative || instantNegative  // either signal is sufficient — avg lags
 
                     if (deltaNegative && bgAboveTarget) {
                         confirmTransition(MealPhase.TAIL, now, phaseElapsedMs)

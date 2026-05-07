@@ -1778,6 +1778,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 mealMode      = mealMode,
                 bgMmol        = glucoseStatus.glucose / 18.0,
                 shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
+                delta         = glucoseStatus.delta / 18.0,
                 targetBgMmol  = profile.getTargetMgdl() / 18.0,
                 lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
             )

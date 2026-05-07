@@ -30,7 +30,7 @@ class MealPhaseTrackerTest {
     @BeforeEach fun setup() { sut = MealPhaseTracker(aapsLogger, preferences) }
 
     private fun cycle(now: Long, mode: MealMode, bg: Double, delta: Double = 0.0, target: Double = TARGET, lowGuard: Double = LOW_GUARD) =
-        sut.onLoopCycle(now, mode, bg, delta, target, lowGuard)
+        sut.onLoopCycle(now, mode, bg, shortAvgDelta = delta, delta = delta, target, lowGuard)
 
     private fun fasting(now: Long, bg: Double = 5.5) = cycle(now, MealMode.FASTING, bg)
     private fun meal(now: Long, bg: Double, delta: Double = 0.0) = cycle(now, MODE, bg, delta)
