@@ -306,6 +306,64 @@ class MealPhaseTrackerTest {
         }
     }
 
+    // ── onMealModeExpired ─────────────────────────────────────────────────────
+
+    @Test fun `P_F mode expiry advances to TAIL immediately`() {
+        val pfStart = driveToProteinFat(0L)
+        assertEquals(MealPhaseTracker.MealPhase.PROTEIN_FAT, sut.currentPhase)
+
+        // P/F mode expires with BG still elevated
+        sut.onMealModeExpired(now = pfStart + T30, bgMmol = 9.0, targetBgMmol = TARGET)
+
+        assertEquals(MealPhaseTracker.MealPhase.TAIL, sut.currentPhase,
+                     "P/F mode expiry with elevated BG should advance to TAIL immediately")
+        assertTrue(sut.sessionActive)
+    }
+
+    @Test fun `CARB mode expiry advances to P_F not TAIL`() {
+        fasting(0L); meal(T5, 8.0, 0.5)
+        assertEquals(MealPhaseTracker.MealPhase.CARB, sut.currentPhase)
+
+        sut.onMealModeExpired(now = T5 + T40, bgMmol = 9.0, targetBgMmol = TARGET)
+
+        assertEquals(MealPhaseTracker.MealPhase.PROTEIN_FAT, sut.currentPhase,
+                     "CARB mode expiry with elevated BG should advance to P/F not TAIL")
+        assertTrue(sut.sessionActive)
+    }
+
+    @Test fun `mode expiry near target completes session`() {
+        var completed: MealPhaseTracker.CompletedMealSession? = null
+        sut.onSessionComplete = { completed = it }
+        val pfStart = driveToProteinFat(0L)
+
+        sut.onMealModeExpired(now = pfStart + T30, bgMmol = TARGET + 0.3, targetBgMmol = TARGET)
+
+        assertFalse(sut.sessionActive, "Session should complete when mode expires near target")
+        assertNotNull(completed)
+    }
+
+    @Test fun `session completes when BG returns to target after P_F expiry→TAIL`() {
+        var completed: MealPhaseTracker.CompletedMealSession? = null
+        sut.onSessionComplete = { completed = it }
+
+        val pfStart   = driveToProteinFat(0L)
+        val tailStart = pfStart + T30
+
+        // P/F mode expires → TAIL
+        sut.onMealModeExpired(now = tailStart, bgMmol = 9.0, targetBgMmol = TARGET)
+        assertEquals(MealPhaseTracker.MealPhase.TAIL, sut.currentPhase)
+
+        // BG returns to target after 35 min in tail
+        meal(tailStart + T35, TARGET + 0.3)
+
+        assertFalse(sut.sessionActive, "Session should complete when BG returns during TAIL")
+        assertNotNull(completed)
+        assertTrue(completed!!.tailPhaseMins >= 30.0,
+                   "Tail should be >= 30min, was ${completed!!.tailPhaseMins}")
+    }
+
+    // ── Multi-session ─────────────────────────────────────────────────────────
+
     @Test fun `tracker resets cleanly and accepts new session after completion`() {
         fasting(0L); meal(T5, 8.0)
         cycle(T30, MealMode.FASTING, TARGET + 0.2)

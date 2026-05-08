@@ -503,45 +503,52 @@ class MealPhaseTracker @Inject constructor(
         }
 
         // BG still elevated — meal mode ran out before the response finished.
-        // Hand off to P/F phase tracking so the session continues and the elevated
-        // plateau data (pfPhaseWentHigh, pfPhasePeakBgMmol) is preserved for learning.
-        // The plugin will activate P/F mode on the next cycle; we keep the session alive
-        // so that when P/F → FASTING eventually fires (BG returns to target), we complete
-        // normally rather than invalidating.
+        // Advance phase based on where we are in the meal curve.
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: meal mode expired with BG ${"%.1f".format(bgMmol)} " +
-                             "${"%.1f".format(bgMmol - targetBgMmol)}mmol above target after ${(now - sessionStartMs) / 60_000}min " +
-                             "— handing off to P/F continuation (session preserved)")
+                             "${"%.1f".format(bgMmol - targetBgMmol)}mmol above target after ${(now - sessionStartMs) / 60_000}min")
 
-        // If we were still in CARB phase, record the carb duration and advance to P/F.
-        // If already in P/F or TAIL, just let it continue (no phase change needed).
         when (currentPhase) {
             MealPhase.CARB -> {
-                carbPhaseDurationMs = phaseElapsedMs
-                currentPhase        = MealPhase.PROTEIN_FAT
-                phaseStartMs        = now
+                // Meal mode expired while still in carb phase — advance to P/F.
+                // Plugin will activate UAM_PROTEIN_FAT mode next cycle.
+                carbPhaseDurationMs      = phaseElapsedMs
+                currentPhase             = MealPhase.PROTEIN_FAT
+                phaseStartMs             = now
                 transitionCandidateCount = 0
                 transitionCandidatePhase = null
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseTracker: advanced CARB→P/F on mode expiry " +
+                                 "MealPhaseTracker: CARB→P/F on mode expiry " +
                                      "(carb phase was ${phaseElapsedMs / 60_000}min)")
+                lastPhaseDebug = "Mode expired — advanced CARB→P/F | " +
+                    "bg=${"%.1f".format(bgMmol)}mmol | session=${(now - sessionStartMs) / 60_000}min"
             }
             MealPhase.PROTEIN_FAT -> {
-                // Already in P/F — nothing to change, just log
+                // P/F mode expired — this IS the signal that the plateau is done and the
+                // tail risk window is starting. The user's configured P/F duration reflects
+                // their physiology. Advancing to TAIL immediately rather than waiting for
+                // delta-based detection preserves the session for tail crash learning.
+                pfPhaseDurationMs        = phaseElapsedMs
+                currentPhase             = MealPhase.TAIL
+                phaseStartMs             = now
+                transitionCandidateCount = 0
+                transitionCandidatePhase = null
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseTracker: already in P/F phase on mode expiry " +
-                                     "— continuing (${phaseElapsedMs / 60_000}min in P/F so far)")
+                                 "MealPhaseTracker: P/F→TAIL on mode expiry " +
+                                     "(pf phase was ${phaseElapsedMs / 60_000}min) " +
+                                     "— tail crash risk window now active")
+                lastPhaseDebug = "P/F mode expired → TAIL phase | " +
+                    "bg=${"%.1f".format(bgMmol)}mmol | session=${(now - sessionStartMs) / 60_000}min"
             }
             MealPhase.TAIL -> {
-                // Already in TAIL — nothing to change, just log
+                // Already in tail — nothing to change
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseTracker: already in TAIL phase on mode expiry " +
-                                     "— continuing (${phaseElapsedMs / 60_000}min in TAIL so far)")
+                                 "MealPhaseTracker: already in TAIL on mode expiry " +
+                                     "(${phaseElapsedMs / 60_000}min in tail so far)")
+                lastPhaseDebug = "Mode expired — continuing in TAIL | " +
+                    "bg=${"%.1f".format(bgMmol)}mmol | session=${(now - sessionStartMs) / 60_000}min"
             }
         }
-
-        lastPhaseDebug = "Mode expired — continuing in ${currentPhase.name} | " +
-            "bg=${"%.1f".format(bgMmol)}mmol | session=${(now - sessionStartMs) / 60_000}min"
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────
@@ -551,6 +558,10 @@ class MealPhaseTracker @Inject constructor(
         sessionMode            = mode
         sessionStartMs         = now
         phaseStartMs           = now
+        currentPhase           = MealPhase.CARB
+        carbPhasePeakBgMmol    = bgMmol
+        pfPhasePeakBgMmol      = bgMmol
+        tailPhaseNadirBgMmol   = Double.MAX_VALUE
         manualBolusDetected    = false
         manualBolusU           = 0.0
         carbPhaseWentLow       = false
@@ -560,38 +571,14 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseWentHigh        = false
         carbPhaseDurationMs    = 0L
         pfPhaseDurationMs      = 0L
-        tailPhaseNadirBgMmol   = Double.MAX_VALUE
         deltaHistory.clear()
         transitionCandidateCount = 0
         transitionCandidatePhase = null
 
-        // UAM_PROTEIN_FAT means the meal is already in the protein/fat plateau —
-        // there is no carb phase to detect. BG is already elevated and flat.
-        // Start directly in P/F phase so:
-        //   1. We don't wait 40 min looking for a carb slowdown that already happened
-        //   2. pfPhaseWentHigh correctly captures the elevated plateau
-        //   3. The tail phase fires when BG eventually falls back to target
-        // This also applies to fresh P/F sessions (not continuations from onMealModeExpired
-        // which advances the phase directly without calling startSession).
-        if (mode == MealMode.UAM_PROTEIN_FAT) {
-            currentPhase        = MealPhase.PROTEIN_FAT
-            carbPhasePeakBgMmol = bgMmol   // no real carb phase — record starting BG as peak
-            pfPhasePeakBgMmol   = bgMmol
-            carbPhaseDurationMs = 0L        // zero = no carb phase observed
-            aapsLogger.debug(LTag.APS,
-                             "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol " +
-                                 "→ starting directly in P/F phase (no carb phase for UAM_PROTEIN_FAT)")
-            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=P/F (no carb phase) | bg=${"%.1f".format(bgMmol)}mmol"
-            lastTransitionDebug = ""
-        } else {
-            currentPhase        = MealPhase.CARB
-            carbPhasePeakBgMmol = bgMmol
-            pfPhasePeakBgMmol   = bgMmol
-            aapsLogger.debug(LTag.APS,
-                             "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
-            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
-            lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
-        }
+        aapsLogger.debug(LTag.APS,
+                         "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
+        lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
+        lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
     }
 
     private fun confirmTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
@@ -774,11 +761,14 @@ class MealPhaseTracker @Inject constructor(
     }
 
     fun carbPhaseStatus(): PhaseStatus = when {
-        !sessionActive                                    -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
-        currentPhase == MealPhase.CARB                   -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
-        carbPhaseDurationMs > 0                          -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
-        sessionMode == MealMode.UAM_PROTEIN_FAT          -> PhaseStatus(PhaseStatus.PhaseState.SKIPPED)   // P/F mode — no carb phase
-        else                                             -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
+        carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
+        // Session is in P/F or TAIL but carb phase was never recorded — happened because
+        // the session was handed off from a P/F mode expiry (onMealModeExpired) with no
+        // prior carb phase tracking. Show as N/A rather than Pending to avoid confusion.
+        currentPhase != MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.SKIPPED)
+        else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
     }
 
     fun pfPhaseStatus(): PhaseStatus = when {
