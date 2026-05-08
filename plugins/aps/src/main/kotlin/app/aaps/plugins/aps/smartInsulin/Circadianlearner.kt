@@ -48,9 +48,7 @@ class CircadianLearner @Inject constructor(
         var partialStableMins: Int   = 0
     )
     private var activeIsfEpisode: IsfEpisode? = null
-    // Tracks when the last episode closed (success or discard) — gates re-opening
-    // so rapid SMB bursts during UAM don't open a new episode every cycle.
-    private var lastEpisodeCloseMs: Long = 0L
+    private var lastEpisodeCloseMs: Long = 0L  // gates re-opening after close/invalidation
 
     // Persistence is gated by reference comparison in update() — persist() only fires
     // if any state reference was replaced. Reduces SharedPreferences writes by ~90%.
@@ -128,11 +126,6 @@ class CircadianLearner @Inject constructor(
     private var trimDirection = 0
     private var trimStartMs  = 0L
     private var lastTrimActionMs = 0L // NEW: Tracks the "Wait and Re-assess" window
-
-    // ── Cross-system action cooldown ─────────────────────────────────────────
-    // Prevents PredTrim, STFT, and AggrNudge from stacking in the same 15-min window.
-    // Any one firing sets this timestamp; the others check it before acting.
-    private var lastSharedActionMs = 0L
 
     // Last aggression nudge status for SI tab display
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
@@ -313,6 +306,9 @@ class CircadianLearner @Inject constructor(
         targetMgdl:        Double  = 99.0
     ): Int {
         // ── Invalidate episode if conditions contaminated ─────────────────────
+        // Only updates lastIsfEpisodeDebug when there was actually an active episode
+        // to invalidate — prevents meal-mode cycles from overwriting the last closed
+        // episode result with a transient "invalidated: mode=UAM_LUNCH" message.
         activeIsfEpisode?.let { ep ->
             val inv = when {
                 mealMode != MealMode.FASTING -> "mode=$mealMode"
@@ -321,16 +317,16 @@ class CircadianLearner @Inject constructor(
                 else                         -> null
             }
             if (inv != null) {
-                lastIsfEpisodeDebug = "Episode invalidated: $inv"
+                lastIsfEpisodeDebug = "Episode invalidated: $inv (was open ${(nowMs - ep.startTimeMs) / 60_000}min)"
                 aapsLogger.debug(LTag.APS, "ISF Episode invalidated: $inv — discarding")
+                lastEpisodeCloseMs = nowMs
                 activeIsfEpisode = null
             }
         }
 
         // ── Open episode on meaningful correction ─────────────────────────────
-        // Gap gate: don't open within EPISODE_MIN_GAP_MS of last close — prevents
-        // rapid SMB bursts (common in UAM) from opening a new episode every cycle
-        // and corrupting startBgMgdl before enough BG drop has accumulated.
+        // Gap gate: don't open within EPISODE_MIN_GAP_MS of last close/invalidation —
+        // prevents rapid SMB bursts opening a new episode every cycle.
         if (activeIsfEpisode == null && isFasting && !inPostMealLockout &&
             bg > lowGuardMgdl && smbDeliveredU >= EPISODE_MIN_CORRECTION_U &&
             nowMs - lastEpisodeCloseMs > EPISODE_MIN_GAP_MS) {
@@ -389,14 +385,6 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Fast-path physics learner (reduced authority) ─────────────────────
-        // Suppress when an episode is active or recently closed — episode data has
-        // much higher signal quality and the physics learner would partially cancel it.
-        val episodeRecentlyActive = activeIsfEpisode != null ||
-            (nowMs - lastEpisodeCloseMs < trimWindowMs)
-        if (episodeRecentlyActive) {
-            aapsLogger.debug(LTag.APS, "CircadianLearner ISF[fast] suppressed — episode active or recently closed (${(nowMs - lastEpisodeCloseMs) / 60_000}min ago)")
-            return 0
-        }
         if (!isFasting || inPostMealLockout) {
             aapsLogger.debug(LTag.APS, "CircadianLearner ISF skip: not fasting or post-meal lockout")
             return 0
@@ -501,39 +489,32 @@ class CircadianLearner @Inject constructor(
                     aboveBand -> {
                         // Not enough insulin — trim ceiling UP (more aggressive)
                         if (readyToReassess) {
-                            // Check shared cooldown — don't fire if PredTrim or AggrNudge fired recently
-                            if (now - lastSharedActionMs < SHARED_ACTION_COOLDOWN_MS) {
-                                aapsLogger.debug(LTag.APS, "FuelTrim[+]: holding — shared cooldown ${(now - lastSharedActionMs) / 60_000}/${SHARED_ACTION_COOLDOWN_MS / 60_000}min")
+                            val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            trimStrength   = magnitude
+                            trimDirection  = +1
+                            if (!trimActive) { trimActive = true; trimStartMs = now }
+
+                            val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
+                                .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
+                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+
+                            val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
+                            val d = dow.coerceIn(0, 6)
+                            // aboveBand = need more insulin → mult UP → dosingISF DOWN → more aggressive ✓
+                            // Skip only if physics ALSO moved mult UP (same direction — redundant).
+                            // If physics moved DOWN (conflict), apply trim to counteract.
+                            if (isfPhysicsDirection != 1) {
+                                isfState = isfState.updatedDayOnly(dow, hour,
+                                                                   (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
                             } else {
-                                val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                                trimStrength   = magnitude
-                                trimDirection  = +1
-                                if (!trimActive) { trimActive = true; trimStartMs = now }
+                                aapsLogger.debug(LTag.APS, "FuelTrim[+] ISF nudge skipped — physics already moved mult UP (dir=$isfPhysicsDirection)")
+                            }
+                            basalState = basalState.updatedDayOnly(dow, hour,
+                                                                   (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
 
-                                val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
-                                    .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
-                                aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
-
-                                val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
-                                val d = dow.coerceIn(0, 6)
-                                // aboveBand = need more insulin → mult UP → dosingISF DOWN → more aggressive ✓
-                                // Skip only if physics ALSO moved mult UP (same direction — redundant).
-                                // If physics moved DOWN (conflict), apply trim to counteract.
-                                if (isfPhysicsDirection != 1) {
-                                    isfState = isfState.updatedDayOnly(dow, hour,
-                                                                       (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
-                                } else {
-                                    aapsLogger.debug(LTag.APS, "FuelTrim[+] ISF nudge skipped — physics already moved mult UP (dir=$isfPhysicsDirection)")
-                                }
-                                basalState = basalState.updatedDayOnly(dow, hour,
-                                                                       (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
-
-                                lastTrimActionMs = now
-                                lastSharedActionMs = now
-                                aapsLogger.debug(LTag.APS,
-                                                 "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                                     "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
-                            } // end shared cooldown else
+                            aapsLogger.debug(LTag.APS,
+                                             "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
+                                                 "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
                         } else {
                             aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding extra insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
                         }
@@ -566,8 +547,6 @@ class CircadianLearner @Inject constructor(
                             basalState = basalState.updatedDayOnly(dow, hour,
                                                                    (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
 
-                            lastTrimActionMs = now
-                            lastSharedActionMs = now
                             aapsLogger.debug(LTag.APS,
                                              "FuelTrim[STEP -] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
                                                  "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
@@ -650,16 +629,6 @@ class CircadianLearner @Inject constructor(
         val prevIsfMult = isfState.days[d].get(hour)
         val prevBasMult = basalState.days[d].get(hour)
 
-        // Shared cooldown — don't fire AggrNudge if PredTrim or STFT fired recently
-        if (now - lastSharedActionMs < SHARED_ACTION_COOLDOWN_MS) {
-            lastAggrNudgeStatus = "${if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"}|$deviationPct|$dayName|$hour|" +
-                "${"%.4f".format(prevIsfMult)}|${"%.4f".format(prevIsfMult)}|${"%.4f".format(prevBasMult)}|${"%.4f".format(prevBasMult)}|" +
-                "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason|" +
-                "ISF_HELD(sharedCooldown)|BAS_HELD"
-            aapsLogger.debug(LTag.APS, "AggrNudge: holding — shared cooldown ${(now - lastSharedActionMs) / 60_000}/${SHARED_ACTION_COOLDOWN_MS / 60_000}min")
-            return
-        }
-
         // Capture session-start multipliers on first nudge of this hour/day combo.
         if (nudgeSessionHour != hour || nudgeSessionDow != dow) {
             nudgeSessionHour    = hour
@@ -725,8 +694,6 @@ class CircadianLearner @Inject constructor(
             "${"%.4f".format(nudgeSessionBasMult)}|${"%.4f".format(basalState.days[d].get(hour))}|" +
             "${if (cooldownActive) "COOLDOWN" else "FULL"}|$lastPenaltyReason|" +
             "${if (isfApplied) "ISF_APPLIED" else "ISF_SKIPPED(physicsAgrees)"}|${if (basApplied) "BAS_APPLIED" else "BAS_SKIPPED"}"
-        // Mark shared action so PredTrim and STFT hold for 15 min
-        if (isfApplied || basApplied) lastSharedActionMs = now
         // Only overwrite lastBasalSignal if the nudge actually applied — otherwise
         // preserve the drift/negIOB/predTrim signal message set by updateBasalLearner.
         if (!basalPhysicsFired) {
@@ -855,19 +822,13 @@ class CircadianLearner @Inject constructor(
                 if (isCuttingBasal && currentlyAboveTarget) {
                     lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${"%.1f".format(projectedError / 18.0)}mmol | suppressed: BG > target"
                 } else if (abs(projectedError) > PRED_TRIM_DEAD_BAND_MGDL) {
-                    // Check shared cooldown — don't fire if STFT or AggrNudge fired recently
-                    if (now - lastSharedActionMs < SHARED_ACTION_COOLDOWN_MS) {
-                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | holding (shared cooldown ${(now - lastSharedActionMs) / 60_000}/${SHARED_ACTION_COOLDOWN_MS / 60_000}min)"
-                    } else {
-                        // Scale adjustment to projected error magnitude
-                        val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
-                        val adjustment = 1.0 + rawAdjust
-                        basalState = basalState.updated(dow, hour, (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
-                        predTrimFired = true
-                        lastSharedActionMs = now
-                        lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | active"
-                    }
+                    // Scale adjustment to projected error magnitude
+                    val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
+                    val adjustment = 1.0 + rawAdjust
+                    basalState = basalState.updated(dow, hour, (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
+                    predTrimFired = true
+                    lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | active"
                 } else {
                     lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | dead-band"
                 }
@@ -1234,8 +1195,7 @@ class CircadianLearner @Inject constructor(
 
         // ISF Episode learner
         private const val EPISODE_MIN_CORRECTION_U  = 0.15
-        private const val EPISODE_MIN_GAP_MS         = 30 * 60_000L  // 30 min between episodes — prevents SMB burst re-opens
-        private const val SHARED_ACTION_COOLDOWN_MS  = 15 * 60_000L  // 15 min between any two system actions (PredTrim/STFT/AggrNudge)
+        private const val EPISODE_MIN_GAP_MS         = 30 * 60_000L  // 30 min between episodes
         private const val EPISODE_STABLE_DELTA       = 1.8    // mg/dL/5min
         private const val EPISODE_FULL_RESOLVE_BAND  = 27.0   // ±1.5 mmol
         private const val EPISODE_FULL_STABLE_MINS   = 30
@@ -1245,7 +1205,7 @@ class CircadianLearner @Inject constructor(
 
         // Basal learner — drift window approach (basalIob gate removed, always negative in closed loop)
         private const val BASAL_ALPHA              = 0.06
-        private const val BASAL_MULT_MIN           = 0.65   // floor at 65% — was 0.5 which allowed too aggressive basal cuts
+        private const val BASAL_MULT_MIN           = 0.5
         private const val BASAL_MULT_MAX           = 1.5
         private const val BASAL_DRIFT_WINDOW_MS    = 90 * 60 * 1000L  // 90 min window to measure drift
         private const val BASAL_MIN_SAMPLES        = 12               // ~60 min of readings
@@ -1318,10 +1278,10 @@ class CircadianLearner @Inject constructor(
         private const val TRIM_DEAD_BAND_MGDL      = 5.4    // ~0.3 mmol — must be this far from target to trim
         private const val TRIM_MAX_STRENGTH         = 0.20   // cap trim magnitude at 20%
         private const val TRIM_CEIL_SCALE           = 0.15   // ceiling shift per unit of trim magnitude
-        private const val TRIM_CEIL_MAX             = 1.30   // ceiling upper bound from trim
+        private const val TRIM_CEIL_MAX             = 1.20   // ceiling upper bound from trim
         private const val TRIM_CEIL_MIN             = 0.80   // ceiling lower bound from trim
         private const val TRIM_LONG_TERM_FRACTION   = 0.50   // long-term nudge = 50% of trim magnitude
-        private const val TRIM_DECAY_RATE           = 0.60   // trim decays by 40% each in-range cycle
+        private const val TRIM_DECAY_RATE           = 0.70   // trim decays by 30% each in-range cycle
 
         // General
         private const val COB_THRESHOLD_G = 5.0   // ignore cycles with active carbs
