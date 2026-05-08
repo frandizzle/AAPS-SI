@@ -768,13 +768,17 @@ class MealPhaseTracker @Inject constructor(
         val durationMins:    Int    = 0,
         val peakOrNadirMmol: Double = 0.0
     ) {
-        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE }
+        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE, SKIPPED }
     }
 
     fun carbPhaseStatus(): PhaseStatus = when {
         !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
         currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
         carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
+        // Session is in P/F or TAIL but carb phase was never recorded — started directly
+        // in P/F (UAM_PROTEIN_FAT fired from fasting) or handed off via onMealModeExpired.
+        // Show as SKIPPED rather than PENDING to avoid confusion in the UI.
+        currentPhase != MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.SKIPPED)
         else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
     }
 
