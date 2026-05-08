@@ -215,6 +215,14 @@ class MealPhaseTracker @Inject constructor(
         // or a natural end to the meal. Treat it as a successful early completion
         // rather than invalidating — these are our most valuable clean sessions.
         // Only truly invalidate if BG is still meaningfully elevated.
+        //
+        // NOTE: natural meal mode *timeouts* with elevated BG are handled BEFORE this
+        // path via [onMealModeExpired], which the plugin calls when it detects
+        // previousWasRealMeal && mealMode == FASTING. That call either completes
+        // (BG near target) or transitions the session to P/F continuation (BG elevated),
+        // so sessionActive will already be false or the phase will be P/F by the time
+        // we reach here. The elevated-BG invalidation below therefore only fires for
+        // genuinely unexpected fasting returns (manual cancel, mode glitch, etc.).
         if (sessionActive && isFasting) {
             val phaseElapsedMs = now - phaseStartMs
             val bgNearTarget   = bgMmol <= targetBgMmol + TAIL_COMPLETE_MMOL
@@ -227,7 +235,7 @@ class MealPhaseTracker @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "MealPhaseTracker: session INVALIDATED — returned to fasting during $currentPhase " +
                                      "with BG ${"%.1f".format(bgMmol)}mmol (${"%+.1f".format(bgMmol - targetBgMmol)} above target) " +
-                                     "after ${(now - sessionStartMs) / 60_000}min")
+                                     "after ${(now - sessionStartMs) / 60_000}min — manual cancel or unexpected mode drop")
                 lastPhaseDebug = "Session cancelled — returned to fasting early with BG still elevated. Not learned from."
                 resetSession()
             }
@@ -457,6 +465,83 @@ class MealPhaseTracker @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: manual bolus ${"%+.2f".format(units)}U during $currentPhase phase " +
                              "— session flagged (SMB fraction may have been too low)")
+    }
+
+    // ── Meal mode expiry notification ─────────────────────────────────────────
+
+    /**
+     * Call this from the plugin when a real meal mode (Lunch, Dinner, etc.) expires
+     * naturally due to its duration timeout — i.e. at the point where the plugin detects
+     * [previousWasRealMeal && mealMode == FASTING].
+     *
+     * This allows MealPhaseTracker to distinguish between:
+     *   - Natural timeout with BG still elevated → hand off to P/F tracking (don't invalidate)
+     *   - Natural timeout with BG near target    → treat as successful completion
+     *   - Manual cancel (not called here)        → normal fasting-return invalidation path
+     *
+     * Must be called **before** [onLoopCycle] for the same cycle so that when
+     * [onLoopCycle] sees mealMode == FASTING it finds no active session to invalidate.
+     *
+     * @param now         Current timestamp ms
+     * @param bgMmol      Current BG in mmol/L
+     * @param targetBgMmol Current dosing target in mmol/L
+     */
+    fun onMealModeExpired(now: Long, bgMmol: Double, targetBgMmol: Double) {
+        if (!sessionActive) return
+
+        val phaseElapsedMs = now - phaseStartMs
+        val bgNearTarget   = bgMmol <= targetBgMmol + TAIL_COMPLETE_MMOL
+
+        if (bgNearTarget) {
+            // BG already back near target when mode expired — treat as successful completion.
+            // This is a clean UAM auto-cancel or a meal that ended perfectly on schedule.
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseTracker: meal mode expired with BG ${"%.1f".format(bgMmol)} " +
+                                 "near target — treating as successful completion")
+            completeSession(now, phaseElapsedMs, targetBgMmol)
+            return
+        }
+
+        // BG still elevated — meal mode ran out before the response finished.
+        // Hand off to P/F phase tracking so the session continues and the elevated
+        // plateau data (pfPhaseWentHigh, pfPhasePeakBgMmol) is preserved for learning.
+        // The plugin will activate P/F mode on the next cycle; we keep the session alive
+        // so that when P/F → FASTING eventually fires (BG returns to target), we complete
+        // normally rather than invalidating.
+        aapsLogger.debug(LTag.APS,
+                         "MealPhaseTracker: meal mode expired with BG ${"%.1f".format(bgMmol)} " +
+                             "${"%.1f".format(bgMmol - targetBgMmol)}mmol above target after ${(now - sessionStartMs) / 60_000}min " +
+                             "— handing off to P/F continuation (session preserved)")
+
+        // If we were still in CARB phase, record the carb duration and advance to P/F.
+        // If already in P/F or TAIL, just let it continue (no phase change needed).
+        when (currentPhase) {
+            MealPhase.CARB -> {
+                carbPhaseDurationMs = phaseElapsedMs
+                currentPhase        = MealPhase.PROTEIN_FAT
+                phaseStartMs        = now
+                transitionCandidateCount = 0
+                transitionCandidatePhase = null
+                aapsLogger.debug(LTag.APS,
+                                 "MealPhaseTracker: advanced CARB→P/F on mode expiry " +
+                                     "(carb phase was ${phaseElapsedMs / 60_000}min)")
+            }
+            MealPhase.PROTEIN_FAT -> {
+                // Already in P/F — nothing to change, just log
+                aapsLogger.debug(LTag.APS,
+                                 "MealPhaseTracker: already in P/F phase on mode expiry " +
+                                     "— continuing (${phaseElapsedMs / 60_000}min in P/F so far)")
+            }
+            MealPhase.TAIL -> {
+                // Already in TAIL — nothing to change, just log
+                aapsLogger.debug(LTag.APS,
+                                 "MealPhaseTracker: already in TAIL phase on mode expiry " +
+                                     "— continuing (${phaseElapsedMs / 60_000}min in TAIL so far)")
+            }
+        }
+
+        lastPhaseDebug = "Mode expired — continuing in ${currentPhase.name} | " +
+            "bg=${"%.1f".format(bgMmol)}mmol | session=${(now - sessionStartMs) / 60_000}min"
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────

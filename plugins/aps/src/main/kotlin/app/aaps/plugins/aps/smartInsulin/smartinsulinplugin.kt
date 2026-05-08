@@ -993,6 +993,11 @@ open class SmartInsulinPlugin @Inject constructor(
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
         val previousWasPf = previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT
         if (previousWasRealMeal && mealMode == MealMode.FASTING) {
+            mealPhaseTracker.onMealModeExpired(
+                now          = now,
+                bgMmol       = glucoseStatus.glucose / 18.0,
+                targetBgMmol = profile.getTargetMgdl() / 18.0
+            )
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
