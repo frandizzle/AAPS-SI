@@ -143,7 +143,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // reboundWindowMins (configurable, default 60). Outside the window taper is always 1.0.
         val reboundMins = if (inReboundWindow) (msSinceLastSuspend / 60_000.0) else 0.0
         val rawTaper = (reboundMins / reboundWindowMins).coerceIn(0.0, 1.0)
-        val reboundTaperFraction = if (inReboundWindow) 0.4 + (0.6 * rawTaper) else 1.0
+        val reboundTaperFraction = if (inReboundWindow) 0.3 + (0.7 * rawTaper) else 1.0
 
         // Guard thresholds in mg/dL
         val lowGuardMgdl  = lowGuardMmol * MMOL_TO_MGDL
