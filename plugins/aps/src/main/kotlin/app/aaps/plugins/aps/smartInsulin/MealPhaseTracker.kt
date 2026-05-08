@@ -551,10 +551,6 @@ class MealPhaseTracker @Inject constructor(
         sessionMode            = mode
         sessionStartMs         = now
         phaseStartMs           = now
-        currentPhase           = MealPhase.CARB
-        carbPhasePeakBgMmol    = bgMmol
-        pfPhasePeakBgMmol      = bgMmol
-        tailPhaseNadirBgMmol   = Double.MAX_VALUE
         manualBolusDetected    = false
         manualBolusU           = 0.0
         carbPhaseWentLow       = false
@@ -564,14 +560,38 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseWentHigh        = false
         carbPhaseDurationMs    = 0L
         pfPhaseDurationMs      = 0L
+        tailPhaseNadirBgMmol   = Double.MAX_VALUE
         deltaHistory.clear()
         transitionCandidateCount = 0
         transitionCandidatePhase = null
 
-        aapsLogger.debug(LTag.APS,
-                         "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
-        lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
-        lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
+        // UAM_PROTEIN_FAT means the meal is already in the protein/fat plateau —
+        // there is no carb phase to detect. BG is already elevated and flat.
+        // Start directly in P/F phase so:
+        //   1. We don't wait 40 min looking for a carb slowdown that already happened
+        //   2. pfPhaseWentHigh correctly captures the elevated plateau
+        //   3. The tail phase fires when BG eventually falls back to target
+        // This also applies to fresh P/F sessions (not continuations from onMealModeExpired
+        // which advances the phase directly without calling startSession).
+        if (mode == MealMode.UAM_PROTEIN_FAT) {
+            currentPhase        = MealPhase.PROTEIN_FAT
+            carbPhasePeakBgMmol = bgMmol   // no real carb phase — record starting BG as peak
+            pfPhasePeakBgMmol   = bgMmol
+            carbPhaseDurationMs = 0L        // zero = no carb phase observed
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol " +
+                                 "→ starting directly in P/F phase (no carb phase for UAM_PROTEIN_FAT)")
+            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=P/F (no carb phase) | bg=${"%.1f".format(bgMmol)}mmol"
+            lastTransitionDebug = ""
+        } else {
+            currentPhase        = MealPhase.CARB
+            carbPhasePeakBgMmol = bgMmol
+            pfPhasePeakBgMmol   = bgMmol
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
+            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
+            lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
+        }
     }
 
     private fun confirmTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
@@ -750,14 +770,15 @@ class MealPhaseTracker @Inject constructor(
         val durationMins:    Int    = 0,
         val peakOrNadirMmol: Double = 0.0
     ) {
-        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE }
+        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE, SKIPPED }
     }
 
     fun carbPhaseStatus(): PhaseStatus = when {
-        !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
-        currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
-        carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
-        else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        !sessionActive                                    -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        currentPhase == MealPhase.CARB                   -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
+        carbPhaseDurationMs > 0                          -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
+        sessionMode == MealMode.UAM_PROTEIN_FAT          -> PhaseStatus(PhaseStatus.PhaseState.SKIPPED)   // P/F mode — no carb phase
+        else                                             -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
     }
 
     fun pfPhaseStatus(): PhaseStatus = when {
