@@ -1318,10 +1318,10 @@ class CircadianLearner @Inject constructor(
         private const val TRIM_DEAD_BAND_MGDL      = 5.4    // ~0.3 mmol — must be this far from target to trim
         private const val TRIM_MAX_STRENGTH         = 0.20   // cap trim magnitude at 20%
         private const val TRIM_CEIL_SCALE           = 0.15   // ceiling shift per unit of trim magnitude
-        private const val TRIM_CEIL_MAX             = 1.20   // ceiling upper bound from trim
+        private const val TRIM_CEIL_MAX             = 1.30   // ceiling upper bound from trim
         private const val TRIM_CEIL_MIN             = 0.80   // ceiling lower bound from trim
         private const val TRIM_LONG_TERM_FRACTION   = 0.50   // long-term nudge = 50% of trim magnitude
-        private const val TRIM_DECAY_RATE           = 0.70   // trim decays by 30% each in-range cycle
+        private const val TRIM_DECAY_RATE           = 0.60   // trim decays by 40% each in-range cycle
 
         // General
         private const val COB_THRESHOLD_G = 5.0   // ignore cycles with active carbs

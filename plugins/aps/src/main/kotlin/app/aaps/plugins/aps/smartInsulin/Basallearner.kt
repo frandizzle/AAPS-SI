@@ -43,9 +43,9 @@ class BasalLearner @Inject constructor(
     init { restoreState() }
     companion object {
         // Gate conditions
-        private const val MIN_MINUTES_NO_BOLUS   = 120.0  // 2h — enough to catch steady drift without blocking all day on SMBs
+        private const val MIN_MINUTES_NO_BOLUS   = 90.0   // 1.5h — allow learning sooner after small SMBs
         private const val LOW_BG_GATE_MGDL        = 72.0   // 4.0 mmol
-        private const val HIGH_BG_GATE_MGDL       = 162.0  // 9.0 mmol — tighter than overnight gate
+        private const val HIGH_BG_GATE_MGDL       = 180.0  // 10.0 mmol — clinical high threshold        private const val HIGH_BG_GATE_MGDL       = 162.0  // 9.0 mmol — tighter than overnight gate
         private const val MAX_COB_G               = 5.0
         private const val MAX_DELTA_MGDL_PER_5MIN = 2.0    // BG must be quiet — <2 mg/dL movement
         // Drift calculation
