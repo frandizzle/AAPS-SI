@@ -1082,8 +1082,6 @@ private fun PhaseRow(
             Triple("◉", "In progress…", inProgressColor)
         MealPhaseTracker.PhaseStatus.PhaseState.COMPLETE ->
             Triple("✓", "Complete — ${status.durationMins}min", completeColor)
-        MealPhaseTracker.PhaseStatus.PhaseState.SKIPPED ->
-            Triple("—", "N/A — P/F mode skips carb phase", pendingColor)
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
