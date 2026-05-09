@@ -1122,7 +1122,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 targetMgdl               = targetBg,
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
-                aggressiveness           = circadianLearner.aggrCeiling(), // initial estimate for summary logging
+                aggressiveness           = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling()), // actual effective aggressiveness — ceiling is a cap not the score
                 suppressAdaptiveLearning = suppressAdaptiveLearningUpdate,
                 fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
             )

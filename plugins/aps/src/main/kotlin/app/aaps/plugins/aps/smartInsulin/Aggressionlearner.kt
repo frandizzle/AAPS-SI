@@ -59,7 +59,7 @@ class AggressionLearner @Inject constructor(
     init { restoreState() }
 
     companion object {
-        private const val WINDOW_MS            = 16 * 60 * 60 * 1000L  // 16h rolling — tighter window makes day-of-week blend meaningful earlier in the day
+        private const val WINDOW_MS            = 24 * 60 * 60 * 1000L
         private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
         private const val MIN_SAMPLES_TO_LEARN = 24   // ~2h of fasting data
 
@@ -69,7 +69,10 @@ class AggressionLearner @Inject constructor(
 
         private const val STEP_UP              = 0.03
         private const val STEP_DOWN            = 0.05
-        private const val MIN_DAY_SAMPLES_FOR_BLEND = 20  // samples on a given day before blending in
+        private const val MIN_DAY_SAMPLES_FOR_BLEND = 20
+        // Day score can't drag aggressiveness more than this below the global score.
+        // Prevents a corrupted day score from dominating when it's fully blended.
+        private const val MAX_DAY_DEVIATION    = 0.15
         val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
         private const val K_SCORE        = "score"
@@ -87,8 +90,14 @@ class AggressionLearner @Inject constructor(
             val max   = preferences.get(DoubleKey.ApsSmartInsulinAggressionMax)
             val dow   = currentDow()
             val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
-            val score = globalScore * (1.0 - blend) + dayScores[dow] * blend
-            return score.coerceIn(1.0 / max, max)
+            val rawScore = globalScore * (1.0 - blend) + dayScores[dow] * blend
+
+            // Cap: day score can't drag the result more than MAX_DAY_DEVIATION below global.
+            // Prevents a single bad day weeks ago from overriding 6 days of good global data
+            // when the day score is fully blended (daySampleCount >= MIN_DAY_SAMPLES_FOR_BLEND).
+            val cappedScore = rawScore.coerceAtLeast(globalScore - MAX_DAY_DEVIATION)
+
+            return cappedScore.coerceIn(1.0 / max, max)
         }
 
     /**
@@ -158,19 +167,15 @@ class AggressionLearner @Inject constructor(
         stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
         stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
         else                                                    -> {
-            // Only decay back toward 1.0 when genuinely in a good state —
-            // both low time acceptable AND high time minimal.
-            // If high pct is still meaningful, hold position rather than
-            // decaying and undoing hard-earned aggressiveness.
+            // Only decay when genuinely in good control — high time minimal AND no lows.
+            // If still running meaningful high time, hold position — don't decay and undo
+            // hard-earned aggressiveness. Faster recovery from below 1.0 when no lows
+            // (0.15 vs 0.03) so a penalised day score recovers within hours not days.
             if (stats.highPct < 10.0 && stats.lowPct < 2.0) {
-                // Asymmetric decay back to 1.0 (neutral)
-                // If current < 1.0 (conservative), return to neutral faster (10% per hour)
-                // If current > 1.0 (aggressive), return to neutral slower (3% per hour)
-                val decayAlpha = if (current < 1.0) 0.10 else 0.03
+                val decayAlpha = if (current < 1.0) 0.15 else 0.03
                 current + (1.0 - current) * decayAlpha
             } else {
-                // Still running meaningful high time — hold position, don't decay
-                current
+                current  // hold — still running high, don't decay
             }
         }
     }
