@@ -158,8 +158,8 @@ class UamController @Inject constructor(
 
         // Stuck-high detection for UAM_PROTEIN_FAT
         // Delta must be in this range to count as "stuck" (not falling, not spiking)
-        private const val STUCK_DELTA_MIN_MMOL        = -0.15  // -0.1 with small noise tolerance — genuinely falling (-0.2+) excluded
-        private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking — raised from 0.2 to tolerate slight noise
+        private const val STUCK_DELTA_MIN_MMOL        = -0.15  // small noise tolerance — genuinely falling (-0.2+) excluded by instantaneous check
+        private const val STUCK_DELTA_MAX_MMOL        = 0.25   // not spiking
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
@@ -570,12 +570,29 @@ class UamController @Inject constructor(
             return
         }
 
+        // Reset streak if BG is clearly descending — only on -0.20 or stronger so
+        // normal sensor noise (-0.1 to +0.1) doesn't break a legitimate plateau streak.
+        if (stuckHighReadings > 0 && deltaMmol < -0.20) {
+            aapsLogger.debug(LTag.APS,
+                             "UAM_PROTEIN_FAT: streak reset — BG clearly falling " +
+                                 "instΔ=${fmtDelta(deltaMmol)}$unitLabel (< -0.20)")
+            stuckHighReadings = 0
+            lastStuckBgTimestampMs = 0L
+            return
+        }
+
         lastStuckAvgDelta = shortAvgDeltaMmol
         lastStuckBgMmol   = currentBgMmol
 
+        // isStuck requires BOTH smoothed avg AND instantaneous delta to not be clearly falling.
+        // shortAvgDelta lags — a BG descending at -0.2+ mmol/5min can still have a near-zero
+        // smoothed avg for 2-3 cycles. The instantaneous gate catches the clear descent before
+        // the smoothed average catches up. Threshold is -0.20 not -0.10 so normal noise
+        // bounces (-0.1 to +0.1) don't cause false resets on a genuinely flat plateau.
         val isStuck = currentBgMmol >= triggerThresholdMmol &&
             shortAvgDeltaMmol >= STUCK_DELTA_MIN_MMOL &&
-            shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL
+            shortAvgDeltaMmol <= STUCK_DELTA_MAX_MMOL &&
+            deltaMmol >= -0.20   // only block on clearly falling (-0.2+ mmol/5min), not noise
 
         if (!isStuck) {
             aapsLogger.debug(LTag.APS,

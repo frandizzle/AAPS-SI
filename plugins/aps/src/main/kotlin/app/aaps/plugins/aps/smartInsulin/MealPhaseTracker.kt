@@ -226,11 +226,21 @@ class MealPhaseTracker @Inject constructor(
         if (sessionActive && isFasting) {
             val phaseElapsedMs = now - phaseStartMs
             val bgNearTarget   = bgMmol <= targetBgMmol + TAIL_COMPLETE_MMOL
-            if (bgNearTarget) {
+
+            // If we're already in TAIL phase, fasting is expected — BG is returning
+            // to target after the meal. Don't invalidate, let the cycle continue so
+            // tailPhaseNadirBgMmol and tailPhaseWentLow are tracked correctly.
+            // The tail completion check at the bottom of the cycle will fire when
+            // BG reaches target.
+            if (currentPhase == MealPhase.TAIL) {
+                // fall through — let the rest of onLoopCycle run normally
+            } else if (bgNearTarget) {
                 aapsLogger.debug(LTag.APS,
                                  "MealPhaseTracker: mode returned to fasting with BG ${"%.1f".format(bgMmol)} near target " +
                                      "— treating as successful completion (UAM auto-cancel or natural end)")
                 completeSession(now, phaseElapsedMs, targetBgMmol)
+                lastMealMode = mealMode
+                return
             } else {
                 aapsLogger.debug(LTag.APS,
                                  "MealPhaseTracker: session INVALIDATED — returned to fasting during $currentPhase " +
@@ -238,9 +248,9 @@ class MealPhaseTracker @Inject constructor(
                                      "after ${(now - sessionStartMs) / 60_000}min — manual cancel or unexpected mode drop")
                 lastPhaseDebug = "Session cancelled — returned to fasting early with BG still elevated. Not learned from."
                 resetSession()
+                lastMealMode = mealMode
+                return
             }
-            lastMealMode = mealMode
-            return
         }
 
         // ── No active session ─────────────────────────────────────────────────
@@ -554,17 +564,11 @@ class MealPhaseTracker @Inject constructor(
     // ── Internal helpers ──────────────────────────────────────────────────────
 
     private fun startSession(now: Long, mode: MealMode, bgMmol: Double) {
-        // UAM_PROTEIN_FAT fires directly from fasting when BG is already in a plateau —
-        // there was no carb absorption phase to track. Start in PROTEIN_FAT immediately
-        // and leave carbPhaseDurationMs = 0 so carbPhaseStatus() returns SKIPPED.
-        val startPhase = if (mode == MealMode.UAM_PROTEIN_FAT) MealPhase.PROTEIN_FAT
-        else                                   MealPhase.CARB
-
         sessionActive          = true
         sessionMode            = mode
         sessionStartMs         = now
         phaseStartMs           = now
-        currentPhase           = startPhase
+        currentPhase           = MealPhase.CARB
         carbPhasePeakBgMmol    = bgMmol
         pfPhasePeakBgMmol      = bgMmol
         tailPhaseNadirBgMmol   = Double.MAX_VALUE
@@ -582,14 +586,9 @@ class MealPhaseTracker @Inject constructor(
         transitionCandidatePhase = null
 
         aapsLogger.debug(LTag.APS,
-                         "MealPhaseTracker: session START mode=$mode phase=$startPhase bg=${"%.1f".format(bgMmol)}mmol")
-        if (startPhase == MealPhase.PROTEIN_FAT) {
-            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=P/F (no carb phase) | bg=${"%.1f".format(bgMmol)}mmol"
-            lastTransitionDebug = "Waiting — min ${PF_MIN_MS / 60_000}min in P/F phase before checking"
-        } else {
-            lastPhaseDebug      = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
-            lastTransitionDebug = "Waiting — min ${CARB_MIN_MS / 60_000}min in CARB phase before checking"
-        }
+                         "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
+        lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
+        lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
     }
 
     private fun confirmTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
@@ -647,11 +646,13 @@ class MealPhaseTracker @Inject constructor(
             isClean             = !manualBolusDetected
         )
 
+        val nadirDisplay = if (session.tailNadirBgMmol < Double.MAX_VALUE / 2)
+            "${"%.1f".format(session.tailNadirBgMmol)}mmol" else "n/a"
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session COMPLETE mode=${session.mode.label} " +
                              "carb=${session.carbPhaseMins.toInt()}min(peak=${"%.1f".format(session.carbPhasePeakBgMmol)}mmol${if (session.carbPhaseWentLow) " ⚠LOW" else ""}) " +
                              "pf=${session.pfPhaseMins.toInt()}min(peak=${"%.1f".format(session.pfPhasePeakBgMmol)}mmol${if (session.pfPhaseWentLow) " ⚠LOW" else ""}${if (session.pfPhaseWentHigh) " ↑HIGH" else ""}) " +
-                             "tail=${session.tailPhaseMins.toInt()}min(nadir=${"%.1f".format(session.tailNadirBgMmol)}mmol${if (session.tailPhaseWentLow) " ⚠LOW" else ""}) " +
+                             "tail=${session.tailPhaseMins.toInt()}min(nadir=$nadirDisplay${if (session.tailPhaseWentLow) " ⚠LOW" else ""}) " +
                              "clean=${session.isClean}" +
                              if (session.manualBolusDetected) " manualBolus=${"%+.2f".format(session.manualBolusU)}U" else "")
 
@@ -741,7 +742,9 @@ class MealPhaseTracker @Inject constructor(
     private fun buildCompleteSummary(session: CompletedMealSession): String {
         val carbStr = "Carb: ${session.carbPhaseMins.toInt()}min peak=${"%.1f".format(session.carbPhasePeakBgMmol)}mmol"
         val pfStr   = "P/F: ${session.pfPhaseMins.toInt()}min peak=${"%.1f".format(session.pfPhasePeakBgMmol)}mmol"
-        val tailStr = "Tail: ${session.tailPhaseMins.toInt()}min nadir=${"%.1f".format(session.tailNadirBgMmol)}mmol"
+        val nadirStr = if (session.tailNadirBgMmol < Double.MAX_VALUE / 2)
+            "${"%.1f".format(session.tailNadirBgMmol)}mmol" else "n/a"
+        val tailStr = "Tail: ${session.tailPhaseMins.toInt()}min nadir=$nadirStr"
         val cleanStr = if (session.isClean) "clean" else "flagged(manual ${"%+.2f".format(session.manualBolusU)}U)"
         return "✓ Session complete | ${session.mode.label} | $carbStr | $pfStr | $tailStr | $cleanStr"
     }
@@ -768,17 +771,13 @@ class MealPhaseTracker @Inject constructor(
         val durationMins:    Int    = 0,
         val peakOrNadirMmol: Double = 0.0
     ) {
-        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE, SKIPPED }
+        enum class PhaseState { PENDING, IN_PROGRESS, COMPLETE }
     }
 
     fun carbPhaseStatus(): PhaseStatus = when {
         !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
         currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
         carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
-        // Session is in P/F or TAIL but carb phase was never recorded — started directly
-        // in P/F (UAM_PROTEIN_FAT fired from fasting) or handed off via onMealModeExpired.
-        // Show as SKIPPED rather than PENDING to avoid confusion in the UI.
-        currentPhase != MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.SKIPPED)
         else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
     }
 
