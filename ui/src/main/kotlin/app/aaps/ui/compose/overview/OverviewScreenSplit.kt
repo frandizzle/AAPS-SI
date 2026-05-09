@@ -35,7 +35,6 @@ import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
-import app.aaps.ui.compose.overview.chips.OverviewChipsColumn
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.IobUiState
 import app.aaps.ui.compose.overview.graphs.SmbUiState
@@ -59,6 +58,7 @@ fun OverviewScreenSplit(
     runningModeText: String,
     runningModeProgress: Float,
     runningModeSceneManaged: Boolean = false,
+    smbEnabled: Boolean,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -81,6 +81,8 @@ fun OverviewScreenSplit(
     val config = LocalConfig.current
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
+    val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
+    val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
@@ -111,7 +113,7 @@ fun OverviewScreenSplit(
                 .fillMaxSize()
                 .padding(horizontal = 4.dp)
         ) {
-            // Left column ΓÇö BG + chips + status + NS card, own scroll
+            // Left column — BG + chips + status + NS card, own scroll
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -138,6 +140,7 @@ fun OverviewScreenSplit(
                         runningMode = runningMode,
                         runningModeText = runningModeText,
                         runningModeProgress = runningModeProgress,
+                        smbEnabled = smbEnabled,
                         isSimpleMode = isSimpleMode,
                         profileName = profileName,
                         isProfileModified = isProfileModified,
@@ -199,7 +202,7 @@ fun OverviewScreenSplit(
                 }
             }
 
-            // Right column ΓÇö graphs, own scroll
+            // Right column — graphs, own scroll
             Column(
                 modifier = Modifier
                     .weight(1f)

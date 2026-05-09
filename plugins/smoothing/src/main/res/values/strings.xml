@@ -10,4 +10,6 @@
     <string name="description_no_smoothing">"No smoothing performed on input glucose data. Use this when you already have filtered data e.g. from BYODA G6."</string>
     <string name="UKF_name">UKF smoothing</string>
     <string name="description_UKF">"Unscented Kalman Filter smoothing with adaptive noise estimation and RTS backward smoother. G7 users: select this and leave the first-day toggle off — UKF runs always. G6 users: select this and enable the First-day CGM smoothing toggle in SmartInsulin → STFT settings — UKF runs for the first 24 h of each new sensor only, then automatically passes raw values through (identical to No Smoothing). Sensor swaps are detected automatically."</string>
+    <string name="adaptive_smoothing_name">Adaptive smoothing</string>
+    <string name="description_adaptive_smoothing">"Context-aware adaptive smoothing: minimal lag on rapid rises, aggressive filtering on noisy data, hypo-safe on lows"</string>
 </resources>

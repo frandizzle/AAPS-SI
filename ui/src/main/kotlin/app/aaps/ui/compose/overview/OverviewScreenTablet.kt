@@ -39,7 +39,6 @@ import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import app.aaps.ui.compose.scenes.ActiveSceneBanner
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
-import app.aaps.ui.compose.overview.chips.OverviewChipsColumn
 import app.aaps.core.ui.compose.navigation.ElementType
 
 /**
@@ -64,6 +63,7 @@ fun OverviewScreenTablet(
     runningModeText: String,
     runningModeProgress: Float,
     runningModeSceneManaged: Boolean = false,
+    smbEnabled: Boolean,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -155,6 +155,7 @@ fun OverviewScreenTablet(
                             runningModeText = runningModeText,
                             runningModeProgress = runningModeProgress,
                             runningModeSceneManaged = runningModeSceneManaged,
+                            smbEnabled = smbEnabled,
                             isSimpleMode = isSimpleMode,
                             profileName = profileName,
                             isProfileModified = isProfileModified,

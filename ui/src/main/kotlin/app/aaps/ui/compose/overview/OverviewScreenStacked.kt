@@ -33,7 +33,6 @@ import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
-import app.aaps.ui.compose.overview.chips.OverviewChipsColumn
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.IobUiState
 import app.aaps.ui.compose.overview.graphs.SmbUiState
@@ -57,6 +56,7 @@ fun OverviewScreenStacked(
     runningModeText: String,
     runningModeProgress: Float,
     runningModeSceneManaged: Boolean = false,
+    smbEnabled: Boolean,
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
@@ -124,6 +124,7 @@ fun OverviewScreenStacked(
                 runningMode = runningMode,
                 runningModeText = runningModeText,
                 runningModeProgress = runningModeProgress,
+                smbEnabled = smbEnabled,
                 isSimpleMode = isSimpleMode,
                 profileName = profileName,
                 isProfileModified = isProfileModified,
