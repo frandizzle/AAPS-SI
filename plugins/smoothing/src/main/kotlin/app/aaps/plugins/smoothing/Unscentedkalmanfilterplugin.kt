@@ -17,6 +17,7 @@ import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventTherapyEventChange
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smoothing.Smoothing
+import app.aaps.core.interfaces.smoothing.SmoothingContext
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.kotlin.plusAssign
 import java.util.concurrent.atomic.AtomicBoolean
@@ -81,9 +82,6 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
     // ============================================================
     // UKF CONFIGURATION
     // ============================================================
-
-    // State dimension
-    //TODO: Abrupt noise code is very much off... logs are spammy
 
     private val n = 2
 
@@ -442,11 +440,14 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
     // MAIN FILTERING
     // ============================================================
 
-    override fun smooth(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
+    override suspend fun smooth(
+        data: MutableList<InMemoryGlucoseValue>,
+        context: SmoothingContext
+    ): MutableList<InMemoryGlucoseValue> {
         if (data.isEmpty()) return data
 
         try {
-            return smoothInternal(data)
+            return smoothInternal(data, context)
         } catch (e: Exception) {
             aapsLogger.error(LTag.GLUCOSE, "UKF: Error during smoothing, falling back to raw values", e)
             copyRawToSmoothed(data)
@@ -486,7 +487,10 @@ class UnscentedKalmanFilterPlugin @Inject constructor(
         return segments
     }
 
-    private fun smoothInternal(data: MutableList<InMemoryGlucoseValue>): MutableList<InMemoryGlucoseValue> {
+    private fun smoothInternal(
+        data: MutableList<InMemoryGlucoseValue>,
+        context: SmoothingContext
+    ): MutableList<InMemoryGlucoseValue> {
         if (shouldResetLearning(data[0].timestamp)) {
             resetLearning()
         }
