@@ -940,17 +940,18 @@ class OverviewDataCacheImpl @AssistedInject constructor(
             }
             // Match original format: "2 min ago"
             val value = dateUtil.minOrSecAgo(rh, clockSuggested)
+            val clockEnacted = processedDeviceStatusData.openAPSData.clockEnacted
+            val enacted = processedDeviceStatusData.openAPSData.enacted
+            val sameCycle = enacted != null && clockSuggested - clockEnacted <= 60_000L
             val dialogText = buildString {
-                processedDeviceStatusData.openAPSData.enacted?.let {
-                    if (processedDeviceStatusData.openAPSData.clockEnacted != clockSuggested) {
-                        append("Enacted: ${dateUtil.minAgo(rh, processedDeviceStatusData.openAPSData.clockEnacted)}")
+                if (sameCycle) {
+                    append("Enacted: ${dateUtil.minAgo(rh, clockEnacted)}")
+                    append(" ${enacted!!.reason}")
+                } else {
+                    processedDeviceStatusData.openAPSData.suggested?.let {
+                        append("Suggested: ${dateUtil.minAgo(rh, clockSuggested)}")
                         append(" ${it.reason}")
-                        append("\n")
                     }
-                }
-                processedDeviceStatusData.openAPSData.suggested?.let {
-                    append("Suggested: ${dateUtil.minAgo(rh, clockSuggested)}")
-                    append(" ${it.reason}")
                 }
             }
             AapsClientStatusItem(
@@ -973,7 +974,7 @@ class OverviewDataCacheImpl @AssistedInject constructor(
             }
             // Match original format: "ᴪ 93%" or "93%"
             val value = buildString {
-                if (isCharging) append("\u26A1 ")
+                if (isCharging) append("\u26A1")
                 append("$minBattery%")
             }
             val dialogText = buildString {
