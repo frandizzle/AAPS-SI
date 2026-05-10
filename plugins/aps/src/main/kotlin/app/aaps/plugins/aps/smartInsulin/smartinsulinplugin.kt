@@ -1945,6 +1945,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinAggressionMax,
                     UnitDoubleKey.ApsLgsThreshold,
                     UnitDoubleKey.ApsSmartInsulinLowGuard,
+                    UnitDoubleKey.ApsSmartInsulinWarnGuard,
                     IntKey.ApsSmartInsulinReboundWindowMins
                 )
             ),
