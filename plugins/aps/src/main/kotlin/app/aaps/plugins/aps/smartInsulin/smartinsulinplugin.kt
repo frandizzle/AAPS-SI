@@ -1761,20 +1761,19 @@ open class SmartInsulinPlugin @Inject constructor(
         //   No sudden jump — the learner adjusts blendMult over time to find the right level.
         //   Morning rises that need no PDP: blendMult learns down → near-zero blend → no effect.
         //   Morning rises that need more: blendMult learns up → meaningful blend.
+        // effectiveBlendMult is the single confidence gate — no separate blendWeightConfidenceScale
+        // (Deepseek review fix: double-applying confidence was keeping blend at 35% despite 0.7 max)
         val learnedBlendScale = pdpLearner.effectiveBlendMult(currentHour)
         val rawBlendWeight = if (!pdpEnabled || !pdpCleanForBlending) 0.0
         else when (pdpActivePathway) {
             "stuck" -> {
                 val readingsBeyondMin = (pdpStuckHighReadings - pdpMinReadingsStuck).coerceAtLeast(0)
                 val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMinReadingsStuck + 1.0)
-                pdpMaxBlend * rampFraction * pdpLearner.blendWeightConfidenceScale(currentHour) * learnedBlendScale
+                pdpMaxBlend * rampFraction * learnedBlendScale
             }
             "rising" -> {
-                // 5% of maxBlend per qualifying reading, capped at maxBlend
-                // At default maxBlend=0.5: 0.025 per reading → needs 20 readings for full blend
-                // Learner then adjusts this cap up or down based on accuracy
                 val risingFraction = minOf(1.0, consecutivePosCiReadings * 0.05)
-                pdpMaxBlend * risingFraction * pdpLearner.blendWeightConfidenceScale(currentHour) * learnedBlendScale
+                pdpMaxBlend * risingFraction * learnedBlendScale
             }
             else -> 0.0
         }

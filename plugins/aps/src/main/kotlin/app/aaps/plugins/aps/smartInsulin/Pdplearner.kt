@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.util.Locale
 import kotlin.math.abs
 
 /**
@@ -58,7 +59,14 @@ class PdpLearner @Inject constructor(
         val samples:      Int    = 0
     )
 
-    private val hours: Array<HourSlot> = Array(24) { HourSlot() }
+    // Thread-safe copy-on-write array — written from loop coroutine,
+    // read from UI thread. @Volatile ensures writes are immediately visible.
+    @Volatile
+    private var hours: Array<HourSlot> = Array(24) { HourSlot() }
+
+    private fun updateSlot(h: Int, newSlot: HourSlot) {
+        hours = hours.clone().also { it[h] = newSlot }
+    }
 
     companion object {
         private const val MIN_STRENGTH_MULT        = 0.3
@@ -77,7 +85,7 @@ class PdpLearner @Inject constructor(
         private const val RISING_BLEND_ALPHA        = 0.02  // half speed of stuck-high blend learning
         private const val RISING_STRENGTH_ALPHA     = 0.04  // half speed of stuck-high strength learning
         private const val MIN_ERROR_MGDL           = 1.8   // ~0.1 mmol noise floor
-        private const val ARTIFACT_THRESHOLD_MGDL  = 36.0  // 2.0 mmol — both wrong → artifact, skip
+        private const val ARTIFACT_THRESHOLD_MGDL  = 90.0  // 5.0 mmol — both wrong → artifact, skip
         private const val FADE_WIN_RATIO_THRESHOLD = 0.3   // min win ratio to adjust fade
 
         // Episode outcome learning — slower than t+5min accuracy, each episode carries more weight
@@ -121,8 +129,8 @@ class PdpLearner @Inject constructor(
         if (primaryErrMgdl > ARTIFACT_THRESHOLD_MGDL && secondaryErrMgdl > ARTIFACT_THRESHOLD_MGDL) {
             aapsLogger.debug(LTag.APS,
                              "PdpLearner[$pathway h=$h]: ARTIFACT — " +
-                                 "pErr=${String.format("%.1f", primaryErrMgdl)} " +
-                                 "sErr=${String.format("%.1f", secondaryErrMgdl)} both > 2mmol, skipping")
+                                 "pErr=${String.format(Locale.US, "%.1f", primaryErrMgdl)} " +
+                                 "sErr=${String.format(Locale.US, "%.1f", secondaryErrMgdl)} both > 2mmol, skipping")
             tickDecayExcept(h)
             return
         }
@@ -131,7 +139,7 @@ class PdpLearner @Inject constructor(
         val errDiff = abs(primaryErrMgdl - secondaryErrMgdl)
         if (errDiff < MIN_ERROR_MGDL) {
             aapsLogger.debug(LTag.APS,
-                             "PdpLearner[$pathway h=$h]: skip — errDiff=${String.format("%.1f", errDiff)} < noise floor")
+                             "PdpLearner[$pathway h=$h]: skip — errDiff=${String.format(Locale.US, "%.1f", errDiff)} < noise floor")
             tickDecayExcept(h)
             return
         }
@@ -142,13 +150,17 @@ class PdpLearner @Inject constructor(
         val winRatio     = (1.0 - betterErr / worseErr).coerceIn(0.0, 1.0)
 
         // ── Strength ─────────────────────────────────────────────────────────
-        // secondaryWon → push up; primaryWon → pull toward 1.0 (floor at 1.0 — PDP never fights IOB)
-        // Rising pathway uses slower strength alpha — it's learning nuanced morning
-        // insulin needs, not just "need more or less". Let it converge slowly.
+        // secondaryWon → push up toward MAX_STRENGTH_MULT
+        // primaryWon   → pull DOWN toward MIN_STRENGTH_MULT (not just 1.0)
+        //   This allows the learner to fully dial back aggressiveness at hours where
+        //   primary IOB consistently outperforms — not just neutralise but suppress.
+        //   Example: if user's ciStrength=5 is too much at 8am, strengthMult can drop
+        //   below 1.0 so effective ciStrength = 5 × 0.6 = 3.0 at that hour.
+        // Rising pathway uses slower alpha — nuanced morning learning.
         val strengthAlpha = if (pathway == "rising") RISING_STRENGTH_ALPHA else STRENGTH_ALPHA
         val strengthTarget = when {
             secondaryWon -> (slot.strengthMult + winRatio * 0.5).coerceAtMost(MAX_STRENGTH_MULT)
-            else         -> (slot.strengthMult - winRatio * 0.3).coerceAtLeast(1.0)
+            else         -> (slot.strengthMult - winRatio * 0.3).coerceAtLeast(MIN_STRENGTH_MULT)
         }
         val newStrengthMult = (slot.strengthMult + strengthAlpha * (strengthTarget - slot.strengthMult))
             .coerceIn(MIN_STRENGTH_MULT, MAX_STRENGTH_MULT)
@@ -188,23 +200,23 @@ class PdpLearner @Inject constructor(
                 .coerceIn(MIN_BLEND_MULT, MAX_BLEND_MULT)
         } else slot.blendMult
 
-        hours[h] = slot.copy(
+        updateSlot(h, slot.copy(
             strengthMult = newStrengthMult,
             fadeMult     = newFadeMult,
             blendMult    = newBlendMult,
             confidence   = newConfidence,
             samples      = newSamples
-        )
+        ))
 
         aapsLogger.debug(LTag.APS,
                          "PdpLearner[$pathway h=$h]: ${if (secondaryWon) "PDP" else "IOB"} won " +
-                             "ratio=${String.format("%.2f", winRatio)} " +
-                             "pErr=${String.format("%.1f", primaryErrMgdl)} " +
-                             "sErr=${String.format("%.1f", secondaryErrMgdl)} " +
-                             "str ${String.format("%.3f", slot.strengthMult)}→${String.format("%.3f", newStrengthMult)} " +
-                             "fade ${String.format("%.3f", slot.fadeMult)}→${String.format("%.3f", newFadeMult)} " +
-                             "blend ${String.format("%.3f", slot.blendMult)}→${String.format("%.3f", newBlendMult)} " +
-                             "conf=${String.format("%.2f", newConfidence)} n=$newSamples")
+                             "ratio=${String.format(Locale.US, "%.2f", winRatio)} " +
+                             "pErr=${String.format(Locale.US, "%.1f", primaryErrMgdl)} " +
+                             "sErr=${String.format(Locale.US, "%.1f", secondaryErrMgdl)} " +
+                             "str ${String.format(Locale.US, "%.3f", slot.strengthMult)}→${String.format(Locale.US, "%.3f", newStrengthMult)} " +
+                             "fade ${String.format(Locale.US, "%.3f", slot.fadeMult)}→${String.format(Locale.US, "%.3f", newFadeMult)} " +
+                             "blend ${String.format(Locale.US, "%.3f", slot.blendMult)}→${String.format(Locale.US, "%.3f", newBlendMult)} " +
+                             "conf=${String.format(Locale.US, "%.2f", newConfidence)} n=$newSamples")
 
         tickDecayExcept(h)
         save()
@@ -336,22 +348,22 @@ class PdpLearner @Inject constructor(
         val newFadeMult   = (slot.fadeMult + EPISODE_FADE_ALPHA * (newFadeTarget - slot.fadeMult))
             .coerceIn(MIN_FADE_MULT, MAX_FADE_MULT)
 
-        hours[h] = slot.copy(
+        updateSlot(h, slot.copy(
             strengthMult = newStrengthMult,
             blendMult    = newBlendMult,
             fadeMult     = newFadeMult
             // confidence and samples not updated — episode scoring is outcome-based,
             // not sample-count-based. Confidence grows from recordAccuracy() only.
-        )
+        ))
 
         aapsLogger.debug(LTag.APS,
                          "PdpLearner episode[$pathway h=$h]: $outcomeLabel " +
-                             "landing=${String.format("%.1f", landingBgMmol)} " +
-                             "nadir=${String.format("%.1f", nadirBgMmol)} " +
+                             "landing=${String.format(Locale.US, "%.1f", landingBgMmol)} " +
+                             "nadir=${String.format(Locale.US, "%.1f", nadirBgMmol)} " +
                              "dur=${durationMins.toInt()}min " +
-                             "str ${String.format("%.3f", slot.strengthMult)}→${String.format("%.3f", newStrengthMult)} " +
-                             "blend ${String.format("%.3f", slot.blendMult)}→${String.format("%.3f", newBlendMult)} " +
-                             "fade ${String.format("%.3f", slot.fadeMult)}→${String.format("%.3f", newFadeMult)}")
+                             "str ${String.format(Locale.US, "%.3f", slot.strengthMult)}→${String.format(Locale.US, "%.3f", newStrengthMult)} " +
+                             "blend ${String.format(Locale.US, "%.3f", slot.blendMult)}→${String.format(Locale.US, "%.3f", newBlendMult)} " +
+                             "fade ${String.format(Locale.US, "%.3f", slot.fadeMult)}→${String.format(Locale.US, "%.3f", newFadeMult)}")
 
         save()
     }
@@ -363,6 +375,7 @@ class PdpLearner @Inject constructor(
      * confidence=0 → baseCiStrength unchanged; confidence=1 → baseCiStrength * learnedMult
      */
     fun effectiveCiStrength(hour: Int, baseCiStrength: Double): Double {
+        if (baseCiStrength <= 0.0) return 0.0  // guard: coerceIn(min, 0) would crash if min > 0
         val slot  = hours[hour.coerceIn(0, 23)]
         val blend = slot.confidence.coerceIn(0.0, 1.0)
         val mult  = 1.0 + blend * (slot.strengthMult - 1.0)
@@ -374,6 +387,7 @@ class PdpLearner @Inject constructor(
      * Same multiplier as ciStrength but clamped tighter (max 1.5× user setting).
      */
     fun effectiveRisingStrength(hour: Int, baseRisingStrength: Double): Double {
+        if (baseRisingStrength <= 0.0) return 0.0  // guard: prevents coerceIn crash
         val slot  = hours[hour.coerceIn(0, 23)]
         val blend = slot.confidence.coerceIn(0.0, 1.0)
         val mult  = 1.0 + blend * (slot.strengthMult - 1.0)
@@ -395,30 +409,29 @@ class PdpLearner @Inject constructor(
     }
 
     /**
-     * Confidence scale for blend weight [0.5, 1.0].
-     * Floors at 0.5 so PDP works from day 1 at half max blend.
-     */
-    /**
-     * Confidence scale for blend weight [0.8, 1.0].
-     * Floors at 0.8 so PDP operates at 80% of max blend from day one.
-     * Rises to 1.0 as confidence grows — learned hours get full blend weight.
-     * Previous floor of 0.5 was too conservative, leaving blend at 35% when
-     * user has set 0.7 max blend weight.
-     */
-    fun blendWeightConfidenceScale(hour: Int): Double =
-        0.8 + 0.2 * hours[hour.coerceIn(0, 23)].confidence.coerceIn(0.0, 1.0)
-
-    /**
      * Effective blend weight multiplier for [hour].
-     * Applied on top of pdpMaxBlend in the plugin.
-     * confidence=0 → mult=1.0 (no adjustment); confidence=1 → full learned mult.
+     * Confidence-blends the learned blendMult toward 1.0 at low confidence.
+     * confidence=0 → returns 1.0 (no adjustment, use pdpMaxBlend as-is)
+     * confidence=1 → returns full learned blendMult
+     *
+     * NOTE: This is the SINGLE confidence gate for blend weight.
+     * blendWeightConfidenceScale() has been removed — it was being applied on top
+     * of this function, double-penalising low confidence and explaining why blend
+     * was only 35% despite pdpMaxBlend=0.7 (Deepseek review fix #2 and #6).
      */
     fun effectiveBlendMult(hour: Int): Double {
         val slot  = hours[hour.coerceIn(0, 23)]
         val blend = slot.confidence.coerceIn(0.0, 1.0)
-        val mult  = 1.0 + blend * (slot.blendMult - 1.0)
+        // Floor at 0.5: new install starts at 50% of blendMult (not zero),
+        // so PDP has immediate effect while learner builds confidence.
+        val scaledBlend = 0.5 + 0.5 * blend
+        val mult  = 1.0 + scaledBlend * (slot.blendMult - 1.0)
         return mult.coerceIn(MIN_BLEND_MULT, MAX_BLEND_MULT)
     }
+
+    /** @deprecated Use effectiveBlendMult() — keeping for binary compatibility only */
+    @Deprecated("Double-applies confidence. Use effectiveBlendMult() instead.")
+    fun blendWeightConfidenceScale(hour: Int): Double = effectiveBlendMult(hour)
 
     fun strengthMultAt(hour: Int): Double = hours[hour.coerceIn(0, 23)].strengthMult
     fun fadeMultAt(hour: Int): Double     = hours[hour.coerceIn(0, 23)].fadeMult
@@ -429,7 +442,7 @@ class PdpLearner @Inject constructor(
     fun tickAllDecay(exceptHour: Int) = tickDecayExcept(exceptHour)
 
     fun reset() {
-        for (h in 0..23) hours[h] = HourSlot()
+        for (h in 0..23) updateSlot(h, HourSlot())
         save()
         aapsLogger.debug(LTag.APS, "PdpLearner: reset")
     }
@@ -461,14 +474,14 @@ class PdpLearner @Inject constructor(
             val arr = JSONArray(raw)
             for (h in 0 until minOf(24, arr.length())) {
                 val obj = arr.getJSONObject(h)
-                hours[h] = HourSlot(
+                updateSlot(h, HourSlot(
                     // Migrate from old format: "strength" → "strengthMult"
                     strengthMult = obj.optDouble("strengthMult", obj.optDouble("strength", 1.0)),
                     fadeMult     = obj.optDouble("fadeMult",     1.0),
                     blendMult    = obj.optDouble("blendMult",    1.0),
                     confidence   = obj.optDouble("confidence",   0.0),
                     samples      = obj.optInt("samples",         0)
-                )
+                ))
             }
             aapsLogger.debug(LTag.APS, "PdpLearner: loaded (${hours.sumOf { it.samples }} total samples)")
         } catch (e: Exception) {
@@ -480,9 +493,9 @@ class PdpLearner @Inject constructor(
     private fun tickDecayExcept(exceptHour: Int) {
         for (h in 0..23) {
             if (h != exceptHour && hours[h].confidence > 0.0) {
-                hours[h] = hours[h].copy(
+                updateSlot(h, hours[h].copy(
                     confidence = (hours[h].confidence - CONFIDENCE_DECAY).coerceAtLeast(0.0)
-                )
+                ))
             }
         }
     }
