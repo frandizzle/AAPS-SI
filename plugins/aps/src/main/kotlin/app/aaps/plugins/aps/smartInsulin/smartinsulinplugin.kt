@@ -1653,13 +1653,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val bgiMgdlForPdp = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
         val ciMgdl = minOf(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgiMgdlForPdp
 
-        // PDP_CI_THRESHOLD: ci must exceed this to count as "unexplained rise"
-        // ~0.3 mmol/5min = 5.4 mg/dL — filters noise
-        val PDP_CI_THRESHOLD_MGDL = 5.4
-
-        // PDP_STUCK_OFFSET: how far above target BG must be to count as stuck-high
-        // 1.5 mmol = 27 mg/dL — filters normal post-correction overshoot
-        val PDP_STUCK_OFFSET_MGDL = 1.5 * MMOL_TO_MGDL
+        // PDP constants — inline mg/dL values, no dependency on DetermineBasalSmartInsulin constants
+        val PDP_CI_THRESHOLD_MGDL   = 5.4   // ~0.3 mmol/5min — filters ci noise
+        val PDP_STUCK_OFFSET_MGDL   = 27.0  // 1.5 mmol above target — filters normal overshoot
+        val PDP_STUCK_DELTA_MGDL    = 2.7   // ±0.15 mmol/5min — genuinely flat
 
         // All PDP tracking gated on clean fasting — no lows, rebound, or post-meal dirty window.
         // Hard reset on dirty conditions so PDP can't carry momentum across low/recovery events.
@@ -1681,7 +1678,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // but BG has been stuck above target for many cycles.
         // No IOB gate — fastingMaxIob handles over-stacking. The signal is purely
         // "BG is above target + offset and not moving" regardless of IOB level.
-        val stuckHighBg = currentBgMgdl > (profileTargetMgdl + PDP_STUCK_OFFSET_MGDL)
+        val stuckHighBg = glucoseStatus.glucose > (profileTargetMgdl + PDP_STUCK_OFFSET_MGDL)
         val stuckFlat   = kotlin.math.abs(glucoseStatus.shortAvgDelta) < PDP_STUCK_DELTA_MGDL
         if (pdpEnabled && pdpCleanForBlending && stuckHighBg && stuckFlat) {
             pdpStuckHighReadings++
