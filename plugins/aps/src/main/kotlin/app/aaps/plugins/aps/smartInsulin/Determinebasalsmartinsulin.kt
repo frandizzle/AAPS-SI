@@ -256,17 +256,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
 
-        // PDP curve — populate both UAM and ZT slots so the line renders regardless of
-        // whether the user has UAM enabled in AAPS settings.
-        // UAM slot: rendered when enableUAM=true in OapsProfile (yellow/orange line)
-        // ZT slot:  always rendered by AAPS overview (cyan/teal line)
-        // Using both means the PDP line is always visible when active.
+        // PDP curve — UAM slot renders as orange/yellow in AAPS overview graph,
+        // clearly distinct from the primary IOB cyan line.
+        // Also populate ZT as fallback in case enableUAM is false in OapsProfile.
         if (effectivePdpBlend > 0.0 && pdpPredictedBg.isNotEmpty()) {
             val rawPdpPrediction = mutableListOf<Int>()
             pdpPredictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
                 .forEach { rawPdpPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
+            // UAM = orange line (visually distinct from cyan IOB line)
             rT.predBGs?.UAM = rawPdpPrediction
-            rT.predBGs?.ZT  = rawPdpPrediction
+            // ZT fallback removed — ZT is cyan like IOB, defeats the purpose of distinction
         }
 
         // ── IOB / headroom ────────────────────────────────────────────────────
