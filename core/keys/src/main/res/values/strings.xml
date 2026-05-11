@@ -570,6 +570,14 @@
     <string name="pref_title_si_uam_proteinfat_night_end">P/F Night window end hour</string>
     <string name="pref_title_si_uam_proteinfat_overnight_start">P/F Overnight window start hour</string>
     <string name="pref_title_si_uam_proteinfat_overnight_end">P/F Overnight window end hour</string>
+    <string name="pref_title_si_pdp_enabled">PDP: Enable persistent deviation prediction</string>
+    <string name="pref_title_si_pdp_learning_enabled">PDP: Enable accuracy learning</string>
+    <string name="pref_title_si_pdp_ci_strength">PDP: Base ci strength multiplier</string>
+    <string name="pref_title_si_pdp_fade_minutes">PDP: Deviation fade duration (min)</string>
+    <string name="pref_title_si_pdp_min_readings">PDP: Min consecutive readings to blend</string>
+    <string name="pref_title_si_pdp_max_blend_weight">PDP: Max blend weight</string>
+    <string name="pref_title_si_fasting_max_iob">Fasting max IOB (0=disabled)</string>
+    <string name="si_screen_pdp_title">PDP — Deviation Prediction</string>
 
     <!-- IntentKey preferences -->
 
