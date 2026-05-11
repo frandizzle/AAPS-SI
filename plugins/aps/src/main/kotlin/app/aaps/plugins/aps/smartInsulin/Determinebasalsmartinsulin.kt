@@ -106,7 +106,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         pdpCiStrength:            Double  = 1.0,     // effective ci multiplier (base * learned)
         pdpFadeMins:              Double  = 120.0,   // how long ci persists in secondary curve
         pdpBlendWeight:           Double  = 0.0,     // 0.0=primary only, 1.0=secondary only
-        fastingMaxIobU:           Double  = 0.0      // 0.0 = disabled (use global max IOB)
+        fastingMaxIobU:           Double  = 0.0,     // 0.0 = disabled (use global max IOB)
+        pdpSyntheticCi:           Double  = 0.0      // synthetic ci for stuck-high pathway (mg/dL per 5min)
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -218,10 +219,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val pdpPredMin: Double
         val pdpPredMinSafety: Double
         if (effectivePdpBlend > 0.0) {
+            // For stuck-high pathway: ci is near-zero (flat BG, low IOB) so ciStrength*ci=0.
+            // Use synthetic ci instead — represents assumed ongoing resistance/deviation.
+            // For rising pathway: use observed ci scaled by ciStrength as before.
+            // Primary prediction (predictedBg) is NEVER modified — only the secondary curve.
+            val pdpEffectiveCi = if (pdpSyntheticCi > 0.0) pdpSyntheticCi else ci * pdpCiStrength
             pdpPredictedBg = predictBgCurvePdp(
                 startBg        = currentBg,
-                ci             = ci,
-                ciStrength     = pdpCiStrength,
+                ci             = pdpEffectiveCi,
                 fadeMins       = pdpFadeMins,
                 iobArray       = iobArray,
                 isfMgdl        = dosingIsfMgdl,
@@ -524,10 +529,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
     // Same IOB activity as primary but ci fades over pdpFadeMins instead of 60min,
     // scaled by ciStrength. Models sustained unexplained deviation persisting longer.
     // ciStrength=1.0 + fadeMins=120 → moderate; ciStrength=2.0 + fadeMins=180 → aggressive.
+    // ── PDP secondary prediction curve ───────────────────────────────────────
+    // ci is pre-computed by the caller (either observed*ciStrength or synthetic).
+    // fadeMins controls how long ci persists (vs 60min hard-coded in primary).
+    // PRIMARY curve (predictBgCurve) is NEVER called with modified ci — it always
+    // uses raw observed ci so the IOB prediction line is never affected.
     private fun predictBgCurvePdp(
         startBg:        Double,
-        ci:             Double,
-        ciStrength:     Double,
+        ci:             Double,       // pre-scaled: observed*ciStrength OR synthetic ci
         fadeMins:       Double,
         iobArray:       Array<IobTotal>,
         isfMgdl:        Double,
@@ -541,9 +550,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         for (tick in 1..ticks) {
             val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
             val iobDelta = -(activity * isfMgdl * 5.0)
-            // ci fades linearly to zero over fadeMins (vs 60min in primary)
-            // ciStrength scales the magnitude — >1.0 means deviation assumed stronger/longer
-            val predDev  = ci * ciStrength * (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
+            // ci fades linearly to zero over fadeMins — longer than primary's 60min
+            val predDev  = ci * (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
             bg += iobDelta + predDev
             predictions.add(bg)
         }

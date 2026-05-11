@@ -200,6 +200,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private var lastCycleHour:           Int     = 0
     private var lastPdpBlendActive:      Boolean = false
     @Volatile private var cachedPdpBlendWeight:    Double  = 0.0   // last computed blend weight — for statusSummary display
+    @Volatile private var cachedPdpSyntheticCi:    Double  = 0.0   // last synthetic ci mg/dL — for display
 
     // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
     @Volatile var pb2LastBgMgdl:            Double = 0.0
@@ -300,6 +301,7 @@ open class SmartInsulinPlugin @Inject constructor(
         consecutivePosCiReadings = 0
         pdpStuckHighReadings     = 0
         lastCiMgdl               = 0.0
+        cachedPdpSyntheticCi     = 0.0
         lastPdpBlendActive       = false
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
@@ -567,6 +569,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpConsecutiveReadings: Int,    // ci-based pathway counter
         val pdpStuckHighReadings:   Int,    // stuck-high pathway counter
         val pdpActivePathway:       String, // "ci", "stuck", or "none"
+        val pdpSyntheticCiMmol:     Double, // synthetic ci in mmol (0 when rising pathway or inactive)
         val pdpMinReadings:        Int,
         val pdpFadeMins:           Int,
         val pdpCiStrength:         Double,
@@ -741,6 +744,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpConsecutiveReadings = consecutivePosCiReadings,
             pdpStuckHighReadings   = pdpStuckHighReadings,
             pdpActivePathway       = if (cachedPdpBlendWeight > 0.0) (if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci") else "none",
+            pdpSyntheticCiMmol     = cachedPdpSyntheticCi / 18.0,
             pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
@@ -1714,17 +1718,41 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveCiStrength = if (pdpEnabled) pdpLearner.effectiveCiStrength(currentHour, pdpBaseCiStrength) else 1.0
         val pdpBlendWeight = rawBlendWeight.coerceIn(0.0, pdpMaxBlend)
 
+        // ── Synthetic ci for stuck-high pathway ───────────────────────────────
+        // When stuck-high pathway is driving the blend, observed ci ≈ 0 (flat BG, low IOB).
+        // ciStrength * 0 = 0 regardless of setting — secondary curve identical to primary.
+        // Instead inject a synthetic ci based on the BG gap above target:
+        //   syntheticCi = (BG - target) / isfMgdl × (1U of insulin expected to move BG by isfMgdl)
+        // This represents: "assume insulin resistance is causing BG to stay elevated —
+        // model as if ci is pulling BG up at a rate proportional to the gap."
+        // Only applied when stuck pathway is dominant AND blend is active.
+        // Rising pathway uses observed ci * ciStrength as before (ci is already non-zero).
+        val pdpSyntheticCi: Double = run {
+            val stuckDominant = pdpStuckHighReadings >= consecutivePosCiReadings && pdpStuckHighReadings > 0
+            if (pdpEnabled && pdpBlendWeight > 0.0 && stuckDominant) {
+                val bgGapMgdl = (glucoseStatus.glucose - profileTargetMgdl).coerceAtLeast(0.0)
+                // Scale: bgGap / isfMgdl gives notional units needed per 5min
+                // Multiply by ciStrength and a sensitivity factor (0.3) so it's meaningful but not extreme
+                // e.g. BG=7.1mmol, target=5.5mmol, ISF=2.0mmol/U → gap=1.6mmol=28.8mg/dL
+                // syntheticCi = 28.8 / 36 * 0.3 * ciStrength ≈ 0.24 * ciStrength mg/dL/5min
+                val syntheticCiBase = (bgGapMgdl / dosingIsfMgdl) * 0.3
+                syntheticCiBase * pdpEffectiveCiStrength
+            } else 0.0
+        }
+
         // Capture for next-cycle accuracy scoring and display
         lastCycleHour        = currentHour
         lastPdpBlendActive   = pdpEnabled && pdpBlendWeight > 0.0
         cachedPdpBlendWeight = pdpBlendWeight
+        cachedPdpSyntheticCi = pdpSyntheticCi
 
         if (pdpEnabled && pdpBlendWeight > 0.0) {
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin PDP[$pdpActivePathway]: blend=${"%.2f".format(pdpBlendWeight)} " +
                                  "ciStr=${"%.2f".format(pdpEffectiveCiStrength)} " +
                                  "fade=${pdpFadeMins.toInt()}m " +
-                                 "ci=${"%.1f".format(ciMgdl)}mg/dL " +
+                                 "observedCi=${"%.1f".format(ciMgdl)}mg/dL " +
+                                 "syntheticCi=${"%.2f".format(pdpSyntheticCi)}mg/dL " +
                                  "ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings min=$pdpMinReadings")
         }
 
@@ -1906,7 +1934,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpCiStrength            = pdpEffectiveCiStrength,
             pdpFadeMins              = pdpFadeMins,
             pdpBlendWeight           = pdpBlendWeight,
-            fastingMaxIobU           = fastingMaxIob
+            fastingMaxIobU           = fastingMaxIob,
+            pdpSyntheticCi           = pdpSyntheticCi
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
