@@ -1700,8 +1700,11 @@ open class SmartInsulinPlugin @Inject constructor(
         if (pdpEnabled && pdpCleanForBlending && ciMgdl > PDP_CI_THRESHOLD_MGDL) {
             consecutivePosCiReadings++
         } else {
-            if (!pdpCleanForBlending) consecutivePosCiReadings = 0
-            else consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
+            when {
+                !pdpCleanForBlending       -> consecutivePosCiReadings = 0  // dirty — hard reset
+                ciMgdl < -PDP_CI_THRESHOLD_MGDL -> consecutivePosCiReadings = 0  // IOB clearly winning — hard reset
+                else                       -> consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
+            }
         }
 
         // ── Pathway 2: stuck-high (BG persistently above target, flat, not correcting) ──
@@ -1714,8 +1717,17 @@ open class SmartInsulinPlugin @Inject constructor(
         if (pdpEnabled && pdpCleanForBlending && stuckHighBg && stuckFlat) {
             pdpStuckHighReadings++
         } else {
-            if (!pdpCleanForBlending) pdpStuckHighReadings = 0
-            else if (!stuckHighBg || !stuckFlat) pdpStuckHighReadings = (pdpStuckHighReadings - 1).coerceAtLeast(0)
+            // Hard reset when:
+            //   - dirty conditions (low, rebound, post-meal) — can't carry state across
+            //   - BG is back below the stuck threshold — episode is resolved, reset immediately
+            //     so PDP stops blending as soon as BG returns to acceptable range
+            // Soft decay only when stuckFlat fails but BG is still above threshold
+            // (e.g. BG is still high but starting to move — give it a moment)
+            when {
+                !pdpCleanForBlending -> pdpStuckHighReadings = 0  // dirty — hard reset
+                !stuckHighBg         -> pdpStuckHighReadings = 0  // BG back at target — hard reset
+                !stuckFlat           -> pdpStuckHighReadings = (pdpStuckHighReadings - 1).coerceAtLeast(0)  // moving but still high — soft decay
+            }
         }
 
         lastCiMgdl = ciMgdl
