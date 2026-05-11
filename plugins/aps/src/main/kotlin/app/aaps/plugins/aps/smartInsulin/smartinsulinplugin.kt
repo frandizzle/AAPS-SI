@@ -558,6 +558,19 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
         val mealPhasePF:           MealPhaseTracker.PhaseStatus,
         val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
+        // ── PDP ───────────────────────────────────────────────────────────────
+        val pdpEnabled:            Boolean,
+        val pdpBlendWeight:        Double,
+        val pdpCiMgdl:             Double,
+        val pdpConsecutiveReadings: Int,
+        val pdpMinReadings:        Int,
+        val pdpFadeMins:           Int,
+        val pdpCiStrength:         Double,
+        val pdpFastingMaxIob:      Double,
+        val pdpHourlyStrengths:    List<Double>,
+        val pdpHourlyConfidences:  List<Double>,
+        val pdpHourlySamples:      List<Int>,
+        val pdpLearningEnabled:    Boolean,
     )
 
     fun fragmentData(): FragmentData {
@@ -716,7 +729,20 @@ open class SmartInsulinPlugin @Inject constructor(
             mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
             mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
             mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
-            fuelTrimStrength   = circadianLearner.trimStrength
+            fuelTrimStrength     = circadianLearner.trimStrength,
+            // ── PDP ───────────────────────────────────────────────────────────
+            pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
+            pdpBlendWeight       = cachedPdpBlendWeight,
+            pdpCiMgdl            = lastCiMgdl,
+            pdpConsecutiveReadings = consecutivePosCiReadings,
+            pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
+            pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
+            pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
+            pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
+            pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthAt(h) },
+            pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
+            pdpHourlySamples     = (0..23).map { h -> pdpLearner.samplesAt(h) },
+            pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
         )
     }
 
@@ -1594,7 +1620,14 @@ open class SmartInsulinPlugin @Inject constructor(
         // Only score when: PDP was active last cycle, we're still fasting, CGM is fresh.
         val pdpEnabled       = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
         val pdpLearningEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
-        if (pdpLearningEnabled && lastPdpBlendActive && mealMode == MealMode.FASTING) {
+        // PDP accuracy scoring — only during clean fasting, no lows, no post-meal dirty window.
+        // Rebound rises (counter-regulatory glucagon) and post-meal tails look like persistent
+        // deviation but aren't — learning from them would corrupt per-hour ci strength.
+        val pdpCleanForLearning = mealMode == MealMode.FASTING
+            && !bgWentLow
+            && !inReboundWindow
+            && !inPostMealLockout
+        if (pdpLearningEnabled && lastPdpBlendActive && pdpCleanForLearning) {
             val iobPred = determineBasalSmartInsulin.lastIobPredAt5Mgdl
             val pdpPred = determineBasalSmartInsulin.lastPdpPredAt5Mgdl
             val actual  = glucoseStatus.glucose
@@ -1617,12 +1650,24 @@ open class SmartInsulinPlugin @Inject constructor(
         // PDP_CI_THRESHOLD: ci must exceed this to count as "unexplained rise"
         // Set at ~0.3 mmol/5min in mg/dL = 5.4 mg/dL — filters out noise
         val PDP_CI_THRESHOLD_MGDL = 5.4
-        if (pdpEnabled && mealMode == MealMode.FASTING && ciMgdl > PDP_CI_THRESHOLD_MGDL) {
+        // PDP ci tracking — block during lows, rebound, and post-meal lockout.
+        // Rebound and post-meal rises look like sustained fasting deviation but are
+        // physiologically different — blending on these causes dump-and-tank rollercoasters.
+        val pdpCleanForBlending = mealMode == MealMode.FASTING
+            && !bgWentLow
+            && !inReboundWindow
+            && !inPostMealLockout
+        if (pdpEnabled && pdpCleanForBlending && ciMgdl > PDP_CI_THRESHOLD_MGDL) {
             consecutivePosCiReadings++
         } else {
-            // Decay slowly on non-qualifying cycles rather than hard reset — avoids
-            // a single noisy negative reading wiping out a genuine sustained pattern
-            consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
+            // Decay slowly rather than hard reset — a single dirty cycle shouldn't wipe a
+            // genuine sustained pattern. But rebound/lockout always hard-resets the counter
+            // so PDP can't carry momentum from a dirty window into clean fasting.
+            if (!pdpCleanForBlending) {
+                consecutivePosCiReadings = 0  // hard reset on dirty conditions
+            } else {
+                consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
+            }
         }
         lastCiMgdl = ciMgdl
 

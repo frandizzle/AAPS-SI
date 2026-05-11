@@ -894,6 +894,9 @@ fun SmartInsulinScreen(
         // ── Meal Phase Tracker card ────────────────────────────────────
         MealPhaseTrackerCard(d)
 
+        // ── PDP card ─────────────────────────────────────────────────────────────
+        if (d.pdpEnabled) { PdpCard(d) }
+
         // ── Reset card ─────────────────────────────────────────────────
         SiCard(title = "Reset Learners") {
             ResetRow("Aggressiveness score") { plugin.resetAggression() }
@@ -907,6 +910,165 @@ fun SmartInsulinScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) { Text("Reset ALL Learners", fontSize = 18.sp) }
         }
+    }
+}
+
+// ── PDP card ─────────────────────────────────────────────────────────────────
+
+@Composable
+private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    val isMmol = d.isMmol
+
+    fun fmtCi(mgdl: Double): String =
+        if (isMmol) "${"%.2f".format(mgdl / 18.0)} mmol/5min"
+        else "${"%.1f".format(mgdl)} mg/dL/5min"
+
+    SiCard(title = "Persistent Deviation Prediction") {
+
+        // ── Status header ────────────────────────────────────────────────
+        val blending = d.pdpBlendWeight > 0.01
+        val (statusText, statusColor) = when {
+            blending -> "Active — favouring secondary prediction" to StatusWarn
+            d.pdpConsecutiveReadings > 0 ->
+                "Watching — ${d.pdpConsecutiveReadings}/${d.pdpMinReadings} readings (building towards blend)" to StatusInfo
+            else -> "Inactive — ci below threshold, using primary IOB prediction" to androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+        }
+        SiRow(statusText, null, primaryColor = statusColor)
+
+        // ── Blend weight bar ─────────────────────────────────────────────
+        if (blending || d.pdpConsecutiveReadings > 0) {
+            Spacer(Modifier.height(4.dp))
+            val blendPct = (d.pdpBlendWeight * 100).toInt()
+            val iobPct   = 100 - blendPct
+            Text("Prediction blend", fontSize = 12.sp,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxWidth().height(16.dp)
+                    .clip(RoundedCornerShape(4.dp))
+            ) {
+                val totalWidth = maxWidth
+                Row(modifier = Modifier.fillMaxSize()) {
+                    // IOB (primary) slice — blue
+                    Box(
+                        Modifier
+                            .width(totalWidth * (iobPct.toFloat() / 100f))
+                            .fillMaxHeight()
+                            .background(StatusInfo)
+                    )
+                    // PDP (secondary) slice — orange
+                    if (blendPct > 0) {
+                        Box(
+                            Modifier
+                                .width(totalWidth * (blendPct.toFloat() / 100f))
+                                .fillMaxHeight()
+                                .background(StatusWarn)
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text("${iobPct}% IOB (primary)", fontSize = 11.sp, color = StatusInfo)
+                if (blendPct > 0)
+                    Text("${blendPct}% PDP (secondary)", fontSize = 11.sp, color = StatusWarn)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // ── Current cycle detail ─────────────────────────────────────────
+        SiRow(
+            "Deviation (ci): ${fmtCi(d.pdpCiMgdl)}",
+            "How much BG is rising beyond what IOB alone predicts.\n" +
+                "Positive = unexplained rise (food, stress, dawn, illness). Negative = IOB working faster than expected.\n" +
+                "PDP activates after ${d.pdpMinReadings} consecutive readings above threshold."
+        )
+        SiRow(
+            "ci strength: ${"%.2f".format(d.pdpCiStrength)}  •  Fade: ${d.pdpFadeMins}min",
+            "Strength scales the deviation signal. 1.0 = as observed, 2.0 = assume twice as persistent.\n" +
+                "Fade: how long ci persists in the secondary curve (vs 60min in primary).\n" +
+                "Both are tuned by the per-hour learner as it accumulates data."
+        )
+        if (d.pdpFastingMaxIob > 0.0) {
+            SiRow(
+                "Fasting max IOB: ${"%.1f".format(d.pdpFastingMaxIob)}U",
+                "Safety cap on IOB during fasting to prevent over-stacking when PDP drives more aggressive dosing.\n" +
+                    "0.0 = disabled (use global max IOB setting).",
+                primaryColor = StatusInfo
+            )
+        }
+
+        // ── Learning state ───────────────────────────────────────────────
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        val totalSamples = d.pdpHourlySamples.sum()
+        val learnColor = when {
+            !d.pdpLearningEnabled -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+            totalSamples < 24    -> StatusWarn
+            else                 -> StatusGood
+        }
+        SiRow(
+            if (!d.pdpLearningEnabled) "Learning: disabled"
+            else "Learning: active  •  $totalSamples total observations",
+            "PDP compares its t+5min prediction against actual BG each fasting cycle.\n" +
+                "If the secondary curve was more accurate → strengthen this hour's ci.\n" +
+                "If the primary IOB curve was more accurate → nudge back toward neutral.\n" +
+                "Needs ~${24 - minOf(24, totalSamples)} more observations before confident.",
+            primaryColor = learnColor
+        )
+
+        // ── Per-hour 24h table ────────────────────────────────────────────
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Text("Per-hour learned ci strength (24h)",
+             fontSize = 13.sp, fontWeight = FontWeight.Bold,
+             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(6.dp))
+        Text("  Hr   Strength  Confidence  n",
+             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+
+        for (h in 0..23) {
+            val marker     = if (h == hour) "▶" else " "
+            val strength   = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
+            val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
+            val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
+
+            // Color-code: high strength + high confidence = warm (PDP strongly learned here)
+            //             low confidence = muted
+            val rowColor = when {
+                confidence < 0.2 -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                strength > 1.5   -> StatusWarn
+                strength > 1.1   -> StatusInfo
+                else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            }
+
+            val confBar = buildString {
+                val filled = (confidence * 10).toInt().coerceIn(0, 10)
+                append("▓".repeat(filled))
+                append("░".repeat(10 - filled))
+            }
+
+            Text(
+                "$marker ${h.toString().padStart(2)}   " +
+                    "${"%.3f".format(strength).padStart(8)}  " +
+                    "$confBar  " +
+                    "$samples",
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                color = if (h == hour) StatusWarn else rowColor
+            )
+        }
+
+        // ── Interpretation footer ─────────────────────────────────────────
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Strength >1.0 = this hour's deviations tend to persist (stress/dawn/food). " +
+                "Confidence bar shows how many observations back this up. " +
+                "Low confidence hours blend toward neutral automatically.",
+            fontSize = 10.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 14.sp
+        )
     }
 }
 
