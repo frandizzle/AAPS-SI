@@ -928,11 +928,19 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
 
         // ── Status header ────────────────────────────────────────────────
         val blending = d.pdpBlendWeight > 0.01
+        val ciBuilding   = d.pdpConsecutiveReadings > 0
+        val stuckBuilding = d.pdpStuckHighReadings > 0
         val (statusText, statusColor) = when {
-            blending -> "Active — favouring secondary prediction" to StatusWarn
-            d.pdpConsecutiveReadings > 0 ->
-                "Watching — ${d.pdpConsecutiveReadings}/${d.pdpMinReadings} readings (building towards blend)" to StatusInfo
-            else -> "Inactive — ci below threshold, using primary IOB prediction" to androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            blending && d.pdpActivePathway == "stuck" ->
+                "Active [stuck-high] — BG plateaued above target, blending secondary" to StatusWarn
+            blending ->
+                "Active [rising deviation] — unexplained rise detected, blending secondary" to StatusWarn
+            stuckBuilding ->
+                "Watching [stuck-high] — ${d.pdpStuckHighReadings}/${d.pdpMinReadings} flat cycles above target" to StatusInfo
+            ciBuilding ->
+                "Watching [rising] — ${d.pdpConsecutiveReadings}/${d.pdpMinReadings} rising readings" to StatusInfo
+            else ->
+                "Inactive — BG on track, using primary IOB prediction" to androidx.compose.material3.MaterialTheme.colorScheme.onSurface
         }
         SiRow(statusText, null, primaryColor = statusColor)
 
@@ -981,8 +989,14 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         SiRow(
             "Deviation (ci): ${fmtCi(d.pdpCiMgdl)}",
             "How much BG is rising beyond what IOB alone predicts.\n" +
-                "Positive = unexplained rise (food, stress, dawn, illness). Negative = IOB working faster than expected.\n" +
-                "PDP activates after ${d.pdpMinReadings} consecutive readings above threshold."
+                "Positive = unexplained rise (food, stress, dawn, illness). Negative = IOB working well.\n" +
+                "Rising pathway: ${d.pdpConsecutiveReadings}/${d.pdpMinReadings} consecutive qualifying readings."
+        )
+        SiRow(
+            "Stuck-high: ${d.pdpStuckHighReadings}/${d.pdpMinReadings} flat cycles above target",
+            "Counts cycles where BG is >1.5 mmol above target and delta is flat (±0.15 mmol/5min).\n" +
+                "Catches overnight plateaus where IOB is low so ci ≈ 0 but correction isn't happening.\n" +
+                "Whichever pathway (rising or stuck) builds faster drives the blend weight."
         )
         SiRow(
             "ci strength: ${"%.2f".format(d.pdpCiStrength)}  •  Fade: ${d.pdpFadeMins}min",

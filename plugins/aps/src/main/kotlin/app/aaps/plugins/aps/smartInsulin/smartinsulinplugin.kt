@@ -193,6 +193,7 @@ open class SmartInsulinPlugin @Inject constructor(
     // Tracks consecutive cycles where ci (unexplained BG deviation) is positive and above
     // threshold — used to compute blend weight toward the secondary prediction curve.
     private var consecutivePosCiReadings: Int    = 0
+    private var pdpStuckHighReadings:     Int    = 0   // consecutive cycles BG stuck above target
     private var lastCiMgdl:              Double  = 0.0   // last ci seen (mg/dL per 5min)
     // Snapshot of last cycle's t+5min predictions for accuracy scoring on next cycle.
     // Set after each determine_basal() call; compared against actual BG next cycle.
@@ -297,6 +298,7 @@ open class SmartInsulinPlugin @Inject constructor(
         uamEntryModeStartMs      = 0L
         pdpLearner.reset()
         consecutivePosCiReadings = 0
+        pdpStuckHighReadings     = 0
         lastCiMgdl               = 0.0
         lastPdpBlendActive       = false
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
@@ -434,7 +436,7 @@ open class SmartInsulinPlugin @Inject constructor(
             if (pdpEnabledStatus) {
                 val pdpBase = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
                 appendLine(pdpLearner.summaryTable(hour, pdpBase))
-                appendLine("  PDP active: blend=${"%.2f".format(cachedPdpBlendWeight)} ci=${"%.1f".format(lastCiMgdl)}mg/dL readings=$consecutivePosCiReadings")
+                appendLine("  PDP: blend=${"%.2f".format(cachedPdpBlendWeight)} ci=${"%.1f".format(lastCiMgdl)}mg/dL ci-readings=$consecutivePosCiReadings stuck-readings=$pdpStuckHighReadings")
                 appendLine()
             }
 
@@ -562,7 +564,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEnabled:            Boolean,
         val pdpBlendWeight:        Double,
         val pdpCiMgdl:             Double,
-        val pdpConsecutiveReadings: Int,
+        val pdpConsecutiveReadings: Int,    // ci-based pathway counter
+        val pdpStuckHighReadings:   Int,    // stuck-high pathway counter
+        val pdpActivePathway:       String, // "ci", "stuck", or "none"
         val pdpMinReadings:        Int,
         val pdpFadeMins:           Int,
         val pdpCiStrength:         Double,
@@ -735,6 +739,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpBlendWeight       = cachedPdpBlendWeight,
             pdpCiMgdl            = lastCiMgdl,
             pdpConsecutiveReadings = consecutivePosCiReadings,
+            pdpStuckHighReadings   = pdpStuckHighReadings,
+            pdpActivePathway       = if (cachedPdpBlendWeight > 0.0) (if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci") else "none",
             pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
@@ -1648,27 +1654,46 @@ open class SmartInsulinPlugin @Inject constructor(
         val ciMgdl = minOf(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgiMgdlForPdp
 
         // PDP_CI_THRESHOLD: ci must exceed this to count as "unexplained rise"
-        // Set at ~0.3 mmol/5min in mg/dL = 5.4 mg/dL — filters out noise
+        // ~0.3 mmol/5min = 5.4 mg/dL — filters noise
         val PDP_CI_THRESHOLD_MGDL = 5.4
-        // PDP ci tracking — block during lows, rebound, and post-meal lockout.
-        // Rebound and post-meal rises look like sustained fasting deviation but are
-        // physiologically different — blending on these causes dump-and-tank rollercoasters.
+
+        // PDP_STUCK_OFFSET: how far above target BG must be to count as stuck-high
+        // 1.5 mmol = 27 mg/dL — filters normal post-correction overshoot
+        val PDP_STUCK_OFFSET_MGDL = 1.5 * MMOL_TO_MGDL
+
+        // PDP_STUCK_DELTA: max |shortAvgDelta| to qualify as genuinely flat
+        // 0.15 mmol/5min = 2.7 mg/dL — allows micro-noise but blocks active movement
+        val PDP_STUCK_DELTA_MGDL = 0.15 * MMOL_TO_MGDL
+
+        // All PDP tracking gated on clean fasting — no lows, rebound, or post-meal dirty window.
+        // Hard reset on dirty conditions so PDP can't carry momentum across low/recovery events.
         val pdpCleanForBlending = mealMode == MealMode.FASTING
             && !bgWentLow
             && !inReboundWindow
             && !inPostMealLockout
+
+        // ── Pathway 1: ci-based (unexplained rising deviation) ────────────────
         if (pdpEnabled && pdpCleanForBlending && ciMgdl > PDP_CI_THRESHOLD_MGDL) {
             consecutivePosCiReadings++
         } else {
-            // Decay slowly rather than hard reset — a single dirty cycle shouldn't wipe a
-            // genuine sustained pattern. But rebound/lockout always hard-resets the counter
-            // so PDP can't carry momentum from a dirty window into clean fasting.
-            if (!pdpCleanForBlending) {
-                consecutivePosCiReadings = 0  // hard reset on dirty conditions
-            } else {
-                consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
-            }
+            if (!pdpCleanForBlending) consecutivePosCiReadings = 0
+            else consecutivePosCiReadings = (consecutivePosCiReadings - 1).coerceAtLeast(0)
         }
+
+        // ── Pathway 2: stuck-high (BG persistently above target, flat, not correcting) ──
+        // Catches the overnight 8.5 mmol plateau where IOB is low so ci ≈ 0
+        // but BG has been stuck above target for many cycles.
+        // No IOB gate — fastingMaxIob handles over-stacking. The signal is purely
+        // "BG is above target + offset and not moving" regardless of IOB level.
+        val stuckHighBg = currentBgMgdl > (profileTargetMgdl + PDP_STUCK_OFFSET_MGDL)
+        val stuckFlat   = kotlin.math.abs(glucoseStatus.shortAvgDelta) < PDP_STUCK_DELTA_MGDL
+        if (pdpEnabled && pdpCleanForBlending && stuckHighBg && stuckFlat) {
+            pdpStuckHighReadings++
+        } else {
+            if (!pdpCleanForBlending) pdpStuckHighReadings = 0
+            else if (!stuckHighBg || !stuckFlat) pdpStuckHighReadings = (pdpStuckHighReadings - 1).coerceAtLeast(0)
+        }
+
         lastCiMgdl = ciMgdl
 
         val pdpMinReadings    = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings)
@@ -1677,11 +1702,17 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpFadeMins       = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()
         val fastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob)
 
-        // Blend weight: ramps from 0 to pdpMaxBlend over pdpMinReadings cycles,
+        // Whichever pathway has more qualifying readings drives the blend weight.
+        // This means PDP activates on EITHER a rising unexplained deviation OR a
+        // persistent plateau — whichever comes first.
+        val pdpActiveReadings = maxOf(consecutivePosCiReadings, pdpStuckHighReadings)
+        val pdpActivePathway  = if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci"
+
+        // Blend weight ramps from 0 to pdpMaxBlend over pdpMinReadings cycles,
         // scaled by per-hour confidence from PdpLearner
-        val rawBlendWeight = if (pdpEnabled && mealMode == MealMode.FASTING && consecutivePosCiReadings >= pdpMinReadings) {
-            val readingsBeyondMin = (consecutivePosCiReadings - pdpMinReadings).coerceAtLeast(0)
-            val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMinReadings + 1.0) // reaches max at 2x minReadings
+        val rawBlendWeight = if (pdpEnabled && pdpCleanForBlending && pdpActiveReadings >= pdpMinReadings) {
+            val readingsBeyondMin = (pdpActiveReadings - pdpMinReadings).coerceAtLeast(0)
+            val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMinReadings + 1.0)
             pdpMaxBlend * rampFraction * pdpLearner.blendWeightConfidenceScale(currentHour)
         } else 0.0
 
@@ -1695,11 +1726,11 @@ open class SmartInsulinPlugin @Inject constructor(
 
         if (pdpEnabled && pdpBlendWeight > 0.0) {
             aapsLogger.debug(LTag.APS,
-                             "SmartInsulin PDP: blend=${"%.2f".format(pdpBlendWeight)} " +
+                             "SmartInsulin PDP[$pdpActivePathway]: blend=${"%.2f".format(pdpBlendWeight)} " +
                                  "ciStr=${"%.2f".format(pdpEffectiveCiStrength)} " +
                                  "fade=${pdpFadeMins.toInt()}m " +
                                  "ci=${"%.1f".format(ciMgdl)}mg/dL " +
-                                 "readings=$consecutivePosCiReadings/${pdpMinReadings}")
+                                 "ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings min=$pdpMinReadings")
         }
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
