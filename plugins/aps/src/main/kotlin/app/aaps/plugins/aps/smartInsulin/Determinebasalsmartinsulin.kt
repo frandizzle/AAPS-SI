@@ -224,8 +224,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // Stuck pathway uses bgGap/ISF synthetic UCI (always meaningful).
             val isStuckHigh = pdpSyntheticCi > 0.0
             val bgGapForPdp = if (isStuckHigh) (currentBg - targetBg).coerceAtLeast(0.0) else 0.0
-            // resistanceStrength maps ciStrength to predUCI scale: 3.0→1.0 (full), 1.0→0.33
-            val resistanceStrength = if (isStuckHigh) (pdpCiStrength / 3.0).coerceIn(0.0, 1.0) else 0.0
+            // resistanceStrength = pdpCiStrength directly — formula inside predictBgCurvePdp
+            // handles the scaling. ciStr=1→subtle, ciStr=2→moderate, ciStr=3→aggressive.
+            val resistanceStrength = if (isStuckHigh) pdpCiStrength else 0.0
             val pdpEffectiveCi = if (isStuckHigh) 0.0 else ci * pdpCiStrength
             pdpPredictedBg = predictBgCurvePdp(
                 startBg            = currentBg,
@@ -563,15 +564,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val fadeTicks = (fadeMins / 5.0).coerceAtLeast(1.0)
 
         // Synthetic positive deviation per tick for stuck-high pathway.
-        // bgGap / ISF = notional U of insulin "missing" to explain the plateau.
-        // Multiply by 2.0 scale factor so the secondary curve diverges visibly:
-        //   ~1.0 mmol separation at resistanceStrength=1.0 over 120min fade.
-        // resistanceStrength (from ciStrength/3.0) controls magnitude:
-        //   ciStrength=1.0 → 0.33 → ~0.33 mmol separation
-        //   ciStrength=2.0 → 0.67 → ~0.67 mmol separation
-        //   ciStrength=3.0 → 1.00 → ~1.00 mmol separation
+        // Uses ciStrength DIRECTLY (not divided by 3) so the full user-configured
+        // range produces meaningful visible separation:
+        //   ciStrength=1.0 → ~0.52 mmol separation (subtle)
+        //   ciStrength=2.0 → ~1.04 mmol separation (moderate)
+        //   ciStrength=3.0 → ~1.56 mmol separation (aggressive, clearly visible)
+        // resistanceStrength is ignored in stuck mode — ciStrength maps directly.
         val syntheticUCI = if (stuckHighMode && isfMgdl > 0.0)
-            (bgGapMgdl / isfMgdl) * 2.0 * resistanceStrength
+            (bgGapMgdl / isfMgdl) * resistanceStrength  // resistanceStrength = pdpCiStrength (1.0–3.0)
         else 0.0
 
         for (tick in 1..ticks) {
