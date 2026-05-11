@@ -219,6 +219,9 @@ class PdpLearner @Inject constructor(
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    /** Public alias for plugin-level decay tick when PDP didn't blend this cycle. */
+    fun tickAllDecay(exceptHour: Int) = tickDecayExcept(exceptHour)
+
     private fun tickDecayExcept(exceptHour: Int) {
         for (h in 0..23) {
             if (h != exceptHour && hours[h].confidence > 0.0) {
