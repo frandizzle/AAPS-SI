@@ -563,12 +563,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val fadeTicks = (fadeMins / 5.0).coerceAtLeast(1.0)
 
         // Synthetic positive deviation per tick for stuck-high pathway.
-        // bgGap / ISF = U of insulin "missing" per hour. Divide by 12 (ticks/hr)
-        // to get per-5min contribution. resistanceStrength scales magnitude.
-        // This acts exactly like predUCI in stock OpenAPS UAM — adds positive BG
-        // contribution each tick so the secondary curve rises above the IOB curve.
+        // bgGap / ISF = notional U of insulin "missing" to explain the plateau.
+        // Multiply by 2.0 scale factor so the secondary curve diverges visibly:
+        //   ~1.0 mmol separation at resistanceStrength=1.0 over 120min fade.
+        // resistanceStrength (from ciStrength/3.0) controls magnitude:
+        //   ciStrength=1.0 → 0.33 → ~0.33 mmol separation
+        //   ciStrength=2.0 → 0.67 → ~0.67 mmol separation
+        //   ciStrength=3.0 → 1.00 → ~1.00 mmol separation
         val syntheticUCI = if (stuckHighMode && isfMgdl > 0.0)
-            (bgGapMgdl / isfMgdl / 12.0) * resistanceStrength
+            (bgGapMgdl / isfMgdl) * 2.0 * resistanceStrength
         else 0.0
 
         for (tick in 1..ticks) {
