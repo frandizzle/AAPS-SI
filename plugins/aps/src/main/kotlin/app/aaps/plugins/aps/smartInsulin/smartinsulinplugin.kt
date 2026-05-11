@@ -1718,26 +1718,14 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveCiStrength = if (pdpEnabled) pdpLearner.effectiveCiStrength(currentHour, pdpBaseCiStrength) else 1.0
         val pdpBlendWeight = rawBlendWeight.coerceIn(0.0, pdpMaxBlend)
 
-        // ── Synthetic ci for stuck-high pathway ───────────────────────────────
-        // When stuck-high pathway is driving the blend, observed ci ≈ 0 (flat BG, low IOB).
-        // ciStrength * 0 = 0 regardless of setting — secondary curve identical to primary.
-        // Instead inject a synthetic ci based on the BG gap above target:
-        //   syntheticCi = (BG - target) / isfMgdl × (1U of insulin expected to move BG by isfMgdl)
-        // This represents: "assume insulin resistance is causing BG to stay elevated —
-        // model as if ci is pulling BG up at a rate proportional to the gap."
-        // Only applied when stuck pathway is dominant AND blend is active.
-        // Rising pathway uses observed ci * ciStrength as before (ci is already non-zero).
+        // ── Stuck-high pathway flag for DetermineBasalSmartInsulin ─────────────
+        // When stuck pathway is dominant, pass a non-zero value so DetermineBasal
+        // uses the resistance model (counteract IOB) instead of ci extension.
+        // The actual resistance strength is derived from pdpCiStrength inside DetermineBasal.
+        // pdpSyntheticCi > 0 = stuck pathway active; 0 = rising pathway or inactive.
         val pdpSyntheticCi: Double = run {
             val stuckDominant = pdpStuckHighReadings >= consecutivePosCiReadings && pdpStuckHighReadings > 0
-            if (pdpEnabled && pdpBlendWeight > 0.0 && stuckDominant) {
-                val bgGapMgdl = (glucoseStatus.glucose - profileTargetMgdl).coerceAtLeast(0.0)
-                // Scale: bgGap / isfMgdl gives notional units needed per 5min
-                // Multiply by ciStrength and a sensitivity factor (0.3) so it's meaningful but not extreme
-                // e.g. BG=7.1mmol, target=5.5mmol, ISF=2.0mmol/U → gap=1.6mmol=28.8mg/dL
-                // syntheticCi = 28.8 / 36 * 0.3 * ciStrength ≈ 0.24 * ciStrength mg/dL/5min
-                val syntheticCiBase = (bgGapMgdl / dosingIsfMgdl) * 0.3
-                syntheticCiBase * pdpEffectiveCiStrength
-            } else 0.0
+            if (pdpEnabled && pdpBlendWeight > 0.0 && stuckDominant) 1.0 else 0.0
         }
 
         // Capture for next-cycle accuracy scoring and display

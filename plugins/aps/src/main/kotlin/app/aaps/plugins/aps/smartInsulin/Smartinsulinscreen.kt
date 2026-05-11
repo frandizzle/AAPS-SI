@@ -992,15 +992,16 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                 "Positive = unexplained rise (food, stress, dawn, illness). Negative = IOB working well.\n" +
                 "Rising pathway: ${d.pdpConsecutiveReadings}/${d.pdpMinReadings} consecutive qualifying readings."
         )
-        val syntheticCiStr = if (d.pdpSyntheticCiMmol > 0.0)
-            " — synthetic ci: ${"%.2f".format(d.pdpSyntheticCiMmol)} mmol/5min injected"
-        else ""
+        val stuckActiveStr = if (d.pdpSyntheticCiMmol > 0.0) {
+            val resistStr = "${"%.0f".format((d.pdpCiStrength / 3.0).coerceIn(0.0, 1.0) * 100)}% resistance"
+            " — active ($resistStr)"
+        } else ""
         SiRow(
-            "Stuck-high: ${d.pdpStuckHighReadings}/${d.pdpMinReadings} flat cycles above target$syntheticCiStr",
-            "Counts cycles where BG is >1.5 mmol above target and delta is flat (±0.15 mmol/5min).\n" +
-                "When stuck pathway drives the blend, a synthetic ci is injected proportional to the BG gap above target.\n" +
-                "This pushes the secondary curve higher even when observed ci ≈ 0 (flat BG, low IOB).\n" +
-                "Whichever pathway (rising or stuck) builds faster drives the blend weight."
+            "Stuck-high: ${d.pdpStuckHighReadings}/${d.pdpMinReadings} flat cycles above target$stuckActiveStr",
+            "Counts cycles where BG is >0.5 mmol above target and delta is flat (±0.3 mmol/5min).\n" +
+                "When active: models insulin resistance — IOB activity is partially counteracted in the secondary curve.\n" +
+                "ciStrength 3.0 = 100% resistance (secondary predicts BG stays flat despite IOB).\n" +
+                "Fades over fadeMins so primary and secondary curves eventually converge."
         )
         SiRow(
             "ci strength: ${"%.2f".format(d.pdpCiStrength)}  •  Fade: ${d.pdpFadeMins}min",
