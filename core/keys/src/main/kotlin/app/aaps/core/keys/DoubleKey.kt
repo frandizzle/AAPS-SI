@@ -273,10 +273,21 @@ enum class DoubleKey(
     // PDP — Persistent Deviation Prediction
     ApsSmartInsulinPdpCiStrength(
         key = "si_pdp_ci_strength",
-        defaultValue = 1.0,
-        min = 0.3,
-        max = 3.0,
+        defaultValue = 3.0,
+        min = 1.0,
+        max = 10.0,
         titleResId = R.string.pref_title_si_pdp_ci_strength,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    // Rising pathway ci strength — separate from stuck-high to prevent over-aggressiveness on rises
+    ApsSmartInsulinPdpRisingStrength(
+        key = "si_pdp_rising_strength",
+        defaultValue = 1.0,
+        min = 0.5,
+        max = 1.5,
+        titleResId = R.string.pref_title_si_pdp_rising_strength,
         defaultedBySM = true,
         dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
         unitType = UnitType.DOUBLE

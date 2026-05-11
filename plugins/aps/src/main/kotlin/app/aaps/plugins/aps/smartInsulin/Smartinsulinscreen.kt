@@ -1004,10 +1004,10 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                 "Fades over fadeMins so primary and secondary curves eventually converge."
         )
         SiRow(
-            "ci strength: ${"%.2f".format(d.pdpCiStrength)}  •  Fade: ${d.pdpFadeMins}min",
-            "Strength scales the deviation signal. 1.0 = as observed, 2.0 = assume twice as persistent.\n" +
-                "Fade: how long ci persists in the secondary curve (vs 60min in primary).\n" +
-                "Both are tuned by the per-hour learner as it accumulates data."
+            "Stuck strength: ${"%.1f".format(d.pdpCiStrength)}  •  Rising strength: ${"%.2f".format(d.pdpRisingStrength)}  •  Fade: ${d.pdpFadeMins}min",
+            "Stuck-high strength (1-10): scales effective ISF for stuck-high pathway. Higher = assumes more insulin resistance = more aggressive dosing.\n" +
+                "Rising strength (0.5-1.5): scales ci for rising pathway. Deliberately narrow — prevents over-aggressiveness on fast rises.\n" +
+                "Fade: how long secondary curve deviates before converging back to primary."
         )
         if (d.pdpFastingMaxIob > 0.0) {
             SiRow(

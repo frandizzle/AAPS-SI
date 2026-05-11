@@ -573,6 +573,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpMinReadings:        Int,
         val pdpFadeMins:           Int,
         val pdpCiStrength:         Double,
+        val pdpRisingStrength:     Double, // rising pathway ci scaling (0.5-1.5)
         val pdpFastingMaxIob:      Double,
         val pdpHourlyStrengths:    List<Double>,
         val pdpHourlyConfidences:  List<Double>,
@@ -748,6 +749,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
+            pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
             pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
@@ -1697,7 +1699,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val pdpMinReadings    = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings)
         val pdpMaxBlend       = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight)
-        val pdpBaseCiStrength = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
+        val pdpBaseCiStrength   = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
+        val pdpRisingStrength   = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength)
         val pdpFadeMins       = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()
         val fastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob)
 
@@ -1923,7 +1926,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpFadeMins              = pdpFadeMins,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
-            pdpSyntheticCi           = pdpSyntheticCi
+            pdpSyntheticCi           = pdpSyntheticCi,
+            pdpRisingStrength        = pdpRisingStrength
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
@@ -2268,6 +2272,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     BooleanKey.ApsSmartInsulinPdpEnabled,
                     BooleanKey.ApsSmartInsulinPdpLearningEnabled,
                     DoubleKey.ApsSmartInsulinPdpCiStrength,
+                    DoubleKey.ApsSmartInsulinPdpRisingStrength,
                     IntKey.ApsSmartInsulinPdpFadeMinutes,
                     IntKey.ApsSmartInsulinPdpMinReadings,
                     DoubleKey.ApsSmartInsulinPdpMaxBlendWeight,
