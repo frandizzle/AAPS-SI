@@ -1004,10 +1004,10 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                 "Fades over fadeMins so primary and secondary curves eventually converge."
         )
         SiRow(
-            "Stuck strength: ${"%.1f".format(d.pdpCiStrength)}  •  Rising strength: ${"%.2f".format(d.pdpRisingStrength)}  •  Fade: ${d.pdpFadeMins}min",
-            "Stuck-high strength (1-10): scales effective ISF for stuck-high pathway. Higher = assumes more insulin resistance = more aggressive dosing.\n" +
-                "Rising strength (0.5-1.5): scales ci for rising pathway. Deliberately narrow — prevents over-aggressiveness on fast rises.\n" +
-                "Fade: how long secondary curve deviates before converging back to primary."
+            "Stuck: ${"%.1f".format(d.pdpCiStrength)} • Rising: ${"%.2f".format(d.pdpRisingStrength)} • Fade: ${d.pdpFadeMins}min (effective: ${"%.0f".format(d.pdpEffectiveFadeMins)}min)",
+            "Stuck strength (1-10): scales effective ISF for stuck-high pathway. Learned per-hour — increases at hours where plateaus are real, decreases where they resolve quickly.\n" +
+                "Rising strength (0.5-1.5): scales ci for rising pathway. Narrow range prevents over-dosing on fake rises.\n" +
+                "Fade: base minutes before secondary curve converges to primary. Learned per-hour — extends at hours with long plateaus, shortens at hours with quick resolving spikes (fake-rise protection)."
         )
         if (d.pdpFastingMaxIob > 0.0) {
             SiRow(
@@ -1032,7 +1032,9 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             "PDP compares its t+5min prediction against actual BG each fasting cycle.\n" +
                 "If the secondary curve was more accurate → strengthen this hour's ci.\n" +
                 "If the primary IOB curve was more accurate → nudge back toward neutral.\n" +
-                "Needs ~${24 - minOf(24, totalSamples)} more observations before confident.",
+                "Needs ~${24 - minOf(24, totalSamples)} more observations before confident.\n" +
+                "Learns both strength (how aggressive) and fade (how long) per hour.\n" +
+                "Fake rises auto-detected: if both curves wrong by >2 mmol → skip learning.",
             primaryColor = learnColor
         )
 

@@ -437,7 +437,7 @@ open class SmartInsulinPlugin @Inject constructor(
             val pdpEnabledStatus = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
             if (pdpEnabledStatus) {
                 val pdpBase = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
-                appendLine(pdpLearner.summaryTable(hour, pdpBase))
+                appendLine(pdpLearner.summaryTable(hour, pdpBase, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()))
                 appendLine("  PDP: blend=${"%.2f".format(cachedPdpBlendWeight)} ci=${"%.1f".format(lastCiMgdl)}mg/dL ci-readings=$consecutivePosCiReadings stuck-readings=$pdpStuckHighReadings")
                 appendLine()
             }
@@ -572,6 +572,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpSyntheticCiMmol:     Double, // synthetic ci in mmol (0 when rising pathway or inactive)
         val pdpMinReadings:        Int,
         val pdpFadeMins:           Int,
+        val pdpEffectiveFadeMins:  Double, // learned effective fade for current hour
         val pdpCiStrength:         Double,
         val pdpRisingStrength:     Double, // rising pathway ci scaling (0.5-1.5)
         val pdpFastingMaxIob:      Double,
@@ -748,6 +749,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpSyntheticCiMmol     = cachedPdpSyntheticCi / 18.0,
             pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
+            pdpEffectiveFadeMins = pdpLearner.effectiveFadeMins(hour, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
             pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
@@ -1648,7 +1650,8 @@ open class SmartInsulinPlugin @Inject constructor(
             if (iobPred > 0.0 && pdpPred > 0.0) {
                 val iobErr = kotlin.math.abs(actual - iobPred)
                 val pdpErr = kotlin.math.abs(actual - pdpPred)
-                pdpLearner.recordAccuracy(lastCycleHour, iobErr, pdpErr)
+                val lastPathway = if (cachedPdpSyntheticCi > 0.0) "stuck" else "rising"
+                pdpLearner.recordAccuracy(lastCycleHour, iobErr, pdpErr, lastPathway)
             }
         } else if (pdpLearningEnabled) {
             // Tick decay for all hours even when PDP didn't blend — prevents stale confidence
@@ -1718,7 +1721,9 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpMaxBlend * rampFraction * pdpLearner.blendWeightConfidenceScale(currentHour)
         } else 0.0
 
-        val pdpEffectiveCiStrength = if (pdpEnabled) pdpLearner.effectiveCiStrength(currentHour, pdpBaseCiStrength) else 1.0
+        val pdpEffectiveCiStrength      = if (pdpEnabled) pdpLearner.effectiveCiStrength(currentHour, pdpBaseCiStrength) else 1.0
+        val pdpEffectiveRisingStrength  = if (pdpEnabled) pdpLearner.effectiveRisingStrength(currentHour, pdpRisingStrength) else 1.0
+        val pdpEffectiveFadeMins        = if (pdpEnabled) pdpLearner.effectiveFadeMins(currentHour, pdpFadeMins) else pdpFadeMins
         val pdpBlendWeight = rawBlendWeight.coerceIn(0.0, pdpMaxBlend)
 
         // ── Stuck-high pathway flag for DetermineBasalSmartInsulin ─────────────
@@ -1740,11 +1745,10 @@ open class SmartInsulinPlugin @Inject constructor(
         if (pdpEnabled && pdpBlendWeight > 0.0) {
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin PDP[$pdpActivePathway]: blend=${"%.2f".format(pdpBlendWeight)} " +
-                                 "ciStr=${"%.2f".format(pdpEffectiveCiStrength)} " +
-                                 "fade=${pdpFadeMins.toInt()}m " +
-                                 "observedCi=${"%.1f".format(ciMgdl)}mg/dL " +
-                                 "syntheticCi=${"%.2f".format(pdpSyntheticCi)}mg/dL " +
-                                 "ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings min=$pdpMinReadings")
+                                 "ciStr=${"%.2f".format(pdpEffectiveCiStrength)} risingStr=${"%.2f".format(pdpEffectiveRisingStrength)} " +
+                                 "fade=${pdpEffectiveFadeMins.toInt()}m " +
+                                 "ci=${"%.1f".format(ciMgdl)}mg/dL " +
+                                 "readings: ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings min=$pdpMinReadings")
         }
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
@@ -1923,7 +1927,8 @@ open class SmartInsulinPlugin @Inject constructor(
             // PDP params
             pdpEnabled               = pdpEnabled,
             pdpCiStrength            = pdpEffectiveCiStrength,
-            pdpFadeMins              = pdpFadeMins,
+            pdpFadeMins              = pdpEffectiveFadeMins,
+            pdpRisingStrength        = pdpEffectiveRisingStrength,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
             pdpSyntheticCi           = pdpSyntheticCi,
