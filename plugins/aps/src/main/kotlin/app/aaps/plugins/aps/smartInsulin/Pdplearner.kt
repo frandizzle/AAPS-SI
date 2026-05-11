@@ -160,12 +160,18 @@ class PdpLearner @Inject constructor(
      * Below CONFIDENCE_BLEND_FLOOR: heavily dampened so untrained hours don't
      * apply aggressive PDP blending. Scales linearly to 1.0 above the floor.
      */
+    /**
+     * Confidence scale for blend weight [0.5, 1.0].
+     * Floors at 0.5 so PDP works from day 1 at half the configured max blend weight.
+     * As learning accumulates confidence, scale rises toward 1.0 (full max blend).
+     * This way the user doesn't need to wait for observations before PDP does anything —
+     * it starts conservative and learns to be more aggressive where it proves accurate.
+     */
     fun blendWeightConfidenceScale(hour: Int): Double {
         val conf = hours[hour.coerceIn(0, 23)].confidence
-        return if (conf < CONFIDENCE_BLEND_FLOOR)
-            0.5 * (conf / CONFIDENCE_BLEND_FLOOR)
-        else
-            0.5 + 0.5 * ((conf - CONFIDENCE_BLEND_FLOOR) / (1.0 - CONFIDENCE_BLEND_FLOOR))
+        // Floor at 0.5: new install starts at half blend weight, not zero
+        // Scales from 0.5 → 1.0 as confidence grows from 0 → 1.0
+        return 0.5 + 0.5 * conf.coerceIn(0.0, 1.0)
     }
 
     fun strengthAt(hour: Int): Double  = hours[hour.coerceIn(0, 23)].strength
