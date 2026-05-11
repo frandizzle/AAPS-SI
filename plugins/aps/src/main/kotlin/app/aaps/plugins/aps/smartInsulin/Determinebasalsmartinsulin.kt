@@ -220,26 +220,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val pdpPredMinSafety: Double
         if (effectivePdpBlend > 0.0) {
             // pdpSyntheticCi > 0 means stuck-high pathway is active.
-            // Rising pathway uses ci * ciStrength (already non-zero).
-            // Stuck pathway uses bgGap/ISF synthetic UCI (always meaningful).
-            val isStuckHigh = pdpSyntheticCi > 0.0
-            val bgGapForPdp = if (isStuckHigh) (currentBg - targetBg).coerceAtLeast(0.0) else 0.0
-            // resistanceStrength = pdpCiStrength directly — formula inside predictBgCurvePdp
-            // handles the scaling. ciStr=1→subtle, ciStr=2→moderate, ciStr=3→aggressive.
-            val resistanceStrength = if (isStuckHigh) pdpCiStrength else 0.0
+            // Rising pathway: ci persists longer, scaled by ciStrength.
+            // Stuck pathway: IOB activity divided by ciStrength (insulin resistance model).
+            val isStuckHigh    = pdpSyntheticCi > 0.0
             val pdpEffectiveCi = if (isStuckHigh) 0.0 else ci * pdpCiStrength
             pdpPredictedBg = predictBgCurvePdp(
-                startBg            = currentBg,
-                ci                 = pdpEffectiveCi,
-                fadeMins           = pdpFadeMins,
-                iobArray           = iobArray,
-                isfMgdl            = dosingIsfMgdl,
-                learnedProfile     = learnedProfile,
-                ticks              = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
-                systemDiaMins      = systemDiaMins,
-                stuckHighMode      = isStuckHigh,
-                bgGapMgdl          = bgGapForPdp,
-                resistanceStrength = resistanceStrength
+                startBg        = currentBg,
+                ci             = pdpEffectiveCi,
+                fadeMins       = pdpFadeMins,
+                iobArray       = iobArray,
+                isfMgdl        = dosingIsfMgdl,
+                learnedProfile = learnedProfile,
+                ticks          = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+                systemDiaMins  = systemDiaMins,
+                stuckHighMode  = isStuckHigh,
+                ciStrength     = pdpCiStrength
             )
             pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
             pdpPredMin = if (pdpPredictedBg.size > insulinPeakTicks)
@@ -533,56 +528,67 @@ class DetermineBasalSmartInsulin @Inject constructor(
     }
 
     // ── PDP secondary prediction curve ───────────────────────────────────────
-    // Uses the same approach as stock OpenAPS UAM prediction:
-    // adds a positive deviation term (predUCI) each tick ON TOP of IOB activity.
+    // Models a "what if insulin is less effective than assumed" scenario.
     //
     // RISING pathway (stuckHighMode=false):
-    //   predUCI = ci (observed*ciStrength), fading over fadeMins instead of 60min.
+    //   ci persists over fadeMins (default 120min) instead of 60min, scaled by
+    //   ciStrength — models UAM/carb tail or dawn phenomenon lasting longer.
+    //   iobDelta is identical to the primary curve (same ISF assumption).
     //
     // STUCK-HIGH pathway (stuckHighMode=true):
-    //   predUCI = synthetic positive deviation per tick, derived from bgGap/ISF.
-    //   This is always positive regardless of IOB level, so the orange line visibly
-    //   rises above the cyan IOB line even during low-IOB overnight plateaus.
-    //   Scales with ciStrength (user-configurable) and fades over fadeMins.
+    //   ci=0 (BG not rising, just not falling). Models insulin resistance by
+    //   dividing iobDelta by ciStrength — each unit of insulin moves BG less:
+    //     ciStrength=1 → same as primary (no resistance)
+    //     ciStrength=2 → insulin half as effective (BG stays higher)
+    //     ciStrength=3 → insulin one-third as effective (BG stays much higher)
+    //   This naturally produces visible separation proportional to actual IOB
+    //   activity — more IOB = more separation = more insulinReq adjustment.
+    //   Fades linearly from resistance model → primary model over fadeMins,
+    //   so the curves converge at the horizon.
     //
     // PRIMARY curve (predictBgCurve) is NEVER touched.
     private fun predictBgCurvePdp(
-        startBg:            Double,
-        ci:                 Double,
-        fadeMins:           Double,
-        iobArray:           Array<IobTotal>,
-        isfMgdl:            Double,
-        learnedProfile:     LearnedInsulinProfile,
-        ticks:              Int,
-        systemDiaMins:      Double,
-        stuckHighMode:      Boolean = false,
-        bgGapMgdl:          Double  = 0.0,
-        resistanceStrength: Double  = 1.0
+        startBg:       Double,
+        ci:            Double,
+        fadeMins:      Double,
+        iobArray:      Array<IobTotal>,
+        isfMgdl:       Double,
+        learnedProfile: LearnedInsulinProfile,
+        ticks:         Int,
+        systemDiaMins: Double,
+        stuckHighMode: Boolean = false,
+        ciStrength:    Double  = 1.0
     ): List<Double> {
-        var bg        = startBg
+        var bg          = startBg
         val predictions = mutableListOf<Double>()
-        val fadeTicks = (fadeMins / 5.0).coerceAtLeast(1.0)
-
-        // Synthetic positive deviation per tick for stuck-high pathway.
-        // Uses ciStrength DIRECTLY (not divided by 3) so the full user-configured
-        // range produces meaningful visible separation:
-        //   ciStrength=1.0 → ~0.52 mmol separation (subtle)
-        //   ciStrength=2.0 → ~1.04 mmol separation (moderate)
-        //   ciStrength=3.0 → ~1.56 mmol separation (aggressive, clearly visible)
-        // resistanceStrength is ignored in stuck mode — ciStrength maps directly.
-        val syntheticUCI = if (stuckHighMode && isfMgdl > 0.0)
-            (bgGapMgdl / isfMgdl) * resistanceStrength  // resistanceStrength = pdpCiStrength (1.0–3.0)
-        else 0.0
+        val fadeTicks   = (fadeMins / 5.0).coerceAtLeast(1.0)
+        // Guard: ciStrength must be >= 1.0 to avoid amplifying IOB beyond primary curve
+        val safeStrength = ciStrength.coerceAtLeast(1.0)
 
         for (tick in 1..ticks) {
-            val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
-            val iobDelta = -(activity * isfMgdl * 5.0)
-            val fadeFrac = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
+            val activity        = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
+            val iobDeltaPrimary = -(activity * isfMgdl * 5.0)
+            val fadeFrac        = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
 
-            val predUCI = if (stuckHighMode)
-                syntheticUCI * fadeFrac
-            else
-                ci * fadeFrac
+            val iobDelta: Double
+            val predUCI:  Double
+
+            if (stuckHighMode) {
+                // Resistance model: divide iobDelta by ciStrength so insulin is less effective.
+                //   ciStrength=1 → identical to primary (no resistance)
+                //   ciStrength=2 → insulin half as effective; BG predicted higher
+                //   ciStrength=3 → insulin one-third as effective; BG predicted much higher
+                // Separation scales with actual IOB activity — low IOB overnight = small gap
+                // (correct: model says "small IOB won't move BG much if it's resistant").
+                // Fade from resistance model → primary over fadeMins so curves converge.
+                val iobDeltaResisted = iobDeltaPrimary / safeStrength
+                iobDelta = iobDeltaPrimary * (1.0 - fadeFrac) + iobDeltaResisted * fadeFrac
+                predUCI  = 0.0
+            } else {
+                // Rising pathway: same IOB effect, ci term fades over fadeMins not 60min.
+                iobDelta = iobDeltaPrimary
+                predUCI  = ci * fadeFrac
+            }
 
             bg += iobDelta + predUCI
             predictions.add(bg)
