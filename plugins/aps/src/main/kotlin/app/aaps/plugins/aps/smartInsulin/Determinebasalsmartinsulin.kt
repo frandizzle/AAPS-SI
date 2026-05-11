@@ -306,14 +306,35 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // not on IOB activity magnitude. The prediction curve still shows the visual
         // separation (orange vs cyan) based on the resistance model.
         val predMinGapMgdl = (blendedPredMin - targetBg).coerceAtLeast(0.0)
+
+        // ── PDP stuck-high: blend current BG gap with predMin gap ─────────────
+        // The core problem: both primary and secondary prediction curves converge
+        // to the same minimum at the end of DIA, so predMinGapMgdl is tiny even
+        // at 89% blend. The ISF blend helps but acts on a near-zero gap.
+        //
+        // Fix: when stuck-high is active, blend between predMinGap (IOB-physics
+        // view: BG will eventually come down) and currentBgGap (resistance view:
+        // BG is stuck here right now, dose against the full current gap).
+        //
+        // effectiveGap = predMinGap * (1-blend) + currentBgGap * blend
+        // This is the core insight: stuck-high PDP says "I don't believe BG will
+        // come down on its own — dose against where it IS, not where it might go."
+        // fastingMaxIob prevents over-stacking.
+        val effectiveGapMgdl = if (pdpEnabled && effectivePdpBlend > 0.0 && pdpSyntheticCi > 0.0) {
+            val currentBgGapMgdl = (currentBg - targetBg).coerceAtLeast(0.0)
+            predMinGapMgdl * (1.0 - effectivePdpBlend) + currentBgGapMgdl * effectivePdpBlend
+        } else {
+            predMinGapMgdl
+        }
+
         val effectiveIsfMgdl = if (pdpEnabled && effectivePdpBlend > 0.0 && pdpSyntheticCi > 0.0) {
-            // Stuck-high: blend ISF down by ciStrength fraction
+            // Stuck-high: also blend ISF down — double mechanism for meaningful correction
             val secondaryIsfMgdl = dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
             dosingIsfMgdl * (1.0 - effectivePdpBlend) + secondaryIsfMgdl * effectivePdpBlend
         } else {
-            dosingIsfMgdl  // rising pathway or PDP off: use primary ISF unchanged
+            dosingIsfMgdl
         }
-        val insulinReq = predMinGapMgdl / effectiveIsfMgdl
+        val insulinReq = effectiveGapMgdl / effectiveIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -324,7 +345,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         if (effectivePdpBlend > 0.0) {
-            val isfStr = if (pdpSyntheticCi > 0.0) " ISF=${fmt(dosingIsfMgdl, isMmol)}→${fmt(effectiveIsfMgdl, isMmol)}" else ""
+            val isfStr = if (pdpSyntheticCi > 0.0) " ISF=${fmt(dosingIsfMgdl, isMmol)}→${fmt(effectiveIsfMgdl, isMmol)} gap=${fmt(predMinGapMgdl, isMmol)}→${fmt(effectiveGapMgdl, isMmol)}" else ""
             sb.append(" | PDP(blend=${"%.2f".format(Locale.US, effectivePdpBlend)} ci×${"%.2f".format(Locale.US, pdpCiStrength)} fade=${pdpFadeMins.toInt()}m pdp_min=${fmt(pdpPredMin, isMmol)} blended=${fmt(blendedPredMin, isMmol)}$isfStr)")
         }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
