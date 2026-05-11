@@ -1382,7 +1382,7 @@ open class SmartInsulinPlugin @Inject constructor(
             remainingCarbsCap               = SMBDefaults.remainingCarbsCap,
             // Force enableUAM=true when PDP is active so the UAM prediction slot
             // renders as orange on the overview graph (distinct from cyan IOB line).
-            enableUAM                       = pdpEnabled || constraintsChecker.isUAMEnabled().also { inputConstraints.copyReasons(it) }.value(),
+            enableUAM                       = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled) || constraintsChecker.isUAMEnabled().also { inputConstraints.copyReasons(it) }.value(),
             A52_risk_enable                 = SMBDefaults.A52_risk_enable,
             SMBInterval                     = preferences.get(IntKey.ApsMaxSmbFrequency),
             enableSMB_with_COB              = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithCob),
