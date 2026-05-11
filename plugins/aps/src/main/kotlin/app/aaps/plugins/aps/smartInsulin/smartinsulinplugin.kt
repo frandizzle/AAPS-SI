@@ -1661,8 +1661,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // PDP constants — inline mg/dL values, no dependency on DetermineBasalSmartInsulin constants
         val PDP_CI_THRESHOLD_MGDL   = 5.4   // ~0.3 mmol/5min — filters ci noise
-        val PDP_STUCK_OFFSET_MGDL   = 27.0  // 1.5 mmol above target — filters normal overshoot
-        val PDP_STUCK_DELTA_MGDL    = 2.7   // ±0.15 mmol/5min — genuinely flat
+        val PDP_STUCK_OFFSET_MGDL   = 9.0   // 0.5 mmol above target — BG only needs to be modestly above target
+        val PDP_STUCK_DELTA_MGDL    = 5.4   // ±0.3 mmol/5min — flat enough (matches ci threshold)
 
         // All PDP tracking gated on clean fasting — no lows, rebound, or post-meal dirty window.
         // Hard reset on dirty conditions so PDP can't carry momentum across low/recovery events.
