@@ -1661,10 +1661,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // 1.5 mmol = 27 mg/dL — filters normal post-correction overshoot
         val PDP_STUCK_OFFSET_MGDL = 1.5 * MMOL_TO_MGDL
 
-        // PDP_STUCK_DELTA: max |shortAvgDelta| to qualify as genuinely flat
-        // 0.15 mmol/5min = 2.7 mg/dL — allows micro-noise but blocks active movement
-        val PDP_STUCK_DELTA_MGDL = 0.15 * MMOL_TO_MGDL
-
         // All PDP tracking gated on clean fasting — no lows, rebound, or post-meal dirty window.
         // Hard reset on dirty conditions so PDP can't carry momentum across low/recovery events.
         val pdpCleanForBlending = mealMode == MealMode.FASTING
