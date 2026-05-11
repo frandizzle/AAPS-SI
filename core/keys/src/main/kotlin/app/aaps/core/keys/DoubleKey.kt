@@ -270,4 +270,35 @@ enum class DoubleKey(
     ApsSmartInsulinUamEntrySmbFraction(key = "si_uam_entry_smb_fraction", defaultValue = 0.8, min = 0.1, max = 1.0, titleResId = R.string.pref_title_si_uam_entry_smb_fraction, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled, unitType = UnitType.DOUBLE),
     // UAM thresholds, ISF overrides, activity targets all in UnitDoubleKey
 
+    // PDP — Persistent Deviation Prediction
+    ApsSmartInsulinPdpCiStrength(
+        key = "si_pdp_ci_strength",
+        defaultValue = 1.0,
+        min = 0.3,
+        max = 3.0,
+        titleResId = R.string.pref_title_si_pdp_ci_strength,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinPdpMaxBlendWeight(
+        key = "si_pdp_max_blend_weight",
+        defaultValue = 0.7,
+        min = 0.1,
+        max = 0.9,
+        titleResId = R.string.pref_title_si_pdp_max_blend_weight,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinFastingMaxIob(
+        key = "si_fasting_max_iob",
+        defaultValue = 0.0,
+        min = 0.0,
+        max = 20.0,
+        titleResId = R.string.pref_title_si_fasting_max_iob,
+        defaultedBySM = true,
+        unitType = UnitType.INSULIN
+    ),
+
 }

@@ -391,4 +391,16 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable = true
     ),
+    // SmartInsulin — PdpLearner per-hour prediction accuracy state (JSON, not user-visible)
+    // Tracks how well the secondary PDP curve predicts actual BG vs primary IOB curve.
+    // Exported so learned accuracy survives phone changes / reinstalls.
+    ApsSmartInsulinPdpLearnerState(
+        key = "si_pdp_learner_state",
+        defaultValue = "",
+        titleResId = R.string.pref_title_internal_state_key,
+        showInApsMode = false,
+        showInNsClientMode = false,
+        showInPumpControlMode = false,
+        exportable = true
+    ),
 }

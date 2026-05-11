@@ -140,6 +140,14 @@
     <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
     <string name="si_mode_cancelled">Meal mode cancelled</string>
     <string name="si_mode_activated">%1$s mode active for %2$d mins</string>
+    <string name="pref_title_si_pdp_enabled">PDP: Enable persistent deviation prediction</string>
+    <string name="pref_title_si_pdp_learning_enabled">PDP: Enable accuracy learning</string>
+    <string name="pref_title_si_pdp_ci_strength">PDP: Base ci strength multiplier</string>
+    <string name="pref_title_si_pdp_fade_minutes">PDP: Deviation fade duration (min)</string>
+    <string name="pref_title_si_pdp_min_readings">PDP: Min consecutive readings to blend</string>
+    <string name="pref_title_si_pdp_max_blend_weight">PDP: Max blend weight</string>
+    <string name="pref_title_si_fasting_max_iob">Fasting max IOB (0=disabled)</string>
+    <string name="si_screen_pdp_title">PDP — Deviation Prediction</string>
 
     <string name="increasing_max_basal">Increasing max basal value because setting is lower than your max basal in profile</string>
     <string name="max_basal_multiplier">max basal multiplier</string>

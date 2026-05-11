@@ -100,7 +100,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         reboundWindowMins:        Double = 60.0,
         circCeil:                 Double = 1.0,
         fuelTrimStrength:         Double = 0.0,
-        isMmol:                   Boolean = true
+        isMmol:                   Boolean = true,
+        // ── PDP (Persistent Deviation Prediction) ─────────────────────────────────────
+        pdpEnabled:               Boolean = false,   // master switch
+        pdpCiStrength:            Double  = 1.0,     // effective ci multiplier (base * learned)
+        pdpFadeMins:              Double  = 120.0,   // how long ci persists in secondary curve
+        pdpBlendWeight:           Double  = 0.0,     // 0.0=primary only, 1.0=secondary only
+        fastingMaxIobU:           Double  = 0.0      // 0.0 = disabled (use global max IOB)
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -200,6 +206,49 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
         val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
 
+        // ── PDP: secondary prediction curve ──────────────────────────────────
+        // Only computed during FASTING when pdpEnabled and blendWeight > 0.
+        // Uses the same IOB activity curve but ci fades over pdpFadeMins (default 120min)
+        // instead of 60min, scaled by pdpCiStrength — models sustained unexplained deviation
+        // (stress, dawn phenomenon, protein/fat tail, illness) persisting longer than normal.
+        // Safety: pdpBlendWeight=0 when mealMode != FASTING so meal modes are never affected.
+        val effectivePdpBlend = if (pdpEnabled && mealMode == app.aaps.core.interfaces.smartInsulin.MealMode.FASTING) pdpBlendWeight else 0.0
+
+        val pdpPredictedBg: List<Double>
+        val pdpPredMin: Double
+        val pdpPredMinSafety: Double
+        if (effectivePdpBlend > 0.0) {
+            pdpPredictedBg = predictBgCurvePdp(
+                startBg        = currentBg,
+                ci             = ci,
+                ciStrength     = pdpCiStrength,
+                fadeMins       = pdpFadeMins,
+                iobArray       = iobArray,
+                isfMgdl        = dosingIsfMgdl,
+                learnedProfile = learnedProfile,
+                ticks          = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+                systemDiaMins  = systemDiaMins
+            )
+            pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
+            pdpPredMin = if (pdpPredictedBg.size > insulinPeakTicks)
+                pdpPredictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
+            else
+                pdpPredictedBg.minOrNull() ?: currentBg
+        } else {
+            pdpPredictedBg   = emptyList()
+            pdpPredMin       = predictedMin
+            pdpPredMinSafety = predictedMinSafety
+        }
+
+        // Blended prediction mins — drive insulinReq when deviation is sustained
+        val blendedPredMin       = predictedMin       * (1.0 - effectivePdpBlend) + pdpPredMin       * effectivePdpBlend
+        val blendedPredMinSafety = predictedMinSafety * (1.0 - effectivePdpBlend) + pdpPredMinSafety * effectivePdpBlend
+
+        // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
+        // These are the t+5min values (first tick) — compared against actual BG next cycle.
+        val pdpPredAt5  = pdpPredictedBg.firstOrNull() ?: currentBg
+        val iobPredAt5  = predictedBg.firstOrNull() ?: currentBg
+
         // Populate rT.predBGs.IOB for the overview prediction graph
         val rawPrediction = mutableListOf<Int>()
         predictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
@@ -207,15 +256,35 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
 
+        // PDP curve populates the UAM prediction slot for graph display (repurposed as
+        // "secondary/deviation" curve — only populated when PDP is active and blending).
+        // This gives a visible second line on the AAPS overview graph.
+        if (effectivePdpBlend > 0.0 && pdpPredictedBg.isNotEmpty()) {
+            val rawPdpPrediction = mutableListOf<Int>()
+            pdpPredictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
+                .forEach { rawPdpPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
+            rT.predBGs?.UAM = rawPdpPrediction
+        }
+
         // ── IOB / headroom ────────────────────────────────────────────────────
-        val iobHeadroom  = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
-        val iobOk        = currentIob < oapsProfile.max_iob
+        // Fasting max IOB: caps IOB during FASTING to prevent over-stacking when PDP
+        // drives more aggressive dosing. 0.0 = disabled (use global max IOB).
+        val effectiveMaxIob = if (
+            fastingMaxIobU > 0.0 &&
+            mealMode == app.aaps.core.interfaces.smartInsulin.MealMode.FASTING
+        ) minOf(oapsProfile.max_iob, fastingMaxIobU)
+        else oapsProfile.max_iob
+
+        val iobHeadroom  = (effectiveMaxIob - currentIob).coerceAtLeast(0.0)
+        val iobOk        = currentIob < effectiveMaxIob
         val bgAboveGuard = currentBg - lowGuardMgdl
 
         // Stock OpenAPS-style insulinReq: how much insulin is needed to bring
-        // predictedMin to target. predictedMin already has existing IOB baked in,
+        // blendedPredMin to target. Uses blended prediction when PDP is active,
+        // falls back to primary predictedMin when PDP is off or blend=0.
+        // blendedPredMin already has existing IOB baked in via the IOB activity curve,
         // so this naturally self-limits — no iobSufficient gate needed.
-        val predMinGapMgdl = (predictedMin - targetBg).coerceAtLeast(0.0)
+        val predMinGapMgdl = (blendedPredMin - targetBg).coerceAtLeast(0.0)
         val insulinReq     = predMinGapMgdl / dosingIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
@@ -226,6 +295,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | d=${fmt(delta, isMmol)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        if (effectivePdpBlend > 0.0) {
+            sb.append(" | PDP(blend=${"%.2f".format(Locale.US, effectivePdpBlend)} ci×${"%.2f".format(Locale.US, pdpCiStrength)} fade=${pdpFadeMins.toInt()}m pdp_min=${fmt(pdpPredMin, isMmol)} blended=${fmt(blendedPredMin, isMmol)})")
+        }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
         sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
@@ -279,20 +351,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
-            predictedMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
+            blendedPredMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(blendedPredMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
-            predictedMinSafety < effectiveCautionMgdl -> {
-                val guardGap   = effectiveCautionMgdl - predictedMinSafety
+            blendedPredMinSafety < effectiveCautionMgdl -> {
+                val guardGap   = effectiveCautionMgdl - blendedPredMinSafety
                 val warnFrac   = 1.0 - (guardGap / (effectiveCautionMgdl - effectiveSuspendMgdl).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
                 // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
@@ -300,7 +372,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(blendedPredMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -398,6 +470,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
         }
 
+        // Store prediction snapshots for next-cycle PDP accuracy scoring
+        lastIobPredAt5Mgdl = iobPredAt5
+        lastPdpPredAt5Mgdl = pdpPredAt5
+        lastPdpBlendWeight  = effectivePdpBlend
+
         rT.reason.append(sb)
         rT.units = smbOut.takeIf { it > 0.0 }
         rT.eventualBG = predictedAt60
@@ -408,6 +485,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         result.with(rT)
         return result
     }
+
+    // ── Last-cycle prediction snapshots — read by SmartInsulinPlugin for PDP accuracy scoring ──
+    // Set on every determine_basal() call. SmartInsulinPlugin reads these on the NEXT cycle
+    // to compare against actual BG and score PDP vs IOB accuracy.
+    var lastIobPredAt5Mgdl: Double = 0.0
+        private set
+    var lastPdpPredAt5Mgdl: Double = 0.0
+        private set
+    var lastPdpBlendWeight: Double = 0.0
+        private set
 
     // ── Prediction curve ──────────────────────────────────────────────────────
     private fun predictBgCurve(
@@ -425,6 +512,36 @@ class DetermineBasalSmartInsulin @Inject constructor(
             val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
             val iobDelta   = -(activity * isfMgdl * 5.0)
             val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
+            bg += iobDelta + predDev
+            predictions.add(bg)
+        }
+        return predictions
+    }
+
+    // ── PDP secondary prediction curve ───────────────────────────────────────
+    // Same IOB activity as primary but ci fades over pdpFadeMins instead of 60min,
+    // scaled by ciStrength. Models sustained unexplained deviation persisting longer.
+    // ciStrength=1.0 + fadeMins=120 → moderate; ciStrength=2.0 + fadeMins=180 → aggressive.
+    private fun predictBgCurvePdp(
+        startBg:        Double,
+        ci:             Double,
+        ciStrength:     Double,
+        fadeMins:       Double,
+        iobArray:       Array<IobTotal>,
+        isfMgdl:        Double,
+        learnedProfile: LearnedInsulinProfile,
+        ticks:          Int,
+        systemDiaMins:  Double
+    ): List<Double> {
+        var bg          = startBg
+        val predictions = mutableListOf<Double>()
+        val fadeTicks   = (fadeMins / 5.0).coerceAtLeast(1.0)
+        for (tick in 1..ticks) {
+            val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
+            val iobDelta = -(activity * isfMgdl * 5.0)
+            // ci fades linearly to zero over fadeMins (vs 60min in primary)
+            // ciStrength scales the magnitude — >1.0 means deviation assumed stronger/longer
+            val predDev  = ci * ciStrength * (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
             bg += iobDelta + predDev
             predictions.add(bg)
         }

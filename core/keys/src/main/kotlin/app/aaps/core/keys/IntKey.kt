@@ -335,4 +335,26 @@ enum class IntKey(
     ApsSmartInsulinUamProteinFatNightEndHour(key = "si_uam_proteinfat_night_end", defaultValue = 6, min = 0, max = 23, titleResId = R.string.pref_title_si_uam_proteinfat_night_end, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinUamProteinFatOvernightStartHour(key = "si_uam_proteinfat_overnight_start", defaultValue = 2, min = 0, max = 23, titleResId = R.string.pref_title_si_uam_proteinfat_overnight_start, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinUamProteinFatOvernightEndHour(key = "si_uam_proteinfat_overnight_end", defaultValue = 4, min = 0, max = 23, titleResId = R.string.pref_title_si_uam_proteinfat_overnight_end, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
+
+    // PDP — Persistent Deviation Prediction
+    ApsSmartInsulinPdpFadeMinutes(
+        key = "si_pdp_fade_minutes",
+        defaultValue = 120,
+        min = 60,
+        max = 240,
+        titleResId = R.string.pref_title_si_pdp_fade_minutes,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
+        unitType = UnitType.MIN
+    ),
+    ApsSmartInsulinPdpMinReadings(
+        key = "si_pdp_min_readings",
+        defaultValue = 3,
+        min = 1,
+        max = 8,
+        titleResId = R.string.pref_title_si_pdp_min_readings,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
+        unitType = UnitType.NONE
+    ),
 }

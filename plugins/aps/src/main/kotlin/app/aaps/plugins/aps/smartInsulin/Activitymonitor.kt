@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.rx.weardata.EventData
 import javax.inject.Inject
 import javax.inject.Singleton
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -68,21 +69,16 @@ class ActivityMonitor @Inject constructor(
     }
 
     private fun subscribeToEvents() {
-        // ⚠️ DEVELOPER NOTE: Uncomment and update the Event class names below
-        // to match the exact Event classes used in your specific AAPS fork.
-        // (e.g., EventNewHeartRate, EventNewPluginData, etc.)
-
-        /*
-        rxBus.toObservable(EventNewHeartRate::class.java).subscribe { event ->
-            latestHrBpm = event.heartRate.toDouble()
+        // Listening for Wear OS events via RxBus
+        rxBus.toObservable(EventData.ActionHeartRate::class.java).subscribe { event ->
+            latestHrBpm = event.beatsPerMinute
             latestHrTimeMs = System.currentTimeMillis()
         }.also { disposables.add(it) }
 
-        rxBus.toObservable(EventNewStepCount::class.java).subscribe { event ->
-            cachedSteps5min = event.steps
+        rxBus.toObservable(EventData.ActionStepsRate::class.java).subscribe { event ->
+            cachedSteps5min = event.steps5min
             latestStepsTimeMs = System.currentTimeMillis()
         }.also { disposables.add(it) }
-        */
     }
 
     fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
