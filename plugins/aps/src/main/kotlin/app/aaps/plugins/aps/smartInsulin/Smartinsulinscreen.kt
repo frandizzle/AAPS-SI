@@ -1038,15 +1038,40 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             primaryColor = learnColor
         )
 
-        // ── Per-hour 24h table ────────────────────────────────────────────
+        // ── Learning stage summary ────────────────────────────────────────
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-        Text("Per-hour learned ci strength (24h)",
+        val totalSamples2 = d.pdpHourlySamples.sum()
+        val hoursWithData = d.pdpHourlySamples.count { it > 0 }
+        val hoursLearned  = d.pdpHourlyStrengths.count { kotlin.math.abs(it - 1.0) > 0.01 }
+        val learningStage = when {
+            totalSamples2 < 24  -> "Early — building baseline (${totalSamples2}/24 observations)"
+            totalSamples2 < 100 -> "Developing — patterns emerging ($hoursWithData/24 hours active)"
+            totalSamples2 < 300 -> "Maturing — $hoursLearned hours have learned deviation ($totalSamples2 obs)"
+            else                -> "Mature — fully calibrated ($totalSamples2 total observations)"
+        }
+        val stageColor = when {
+            totalSamples2 < 24  -> StatusWarn
+            totalSamples2 < 100 -> StatusInfo
+            else                -> StatusGood
+        }
+        SiRow("Learning stage: $learningStage", null, primaryColor = stageColor)
+        Spacer(Modifier.height(4.dp))
+
+        // ── Per-hour 24h table ────────────────────────────────────────────
+        Text("Per-hour learning table",
              fontSize = 13.sp, fontWeight = FontWeight.Bold,
              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(6.dp))
-        Text("  Hr   StrMlt  FadeMlt  BlndMlt  Conf   n",
-             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Columns: Hr | StrMlt | FadMlt | BlnMlt | Progress | n",
+            fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            "StrMlt >1 = more resistance assumed. FadMlt >1 = deviation lasts longer.",
+            fontSize = 9.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
 
         for (h in 0..23) {
             val marker     = if (h == hour) "▶" else " "
@@ -1054,33 +1079,52 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
             val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
             val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
+            val fadeMult   = if (h < d.pdpHourlyStrengths.size) d.pdpHourlyStrengths.getOrElse(h) { 1.0 } else 1.0
 
-            // Color-code: high strength + high confidence = warm (PDP strongly learned here)
-            //             low confidence = muted
+            // Progress bar: based on samples toward full confidence (20 samples = full)
+            // This is much more readable than raw confidence float
+            val progressFilled = minOf(10, samples / 2)  // 2 samples per bar segment, 10 segments = 20 samples
+            val progressBar = buildString {
+                append("▓".repeat(progressFilled))
+                append("░".repeat(10 - progressFilled))
+            }
+
+            // Color: hours with meaningful learned deviation get highlighted
+            val strDeviation = kotlin.math.abs(strength - 1.0)
             val rowColor = when {
-                confidence < 0.2 -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                strength > 1.5   -> StatusWarn
-                strength > 1.1   -> StatusInfo
+                samples == 0     -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                strDeviation > 0.1 && confidence > 0.3 -> StatusWarn   // learned and confident
+                strDeviation > 0.03                     -> StatusInfo   // learning something
                 else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
             }
 
-            val confBar = buildString {
-                val filled = (confidence * 10).toInt().coerceIn(0, 10)
-                append("▓".repeat(filled))
-                append("░".repeat(10 - filled))
+            // Deviation indicators — more readable than raw multiplier numbers
+            val strIndicator = when {
+                strength > 1.15 -> "↑↑"
+                strength > 1.05 -> "↑"
+                strength < 0.95 -> "↓"
+                else            -> "·"
             }
 
             Text(
-                "$marker ${h.toString().padStart(2)}   " +
-                    "${"%.3f".format(strength).padStart(6)}  " +
-                    "${"%.3f".format(blendMult).padStart(7)}  " +
-                    "$confBar  " +
+                "$marker ${h.toString().padStart(2)}  " +
+                    "${"%.3f".format(strength)}$strIndicator  " +
+                    "${"%.3f".format(blendMult).padStart(5)}  " +
+                    "$progressBar  " +
                     "$samples",
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 color = if (h == hour) StatusWarn else rowColor
             )
         }
+
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Progress bar: ▓ = 2 obs each, full at 20. ↑↑ = strong resistance. ↑ = mild. · = neutral.",
+            fontSize = 9.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 13.sp
+        )
 
         // ── Interpretation footer ─────────────────────────────────────────
         Spacer(Modifier.height(8.dp))

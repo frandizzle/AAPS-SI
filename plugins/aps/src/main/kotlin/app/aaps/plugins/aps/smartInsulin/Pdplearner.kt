@@ -398,8 +398,15 @@ class PdpLearner @Inject constructor(
      * Confidence scale for blend weight [0.5, 1.0].
      * Floors at 0.5 so PDP works from day 1 at half max blend.
      */
+    /**
+     * Confidence scale for blend weight [0.8, 1.0].
+     * Floors at 0.8 so PDP operates at 80% of max blend from day one.
+     * Rises to 1.0 as confidence grows — learned hours get full blend weight.
+     * Previous floor of 0.5 was too conservative, leaving blend at 35% when
+     * user has set 0.7 max blend weight.
+     */
     fun blendWeightConfidenceScale(hour: Int): Double =
-        0.5 + 0.5 * hours[hour.coerceIn(0, 23)].confidence.coerceIn(0.0, 1.0)
+        0.8 + 0.2 * hours[hour.coerceIn(0, 23)].confidence.coerceIn(0.0, 1.0)
 
     /**
      * Effective blend weight multiplier for [hour].
