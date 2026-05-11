@@ -753,7 +753,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
             pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
-            pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthAt(h) },
+            pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthMultAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
             pdpHourlySamples     = (0..23).map { h -> pdpLearner.samplesAt(h) },
             pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
@@ -1931,8 +1931,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpRisingStrength        = pdpEffectiveRisingStrength,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
-            pdpSyntheticCi           = pdpSyntheticCi,
-            pdpRisingStrength        = pdpRisingStrength
+            pdpSyntheticCi           = pdpSyntheticCi
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
