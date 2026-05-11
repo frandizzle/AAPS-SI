@@ -1044,7 +1044,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
              fontSize = 13.sp, fontWeight = FontWeight.Bold,
              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
         Spacer(Modifier.height(6.dp))
-        Text("  Hr   Strength  Confidence  n",
+        Text("  Hr   StrMlt  FadeMlt  BlndMlt  Conf   n",
              fontSize = 10.sp, fontFamily = FontFamily.Monospace,
              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -1053,6 +1053,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val strength   = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
             val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
             val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
+            val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
 
             // Color-code: high strength + high confidence = warm (PDP strongly learned here)
             //             low confidence = muted
@@ -1071,7 +1072,8 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
 
             Text(
                 "$marker ${h.toString().padStart(2)}   " +
-                    "${"%.3f".format(strength).padStart(8)}  " +
+                    "${"%.3f".format(strength).padStart(6)}  " +
+                    "${"%.3f".format(blendMult).padStart(7)}  " +
                     "$confBar  " +
                     "$samples",
                 fontSize = 10.sp,
@@ -1083,7 +1085,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         // ── Interpretation footer ─────────────────────────────────────────
         Spacer(Modifier.height(8.dp))
         Text(
-            "Strength >1.0 = this hour's deviations tend to persist (stress/dawn/food). " +
+            "StrMlt >1.0 = more resistance/deviation assumed. FadeMlt >1.0 = deviation lasts longer. BlndMlt >1.0 = blend weight raised. " +
                 "Confidence bar shows how many observations back this up. " +
                 "Low confidence hours blend toward neutral automatically.",
             fontSize = 10.sp,

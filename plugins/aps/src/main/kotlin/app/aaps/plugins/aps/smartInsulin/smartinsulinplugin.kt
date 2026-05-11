@@ -202,6 +202,18 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedPdpBlendWeight:    Double  = 0.0   // last computed blend weight — for statusSummary display
     @Volatile private var cachedPdpSyntheticCi:    Double  = 0.0   // last synthetic ci mg/dL — for display
 
+    // ── PDP episode tracking ──────────────────────────────────────────────────
+    // An episode opens when pdpBlendWeight goes from 0 → >0.
+    // Tracks outcome metrics (nadir BG, duration) until episode closes.
+    private data class PdpEpisode(
+        val startTimeMs:     Long,
+        val startHour:       Int,
+        val pathway:         String,
+        var nadirBgMmol:     Double,   // lowest BG seen during episode
+        var peakBlendWeight: Double    // highest blend weight used
+    )
+    private var activeEpisode: PdpEpisode? = null
+
     // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
     @Volatile var pb2LastBgMgdl:            Double = 0.0
     @Volatile var pb2LastDeltaMgdl:         Double = 0.0
@@ -302,6 +314,7 @@ open class SmartInsulinPlugin @Inject constructor(
         pdpStuckHighReadings     = 0
         lastCiMgdl               = 0.0
         cachedPdpSyntheticCi     = 0.0
+        activeEpisode             = null
         lastPdpBlendActive       = false
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: all learners reset")
     }
@@ -439,6 +452,11 @@ open class SmartInsulinPlugin @Inject constructor(
                 val pdpBase = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
                 appendLine(pdpLearner.summaryTable(hour, pdpBase, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()))
                 appendLine("  PDP: blend=${"%.2f".format(cachedPdpBlendWeight)} ci=${"%.1f".format(lastCiMgdl)}mg/dL ci-readings=$consecutivePosCiReadings stuck-readings=$pdpStuckHighReadings")
+                val ep = activeEpisode
+                if (ep != null) {
+                    val epMins = ((System.currentTimeMillis() - ep.startTimeMs) / 60_000.0).toInt()
+                    appendLine("  Episode[${ep.pathway}]: ${epMins}min active, nadir=${"%.1f".format(ep.nadirBgMmol)}mmol, peakBlend=${"%.2f".format(ep.peakBlendWeight)}")
+                }
                 appendLine()
             }
 
@@ -570,7 +588,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpStuckHighReadings:   Int,    // stuck-high pathway counter
         val pdpActivePathway:       String, // "ci", "stuck", or "none"
         val pdpSyntheticCiMmol:     Double, // synthetic ci in mmol (0 when rising pathway or inactive)
-        val pdpMinReadings:        Int,
+        val pdpMinReadings:        Int,    // stuck-high min readings threshold
         val pdpFadeMins:           Int,
         val pdpEffectiveFadeMins:  Double, // learned effective fade for current hour
         val pdpCiStrength:         Double,
@@ -579,6 +597,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpHourlyStrengths:    List<Double>,
         val pdpHourlyConfidences:  List<Double>,
         val pdpHourlySamples:      List<Int>,
+        val pdpHourlyBlendMults:   List<Double>,   // learned blend mult per hour (24)
         val pdpLearningEnabled:    Boolean,
     )
 
@@ -747,7 +766,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpStuckHighReadings   = pdpStuckHighReadings,
             pdpActivePathway       = if (cachedPdpBlendWeight > 0.0) (if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci") else "none",
             pdpSyntheticCiMmol     = cachedPdpSyntheticCi / 18.0,
-            pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings),
+            pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings), // stuck threshold only
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
             pdpEffectiveFadeMins = pdpLearner.effectiveFadeMins(hour, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
@@ -756,6 +775,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthMultAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
             pdpHourlySamples     = (0..23).map { h -> pdpLearner.samplesAt(h) },
+            pdpHourlyBlendMults  = (0..23).map { h -> pdpLearner.effectiveBlendMult(h) },
             pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
         )
     }
@@ -1700,26 +1720,52 @@ open class SmartInsulinPlugin @Inject constructor(
 
         lastCiMgdl = ciMgdl
 
-        val pdpMinReadings    = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings)
-        val pdpMaxBlend       = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight)
+        val pdpMinReadingsStuck = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings)
+        val pdpMaxBlend         = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight)
         val pdpBaseCiStrength   = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
         val pdpRisingStrength   = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength)
-        val pdpFadeMins       = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()
-        val fastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob)
+        val pdpFadeMins         = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()
+        val fastingMaxIob       = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob)
 
-        // Whichever pathway has more qualifying readings drives the blend weight.
-        // This means PDP activates on EITHER a rising unexplained deviation OR a
-        // persistent plateau — whichever comes first.
-        val pdpActiveReadings = maxOf(consecutivePosCiReadings, pdpStuckHighReadings)
-        val pdpActivePathway  = if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci"
+        // ── Active pathway determination ──────────────────────────────────────
+        // Stuck pathway: requires pdpMinReadingsStuck consecutive qualifying readings
+        // Rising pathway: NO minimum readings gate — activates immediately but starts
+        //   at very low blend weight so it barely does anything until it's earned trust.
+        //   This lets it learn from the first qualifying reading, building slowly.
+        val stuckActive  = pdpStuckHighReadings >= pdpMinReadingsStuck && pdpStuckHighReadings > 0
+        val risingActive = consecutivePosCiReadings > 0  // no gate — always active when rising
+        val pdpActivePathway = when {
+            stuckActive && risingActive ->
+                if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "rising"
+            stuckActive  -> "stuck"
+            risingActive -> "rising"
+            else         -> "none"
+        }
 
-        // Blend weight ramps from 0 to pdpMaxBlend over pdpMinReadings cycles,
-        // scaled by per-hour confidence from PdpLearner
-        val rawBlendWeight = if (pdpEnabled && pdpCleanForBlending && pdpActiveReadings >= pdpMinReadings) {
-            val readingsBeyondMin = (pdpActiveReadings - pdpMinReadings).coerceAtLeast(0)
-            val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMinReadings + 1.0)
-            pdpMaxBlend * rampFraction * pdpLearner.blendWeightConfidenceScale(currentHour)
-        } else 0.0
+        // ── Blend weight ──────────────────────────────────────────────────────
+        // Stuck: ramps from 0 → pdpMaxBlend over pdpMinReadingsStuck cycles, then scales
+        //   by learned blendMult and confidence. Full blend after 2× minReadings.
+        // Rising: starts at 5% of max blend per reading, very slowly building up.
+        //   No sudden jump — the learner adjusts blendMult over time to find the right level.
+        //   Morning rises that need no PDP: blendMult learns down → near-zero blend → no effect.
+        //   Morning rises that need more: blendMult learns up → meaningful blend.
+        val learnedBlendScale = pdpLearner.effectiveBlendMult(currentHour)
+        val rawBlendWeight = if (!pdpEnabled || !pdpCleanForBlending) 0.0
+        else when (pdpActivePathway) {
+            "stuck" -> {
+                val readingsBeyondMin = (pdpStuckHighReadings - pdpMinReadingsStuck).coerceAtLeast(0)
+                val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMinReadingsStuck + 1.0)
+                pdpMaxBlend * rampFraction * pdpLearner.blendWeightConfidenceScale(currentHour) * learnedBlendScale
+            }
+            "rising" -> {
+                // 5% of maxBlend per qualifying reading, capped at maxBlend
+                // At default maxBlend=0.5: 0.025 per reading → needs 20 readings for full blend
+                // Learner then adjusts this cap up or down based on accuracy
+                val risingFraction = minOf(1.0, consecutivePosCiReadings * 0.05)
+                pdpMaxBlend * risingFraction * pdpLearner.blendWeightConfidenceScale(currentHour) * learnedBlendScale
+            }
+            else -> 0.0
+        }
 
         val pdpEffectiveCiStrength      = if (pdpEnabled) pdpLearner.effectiveCiStrength(currentHour, pdpBaseCiStrength) else 1.0
         val pdpEffectiveRisingStrength  = if (pdpEnabled) pdpLearner.effectiveRisingStrength(currentHour, pdpRisingStrength) else 1.0
@@ -1731,9 +1777,74 @@ open class SmartInsulinPlugin @Inject constructor(
         // uses the resistance model (counteract IOB) instead of ci extension.
         // The actual resistance strength is derived from pdpCiStrength inside DetermineBasal.
         // pdpSyntheticCi > 0 = stuck pathway active; 0 = rising pathway or inactive.
-        val pdpSyntheticCi: Double = run {
-            val stuckDominant = pdpStuckHighReadings >= consecutivePosCiReadings && pdpStuckHighReadings > 0
-            if (pdpEnabled && pdpBlendWeight > 0.0 && stuckDominant) 1.0 else 0.0
+        val pdpSyntheticCi: Double =
+            if (pdpEnabled && pdpBlendWeight > 0.0 && pdpActivePathway == "stuck") 1.0 else 0.0
+
+        // ── PDP episode tracking ──────────────────────────────────────────────
+        val currentBgMmolForEpisode = glucoseStatus.glucose / 18.0
+        val warnGuardMmol     = spMgdl(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0
+        val lowGuardMmolEp    = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
+        val profileTargetMmol = profileTargetMgdl / 18.0
+
+        if (pdpEnabled && pdpBlendWeight > 0.0) {
+            val ep = activeEpisode
+            if (ep == null) {
+                // Episode opening — PDP just became active
+                activeEpisode = PdpEpisode(
+                    startTimeMs     = System.currentTimeMillis(),
+                    startHour       = currentHour,
+                    pathway         = pdpActivePathway,
+                    nadirBgMmol     = currentBgMmolForEpisode,
+                    peakBlendWeight = pdpBlendWeight
+                )
+                aapsLogger.debug(LTag.APS,
+                                 "PDP episode OPEN [$pdpActivePathway] BG=${String.format("%.1f", currentBgMmolForEpisode)} blend=${String.format("%.2f", pdpBlendWeight)}")
+            } else {
+                // Episode ongoing — update nadir and peak blend
+                ep.nadirBgMmol     = minOf(ep.nadirBgMmol, currentBgMmolForEpisode)
+                ep.peakBlendWeight = maxOf(ep.peakBlendWeight, pdpBlendWeight)
+                // Force-close if episode has been open too long (4h safety timeout)
+                val durationMins = (System.currentTimeMillis() - ep.startTimeMs) / 60_000.0
+                if (durationMins > 240.0 && pdpLearningEnabled) {
+                    aapsLogger.debug(LTag.APS, "PDP episode TIMEOUT after ${durationMins.toInt()}min — force closing")
+                    pdpLearner.recordEpisodeOutcome(
+                        hour          = ep.startHour,
+                        pathway       = ep.pathway,
+                        landingBgMmol = currentBgMmolForEpisode,
+                        nadirBgMmol   = ep.nadirBgMmol,
+                        durationMins  = durationMins,
+                        warnGuardMmol = warnGuardMmol,
+                        lowGuardMmol  = lowGuardMmolEp,
+                        targetMmol    = profileTargetMmol
+                    )
+                    activeEpisode = null
+                }
+            }
+        } else if (activeEpisode != null) {
+            // Episode closing — blend dropped to 0, BG pathway resolved
+            val ep = activeEpisode!!
+            val durationMins = (System.currentTimeMillis() - ep.startTimeMs) / 60_000.0
+            // Only score if episode lasted at least 15min (avoid micro-episodes from noise)
+            if (durationMins >= 15.0 && pdpLearningEnabled && pdpCleanForBlending) {
+                aapsLogger.debug(LTag.APS,
+                                 "PDP episode CLOSE [${ep.pathway}] " +
+                                     "landing=${String.format("%.1f", currentBgMmolForEpisode)}mmol " +
+                                     "nadir=${String.format("%.1f", ep.nadirBgMmol)}mmol " +
+                                     "dur=${durationMins.toInt()}min")
+                pdpLearner.recordEpisodeOutcome(
+                    hour          = ep.startHour,
+                    pathway       = ep.pathway,
+                    landingBgMmol = currentBgMmolForEpisode,
+                    nadirBgMmol   = ep.nadirBgMmol,
+                    durationMins  = durationMins,
+                    warnGuardMmol = warnGuardMmol,
+                    lowGuardMmol  = lowGuardMmolEp,
+                    targetMmol    = profileTargetMmol
+                )
+            } else if (durationMins < 15.0) {
+                aapsLogger.debug(LTag.APS, "PDP episode DISCARDED — too short (${durationMins.toInt()}min < 15min)")
+            }
+            activeEpisode = null
         }
 
         // Capture for next-cycle accuracy scoring and display
@@ -1748,7 +1859,7 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "ciStr=${"%.2f".format(pdpEffectiveCiStrength)} risingStr=${"%.2f".format(pdpEffectiveRisingStrength)} " +
                                  "fade=${pdpEffectiveFadeMins.toInt()}m " +
                                  "ci=${"%.1f".format(ciMgdl)}mg/dL " +
-                                 "readings: ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings min=$pdpMinReadings")
+                                 "readings: ci=$consecutivePosCiReadings stuck=$pdpStuckHighReadings minStuck=$pdpMinReadingsStuck blendScale=${"%.2f".format(learnedBlendScale)}")
         }
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
