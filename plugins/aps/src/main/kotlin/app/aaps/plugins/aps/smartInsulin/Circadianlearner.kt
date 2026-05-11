@@ -487,37 +487,14 @@ class CircadianLearner @Inject constructor(
 
                 when {
                     aboveBand -> {
-                        // Not enough insulin — trim ceiling UP (more aggressive)
-                        if (readyToReassess) {
-                            val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                            trimStrength   = magnitude
-                            trimDirection  = +1
-                            if (!trimActive) { trimActive = true; trimStartMs = now }
-
-                            val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
-                                .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
-                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
-
-                            val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
-                            val d = dow.coerceIn(0, 6)
-                            // aboveBand = need more insulin → mult UP → dosingISF DOWN → more aggressive ✓
-                            // Skip only if physics ALSO moved mult UP (same direction — redundant).
-                            // If physics moved DOWN (conflict), apply trim to counteract.
-                            if (isfPhysicsDirection != 1) {
-                                isfState = isfState.updatedDayOnly(dow, hour,
-                                                                   (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
-                            } else {
-                                aapsLogger.debug(LTag.APS, "FuelTrim[+] ISF nudge skipped — physics already moved mult UP (dir=$isfPhysicsDirection)")
-                            }
-                            basalState = basalState.updatedDayOnly(dow, hour,
-                                                                   (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
-
-                            aapsLogger.debug(LTag.APS,
-                                             "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                                 "mag=${"%.3f".format(magnitude)} → ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
-                        } else {
-                            aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding extra insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
-                        }
+                        // Above-target correction is now handled by PDP episode learner.
+                        // FuelTrim aboveBand path deliberately disabled — PDP's stuck-high
+                        // pathway and episode outcome feedback to CircadianLearner replace this.
+                        // Keeping trimStrength=0 when above target prevents compounding with PDP.
+                        trimStrength  = 0.0
+                        trimActive    = false
+                        trimDirection = 0
+                        aapsLogger.debug(LTag.APS, "FuelTrim[+] disabled — PDP handles above-target correction (h=$hour avgBg=${"%.1f".format(avgBg)})")
                     }
                     belowBand -> {
                         // Too much insulin — trim ceiling DOWN (less aggressive)
@@ -1157,6 +1134,67 @@ class CircadianLearner @Inject constructor(
     // ── Status summary for tab UI ─────────────────────────────────────────────
 
     /** Average confidence across ISF/basal/aggr for a given hour and day, as 0–100 */
+    // ── PDP episode feedback ─────────────────────────────────────────────────
+    /**
+     * Called by SmartInsulinPlugin when a PDP episode closes with a scored outcome.
+     * Nudges CircadianLearner's per-hour ISF and basal multipliers based on whether
+     * the episode correction was too much, too little, or just right.
+     *
+     * PERFECT / GOOD / PARTIAL → hold (don't touch what's working or nearly working)
+     * MISSED                   → ISF mult DOWN + basal mult UP (need more aggression)
+     * OVERSHOT                 → ISF mult UP + basal mult DOWN (too much insulin)
+     * SEVERE_LOW               → stronger pull in same direction as OVERSHOT
+     *
+     * Uses ISF_ALPHA_SLOW (0.12) — same authority as the episode learner, ground truth signal.
+     * dosingISF = profileISF / isfMult, so mult DOWN = more aggressive.
+     */
+    fun nudgeIsfFromPdpEpisode(
+        hour:    Int,
+        dow:     Int = currentDow(),
+        outcome: String  // "PERFECT", "GOOD", "PARTIAL", "MISSED", "OVERSHOT", "SEVERE_LOW"
+    ) {
+        val d        = dow.coerceIn(0, 6)
+        val h        = hour.coerceIn(0, 23)
+        val isfCurr  = isfState.days[d].get(h)
+        val basCurr  = basalState.days[d].get(h)
+
+        // Only nudge on definitive outcomes — hold on PERFECT, GOOD, PARTIAL
+        val (isfTarget, basTarget) = when (outcome) {
+            "MISSED"     -> {
+                // Need more insulin: ISF mult DOWN (more aggressive), basal mult UP
+                Pair(
+                    (isfCurr * 0.97).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (basCurr * 1.03).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                )
+            }
+            "OVERSHOT"   -> {
+                // Too much insulin: ISF mult UP (less aggressive), basal mult DOWN
+                Pair(
+                    (isfCurr * 1.03).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (basCurr * 0.97).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                )
+            }
+            "SEVERE_LOW" -> {
+                // Significantly too much insulin: stronger pull
+                Pair(
+                    (isfCurr * 1.06).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (basCurr * 0.94).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                )
+            }
+            else -> return  // PERFECT, GOOD, PARTIAL — hold completely, don't touch
+        }
+
+        isfState   = isfState.updatedDayOnly(dow, h, isfTarget, ISF_ALPHA_SLOW)
+        basalState = basalState.updatedDayOnly(dow, h, basTarget, BASAL_ALPHA)
+
+        aapsLogger.debug(LTag.APS,
+                         "CircadianLearner[PDP episode h=$h $outcome]: " +
+                             "isf ${"%.3f".format(isfCurr)}→${"%.3f".format(isfState.days[d].get(h))} " +
+                             "bas ${"%.3f".format(basCurr)}→${"%.3f".format(basalState.days[d].get(h))}")
+
+        persist()
+    }
+
     fun confidencePct(hour: Int, dow: Int = currentDow()): Double {
         val h = hour.coerceIn(0, 23)
         return ((isfState.getConfidence(dow, h) + basalState.getConfidence(dow, h) + aggrState.getConfidence(dow, h)) / 3.0) * 100.0

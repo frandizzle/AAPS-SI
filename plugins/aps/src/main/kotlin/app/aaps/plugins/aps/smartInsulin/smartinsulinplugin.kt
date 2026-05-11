@@ -1817,6 +1817,12 @@ open class SmartInsulinPlugin @Inject constructor(
                         lowGuardMmol  = lowGuardMmolEp,
                         targetMmol    = profileTargetMmol
                     )
+                    // Timeout with BG still above target = missed correction
+                    circadianLearner.nudgeIsfFromPdpEpisode(
+                        hour    = ep.startHour,
+                        dow     = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+                        outcome = if (currentBgMmolForEpisode > profileTargetMmol + 1.0) "MISSED" else "PARTIAL"
+                    )
                     activeEpisode = null
                 }
             }
@@ -1831,6 +1837,7 @@ open class SmartInsulinPlugin @Inject constructor(
                                      "landing=${String.format("%.1f", currentBgMmolForEpisode)}mmol " +
                                      "nadir=${String.format("%.1f", ep.nadirBgMmol)}mmol " +
                                      "dur=${durationMins.toInt()}min")
+                // Score PDP learner (blend/strength/fade)
                 pdpLearner.recordEpisodeOutcome(
                     hour          = ep.startHour,
                     pathway       = ep.pathway,
@@ -1840,6 +1847,30 @@ open class SmartInsulinPlugin @Inject constructor(
                     warnGuardMmol = warnGuardMmol,
                     lowGuardMmol  = lowGuardMmolEp,
                     targetMmol    = profileTargetMmol
+                )
+
+                // Determine outcome label for CircadianLearner
+                val severeOvershot = ep.nadirBgMmol < lowGuardMmolEp
+                val overshot       = ep.nadirBgMmol < warnGuardMmol
+                val perfectLanding = !overshot
+                    && currentBgMmolForEpisode >= (profileTargetMmol - 0.3)
+                    && currentBgMmolForEpisode <= (profileTargetMmol + 0.3)
+                val missed = !overshot && currentBgMmolForEpisode > (profileTargetMmol + 1.0)
+                val circOutcome = when {
+                    severeOvershot -> "SEVERE_LOW"
+                    overshot       -> "OVERSHOT"
+                    perfectLanding -> "PERFECT"
+                    missed         -> "MISSED"
+                    else           -> "PARTIAL"
+                }
+
+                // Feed episode outcome into CircadianLearner — long-term ISF/basal calibration
+                // This replaces what fuel trim aboveBand was doing, but using real outcome data
+                // rather than a proxy "BG has been above target for X minutes" signal.
+                circadianLearner.nudgeIsfFromPdpEpisode(
+                    hour    = ep.startHour,
+                    dow     = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+                    outcome = circOutcome
                 )
             } else if (durationMins < 15.0) {
                 aapsLogger.debug(LTag.APS, "PDP episode DISCARDED — too short (${durationMins.toInt()}min < 15min)")
@@ -2033,7 +2064,12 @@ open class SmartInsulinPlugin @Inject constructor(
             targetRespectEnabled     = true,
             reboundWindowMins        = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toDouble(),
             circCeil                 = circAggrCeil,
-            fuelTrimStrength         = circadianLearner.trimStrength,
+            // Fuel trim aboveBand path is disabled — PDP handles above-target correction.
+            // Only pass trimStrength when it's negative (belowBand — BG running too low)
+            // and PDP is not actively blending. When PDP is active, both are zeroed to
+            // prevent any compounding of ISF adjustments.
+            fuelTrimStrength         = if (cachedPdpBlendWeight > 0.05) 0.0
+            else circadianLearner.trimStrength.coerceAtMost(0.0),
             isMmol                   = isMmol,
             // PDP params
             pdpEnabled               = pdpEnabled,
