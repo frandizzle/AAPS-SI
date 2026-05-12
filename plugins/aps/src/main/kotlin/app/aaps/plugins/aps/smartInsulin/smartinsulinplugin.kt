@@ -2163,14 +2163,20 @@ open class SmartInsulinPlugin @Inject constructor(
         // the full meal shape even if BolusCurveTracker is paused.
         // Only skips when sensor is completely unreliable (warmup).
         if (!cgmInWarmup) {
+            // firstBolusEpochMs: use lastBolusTime from IOB array — this is epoch ms of the most
+            // recent bolus (PB1 for a new meal session). 0 if no bolus recorded yet.
+            val firstBolusEpochMs = iobArray.firstOrNull()?.lastBolusTime ?: 0L
             mealPhaseTracker.onLoopCycle(
-                now           = now,
-                mealMode      = mealMode,
-                bgMmol        = glucoseStatus.glucose / 18.0,
-                shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
-                delta         = glucoseStatus.delta / 18.0,
-                targetBgMmol  = profile.getTargetMgdl() / 18.0,
-                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
+                now                = now,
+                mealMode           = mealMode,
+                bgMmol             = glucoseStatus.glucose / 18.0,
+                shortAvgDelta      = glucoseStatus.shortAvgDelta / 18.0,
+                delta              = glucoseStatus.delta / 18.0,
+                targetBgMmol       = profile.getTargetMgdl() / 18.0,
+                lowGuardMmol       = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
+                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
+                firstBolusEpochMs  = firstBolusEpochMs,
+                smbsDeliveredU     = apsResult.smb.coerceAtLeast(0.0)
             )
         }
 

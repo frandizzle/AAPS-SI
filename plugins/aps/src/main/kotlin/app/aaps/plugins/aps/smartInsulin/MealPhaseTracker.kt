@@ -123,9 +123,32 @@ class MealPhaseTracker @Inject constructor(
     private var pfPhaseWentHigh       = false
 
     // Time gates
-    private val CARB_LOW_GATE_MS       = 20 * 60_000L  // ignore lows in first 20 min of carb phase
-    private val PF_HIGH_THRESHOLD_MMOL = 10.0           // sustained above this = under-delivery
-    private val PFHIGH_CONFIRM_READINGS = 3             // 3 consecutive readings = 15 min sustained
+    private val CARB_LOW_GATE_MS        = 20 * 60_000L  // ignore lows in first 20 min of carb phase
+    private val PF_HIGH_THRESHOLD_MMOL  = 10.0           // sustained above this = under-delivery
+    private val PFHIGH_CONFIRM_READINGS = 3              // 3 consecutive readings = 15 min sustained
+
+    // IOB-peak fallback for CARB→P/F transition.
+    // If delta-based gate hasn't fired by this offset from first bolus delivery, force the handoff.
+    // 75 min = typical NovoRapid peak offset. Prevents a perfect prebolus suppressing the signal.
+    private val INSULIN_PEAK_OFFSET_MS  = 75 * 60_000L
+
+    // ── IOB / insulin tracking ────────────────────────────────────────────────
+
+    // Epoch ms of the first bolus for this session (PB1 or manual start).
+    // Supplied each cycle via onLoopCycle — 0L until first bolus is known.
+    private var firstBolusMs: Long = 0L
+
+    // IOB snapshots at phase boundaries — primary learning signal
+    private var iobAtCarbExit: Double = 0.0
+    private var iobAtPfExit:   Double = 0.0
+
+    // Running AUC above target per phase (mmol·min — (bg - target) × 5 each cycle, floored at 0)
+    private var bgAucCarbPhase: Double = 0.0
+    private var bgAucPfPhase:   Double = 0.0
+    private var bgAucTailPhase: Double = 0.0
+
+    // Total SMBs delivered during this session (beyond prebolus)
+    private var totalSmbsDeliveredU: Double = 0.0
 
     // ── Display / debug ───────────────────────────────────────────────────────
 
@@ -164,7 +187,17 @@ class MealPhaseTracker @Inject constructor(
         // High flag: P/F only — sustained (3+ readings) above PF_HIGH_THRESHOLD_MMOL
         // Carb phase high is normal without prebolus — not tracked
         val pfPhaseWentHigh:     Boolean,   // ISF too conservative during plateau
-        val isClean:             Boolean    // true = no confounders, best for learning
+        val isClean:             Boolean,   // true = no confounders, best for learning
+        // ── IOB / insulin context ────────────────────────────────────────────
+        val iobAtCarbExit:       Double,    // IOB (U) when CARB→P/F fired — high = prebolus still active
+        val iobAtPfExit:         Double,    // IOB (U) when P/F→TAIL fired — near 0 = tail is unprotected
+        val totalSmbsDeliveredU: Double,    // SMBs fired during session (beyond prebolus)
+        // ── BG area-above-target per phase (mmol·min) ─────────────────────────
+        // 0 = BG never exceeded target during that phase (perfect prebolus)
+        // High = prolonged elevation — learning signal for dose insufficiency
+        val bgAucCarbMmolMin:    Double,
+        val bgAucPfMmolMin:      Double,
+        val bgAucTailMmolMin:    Double
     ) {
         val totalDurationMs: Long get() = sessionEndMs - sessionStartMs
         val totalDurationMins: Double get() = totalDurationMs / 60_000.0
@@ -190,17 +223,28 @@ class MealPhaseTracker @Inject constructor(
      * @param lowGuardMmol  Low guard threshold in mmol/L
      */
     fun onLoopCycle(
-        now:           Long,
-        mealMode:      MealMode,
-        bgMmol:        Double,
-        shortAvgDelta: Double,
-        delta:         Double  = shortAvgDelta,   // defaults to shortAvgDelta if not supplied
-        targetBgMmol:  Double,
-        lowGuardMmol:  Double = 4.0
+        now:                Long,
+        mealMode:           MealMode,
+        bgMmol:             Double,
+        shortAvgDelta:      Double,
+        delta:              Double = shortAvgDelta,
+        targetBgMmol:       Double,
+        lowGuardMmol:       Double = 4.0,
+        iobU:               Double = 0.0,           // current total IOB in units
+        firstBolusEpochMs:  Long   = 0L,            // epoch ms of PB1/first meal bolus (0 = unknown)
+        smbsDeliveredU:     Double = 0.0            // SMBs fired THIS cycle (not cumulative)
     ) {
         val wasFasting    = lastMealMode == MealMode.FASTING
         val isFasting     = mealMode    == MealMode.FASTING
         val modeChanged   = mealMode != lastMealMode
+
+        // Track first bolus timestamp — set once, never overwritten
+        if (sessionActive && firstBolusMs == 0L && firstBolusEpochMs > 0L)
+            firstBolusMs = firstBolusEpochMs
+
+        // Accumulate SMBs delivered this session
+        if (sessionActive && smbsDeliveredU > 0.0)
+            totalSmbsDeliveredU += smbsDeliveredU
 
         // ── Session start ─────────────────────────────────────────────────────
         if (wasFasting && !isFasting) {
@@ -299,6 +343,15 @@ class MealPhaseTracker @Inject constructor(
 
         // ── Track per-phase BG extremes and outcome flags ─────────────────────
         val carbPhaseElapsed = if (currentPhase == MealPhase.CARB) now - phaseStartMs else Long.MAX_VALUE
+
+        // Accumulate BG area-above-target per phase every cycle (5-min interval assumed)
+        val bgExcess = (bgMmol - targetBgMmol).coerceAtLeast(0.0)
+        when (currentPhase) {
+            MealPhase.CARB        -> bgAucCarbPhase += bgExcess * 5.0
+            MealPhase.PROTEIN_FAT -> bgAucPfPhase   += bgExcess * 5.0
+            MealPhase.TAIL        -> bgAucTailPhase  += bgExcess * 5.0
+        }
+
         when (currentPhase) {
             MealPhase.CARB -> {
                 if (bgMmol > carbPhasePeakBgMmol) carbPhasePeakBgMmol = bgMmol
@@ -358,31 +411,34 @@ class MealPhaseTracker @Inject constructor(
         when (currentPhase) {
 
             MealPhase.CARB -> {
-                // Transition to P/F when:
-                // 1. Minimum carb phase time elapsed (40 min)
-                // 2. Delta is slowing — recent smoothed avg < early avg (history-based)
-                // 3. BOTH smoothed avg AND instantaneous delta below exit threshold
-                //
-                // WHY both signals: shortAvgDelta is a weighted average that lags behind
-                // the current reading. During a gradual Low Carb rise, shortAvgDelta can
-                // remain above 0.15 for many readings after BG has truly plateaued because
-                // it still reflects the earlier rising readings. Requiring the instantaneous
-                // delta to also be below the threshold ensures we detect the plateau as
-                // soon as it actually happens, not 15-20 min later.
+                // Transition to P/F when EITHER:
+                //   A) BG-delta gate: min time elapsed + delta slowing + both avg & instant below threshold
+                //   B) IOB-peak fallback: firstBolus + INSULIN_PEAK_OFFSET_MS has passed
+                //      This handles perfect prebolus sessions where BG barely rises —
+                //      delta never climbs high enough to trigger the delta gate, so we
+                //      fall back to insulin pharmacokinetics: at 75min post-bolus, peak
+                //      IOB has passed and the carb phase is physiologically over.
+                val iobPeakPassed = firstBolusMs > 0L && (now - firstBolusMs) >= INSULIN_PEAK_OFFSET_MS
+
                 if (phaseElapsedMs >= CARB_MIN_MS) {
                     val deltaSlowing    = avgRecentDelta < avgEarlyDelta - 0.05
                     val avgDeltaLow     = avgRecentDelta < CARB_EXIT_DELTA_MMOL
-                    val instantDeltaLow = delta < CARB_EXIT_DELTA_MMOL + 0.05  // slightly more lenient for instantaneous
-
-                    // Both smoothed AND instantaneous must agree — prevents single noisy
-                    // reading from triggering transition, while also not blocking when the
-                    // smoothed average lags behind a genuine plateau.
-                    // deltaSlowing only required when earlyAvgDelta is meaningful (>= 6 history entries).
+                    val instantDeltaLow = delta < CARB_EXIT_DELTA_MMOL + 0.05
                     val hasEarlyHistory = deltaHistory.size >= 6
-                    val transitionReady = avgDeltaLow && instantDeltaLow &&
-                        (!hasEarlyHistory || deltaSlowing)
+                    val deltaGate       = avgDeltaLow && instantDeltaLow && (!hasEarlyHistory || deltaSlowing)
+
+                    val transitionReady = deltaGate || iobPeakPassed
 
                     if (transitionReady) {
+                        // Snapshot IOB at carb exit before handing off
+                        iobAtCarbExit = iobU
+                        val reason = when {
+                            deltaGate && iobPeakPassed -> "delta+iobPeak"
+                            iobPeakPassed              -> "iobPeak (prebolus suppressed spike)"
+                            else                       -> "delta"
+                        }
+                        aapsLogger.debug(LTag.APS,
+                                         "MealPhaseTracker CARB→P/F via $reason iobAtExit=${"%.2f".format(iobAtCarbExit)}U")
                         confirmTransition(MealPhase.PROTEIN_FAT, now, phaseElapsedMs)
                     } else {
                         resetTransitionCandidate()
@@ -391,8 +447,8 @@ class MealPhaseTracker @Inject constructor(
                                      "MealPhaseTracker CARB check: elapsed=${phaseElapsedMs/60_000}min " +
                                          "avgRecent=${"%.3f".format(avgRecentDelta)} avgEarly=${"%.3f".format(avgEarlyDelta)} " +
                                          "instant=${"%.3f".format(delta)} " +
-                                         "avgLow=$avgDeltaLow instLow=$instantDeltaLow slowing=$deltaSlowing " +
-                                         "hasHistory=$hasEarlyHistory confirm=$transitionCandidateCount/$TRANSITION_CONFIRM_READINGS")
+                                         "deltaGate=$deltaGate iobPeakPassed=$iobPeakPassed " +
+                                         "confirm=$transitionCandidateCount/$TRANSITION_CONFIRM_READINGS")
                     lastTransitionDebug = buildString {
                         append("CARB→P/F gates (${phaseElapsedMs/60_000}min elapsed):\n")
                         append("  avgΔ ${"%.2f".format(avgRecentDelta)} mmol  ")
@@ -408,6 +464,12 @@ class MealPhaseTracker @Inject constructor(
                         } else {
                             append("  slowing — skip (history building ${deltaHistory.size}/6)\n")
                         }
+                        val bolusAgeMin = if (firstBolusMs > 0L) (now - firstBolusMs) / 60_000 else -1L
+                        append("  IOB-peak fallback: ")
+                        append(if (iobPeakPassed) "✓ fired (bolus ${bolusAgeMin}min ago)"
+                               else if (firstBolusMs > 0L) "✗ ${bolusAgeMin}min / 75min"
+                        else "✗ no bolus time known")
+                        append("\n")
                         val confirmStr = if (transitionCandidateCount > 0)
                             "  confirm $transitionCandidateCount/$TRANSITION_CONFIRM_READINGS readings"
                         else
@@ -430,6 +492,9 @@ class MealPhaseTracker @Inject constructor(
                     val deltaNegative   = avgNegative || instantNegative  // either signal is sufficient — avg lags
 
                     if (deltaNegative && bgAboveTarget) {
+                        iobAtPfExit = iobU  // snapshot IOB at P/F→TAIL handoff
+                        aapsLogger.debug(LTag.APS,
+                                         "MealPhaseTracker P/F→TAIL iobAtExit=${"%.2f".format(iobAtPfExit)}U")
                         confirmTransition(MealPhase.TAIL, now, phaseElapsedMs)
                     } else {
                         resetTransitionCandidate()
@@ -584,6 +649,13 @@ class MealPhaseTracker @Inject constructor(
         deltaHistory.clear()
         transitionCandidateCount = 0
         transitionCandidatePhase = null
+        firstBolusMs             = 0L
+        iobAtCarbExit            = 0.0
+        iobAtPfExit              = 0.0
+        bgAucCarbPhase           = 0.0
+        bgAucPfPhase             = 0.0
+        bgAucTailPhase           = 0.0
+        totalSmbsDeliveredU      = 0.0
 
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
@@ -643,7 +715,13 @@ class MealPhaseTracker @Inject constructor(
             pfPhaseWentLow      = pfPhaseWentLow,
             tailPhaseWentLow    = tailPhaseWentLow,
             pfPhaseWentHigh     = pfPhaseWentHigh,
-            isClean             = !manualBolusDetected
+            isClean             = !manualBolusDetected,
+            iobAtCarbExit       = iobAtCarbExit,
+            iobAtPfExit         = iobAtPfExit,
+            totalSmbsDeliveredU = totalSmbsDeliveredU,
+            bgAucCarbMmolMin    = bgAucCarbPhase,
+            bgAucPfMmolMin      = bgAucPfPhase,
+            bgAucTailMmolMin    = bgAucTailPhase
         )
 
         val nadirDisplay = if (session.tailNadirBgMmol < Double.MAX_VALUE / 2)
@@ -683,6 +761,13 @@ class MealPhaseTracker @Inject constructor(
         deltaHistory.clear()
         transitionCandidateCount = 0
         transitionCandidatePhase = null
+        firstBolusMs             = 0L
+        iobAtCarbExit            = 0.0
+        iobAtPfExit              = 0.0
+        bgAucCarbPhase           = 0.0
+        bgAucPfPhase             = 0.0
+        bgAucTailPhase           = 0.0
+        totalSmbsDeliveredU      = 0.0
     }
 
     // ── Delta helpers ─────────────────────────────────────────────────────────

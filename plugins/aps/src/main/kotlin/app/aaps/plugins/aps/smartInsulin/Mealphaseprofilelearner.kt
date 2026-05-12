@@ -155,66 +155,93 @@ class MealPhaseProfileLearner @Inject constructor(
 
         val prev = p.copy()
 
+        // ── IOB context — modifies learning weight ────────────────────────────
+        // High IOB at carb exit = prebolus still active during P/F = less ISF correction needed.
+        // Low IOB at P/F exit  = tail is unprotected = tail ISF matters more.
+        // We use these as confidence/weight modifiers, not as primary signals.
+        val highIobAtCarbExit = session.iobAtCarbExit > 1.0   // >1U IOB still active into P/F
+        val lowIobAtPfExit    = session.iobAtPfExit < 0.3     // <0.3U IOB entering tail = exposed
+
+        // BG AUC context — did BG ever meaningfully exceed target in this phase?
+        // Low AUC means the prebolus/SMBs covered it well — don't penalise or reward aggressively.
+        val carbWellCovered   = session.bgAucCarbMmolMin < 15.0   // <15 mmol·min ≈ <3mmol avg over 5min
+        val pfWellCovered     = session.bgAucPfMmolMin   < 20.0
+        val tailWellCovered   = session.bgAucTailMmolMin < 10.0
+
         // ── Carb phase — SMB fraction multiplier ─────────────────────────────
         when {
             session.carbPhaseWentLow -> {
                 // Low during carbs = SMBs too aggressive → cut fraction
                 p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 - LOW_PENALTY)).coerceIn(MULT_MIN, MULT_MAX)
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] CARB LOW penalty: " +
+                                 "MealPhaseProfileLearner [${session.mode.label}] CARB LOW: " +
+                                     "iobAtExit=${"%.2f".format(session.iobAtCarbExit)}U auc=${"%.1f".format(session.bgAucCarbMmolMin)}mmol·min " +
                                      "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
             }
-            session.manualBolusDetected -> {
-                // Manual top-up needed = SMBs delivered too little → nudge fraction up
+            session.manualBolusDetected && !carbWellCovered -> {
+                // Manual top-up AND BG was elevated = genuinely under-delivered → nudge fraction up
                 p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 + MANUAL_NUDGE)).coerceIn(MULT_MIN, MULT_MAX)
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] CARB manual bolus nudge: " +
+                                 "MealPhaseProfileLearner [${session.mode.label}] CARB manual+highAUC: " +
                                      "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
             }
-            else -> {
-                // Clean session — slow drift back toward 1.0
+            carbWellCovered && !session.carbPhaseWentLow -> {
+                // BG stayed near target during carb phase — prebolus worked, drift toward 1.0
                 p.carbSmbFractionMult = drift(p.carbSmbFractionMult)
+            }
+            else -> {
+                // Elevated AUC but no low and no manual bolus — hold, don't drift
+                // (marginal over-coverage — not enough signal to act on)
             }
         }
 
         // ── P/F phase — ISF multiplier ────────────────────────────────────────
+        // If IOB was still high at carb exit, the prebolus was doing the work during P/F.
+        // In that case, weight down the ISF penalty — the loop wasn't the cause.
+        val pfLowPenalty = if (highIobAtCarbExit) LOW_PENALTY * 0.5 else LOW_PENALTY
         when {
             session.pfPhaseWentLow -> {
-                // Low during plateau = ISF too aggressive → raise ISF mult (less aggressive)
-                p.pfIsfMult = (p.pfIsfMult * (1.0 + LOW_PENALTY)).coerceIn(MULT_MIN, MULT_MAX)
+                p.pfIsfMult = (p.pfIsfMult * (1.0 + pfLowPenalty)).coerceIn(MULT_MIN, MULT_MAX)
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] P/F LOW penalty: " +
+                                 "MealPhaseProfileLearner [${session.mode.label}] P/F LOW (penalty×${if (highIobAtCarbExit) "0.5" else "1.0"}): " +
+                                     "iobAtCarbExit=${"%.2f".format(session.iobAtCarbExit)}U " +
                                      "pfIsfMult ${"%.3f".format(prev.pfIsfMult)}→${"%.3f".format(p.pfIsfMult)}")
             }
-            session.pfPhaseWentHigh -> {
-                // Sustained high during plateau = ISF too conservative → lower ISF mult (more aggressive)
-                // Smaller step than low penalty — high is less urgent than low
+            session.pfPhaseWentHigh && !highIobAtCarbExit -> {
+                // Sustained high AND prebolus IOB was already gone = genuinely under-delivered in P/F
                 p.pfIsfMult = (p.pfIsfMult * (1.0 - PF_HIGH_NUDGE)).coerceIn(MULT_MIN, MULT_MAX)
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] P/F HIGH nudge: " +
+                                 "MealPhaseProfileLearner [${session.mode.label}] P/F HIGH (iob low at entry): " +
                                      "pfIsfMult ${"%.3f".format(prev.pfIsfMult)}→${"%.3f".format(p.pfIsfMult)}")
             }
-            else -> {
+            pfWellCovered -> {
                 p.pfIsfMult = drift(p.pfIsfMult)
             }
+            else -> { /* elevated but prebolus covering — hold */ }
         }
 
         // ── Tail phase — ISF multiplier ───────────────────────────────────────
+        // Low IOB at P/F exit means the tail is running without insulin cover — crash risk is real.
+        // High IOB at P/F exit means IOB is still dropping BG — tail ISF should be conservative.
+        val tailLowPenalty = if (lowIobAtPfExit) LOW_PENALTY * 1.2 else LOW_PENALTY  // amplify if exposed
         when {
             session.tailPhaseWentLow -> {
-                // Low during tail = taper too slow / ISF too aggressive → raise ISF mult
-                p.tailIsfMult = (p.tailIsfMult * (1.0 + LOW_PENALTY)).coerceIn(MULT_MIN, MULT_MAX)
+                p.tailIsfMult = (p.tailIsfMult * (1.0 + tailLowPenalty)).coerceIn(MULT_MIN, MULT_MAX)
                 aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] TAIL LOW penalty: " +
+                                 "MealPhaseProfileLearner [${session.mode.label}] TAIL LOW (iobAtPfExit=${"%.2f".format(session.iobAtPfExit)}U penalty×${if (lowIobAtPfExit) "1.2" else "1.0"}): " +
                                      "tailIsfMult ${"%.3f".format(prev.tailIsfMult)}→${"%.3f".format(p.tailIsfMult)}")
             }
-            else -> {
+            tailWellCovered -> {
                 p.tailIsfMult = drift(p.tailIsfMult)
             }
+            else -> { /* tail elevated but not crashed — hold */ }
         }
 
         aapsLogger.debug(LTag.APS,
-                         "MealPhaseProfileLearner [${session.mode.label}] session #${p.sessionCount} complete " +
+                         "MealPhaseProfileLearner [${session.mode.label}] session #${p.sessionCount} " +
+                             "iobCarb=${"%.2f".format(session.iobAtCarbExit)}U iobPf=${"%.2f".format(session.iobAtPfExit)}U " +
+                             "smbs=${"%.2f".format(session.totalSmbsDeliveredU)}U " +
+                             "auc=carb${"%.0f".format(session.bgAucCarbMmolMin)}/pf${"%.0f".format(session.bgAucPfMmolMin)}/tail${"%.0f".format(session.bgAucTailMmolMin)} " +
                              "clean=${session.isClean} → $p")
 
         saveProfile(p)
