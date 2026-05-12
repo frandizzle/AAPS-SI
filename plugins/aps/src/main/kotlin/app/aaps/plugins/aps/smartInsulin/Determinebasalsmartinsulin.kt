@@ -108,9 +108,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         pdpBlendWeight:           Double  = 0.0,     // 0.0=primary only, 1.0=secondary only
         fastingMaxIobU:           Double  = 0.0,     // 0.0 = disabled (use global max IOB)
         pdpSyntheticCi:           Double  = 0.0,     // >0 = stuck-high pathway active
-        pdpRisingStrength:        Double  = 1.0,     // rising pathway ci scale (0.5-1.5, separate from stuck-high)
-        pdpStuckHighReadings:     Int     = 0,       // consecutive cycles BG has been stuck above target
-        pdpMinReadingsStuck:      Int     = 3        // readings needed before stuck pathway fires
+        pdpRisingStrength:        Double  = 1.0      // rising pathway ci scale (0.5-1.5, separate from stuck-high)
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -247,47 +245,26 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // ── Stuck-high dosing minimum: direct formula, not curve minimum ───────
             //
             // The curve approach (predMin = min of secondary curve) fails when IOB is
-            // large: even after lifting the secondary curve, the post-peak minimum still
-            // sits near or below target, giving gap≈0. The fundamental issue is that
-            // curve minimums are dominated by IOB physics regardless of ciStrength.
-            //
-            // Correct model: "BG has been stuck for N readings — it will fall at most
-            // 1/ciStrength of what IOB predicts." Set pdpPredMin directly:
-            //
-            //   pdpPredMin = currentBg - primaryTotalDrop / ciStrength
-            //
-            // stuckFraction scales 0→1 as pdpStuckHighReadings grows beyond minReadings,
-            // so the dosing minimum ramps smoothly from the primary curve minimum
-            // (no PDP effect) up toward currentBg - primaryDrop/ci (full resistance).
-            // This matches the blend ramp already used for pdpBlendWeight.
-            //
-            //   stuckFraction=0 → pdpPredMin = primaryCurveMin (no resistance)
-            //   stuckFraction=1 → pdpPredMin = currentBg - primaryDrop/ci (full)
-            //
-            // The graph curve (pdpPredictedBg) is unchanged — it still shows the
-            // secondary curve shape. Safety minimum (pdpPredMinSafety) is unchanged.
+            // The graph curve (pdpPredictedBg) is unchanged — displays the secondary
+            // curve shape. Safety minimum (pdpPredMinSafety) is unchanged.
             pdpPredMin = if (isStuckHigh) {
-                // ── Direct anchor: pdpPredMin = currentBg when fully stuck ─────────
+                // Stuck-high: pdpPredMin = currentBg.
                 //
-                // The curve-derived resistedMin (currentBg - primaryDrop/ci) still
-                // produces gap≈0 when primaryDrop is large relative to currentBg-target.
-                // The correct model is: "BG is stuck — I don't believe it will fall
-                // at all." So pdpPredMin = currentBg at full stuck.
+                // "BG is stuck — I don't believe it will fall." The gradual ramp is
+                // already handled by pdpBlendWeight in the plugin (0→maxBlend over
+                // pdpMinReadingsStuck cycles). Adding a stuckFraction ramp here would
+                // double-ramp: blendWeight ramps AND predMin ramps, compounding in a
+                // way that's hard to reason about. Keep it simple — blend owns the ramp,
+                // DetermineBasal just anchors pdpPredMin to currentBg.
                 //
-                // ciStrength still controls aggressiveness via the ISF blend:
+                // blendedPredMin = predictedMin*(1-blend) + currentBg*blend
+                // As blend ramps 0→maxBlend, blendedPredMin naturally ramps from
+                // predictedMin toward currentBg. That's the ramp. One mechanism, clear.
+                //
+                // ciStrength controls aggressiveness via the ISF blend:
                 //   effectiveISF = primaryISF*(1-blend) + (primaryISF/ci)*blend
-                // Higher ci → lower effective ISF → more units per mmol gap.
-                //
-                // stuckFraction ramps 0→1 as readings accumulate, interpolating from
-                // the primary curve minimum (no effect) up to currentBg (full stuck).
-                // Matches the blend weight ramp already used in the plugin.
-                val primaryCurveMin = pdpPredictedBg.drop(insulinPeakTicks)
-                    .minOrNull() ?: (pdpPredictedBg.minOrNull() ?: currentBg)
-                val readingsBeyond  = (pdpStuckHighReadings - pdpMinReadingsStuck).coerceAtLeast(0)
-                val stuckFraction   = minOf(1.0, readingsBeyond.toDouble() / pdpMinReadingsStuck.coerceAtLeast(1) + 1.0)
-                // At stuckFraction=0: pdpPredMin = primaryCurveMin (no PDP effect)
-                // At stuckFraction=1: pdpPredMin = currentBg (full resistance — BG not moving)
-                primaryCurveMin * (1.0 - stuckFraction) + currentBg * stuckFraction
+                // Higher ci → lower effectiveISF → more units per mmol gap.
+                currentBg
             } else {
                 // Rising pathway: curve minimum is already above primary (ci term lifts it)
                 if (pdpPredictedBg.size > insulinPeakTicks)

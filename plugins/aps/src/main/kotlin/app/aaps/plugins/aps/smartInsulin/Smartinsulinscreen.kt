@@ -1381,13 +1381,13 @@ private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
             Text("No sessions completed yet. Complete a full carb→P/F→tail session to begin learning.",
                  fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            modesWithData.forEach { (mode, summary) ->
+            for ((mode, summary) in modesWithData) {
                 val multSummary = d.mealPhaseModeSummaries[mode] ?: ""
                 MealFingerprintRow(mode = mode, insulinSummary = summary, multSummary = multSummary)
                 Spacer(Modifier.height(4.dp))
             }
             // Show modes still building
-            d.mealPhaseInsulinSummaries.filter { (_, v) -> v.contains("Building") }.forEach { (mode, summary) ->
+            for ((mode, summary) in d.mealPhaseInsulinSummaries.filter { (_, v) -> v.contains("Building") }) {
                 Text("$mode: $summary",
                      fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

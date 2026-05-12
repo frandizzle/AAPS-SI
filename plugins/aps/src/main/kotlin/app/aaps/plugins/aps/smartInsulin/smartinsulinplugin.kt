@@ -581,6 +581,20 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
         val mealPhasePF:           MealPhaseTracker.PhaseStatus,
         val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
+        // ── Meal phase learner
+        val mealPhaseCurrentPhase:     String,
+        val mealPhasePrebolusU:        Double,
+        val mealPhaseCarbSmbsU:        Double,
+        val mealPhasePfSmbsU:          Double,
+        val mealPhaseTailSmbsU:        Double,
+        val mealPhaseExtraBasalU:      Double,
+        val mealPhaseManualU:          Double,
+        val mealPhaseTotalU:           Double,
+        val mealPhaseCarbSmbMult:      Double,
+        val mealPhasePfIsfMult:        Double,
+        val mealPhaseTailIsfMult:      Double,
+        val mealPhaseInsulinSummaries: Map<String, String>,
+        val mealPhaseModeSummaries:    Map<String, String>,
         // ── PDP ───────────────────────────────────────────────────────────────
         val pdpEnabled:            Boolean,
         val pdpBlendWeight:        Double,
@@ -594,6 +608,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveFadeMins:  Double, // learned effective fade for current hour
         val pdpCiStrength:         Double,
         val pdpRisingStrength:     Double, // rising pathway ci scaling (0.5-1.5)
+        val pdpMaxBlend:           Double,
         val pdpFastingMaxIob:      Double,
         val pdpHourlyStrengths:    List<Double>,
         val pdpHourlyConfidences:  List<Double>,
@@ -759,6 +774,27 @@ open class SmartInsulinPlugin @Inject constructor(
             mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
             mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
             mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
+            mealPhaseCurrentPhase     = if (mealPhaseTracker.sessionActive)
+                mealPhaseTracker.currentPhase.name else "",
+            mealPhasePrebolusU        = mealPhaseTracker.sessionPrebolusU,
+            mealPhaseCarbSmbsU        = mealPhaseTracker.sessionCarbSmbsU,
+            mealPhasePfSmbsU          = mealPhaseTracker.sessionPfSmbsU,
+            mealPhaseTailSmbsU        = mealPhaseTracker.sessionTailSmbsU,
+            mealPhaseExtraBasalU      = mealPhaseTracker.sessionExtraBasalU,
+            mealPhaseManualU          = mealPhaseTracker.sessionManualU,
+            mealPhaseTotalU           = mealPhaseTracker.sessionTotalInsulinU,
+            mealPhaseCarbSmbMult      = mealPhaseProfileLearner.carbSmbFractionMult(
+                mealPhaseTracker.sessionMode),
+            mealPhasePfIsfMult        = mealPhaseProfileLearner.pfIsfMult(
+                mealPhaseTracker.sessionMode),
+            mealPhaseTailIsfMult      = mealPhaseProfileLearner.tailIsfMult(
+                mealPhaseTracker.sessionMode),
+            mealPhaseInsulinSummaries = app.aaps.core.interfaces.smartInsulin.MealMode.entries
+                .filter { it != app.aaps.core.interfaces.smartInsulin.MealMode.FASTING }
+                .associate { it.label to mealPhaseProfileLearner.insulinSummaryForMode(it) },
+            mealPhaseModeSummaries    = app.aaps.core.interfaces.smartInsulin.MealMode.entries
+                .filter { it != app.aaps.core.interfaces.smartInsulin.MealMode.FASTING }
+                .associate { it.label to mealPhaseProfileLearner.statusForMode(it) },
             fuelTrimStrength     = circadianLearner.trimStrength,
             // ── PDP ───────────────────────────────────────────────────────────
             pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
@@ -773,6 +809,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpEffectiveFadeMins = pdpLearner.effectiveFadeMins(hour, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
             pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
+            pdpMaxBlend          = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
             pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthMultAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
@@ -2105,9 +2142,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpRisingStrength        = pdpEffectiveRisingStrength,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
-            pdpSyntheticCi           = pdpSyntheticCi,
-            pdpStuckHighReadings     = pdpStuckHighReadings,
-            pdpMinReadingsStuck      = pdpMinReadingsStuck
+            pdpSyntheticCi           = pdpSyntheticCi
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
