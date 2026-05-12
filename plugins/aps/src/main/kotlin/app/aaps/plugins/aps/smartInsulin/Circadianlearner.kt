@@ -359,9 +359,17 @@ class CircadianLearner @Inject constructor(
             }
             if (closeReason != null) {
                 val bgDrop = ep.startBgMgdl - bg
-                if (bgDrop < EPISODE_MIN_BG_DROP) {
-                    lastIsfEpisodeDebug = "Episode discarded ($closeReason) — bgDrop=${"%.1f".format(bgDrop)} < min gate"
-                    aapsLogger.debug(LTag.APS, "ISF Episode closed ($closeReason) bgDrop=${"%.1f".format(bgDrop)} < gate — discarding")
+                // Discard if BG ended below target — overshoot episode.
+                // Recording it would teach "ISF was very aggressive" and push
+                // ISF lower, making future episodes more likely to overshoot.
+                val bgOvershot = bg < targetMgdl
+                if (bgDrop < EPISODE_MIN_BG_DROP || bgOvershot) {
+                    val discardReason = if (bgOvershot)
+                        "overshoot (bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)})"
+                    else
+                        "bgDrop=${"%.1f".format(bgDrop)} < min gate"
+                    lastIsfEpisodeDebug = "Episode discarded ($closeReason) — $discardReason"
+                    aapsLogger.debug(LTag.APS, "ISF Episode closed ($closeReason) discarded: $discardReason")
                     lastEpisodeCloseMs = nowMs
                     activeIsfEpisode = null
                 } else {
@@ -858,6 +866,15 @@ class CircadianLearner @Inject constructor(
             } else {
                 val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
                 aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+                // Rollercoaster: also nudge ISF up (less aggressive) and basal down.
+                // 5% ISF nudge up = profile ISF × 1.05 → slightly less insulin per gap.
+                // 5% basal nudge down → reduces steady-state delivery at this hour.
+                val prevIsf   = isfState.get(dow, hour)
+                val prevBasal = basalState.get(dow, hour)
+                isfState   = isfState.updated(dow, hour,
+                                              (prevIsf   * 1.05).coerceIn(ISF_MULT_MIN,   ISF_MULT_MAX),   ISF_ALPHA_FAST)
+                basalState = basalState.updated(dow, hour,
+                                                (prevBasal * 0.95).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
                 lastPenaltyMs = System.currentTimeMillis()
                 lastPenaltyWasFasting = isFasting
                 lastPenaltyReason = "rollercoaster"
@@ -873,6 +890,33 @@ class CircadianLearner @Inject constructor(
                                      .format(aggrState.get(dow, hour)))
             }
             return
+        }
+
+        // ── Penalty signal 1b: Sustained below-target ────────────────────────
+        // BG spending >60% of the 90min window below target without the swings
+        // needed to trigger a rollercoaster. Nudges ISF up and basal down gently.
+        // Does NOT cap aggression (that's the rollercoaster's job) — this is
+        // purely a slow structural correction for persistent sub-target patterns.
+        val belowFrac = belowTargetFraction(targetMgdl)
+        if (belowFrac >= 0.60 && isFasting && !isLikelyCompression(targetMgdl, lowGuardMgdl)) {
+            val prevIsf   = isfState.get(dow, hour)
+            val prevBasal = basalState.get(dow, hour)
+            // Scale nudge by how much time was spent below — 60%→3%, 80%→5%, 100%→7%
+            val nudgeStrength = ((belowFrac - 0.60) / 0.40).coerceIn(0.0, 1.0)
+            val isfNudge   = 1.0 + (0.03 + nudgeStrength * 0.04)   // 1.03–1.07
+            val basalNudge = 1.0 - (0.02 + nudgeStrength * 0.03)   // 0.95–0.98
+            isfState   = isfState.updated(dow, hour,
+                                          (prevIsf   * isfNudge).coerceIn(ISF_MULT_MIN,   ISF_MULT_MAX),   ISF_ALPHA_FAST)
+            basalState = basalState.updated(dow, hour,
+                                            (prevBasal * basalNudge).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
+            lastPenaltyMs = System.currentTimeMillis()
+            lastPenaltyWasFasting = isFasting
+            lastPenaltyReason = "sustained_below_target"
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner Aggr h=$hour SUSTAINED_BELOW frac=${"%.0f".format(belowFrac*100)}% " +
+                                 "isfNudge=${"%.3f".format(isfNudge)} basalNudge=${"%.3f".format(basalNudge)} " +
+                                 "isf ${"%.3f".format(prevIsf)}→${"%.3f".format(isfState.get(dow, hour))} " +
+                                 "basal ${"%.3f".format(prevBasal)}→${"%.3f".format(basalState.get(dow, hour))}")
         }
 
         // ── Penalty signal 2: Hard low — BG below low guard ─────────────────
@@ -979,6 +1023,18 @@ class CircadianLearner @Inject constructor(
             }
         }
         return extremeSwings >= ROLLER_CROSSING_THRESHOLD
+    }
+
+    /**
+     * Detects sustained sub-target pattern: BG spending >60% of the recent
+     * window below target. Different from rollercoaster — catches slow drifts
+     * that don't swing high enough to qualify as roller swings.
+     * Returns fraction of readings below target (0.0–1.0).
+     */
+    private fun belowTargetFraction(targetMgdl: Double): Double {
+        if (bgHistory.size < MIN_HISTORY_FOR_ROLLER) return 0.0
+        val belowCount = bgHistory.count { (_, bg) -> bg < targetMgdl }
+        return belowCount.toDouble() / bgHistory.size
     }
 
     /**
