@@ -476,7 +476,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val trigger = when {
                     !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
                     !smbAllowed -> "blocked"
-                    else        -> "predMinGap(${fmt(blendedPredMin, isMmol)}->${fmt(targetBg, isMmol)})"
+                    else        -> {
+                        val pdpActive = pdpEnabled && effectivePdpBlend > 0.0
+                        val label = if (pdpActive) "pdpMinGap" else "predMinGap"
+                        "$label(${fmt(blendedPredMin, isMmol)}->${fmt(targetBg, isMmol)})"
+                    }
                 }
 
                 val reboundStr = when {
