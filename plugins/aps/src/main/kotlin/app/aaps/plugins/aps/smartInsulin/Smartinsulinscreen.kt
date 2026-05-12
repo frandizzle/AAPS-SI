@@ -903,6 +903,7 @@ fun SmartInsulinScreen(
             ResetRow("Basal multiplier") { plugin.resetBasal() }
             ResetRow("Circadian hourly learning") { plugin.resetCircadian() }
             ResetRow("Insulin profiles (peak/DIA)") { plugin.resetProfiles() }
+            ResetRow("PDP learner") { plugin.resetPdp() }
             HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
             Button(
                 onClick = { plugin.resetAllLearners() },
@@ -1285,11 +1286,9 @@ private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
             Spacer(Modifier.height(6.dp))
 
             // Prebolus bar
-            val avgTotal = d.mealPhaseInsulinSummaries.entries
-                .firstOrNull { it.key == d.mealPhaseSessionMode }
-                ?.value?.let {
-                    // parse "avg X.XU total" from insulinSummaryForMode
-                    Regex("""avg ([0-9.]+)U""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
+            val avgTotal: Double = d.mealPhaseInsulinSummaries[d.mealPhaseSessionMode]
+                ?.let { summary: String ->
+                    Regex("""avg ([0-9.]+)U""").find(summary)?.groupValues?.get(1)?.toDoubleOrNull()
                 } ?: 0.0
             val delivered = d.mealPhaseTotalU
             val fraction  = if (avgTotal > 0.0) (delivered / avgTotal).coerceIn(0f.toDouble(), 1.5) else 0.0
@@ -1374,20 +1373,21 @@ private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(6.dp))
 
-        val modesWithData = d.mealPhaseInsulinSummaries.filter { (_, v) ->
-            !v.contains("Building") && !v.contains("No data")
-        }
+        val modesWithData: Map<String, String> = d.mealPhaseInsulinSummaries
+            .entries.filter { e -> !e.value.contains("Building") && !e.value.contains("No data") }
+            .associate { e -> e.key to e.value }
         if (modesWithData.isEmpty()) {
             Text("No sessions completed yet. Complete a full carb→P/F→tail session to begin learning.",
                  fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            for ((mode, summary) in modesWithData) {
+            for ((mode, summary) in modesWithData.entries) {
                 val multSummary = d.mealPhaseModeSummaries[mode] ?: ""
                 MealFingerprintRow(mode = mode, insulinSummary = summary, multSummary = multSummary)
                 Spacer(Modifier.height(4.dp))
             }
             // Show modes still building
-            for ((mode, summary) in d.mealPhaseInsulinSummaries.filter { (_, v) -> v.contains("Building") }) {
+            for (entry in d.mealPhaseInsulinSummaries.entries.filter { e -> e.value.contains("Building") }) {
+                val mode = entry.key; val summary = entry.value
                 Text("$mode: $summary",
                      fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

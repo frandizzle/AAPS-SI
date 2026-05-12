@@ -220,58 +220,41 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val pdpPredMin: Double
         val pdpPredMinSafety: Double
         if (effectivePdpBlend > 0.0) {
-            // pdpSyntheticCi > 0 means stuck-high pathway is active.
-            // Rising pathway: ci persists longer, scaled by ciStrength.
-            // Stuck pathway: IOB activity divided by ciStrength (insulin resistance model).
+            // pdpSyntheticCi > 0 = stuck-high. pdpSyntheticCi = 0 = rising or inactive.
             val isStuckHigh    = pdpSyntheticCi > 0.0
             // Rising: use pdpRisingStrength (0.5-1.5), not pdpCiStrength (1-10)
             // This prevents a high ciStrength for stuck-high from making rises overly aggressive
             val pdpEffectiveCi = if (isStuckHigh) 0.0 else ci * pdpRisingStrength
-            val (pdpCurve, primaryTotalDrop) = predictBgCurvePdp(
+            // Stuck-high: secondary curve uses ISF / ciStrength.
+            // Lower ISF = insulin less effective = BG doesn't fall as far = higher predMin.
+            // This is the correct physical model: if ciStrength=3, each unit of insulin
+            // only moves BG 1/3 as far, so the prediction line lands much higher.
+            // Rising pathway keeps primary ISF — ci term lifts it, not ISF scaling.
+            val pdpIsfMgdl = if (isStuckHigh)
+                dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
+            else
+                dosingIsfMgdl
+            pdpPredictedBg = predictBgCurvePdp(
                 startBg        = currentBg,
                 ci             = pdpEffectiveCi,
                 fadeMins       = pdpFadeMins,
                 iobArray       = iobArray,
-                isfMgdl        = dosingIsfMgdl,
+                isfMgdl        = pdpIsfMgdl,
                 learnedProfile = learnedProfile,
                 ticks          = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
-                systemDiaMins  = systemDiaMins,
-                stuckHighMode  = isStuckHigh,
-                ciStrength     = pdpCiStrength
+                systemDiaMins  = systemDiaMins
             )
-            pdpPredictedBg   = pdpCurve
             pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
 
-            // ── Stuck-high dosing minimum: direct formula, not curve minimum ───────
-            //
-            // The curve approach (predMin = min of secondary curve) fails when IOB is
-            // The graph curve (pdpPredictedBg) is unchanged — displays the secondary
-            // curve shape. Safety minimum (pdpPredMinSafety) is unchanged.
-            pdpPredMin = if (isStuckHigh) {
-                // Stuck-high: pdpPredMin = currentBg.
-                //
-                // "BG is stuck — I don't believe it will fall." The gradual ramp is
-                // already handled by pdpBlendWeight in the plugin (0→maxBlend over
-                // pdpMinReadingsStuck cycles). Adding a stuckFraction ramp here would
-                // double-ramp: blendWeight ramps AND predMin ramps, compounding in a
-                // way that's hard to reason about. Keep it simple — blend owns the ramp,
-                // DetermineBasal just anchors pdpPredMin to currentBg.
-                //
-                // blendedPredMin = predictedMin*(1-blend) + currentBg*blend
-                // As blend ramps 0→maxBlend, blendedPredMin naturally ramps from
-                // predictedMin toward currentBg. That's the ramp. One mechanism, clear.
-                //
-                // ciStrength controls aggressiveness via the ISF blend:
-                //   effectiveISF = primaryISF*(1-blend) + (primaryISF/ci)*blend
-                // Higher ci → lower effectiveISF → more units per mmol gap.
-                currentBg
-            } else {
-                // Rising pathway: curve minimum is already above primary (ci term lifts it)
-                if (pdpPredictedBg.size > insulinPeakTicks)
-                    pdpPredictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
-                else
-                    pdpPredictedBg.minOrNull() ?: currentBg
-            }
+            // Graph curve stored for display. Safety minimum is primary-only (unchanged).
+            // pdpPredMin = post-peak minimum of the secondary curve.
+            // Stuck-high: curve ran with ISF/ciStrength → falls slower → lands higher.
+            // Rising: ci term holds BG up → lands higher.
+            // Either way: just take the curve minimum.
+            pdpPredMin = if (pdpPredictedBg.size > insulinPeakTicks)
+                pdpPredictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
+            else
+                pdpPredictedBg.minOrNull() ?: currentBg
         } else {
             pdpPredictedBg   = emptyList()
             pdpPredMin       = predictedMin
@@ -330,32 +313,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // divisor. This is the key PDP mechanism for stuck-high:
         //
         // Primary ISF = dosingIsfMgdl (e.g. 36 mg/dL/U at ISF=2.0 mmol/U)
-        // Secondary ISF = dosingIsfMgdl / ciStrength (models resistance: insulin less effective)
-        //   ciStrength=1 → same ISF (no effect)
-        //   ciStrength=2 → half ISF in formula → 2× insulinReq for same gap
-        //   ciStrength=3 → 1/3 ISF in formula → 3× insulinReq for same gap
-        // Blended: effectiveISF = primaryISF*(1-blend) + (primaryISF/ciStrength)*blend
-        //
-        // This works regardless of IOB level because it's based on the BG gap directly,
-        // not on IOB activity magnitude. The prediction curve still shows the visual
-        // separation (orange vs cyan) based on the resistance model.
         val predMinGapMgdl = (blendedPredMin - targetBg).coerceAtLeast(0.0)
 
-        // The secondary curve now correctly lands at startBg - (primaryDrop / ciStrength),
-        // so blendedPredMin is genuinely above target when BG is stuck-high.
-        // No gap workaround needed — predMinGapMgdl is the real gap.
+        // effectiveGapMgdl = predMinGapMgdl.
+        // The secondary curve was built with ISF/ciStrength so blendedPredMin is
+        // already higher — gap is real. No separate ISF blend needed.
+        // dosingIsfMgdl is used directly: the curve ISF already captured the resistance.
         val effectiveGapMgdl = predMinGapMgdl
-
-        // ISF blend: still useful — models "insulin is less effective here so we need
-        // more units per mmol gap." Works on the real gap produced by the fixed curve.
-        //   effectiveISF = primaryISF*(1-blend) + (primaryISF/ciStrength)*blend
-        //   ciStrength=2 → effectiveISF halved → 2× insulinReq for same gap
-        val effectiveIsfMgdl = if (pdpEnabled && effectivePdpBlend > 0.0 && pdpSyntheticCi > 0.0) {
-            val secondaryIsfMgdl = dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
-            dosingIsfMgdl * (1.0 - effectivePdpBlend) + secondaryIsfMgdl * effectivePdpBlend
-        } else {
-            dosingIsfMgdl
-        }
+        val effectiveIsfMgdl = dosingIsfMgdl
         val insulinReq = effectiveGapMgdl / effectiveIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
@@ -614,84 +579,31 @@ class DetermineBasalSmartInsulin @Inject constructor(
     //   so the curves converge at the horizon.
     //
     // PRIMARY curve (predictBgCurve) is NEVER touched.
-    // Returns Pair(predictions, primaryTotalDrop).
-    // primaryTotalDrop is the full-curve primary drop — returned so the floor at the
-    // call site uses the exact same reference drop the curve was built with, not a
-    // separately-derived post-peak approximation.
+    // Secondary curve for PDP — caller passes the appropriate ISF:
+    //   stuck-high: isfMgdl = dosingIsfMgdl / ciStrength  → curve falls slower → higher predMin
+    //   rising:     isfMgdl = dosingIsfMgdl               → ci term holds BG up
+    // No stuckHighMode branch needed — ISF selection in the caller is the whole mechanism.
     private fun predictBgCurvePdp(
-        startBg:       Double,
-        ci:            Double,
-        fadeMins:      Double,
-        iobArray:      Array<IobTotal>,
-        isfMgdl:       Double,
+        startBg:        Double,
+        ci:             Double,
+        fadeMins:       Double,
+        iobArray:       Array<IobTotal>,
+        isfMgdl:        Double,
         learnedProfile: LearnedInsulinProfile,
-        ticks:         Int,
-        systemDiaMins: Double,
-        stuckHighMode: Boolean = false,
-        ciStrength:    Double  = 1.0
-    ): Pair<List<Double>, Double> {
-        val safeStrength = ciStrength.coerceAtLeast(1.0)
-        val fadeTicks    = (fadeMins / 5.0).coerceAtLeast(1.0)
-
-        if (stuckHighMode) {
-            // ── Stuck-high: scale the TOTAL predicted drop ────────────────────────
-            //
-            // Correct model: "BG is resistant — it will only fall 1/ciStrength as far
-            // as IOB predicts." We compute the full primary drop first, then build a
-            // secondary curve that lands exactly savedDrop = primaryDrop*(1-1/ci) higher.
-            //
-            //   ciStrength=1  → savedDrop=0    → identical to primary
-            //   ciStrength=3  → secondary lands at startBg - primaryDrop/3
-            //   ciStrength=10 → secondary barely moves from startBg
-
-            // Pass 1: compute full primary curve total drop
-            var tempBg = startBg
-            for (tick in 1..ticks) {
-                val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
-                tempBg += -(activity * isfMgdl * 5.0)
-            }
-            val primaryTotalDrop   = (startBg - tempBg).coerceAtLeast(0.0)
-            val secondaryTotalDrop = primaryTotalDrop / safeStrength
-            val savedDrop          = primaryTotalDrop - secondaryTotalDrop
-
-            // Pass 2: secondary curve = primary iobDelta + normalised fade lift.
-            //
-            // The lift is distributed as a fadeFrac-weighted ramp that decays linearly
-            // from 1.0 to 0.0 over fadeTicks. The sum of this ramp is fadeTicks/2
-            // (area of a right triangle), NOT fadeTicks — so we normalise by fadeTicks/2
-            // to guarantee the total lift sums exactly to savedDrop.
-            //
-            //   liftPerWeight = savedDrop / (fadeTicks / 2)
-            //   liftThisTick  = liftPerWeight * fadeFrac
-            //   sum over ticks = liftPerWeight * sum(fadeFrac) = liftPerWeight * fadeTicks/2 = savedDrop  ✓
-            val rampSum      = fadeTicks / 2.0  // exact integral of the linearly-decaying ramp
-            val liftPerWeight = if (rampSum > 0.0) savedDrop / rampSum else 0.0
-
-            var bg = startBg
-            val predictions = mutableListOf<Double>()
-            for (tick in 1..ticks) {
-                val activity        = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
-                val iobDeltaPrimary = -(activity * isfMgdl * 5.0)
-                val fadeFrac        = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
-                val liftThisTick    = liftPerWeight * fadeFrac
-                bg += iobDeltaPrimary + liftThisTick
-                predictions.add(bg)
-            }
-            return Pair(predictions, primaryTotalDrop)
-
-        } else {
-            // ── Rising pathway: primary IOB physics + ci term fades over fadeMins ──
-            var bg = startBg
-            val predictions = mutableListOf<Double>()
-            for (tick in 1..ticks) {
-                val activity        = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
-                val iobDeltaPrimary = -(activity * isfMgdl * 5.0)
-                val fadeFrac        = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
-                bg += iobDeltaPrimary + (ci * fadeFrac)
-                predictions.add(bg)
-            }
-            return Pair(predictions, 0.0)  // primaryTotalDrop unused for rising pathway
+        ticks:          Int,
+        systemDiaMins:  Double
+    ): List<Double> {
+        val fadeTicks   = (fadeMins / 5.0).coerceAtLeast(1.0)
+        var bg          = startBg
+        val predictions = mutableListOf<Double>()
+        for (tick in 1..ticks) {
+            val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
+            val iobDelta = -(activity * isfMgdl * 5.0)
+            val predDev  = ci * (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
+            bg += iobDelta + predDev
+            predictions.add(bg)
         }
+        return predictions
     }
 
 

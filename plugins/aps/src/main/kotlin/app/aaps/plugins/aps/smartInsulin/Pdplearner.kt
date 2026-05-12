@@ -447,6 +447,23 @@ class PdpLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "PdpLearner: reset")
     }
 
+    /**
+     * Reset all slots and seed strengthMult to [seedStrengthMult].
+     * Confidence is zeroed so the seed only influences dosing once
+     * real episode data accumulates — safe to start conservatively.
+     *
+     * Example: seedStrengthMult=0.5 with baseCiStrength=5 means
+     * effectiveCiStrength starts at 5 (confidence=0 → mult=1.0 always),
+     * then as confidence builds it converges toward 5×0.5=2.5.
+     * Episode outcome learning adjusts from there.
+     */
+    fun resetWithSeed(seedStrengthMult: Double) {
+        val seed = seedStrengthMult.coerceIn(MIN_STRENGTH_MULT, MAX_STRENGTH_MULT)
+        for (h in 0..23) updateSlot(h, HourSlot(strengthMult = seed))
+        save()
+        aapsLogger.debug(LTag.APS, "PdpLearner: reset with strengthMult seed=${"%.2f".format(seed)}")
+    }
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
     private fun save() {

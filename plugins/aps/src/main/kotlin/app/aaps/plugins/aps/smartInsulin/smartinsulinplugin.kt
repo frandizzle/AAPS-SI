@@ -347,6 +347,27 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: profiles reset")
     }
 
+    /**
+     * Reset PDP learner and seed strengthMult.
+     * Also resets the live PDP tracking state (streak counters, episode) so
+     * the system starts fresh without any stale stuck-high or rising state.
+     *
+     * [seedStrengthMult] seeds the per-hour strengthMult after reset.
+     * 1.0 = neutral start (effectiveCiStrength = baseCiStrength as confidence builds).
+     * 0.5 = conservative start (effectiveCiStrength = baseCiStrength × 0.5 at full confidence).
+     */
+    fun resetPdp(seedStrengthMult: Double = 1.0) {
+        pdpLearner.resetWithSeed(seedStrengthMult)
+        consecutivePosCiReadings = 0
+        pdpStuckHighReadings     = 0
+        lastCiMgdl               = 0.0
+        cachedPdpSyntheticCi     = 0.0
+        cachedPdpBlendWeight     = 0.0
+        activeEpisode            = null
+        lastPdpBlendActive       = false
+        aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: PDP learner reset (seed=${"%.2f".format(seedStrengthMult)})")
+    }
+
 
 
 
@@ -789,11 +810,11 @@ open class SmartInsulinPlugin @Inject constructor(
                 mealPhaseTracker.sessionMode),
             mealPhaseTailIsfMult      = mealPhaseProfileLearner.tailIsfMult(
                 mealPhaseTracker.sessionMode),
-            mealPhaseInsulinSummaries = app.aaps.core.interfaces.smartInsulin.MealMode.entries
-                .filter { it != app.aaps.core.interfaces.smartInsulin.MealMode.FASTING }
+            mealPhaseInsulinSummaries = MealMode.entries
+                .filter { it != MealMode.FASTING }
                 .associate { it.label to mealPhaseProfileLearner.insulinSummaryForMode(it) },
-            mealPhaseModeSummaries    = app.aaps.core.interfaces.smartInsulin.MealMode.entries
-                .filter { it != app.aaps.core.interfaces.smartInsulin.MealMode.FASTING }
+            mealPhaseModeSummaries    = MealMode.entries
+                .filter { it != MealMode.FASTING }
                 .associate { it.label to mealPhaseProfileLearner.statusForMode(it) },
             fuelTrimStrength     = circadianLearner.trimStrength,
             // ── PDP ───────────────────────────────────────────────────────────
@@ -1708,12 +1729,19 @@ open class SmartInsulinPlugin @Inject constructor(
             val pdpPred = determineBasalSmartInsulin.lastPdpPredAt5Mgdl
             val actual  = glucoseStatus.glucose
             if (iobPred > 0.0 && pdpPred > 0.0) {
-                val iobErr = kotlin.math.abs(actual - iobPred)
-                val pdpErr = kotlin.math.abs(actual - pdpPred)
-                // lastCycleHour and cachedPdpSyntheticCi are from the PREVIOUS cycle —
-                // intentional: we are scoring last cycle's prediction against today's actual BG.
                 val lastPathway = if (cachedPdpSyntheticCi > 0.0) "stuck" else "rising"
-                pdpLearner.recordAccuracy(lastCycleHour, iobErr, pdpErr, lastPathway)
+                // Stuck-high: secondary curve uses ISF/ciStrength as a dosing model,
+                // not a BG predictor. Scoring its t+5 prediction against actual BG
+                // would always show large error → learner drives strengthMult to minimum
+                // → PDP disabled. Episode outcome (recordEpisodeOutcome) provides the
+                // correct feedback for stuck-high: did the dose land BG well?
+                // Rising pathway still uses curve prediction accuracy — ci extension
+                // is genuinely trying to predict where BG will go.
+                if (lastPathway != "stuck") {
+                    val iobErr = kotlin.math.abs(actual - iobPred)
+                    val pdpErr = kotlin.math.abs(actual - pdpPred)
+                    pdpLearner.recordAccuracy(lastCycleHour, iobErr, pdpErr, lastPathway)
+                }
             }
         } else if (pdpLearningEnabled) {
             // Learning enabled but PDP wasn't blending or conditions weren't clean —
