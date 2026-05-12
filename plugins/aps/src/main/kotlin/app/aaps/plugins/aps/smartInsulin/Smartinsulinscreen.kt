@@ -1070,23 +1070,20 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         )
         Spacer(Modifier.height(6.dp))
 
-        // Column headers
+        // Column headers — Hr | Str | confidence bar (fills) | n
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Hr",     modifier = Modifier.width(36.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            Text("Hr",   modifier = Modifier.width(36.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
                  color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("StrMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            Text("Str",  modifier = Modifier.width(60.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
                  color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("FadMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            Text("Confidence (samples/20)", modifier = Modifier.weight(1f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
                  color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("BlnMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Confidence",modifier = Modifier.weight(3f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("n",      modifier = Modifier.width(22.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("n",    modifier = Modifier.width(24.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                 textAlign = androidx.compose.ui.text.style.TextAlign.End)
         }
         HorizontalDivider(modifier = Modifier.padding(bottom = 2.dp))
 
@@ -1101,7 +1098,6 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val fadeMult   = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
 
             // Heatmap cell colour — strength deviation drives the accent
-            // >1.0 = more resistance (orange), <1.0 = less (blue), ~1.0 = neutral (surface)
             val strDev = strength - 1.0
             val cellColor: Color = when {
                 samples == 0     -> Color.Transparent
@@ -1117,12 +1113,12 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                 else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
             }
 
-            // Confidence mini-bar — filled proportion of 20-sample full-trust threshold
+            // Confidence bar fills based on samples (20 = full trust)
             val confFraction = (samples.toFloat() / 20f).coerceIn(0f, 1f)
             val confBarColor = when {
-                confidence >= 0.6 -> StatusGood
-                confidence >= 0.3 -> StatusWarn
-                else              -> StatusBad
+                confFraction >= 0.6f -> StatusGood
+                confFraction >= 0.3f -> StatusWarn
+                else                 -> StatusBad
             }
 
             Column(
@@ -1146,7 +1142,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                         color = textColor
                     )
-                    // StrMlt with arrow indicator
+                    // Str value + arrow — fixed width so bar always starts at same x
                     val strArrow = when {
                         strength > 1.15 -> "↑↑"
                         strength > 1.05 -> "↑"
@@ -1156,56 +1152,44 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                     }
                     Text(
                         "${"%.3f".format(strength)}$strArrow",
-                        modifier = Modifier.weight(1.8f),
+                        modifier = Modifier.width(60.dp),
                         fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                         color = textColor
                     )
-                    // FadMlt
-                    Text(
-                        "%.3f".format(fadeMult),
-                        modifier = Modifier.weight(1.8f),
-                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        color = textColor
-                    )
-                    // BlndMlt
-                    Text(
-                        "%.3f".format(blendMult),
-                        modifier = Modifier.weight(1.8f),
-                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        color = textColor
-                    )
-                    // Confidence mini bar + pct
+                    // Confidence bar — stretches to fill remaining space, then pct label
                     Row(
-                        modifier = Modifier.weight(3f),
+                        modifier = Modifier.weight(1f),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .width(36.dp).height(6.dp)
-                                .clip(RoundedCornerShape(3.dp))
+                        BoxWithConstraints(
+                            modifier = Modifier.weight(1f).height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
                                 .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
                         ) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxHeight()
-                                    .width(36.dp * confFraction)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(confBarColor)
+                                    .width(maxWidth * confFraction)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (samples == 0) Color.Transparent else confBarColor)
                             )
                         }
                         Text(
                             "${(confFraction * 100).toInt()}%",
+                            modifier = Modifier.width(26.dp),
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = confBarColor
+                            color = if (samples == 0) androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            else confBarColor
                         )
                     }
                     // Sample count
                     Text(
                         "$samples",
-                        modifier = Modifier.width(22.dp),
+                        modifier = Modifier.width(24.dp),
                         fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
                         color = textColor
                     )
                 }
