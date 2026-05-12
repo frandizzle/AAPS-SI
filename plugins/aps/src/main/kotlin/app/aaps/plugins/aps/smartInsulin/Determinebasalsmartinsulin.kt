@@ -240,10 +240,32 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 ciStrength     = pdpCiStrength
             )
             pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
-            pdpPredMin = if (pdpPredictedBg.size > insulinPeakTicks)
+            val pdpPredMinRaw = if (pdpPredictedBg.size > insulinPeakTicks)
                 pdpPredictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
             else
                 pdpPredictedBg.minOrNull() ?: currentBg
+
+            // ── Stuck-high floor: enforce the resistance belief directly ──────────
+            // Even with the scaled-total-drop curve, with large IOB the secondary
+            // post-peak minimum can still land below target — the physics accumulate
+            // over many ticks. This undermines the core belief of stuck-high: "BG
+            // will only fall 1/ciStrength as far as IOB predicts."
+            //
+            // Floor: pdpPredMin >= currentBg - primaryPostPeakDrop / ciStrength
+            //   primaryPostPeakDrop = currentBg - predictedMin  (primary curve post-peak)
+            //   ciStrength=3  → secondary can fall at most 1/3 of what primary falls
+            //   ciStrength=10 → secondary can fall at most 1/10 → stays near currentBg
+            //
+            // Safety curve (pdpPredMinSafety) is untouched — safety gates always use
+            // the conservative primary-only prediction. Only the dosing minimum is floored.
+            pdpPredMin = if (isStuckHigh) {
+                val primaryPostPeakDrop = (currentBg - predictedMin).coerceAtLeast(0.0)
+                val maxSecondaryDrop    = primaryPostPeakDrop / pdpCiStrength.coerceAtLeast(1.0)
+                val flooredMin          = currentBg - maxSecondaryDrop
+                maxOf(pdpPredMinRaw, flooredMin)
+            } else {
+                pdpPredMinRaw  // rising pathway: no floor, curve is already above primary
+            }
         } else {
             pdpPredictedBg   = emptyList()
             pdpPredMin       = predictedMin
