@@ -84,12 +84,45 @@ class MealPhaseProfileLearner @Inject constructor(
                 "tailIsf=${"%.3f".format(tailIsfMult)}"
     }
 
+    // ── Per-mode insulin fingerprint ─────────────────────────────────────────
+    // Tracks how much total insulin each meal type typically needs, split by phase.
+    // EWMA with α=0.15 — adapts over ~10 sessions without overreacting to outliers.
+    // Used to understand whether a session was under/over-delivered relative to history.
+
+    private val INSULIN_EWMA_ALPHA = 0.15
+
+    data class MealInsulinModel(
+        val mode:              MealMode,
+        var avgTotalU:         Double = 0.0,  // prebolus + all SMBs
+        var avgPrebolusU:      Double = 0.0,  // PB1 + PB2 + PB3
+        var avgCarbSmbsU:      Double = 0.0,  // SMBs during carb phase
+        var avgPfSmbsU:        Double = 0.0,  // SMBs during P/F phase
+        var avgTailSmbsU:      Double = 0.0,  // SMBs during tail phase
+        var sessionCount:      Int    = 0
+    ) {
+        val hasData: Boolean get() = sessionCount >= 3
+
+        override fun toString() =
+            "mode=${mode.label} n=$sessionCount " +
+                "total=${"%.2f".format(avgTotalU)}U " +
+                "pre=${"%.2f".format(avgPrebolusU)}U " +
+                "carb=${"%.2f".format(avgCarbSmbsU)}U " +
+                "pf=${"%.2f".format(avgPfSmbsU)}U " +
+                "tail=${"%.2f".format(avgTailSmbsU)}U"
+    }
+
+    private val insulinModels: MutableMap<MealMode, MealInsulinModel> = mutableMapOf()
+
     private val profiles: MutableMap<MealMode, ModeProfile> = mutableMapOf()
 
     init {
         // Load persisted state for all meal modes
         MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
             profiles[mode] = loadProfile(mode)
+        }
+        // Load persisted insulin models
+        MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
+            insulinModels[mode] = loadInsulinModel(mode)
         }
         // Wire ourselves into MealPhaseTracker to receive completed sessions
         mealPhaseTracker.onSessionComplete = { session -> onSessionComplete(session) }
@@ -126,6 +159,24 @@ class MealPhaseProfileLearner @Inject constructor(
     fun tailIsfMult(mode: MealMode): Double {
         val p = profiles[mode] ?: return 1.0
         return if (p.hasConfidence) p.tailIsfMult else 1.0
+    }
+
+    // ── Insulin model accessors ──────────────────────────────────────────────
+
+    /** Learned average total insulin for [mode], or 0.0 if not enough data */
+    fun avgTotalInsulinU(mode: MealMode): Double = insulinModels[mode]?.takeIf { it.hasData }?.avgTotalU ?: 0.0
+
+    /** How much of the typical total has been delivered so far this session */
+    fun sessionDeliveryFraction(mode: MealMode, deliveredSoFarU: Double): Double {
+        val avg = avgTotalInsulinU(mode)
+        return if (avg > 0.0) (deliveredSoFarU / avg).coerceIn(0.0, 1.5) else 0.0
+    }
+
+    /** Human-readable insulin fingerprint for a mode */
+    fun insulinSummaryForMode(mode: MealMode): String {
+        val m = insulinModels[mode] ?: return "No data"
+        return if (!m.hasData) "Building (${m.sessionCount}/3 sessions)"
+        else "avg ${"%+.1f".format(m.avgTotalU)}U total | pre=${"%+.1f".format(m.avgPrebolusU)}U carb+=${"%+.1f".format(m.avgCarbSmbsU)}U pf+=${"%+.1f".format(m.avgPfSmbsU)}U tail+=${"%+.1f".format(m.avgTailSmbsU)}U"
     }
 
     /** Human-readable status for display in SmartInsulinScreen */
@@ -237,8 +288,30 @@ class MealPhaseProfileLearner @Inject constructor(
             else -> { /* tail elevated but not crashed — hold */ }
         }
 
+        // ── Update insulin fingerprint model
+        val m = insulinModels.getOrPut(session.mode) { MealInsulinModel(session.mode) }
+        m.sessionCount++
+        if (m.sessionCount == 1) {
+            m.avgTotalU    = session.totalSessionInsulinU
+            m.avgPrebolusU = session.prebolusU
+            m.avgCarbSmbsU = session.carbPhaseSmbsU
+            m.avgPfSmbsU   = session.pfPhaseSmbsU
+            m.avgTailSmbsU = session.tailPhaseSmbsU
+        } else {
+            val alpha = if (session.isClean) INSULIN_EWMA_ALPHA else INSULIN_EWMA_ALPHA * 0.5
+            m.avgTotalU    += alpha * (session.totalSessionInsulinU - m.avgTotalU)
+            m.avgPrebolusU += alpha * (session.prebolusU            - m.avgPrebolusU)
+            m.avgCarbSmbsU += alpha * (session.carbPhaseSmbsU       - m.avgCarbSmbsU)
+            m.avgPfSmbsU   += alpha * (session.pfPhaseSmbsU         - m.avgPfSmbsU)
+            m.avgTailSmbsU += alpha * (session.tailPhaseSmbsU       - m.avgTailSmbsU)
+        }
+        saveInsulinModel(m)
+        aapsLogger.debug(LTag.APS, "MealPhaseProfileLearner insulin model: $m")
+
         aapsLogger.debug(LTag.APS,
                          "MealPhaseProfileLearner [${session.mode.label}] session #${p.sessionCount} " +
+                             "pre=${"%.2f".format(session.prebolusU)}U total=${"%.2f".format(session.totalSessionInsulinU)}U " +
+                             "carbSmbs=${"%.2f".format(session.carbPhaseSmbsU)}U pfSmbs=${"%.2f".format(session.pfPhaseSmbsU)}U " +
                              "iobCarb=${"%.2f".format(session.iobAtCarbExit)}U iobPf=${"%.2f".format(session.iobAtPfExit)}U " +
                              "smbs=${"%.2f".format(session.totalSmbsDeliveredU)}U " +
                              "auc=carb${"%.0f".format(session.bgAucCarbMmolMin)}/pf${"%.0f".format(session.bgAucPfMmolMin)}/tail${"%.0f".format(session.bgAucTailMmolMin)} " +
@@ -267,9 +340,16 @@ class MealPhaseProfileLearner @Inject constructor(
         MealMode.entries.filter { it != MealMode.FASTING }.forEach { resetMode(it) }
     }
 
+    fun resetInsulinModel(mode: MealMode) {
+        insulinModels[mode] = MealInsulinModel(mode)
+        saveInsulinModel(insulinModels[mode]!!)
+        aapsLogger.debug(LTag.APS, "MealPhaseProfileLearner: reset insulinModel mode=${mode.label}")
+    }
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
     private fun prefKey(mode: MealMode) = "si_mealphase_${mode.name.lowercase()}"
+    private fun insulinKey(mode: MealMode) = "si_mealinsulin_${mode.name.lowercase()}"
 
     private fun saveProfile(p: ModeProfile) {
         try {
@@ -284,6 +364,39 @@ class MealPhaseProfileLearner @Inject constructor(
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "MealPhaseProfileLearner: save failed ${p.mode}: ${e.message}")
         }
+    }
+
+    private fun saveInsulinModel(m: MealInsulinModel) {
+        try {
+            val json = JSONObject().apply {
+                put("avgTotalU",    m.avgTotalU)
+                put("avgPrebolusU", m.avgPrebolusU)
+                put("avgCarbSmbsU", m.avgCarbSmbsU)
+                put("avgPfSmbsU",   m.avgPfSmbsU)
+                put("avgTailSmbsU", m.avgTailSmbsU)
+                put("sessionCount", m.sessionCount)
+            }
+            sp.edit { putString(insulinKey(m.mode), json.toString()) }
+        } catch (e: Exception) {
+            aapsLogger.debug(LTag.APS, "MealPhaseProfileLearner: insulinModel save failed: ${e.message}")
+        }
+    }
+
+    private fun loadInsulinModel(mode: MealMode): MealInsulinModel {
+        return try {
+            val raw = sp.getString(insulinKey(mode), "")
+            if (raw.isNullOrBlank()) return MealInsulinModel(mode)
+            val json = JSONObject(raw)
+            MealInsulinModel(
+                mode         = mode,
+                avgTotalU    = json.optDouble("avgTotalU",    0.0),
+                avgPrebolusU = json.optDouble("avgPrebolusU", 0.0),
+                avgCarbSmbsU = json.optDouble("avgCarbSmbsU", 0.0),
+                avgPfSmbsU   = json.optDouble("avgPfSmbsU",   0.0),
+                avgTailSmbsU = json.optDouble("avgTailSmbsU", 0.0),
+                sessionCount = json.optInt("sessionCount",     0)
+            )
+        } catch (_: Exception) { MealInsulinModel(mode) }
     }
 
     private fun loadProfile(mode: MealMode): ModeProfile {

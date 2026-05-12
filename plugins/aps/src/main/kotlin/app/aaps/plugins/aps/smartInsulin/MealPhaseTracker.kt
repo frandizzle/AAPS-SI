@@ -147,8 +147,14 @@ class MealPhaseTracker @Inject constructor(
     private var bgAucPfPhase:   Double = 0.0
     private var bgAucTailPhase: Double = 0.0
 
-    // Total SMBs delivered during this session (beyond prebolus)
+    // Prebolus total (PB1 + PB2 + PB3) — set once at session start via notifyPrebolus()
+    private var prebolusU: Double = 0.0
+
+    // Total SMBs delivered during this session (beyond prebolus), split by phase
     private var totalSmbsDeliveredU: Double = 0.0
+    private var carbPhaseSmbsU:      Double = 0.0
+    private var pfPhaseSmbsU:        Double = 0.0
+    private var tailPhaseSmbsU:      Double = 0.0
 
     // ── Display / debug ───────────────────────────────────────────────────────
 
@@ -191,7 +197,13 @@ class MealPhaseTracker @Inject constructor(
         // ── IOB / insulin context ────────────────────────────────────────────
         val iobAtCarbExit:       Double,    // IOB (U) when CARB→P/F fired — high = prebolus still active
         val iobAtPfExit:         Double,    // IOB (U) when P/F→TAIL fired — near 0 = tail is unprotected
+        val prebolusU:           Double,    // PB1 + PB2 + PB3 total delivered before/at meal start
         val totalSmbsDeliveredU: Double,    // SMBs fired during session (beyond prebolus)
+        val carbPhaseSmbsU:      Double,    // SMBs fired during carb phase specifically
+        val pfPhaseSmbsU:        Double,    // SMBs fired during P/F phase
+        val tailPhaseSmbsU:      Double,    // SMBs fired during tail phase
+        // Total insulin this session: prebolus + all SMBs
+        val totalSessionInsulinU: Double,
         // ── BG area-above-target per phase (mmol·min) ─────────────────────────
         // 0 = BG never exceeded target during that phase (perfect prebolus)
         // High = prolonged elevation — learning signal for dose insufficiency
@@ -242,9 +254,15 @@ class MealPhaseTracker @Inject constructor(
         if (sessionActive && firstBolusMs == 0L && firstBolusEpochMs > 0L)
             firstBolusMs = firstBolusEpochMs
 
-        // Accumulate SMBs delivered this session
-        if (sessionActive && smbsDeliveredU > 0.0)
+        // Accumulate SMBs delivered this session, split by phase
+        if (sessionActive && smbsDeliveredU > 0.0) {
             totalSmbsDeliveredU += smbsDeliveredU
+            when (currentPhase) {
+                MealPhase.CARB        -> carbPhaseSmbsU += smbsDeliveredU
+                MealPhase.PROTEIN_FAT -> pfPhaseSmbsU   += smbsDeliveredU
+                MealPhase.TAIL        -> tailPhaseSmbsU  += smbsDeliveredU
+            }
+        }
 
         // ── Session start ─────────────────────────────────────────────────────
         if (wasFasting && !isFasting) {
@@ -526,6 +544,20 @@ class MealPhaseTracker @Inject constructor(
         lastMealMode = mealMode
     }
 
+    // ── Prebolus notification ────────────────────────────────────────────────────
+
+    /**
+     * Call when prebolus amounts are known for this session (after PB1 fires, and again
+     * as PB2/PB3 deliver). Cumulative — calling multiple times adds to the total.
+     * Safe to call if no session is active (no-op).
+     */
+    fun notifyPrebolus(units: Double) {
+        if (!sessionActive || units <= 0.0) return
+        prebolusU += units
+        aapsLogger.debug(LTag.APS,
+                         "MealPhaseTracker: prebolus +${"%.2f".format(units)}U → total=${"%.2f".format(prebolusU)}U")
+    }
+
     // ── Manual bolus notification ─────────────────────────────────────────────
 
     /**
@@ -655,7 +687,11 @@ class MealPhaseTracker @Inject constructor(
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
         bgAucTailPhase           = 0.0
+        prebolusU                = 0.0
         totalSmbsDeliveredU      = 0.0
+        carbPhaseSmbsU           = 0.0
+        pfPhaseSmbsU             = 0.0
+        tailPhaseSmbsU           = 0.0
 
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
@@ -718,10 +754,15 @@ class MealPhaseTracker @Inject constructor(
             isClean             = !manualBolusDetected,
             iobAtCarbExit       = iobAtCarbExit,
             iobAtPfExit         = iobAtPfExit,
-            totalSmbsDeliveredU = totalSmbsDeliveredU,
-            bgAucCarbMmolMin    = bgAucCarbPhase,
-            bgAucPfMmolMin      = bgAucPfPhase,
-            bgAucTailMmolMin    = bgAucTailPhase
+            prebolusU            = prebolusU,
+            totalSmbsDeliveredU  = totalSmbsDeliveredU,
+            carbPhaseSmbsU       = carbPhaseSmbsU,
+            pfPhaseSmbsU         = pfPhaseSmbsU,
+            tailPhaseSmbsU       = tailPhaseSmbsU,
+            totalSessionInsulinU = prebolusU + totalSmbsDeliveredU,
+            bgAucCarbMmolMin     = bgAucCarbPhase,
+            bgAucPfMmolMin       = bgAucPfPhase,
+            bgAucTailMmolMin     = bgAucTailPhase
         )
 
         val nadirDisplay = if (session.tailNadirBgMmol < Double.MAX_VALUE / 2)
@@ -767,7 +808,11 @@ class MealPhaseTracker @Inject constructor(
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
         bgAucTailPhase           = 0.0
+        prebolusU                = 0.0
         totalSmbsDeliveredU      = 0.0
+        carbPhaseSmbsU           = 0.0
+        pfPhaseSmbsU             = 0.0
+        tailPhaseSmbsU           = 0.0
     }
 
     // ── Delta helpers ─────────────────────────────────────────────────────────
