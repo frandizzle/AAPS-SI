@@ -147,6 +147,10 @@ class MealPhaseTracker @Inject constructor(
     private var bgAucPfPhase:   Double = 0.0
     private var bgAucTailPhase: Double = 0.0
 
+    // True when session started directly in P/F phase (UAM_PROTEIN_FAT auto-detection).
+    // Carb phase was not observed — learner must skip carb-phase logic for this session.
+    private var isPfOnlySession: Boolean = false
+
     // Prebolus total (PB1 + PB2 + PB3) — set once at session start via notifyPrebolus()
     private var prebolusU: Double = 0.0
 
@@ -198,6 +202,8 @@ class MealPhaseTracker @Inject constructor(
         // Carb phase high is normal without prebolus — not tracked
         val pfPhaseWentHigh:     Boolean,   // ISF too conservative during plateau
         val isClean:             Boolean,   // true = no confounders, best for learning
+        val carbPhaseSkipped:    Boolean,   // true when session started in P/F (e.g. UAM_PROTEIN_FAT)
+        // carb phase data is absent — learner must skip carb logic
         // ── IOB / insulin context ────────────────────────────────────────────
         val iobAtCarbExit:       Double,    // IOB (U) when CARB→P/F fired — high = prebolus still active
         val iobAtPfExit:         Double,    // IOB (U) when P/F→TAIL fired — near 0 = tail is unprotected
@@ -708,11 +714,26 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
         extraBasalU              = 0.0
+        isPfOnlySession          = false
 
-        aapsLogger.debug(LTag.APS,
-                         "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
-        lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
-        lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
+        // UAM_PROTEIN_FAT fires after a meal is already over — carb phase already happened
+        // outside this session. Skip straight to PROTEIN_FAT so phase tracking is meaningful.
+        isPfOnlySession = (mode == MealMode.UAM_PROTEIN_FAT)
+        if (isPfOnlySession) {
+            currentPhase        = MealPhase.PROTEIN_FAT
+            carbPhaseDurationMs = 0L  // explicitly 0 — carb phase not observed
+            lastTransitionDebug = ""
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseTracker: session START mode=$mode (P/F only) — " +
+                                 "skipping CARB phase, starting in PROTEIN_FAT bg=${"%.1f".format(bgMmol)}mmol")
+            lastPhaseDebug = "Session started | mode=${mode.label} | phase=P/F (auto-detected) | bg=${"%.1f".format(bgMmol)}mmol"
+        } else {
+            currentPhase        = MealPhase.CARB
+            lastTransitionDebug = "Waiting — min 40min in CARB phase before checking"
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
+            lastPhaseDebug = "Session started | mode=${mode.label} | phase=CARB | bg=${"%.1f".format(bgMmol)}mmol"
+        }
     }
 
     private fun confirmTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
@@ -768,6 +789,7 @@ class MealPhaseTracker @Inject constructor(
             tailPhaseWentLow    = tailPhaseWentLow,
             pfPhaseWentHigh     = pfPhaseWentHigh,
             isClean             = !manualBolusDetected,
+            carbPhaseSkipped    = isPfOnlySession,
             iobAtCarbExit       = iobAtCarbExit,
             iobAtPfExit         = iobAtPfExit,
             prebolusU            = prebolusU,
@@ -833,6 +855,7 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
         extraBasalU              = 0.0
+        isPfOnlySession          = false
     }
 
     // ── Delta helpers ─────────────────────────────────────────────────────────
@@ -902,6 +925,7 @@ class MealPhaseTracker @Inject constructor(
     // ── Public accessors ──────────────────────────────────────────────────────
 
     // ── Session data accessors for FragmentData ─────────────────────────────
+    val sessionIsPfOnly:     Boolean get() = isPfOnlySession
     val sessionPrebolusU:    Double get() = prebolusU
     val sessionCarbSmbsU:    Double get() = carbPhaseSmbsU
     val sessionPfSmbsU:      Double get() = pfPhaseSmbsU
@@ -936,6 +960,7 @@ class MealPhaseTracker @Inject constructor(
 
     fun carbPhaseStatus(): PhaseStatus = when {
         !sessionActive                        -> PhaseStatus(PhaseStatus.PhaseState.PENDING)
+        isPfOnlySession                       -> PhaseStatus(PhaseStatus.PhaseState.PENDING)  // N/A — session started in P/F
         currentPhase == MealPhase.CARB        -> PhaseStatus(PhaseStatus.PhaseState.IN_PROGRESS, peakOrNadirMmol = carbPhasePeakBgMmol)
         carbPhaseDurationMs > 0               -> PhaseStatus(PhaseStatus.PhaseState.COMPLETE, (carbPhaseDurationMs / 60_000).toInt(), carbPhasePeakBgMmol)
         else                                  -> PhaseStatus(PhaseStatus.PhaseState.PENDING)

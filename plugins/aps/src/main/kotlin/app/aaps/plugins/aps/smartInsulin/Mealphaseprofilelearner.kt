@@ -220,30 +220,32 @@ class MealPhaseProfileLearner @Inject constructor(
         val tailWellCovered   = session.bgAucTailMmolMin < 10.0
 
         // ── Carb phase — SMB fraction multiplier ─────────────────────────────
-        when {
-            session.carbPhaseWentLow -> {
-                // Low during carbs = SMBs too aggressive → cut fraction
-                p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 - LOW_PENALTY)).coerceIn(MULT_MIN, MULT_MAX)
-                aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] CARB LOW: " +
-                                     "iobAtExit=${"%.2f".format(session.iobAtCarbExit)}U auc=${"%.1f".format(session.bgAucCarbMmolMin)}mmol·min " +
-                                     "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
+        // Skip entirely for UAM_PROTEIN_FAT sessions — carb phase was not observed.
+        // carbSmbFractionMult for UAM_PROTEIN_FAT is meaningless (P/F fires from fasting,
+        // no carb spike to manage) and would corrupt the multiplier with phantom signals.
+        if (!session.carbPhaseSkipped) {
+            when {
+                session.carbPhaseWentLow -> {
+                    p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 - LOW_PENALTY)).coerceIn(MULT_MIN, MULT_MAX)
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseProfileLearner [${session.mode.label}] CARB LOW: " +
+                                         "iobAtExit=${"%.2f".format(session.iobAtCarbExit)}U auc=${"%.1f".format(session.bgAucCarbMmolMin)}mmol·min " +
+                                         "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
+                }
+                session.manualBolusDetected && !carbWellCovered -> {
+                    p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 + MANUAL_NUDGE)).coerceIn(MULT_MIN, MULT_MAX)
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseProfileLearner [${session.mode.label}] CARB manual+highAUC: " +
+                                         "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
+                }
+                carbWellCovered && !session.carbPhaseWentLow -> {
+                    p.carbSmbFractionMult = drift(p.carbSmbFractionMult)
+                }
+                else -> { /* elevated AUC, no low, no manual — hold */ }
             }
-            session.manualBolusDetected && !carbWellCovered -> {
-                // Manual top-up AND BG was elevated = genuinely under-delivered → nudge fraction up
-                p.carbSmbFractionMult = (p.carbSmbFractionMult * (1.0 + MANUAL_NUDGE)).coerceIn(MULT_MIN, MULT_MAX)
-                aapsLogger.debug(LTag.APS,
-                                 "MealPhaseProfileLearner [${session.mode.label}] CARB manual+highAUC: " +
-                                     "carbSmbMult ${"%.3f".format(prev.carbSmbFractionMult)}→${"%.3f".format(p.carbSmbFractionMult)}")
-            }
-            carbWellCovered && !session.carbPhaseWentLow -> {
-                // BG stayed near target during carb phase — prebolus worked, drift toward 1.0
-                p.carbSmbFractionMult = drift(p.carbSmbFractionMult)
-            }
-            else -> {
-                // Elevated AUC but no low and no manual bolus — hold, don't drift
-                // (marginal over-coverage — not enough signal to act on)
-            }
+        } else {
+            aapsLogger.debug(LTag.APS,
+                             "MealPhaseProfileLearner [${session.mode.label}] carb phase skipped (P/F-only session) — carbSmbMult unchanged")
         }
 
         // ── P/F phase — ISF multiplier ────────────────────────────────────────
@@ -294,14 +296,17 @@ class MealPhaseProfileLearner @Inject constructor(
         if (m.sessionCount == 1) {
             m.avgTotalU    = session.totalSessionInsulinU
             m.avgPrebolusU = session.prebolusU
-            m.avgCarbSmbsU = session.carbPhaseSmbsU
+            // For P/F-only sessions, carb SMBs are 0 by definition — don't seed from zero
+            if (!session.carbPhaseSkipped) m.avgCarbSmbsU = session.carbPhaseSmbsU
             m.avgPfSmbsU   = session.pfPhaseSmbsU
             m.avgTailSmbsU = session.tailPhaseSmbsU
         } else {
             val alpha = if (session.isClean) INSULIN_EWMA_ALPHA else INSULIN_EWMA_ALPHA * 0.5
             m.avgTotalU    += alpha * (session.totalSessionInsulinU - m.avgTotalU)
             m.avgPrebolusU += alpha * (session.prebolusU            - m.avgPrebolusU)
-            m.avgCarbSmbsU += alpha * (session.carbPhaseSmbsU       - m.avgCarbSmbsU)
+            // Only update carb SMBs from sessions that actually had a carb phase
+            if (!session.carbPhaseSkipped)
+                m.avgCarbSmbsU += alpha * (session.carbPhaseSmbsU - m.avgCarbSmbsU)
             m.avgPfSmbsU   += alpha * (session.pfPhaseSmbsU         - m.avgPfSmbsU)
             m.avgTailSmbsU += alpha * (session.tailPhaseSmbsU       - m.avgTailSmbsU)
         }
