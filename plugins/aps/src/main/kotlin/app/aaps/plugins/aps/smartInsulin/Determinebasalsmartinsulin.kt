@@ -338,8 +338,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
             else
                 dosingIsfMgdl  // rising: same ISF, ci term does the work
+            // Show as "secISF=0.38mmol (÷5)" so it's clear this is the secondary
+            // curve ISF, not the dosing ISF, and why it's that value
             val isfStr = if (pdpSyntheticCi > 0.0)
-                " ISF=${fmt(dosingIsfMgdl, isMmol)}→${fmt(pdpIsfDisplay, isMmol)} gap=${fmt(predMinGapMgdl, isMmol)}"
+                " secISF=${fmt(pdpIsfDisplay, isMmol)}${if (isMmol) "mmol/U" else "mg/dL/U"} gap=${fmt(predMinGapMgdl, isMmol)}"
             else ""
             sb.append(" | PDP(blend=${"%.2f".format(Locale.US, effectivePdpBlend)} ci×${"%.2f".format(Locale.US, pdpCiStrength)} fade=${pdpFadeMins.toInt()}m pdp_min=${fmt(pdpPredMin, isMmol)} blended=${fmt(blendedPredMin, isMmol)}$isfStr)")
         }
