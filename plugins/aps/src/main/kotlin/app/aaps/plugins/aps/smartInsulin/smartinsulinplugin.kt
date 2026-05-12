@@ -613,6 +613,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveFadeMins:  Double, // learned effective fade for current hour
         val pdpCiStrength:         Double,
         val pdpRisingStrength:     Double, // rising pathway ci scaling (0.5-1.5)
+        val pdpMaxBlend:           Double, // configured max blend weight (e.g. 0.5)
         val pdpFastingMaxIob:      Double,
         val pdpHourlyStrengths:    List<Double>,
         val pdpHourlyConfidences:  List<Double>,
@@ -813,6 +814,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpEffectiveFadeMins = pdpLearner.effectiveFadeMins(hour, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
             pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
+            pdpMaxBlend          = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
             pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthMultAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },

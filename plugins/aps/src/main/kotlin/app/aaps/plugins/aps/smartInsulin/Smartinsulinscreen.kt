@@ -1070,30 +1070,50 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         )
         Spacer(Modifier.height(6.dp))
 
-        // Column headers — same weight() pattern as circadian table
+        // Column headers — effective values, plain names
+        // CI Strength = ciStrength × strengthMult × confidence (what the loop actually uses)
+        // Fade mins   = fadeMins × fadeMult × confidence (effective fade duration in minutes)
+        // Blend weight = maxBlend × blendMult × confidence (how much PDP curve blends in)
         Row(modifier = Modifier.fillMaxWidth()) {
-            Text("Hr",     modifier = Modifier.weight(1.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("StrMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("FadMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("BlnMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Conf",   modifier = Modifier.weight(3f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Hr",           modifier = Modifier.weight(1.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("CI Strength",  modifier = Modifier.weight(2.2f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Fade mins",    modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Blend wt",     modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Conf",         modifier = Modifier.weight(3f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
         }
         HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
 
         var expandedHour by rememberSaveable { mutableStateOf(-1) }
 
+        // Base settings — needed to compute effective values
+        val baseCiStrength  = d.pdpCiStrength
+        val baseFadeMins    = d.pdpFadeMins.toDouble()
+        val baseMaxBlend    = d.pdpMaxBlend
+
         for (h in 0..23) {
             val isCurrent  = h == hour
-            val strength   = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
-            val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
-            val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
-            val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
-            val fadeMult   = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
+            val strengthMult = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
+            val confidence   = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
+            val samples      = d.pdpHourlySamples.getOrElse(h) { 0 }
+            val blendMult    = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
+            val fadeMult     = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
 
-            val strDev = strength - 1.0
+            // Compute effective values — what the loop actually used at this hour
+            // Mirrors effectiveCiStrength() / effectiveFadeMins() / effectiveBlendMult() in PdpLearner
+            val confClamped     = confidence.coerceIn(0.0, 1.0)
+            val effStrMult      = 1.0 + confClamped * (strengthMult - 1.0)
+            val effCiStrength   = (baseCiStrength * effStrMult).coerceIn(0.3, baseCiStrength * 3.0)
+            val effFadeMult     = 1.0 + confClamped * (fadeMult - 1.0)
+            val effFadeMins     = (baseFadeMins * effFadeMult).coerceIn(baseFadeMins * 0.5, baseFadeMins * 2.0)
+            // effectiveBlendMult: confidence floored at 0.5 so PDP works from day 1
+            val scaledBlend     = (confClamped * 2.0 - 1.0).coerceIn(0.0, 1.0)  // 0 until conf>0.5
+            val effBlendMult    = 1.0 + scaledBlend * (blendMult - 1.0)
+            val effBlendWeight  = (baseMaxBlend * effBlendMult).coerceIn(baseMaxBlend * 0.2, baseMaxBlend * 1.5)
+
+            val strDev   = strengthMult - 1.0
             val cellColor = Color.Transparent
             val textColor: Color = when {
-                isCurrent  -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+                isCurrent    -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
                 samples == 0 -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                 else         -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
             }
@@ -1102,9 +1122,10 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val confPct = (confFraction * 100).toInt()
             fun confColor(pct: Int) = when { pct >= 60 -> StatusGood; pct >= 30 -> StatusWarn; else -> StatusBad }
 
-            fun strColor(s: Double) = when { s > 1.03 -> StatusWarn; s < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
-            fun fadColor(f: Double) = when { f > 1.03 -> StatusWarn; f < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
-            fun blnColor(b: Double) = when { b > 1.03 -> StatusWarn; b < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+            // Colour by deviation from base setting (not from 1.0)
+            fun ciColor(eff: Double)    = when { eff > baseCiStrength * 1.03 -> StatusWarn; eff < baseCiStrength * 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+            fun fadeColor(eff: Double)  = when { eff > baseFadeMins  * 1.03 -> StatusWarn; eff < baseFadeMins  * 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+            fun blendColor(eff: Double) = when { eff > baseMaxBlend  * 1.03 -> StatusWarn; eff < baseMaxBlend  * 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
 
             val rowBg = if (isCurrent) androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant else cellColor
 
@@ -1121,9 +1142,9 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                          modifier = Modifier.weight(1.5f), fontSize = 11.sp,
                          fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                          color = if (isCurrent) androidx.compose.material3.MaterialTheme.colorScheme.onSurface else textColor)
-                    Text("%.3f".format(strength), modifier = Modifier.weight(2f), fontSize = 11.sp, color = strColor(strength))
-                    Text("%.3f".format(fadeMult),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = fadColor(fadeMult))
-                    Text("%.3f".format(blendMult), modifier = Modifier.weight(2f), fontSize = 11.sp, color = blnColor(blendMult))
+                    Text("%.2f".format(effCiStrength),   modifier = Modifier.weight(2.2f), fontSize = 11.sp, color = if (samples == 0) textColor else ciColor(effCiStrength))
+                    Text("%.1f".format(effFadeMins),     modifier = Modifier.weight(2f),   fontSize = 11.sp, color = if (samples == 0) textColor else fadeColor(effFadeMins))
+                    Text("%.3f".format(effBlendWeight),  modifier = Modifier.weight(2f),   fontSize = 11.sp, color = if (samples == 0) textColor else blendColor(effBlendWeight))
                     Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(modifier = Modifier.width(40.dp).height(6.dp)
@@ -1138,7 +1159,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                     }
                 }
 
-                // Expanded detail row — tap to reveal
+                // Expanded detail — tap to reveal
                 if (expandedHour == h) {
                     Spacer(Modifier.height(4.dp))
                     Column(
@@ -1149,37 +1170,42 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                             .padding(horizontal = 8.dp, vertical = 6.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        Text("Hour $h:00 — detail", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        Text("Hour $h:00", fontSize = 11.sp, fontWeight = FontWeight.Bold,
                              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
-                        Text("StrengthMult : ${"%.4f".format(strength)}  (1.0 = neutral, >1 = more resistance assumed)",
+                        Spacer(Modifier.height(2.dp))
+                        // Show effective = base × mult, so user sees exactly what changed
+                        Text("CI Strength  : ${"%.2f".format(effCiStrength)}  (${"%.2f".format(baseCiStrength)} base × ${"%.3f".format(effStrMult)} eff mult)",
                              fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("FadeMult     : ${"%.4f".format(fadeMult)}  (1.0 = base fadeMins, >1 = deviation lasts longer)",
+                        Text("             applies to both stuck-high and rising pathway",
+                             fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                        Text("Fade mins    : ${"%.1f".format(effFadeMins)}min  (${"%.0f".format(baseFadeMins)}min base × ${"%.3f".format(effFadeMult)} eff mult)",
                              fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("BlendMult    : ${"%.4f".format(blendMult)}  (1.0 = base pdpMaxBlend, confidence-weighted)",
+                        Text("Blend weight : ${"%.3f".format(effBlendWeight)}  (${"%.3f".format(baseMaxBlend)} max × ${"%.3f".format(effBlendMult)} eff mult)",
                              fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Confidence   : ${"%.3f".format(confidence)}  ($samples observations)",
+                        Text("Confidence   : ${"%.1f".format(confidence * 100)}%  ($samples observations)",
                              fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                        if (samples == 0) {
-                            Text("No data yet — using neutral defaults until first observation.",
-                                 fontSize = 10.sp,
-                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-                        } else {
+                        if (samples > 0) {
+                            Spacer(Modifier.height(2.dp))
                             val strDesc = when {
-                                strength > 1.3  -> "Strong resistance — PDP applies significantly more correction here"
-                                strength > 1.1  -> "Moderate resistance — consistent above-target plateau at this hour"
-                                strength > 1.02 -> "Mild resistance — slight upward tendency learned"
-                                strength < 0.7  -> "Primary IOB clearly winning — PDP backs off significantly here"
-                                strength < 0.9  -> "Primary IOB outperforms — nudging PDP back at this hour"
-                                strength < 0.98 -> "Slight IOB advantage — small downward adjustment"
-                                else            -> "Neutral — no consistent deviation at this hour"
+                                strengthMult > 1.3  -> "Strong resistance learned — PDP applies significantly more correction here"
+                                strengthMult > 1.1  -> "Moderate resistance — consistent plateau at this hour"
+                                strengthMult > 1.02 -> "Mild resistance — slight upward tendency"
+                                strengthMult < 0.7  -> "Primary IOB clearly winning — PDP backs off significantly"
+                                strengthMult < 0.9  -> "Primary IOB outperforms — nudging back"
+                                strengthMult < 0.98 -> "Slight IOB advantage — small adjustment"
+                                else               -> "Neutral — no consistent deviation at this hour"
                             }
                             Text(strDesc, fontSize = 10.sp,
                                  color = if (kotlin.math.abs(strDev) > 0.05) StatusWarn
                                  else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            Text("No data — showing base settings. Will learn once PDP activates at this hour.",
+                                 fontSize = 10.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Spacer(Modifier.height(2.dp))
@@ -1189,7 +1215,8 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
 
         Spacer(Modifier.height(4.dp))
         Text(
-            "↑↑ = strong resistance (str >1.15). ↑ = mild (>1.05). ↓↓ = IOB clearly wins (<0.85). · = neutral. Tap any row for detail.",
+            "Values shown are effective (what the loop actually uses): base setting × learned multiplier × confidence. " +
+                "Orange = above base (more resistance/longer fade/heavier blend). Blue = below base. Tap any row for breakdown.",
             fontSize = 9.sp,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 13.sp
