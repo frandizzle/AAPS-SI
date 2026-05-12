@@ -211,7 +211,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val startDow:        Int,    // day-of-week when episode opened (0=Sun..6=Sat)
         var pathway:         String,
         var nadirBgMmol:     Double,   // lowest BG seen during episode
-        var peakBlendWeight: Double    // highest blend weight used
+        var peakBlendWeight: Double,   // highest blend weight used
+        val openedClean:     Boolean = true  // was pdpCleanForBlending true when episode opened?
+        // Episodes that opened clean are always allowed to close and score, even if
+        // pdpCleanForBlending later drops transiently (e.g. lockout flag flip at episode edge).
+        // Prevents silent discard of real stuck-high episodes near post-meal windows.
     )
     private var activeEpisode: PdpEpisode? = null
 
@@ -625,7 +629,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpCiMgdl:             Double,
         val pdpConsecutiveReadings: Int,    // ci-based pathway counter
         val pdpStuckHighReadings:   Int,    // stuck-high pathway counter
-        val pdpActivePathway:       String, // "ci", "stuck", or "none"
+        val pdpActivePathway:       String, // "rising", "stuck", or "none"
         val pdpSyntheticCiMmol:     Double, // synthetic ci in mmol (0 when rising pathway or inactive)
         val pdpMinReadings:        Int,    // stuck-high min readings threshold
         val pdpFadeMins:           Int,
@@ -826,7 +830,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpCiMgdl            = lastCiMgdl,
             pdpConsecutiveReadings = consecutivePosCiReadings,
             pdpStuckHighReadings   = pdpStuckHighReadings,
-            pdpActivePathway       = if (cachedPdpBlendWeight > 0.0) (if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "ci") else "none",
+            pdpActivePathway       = if (cachedPdpBlendWeight > 0.0) (if (pdpStuckHighReadings >= consecutivePosCiReadings) "stuck" else "rising") else "none",
             pdpSyntheticCiMmol     = cachedPdpSyntheticCi / 18.0,
             pdpMinReadings       = preferences.get(IntKey.ApsSmartInsulinPdpMinReadings), // stuck threshold only
             pdpFadeMins          = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes),
@@ -1871,7 +1875,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 pdpMaxBlend * rampFraction * learnedBlendScale
             }
             "rising" -> {
-                val risingFraction = minOf(1.0, consecutivePosCiReadings * 0.05)
+                // 15% of max blend per reading — reaches full blend in ~7 consecutive ci readings (~35 min).
+                // Previous 5%/reading required 20 readings (100 min) — effectively neutered the pathway.
+                val risingFraction = minOf(1.0, consecutivePosCiReadings * 0.15)
                 pdpMaxBlend * risingFraction * learnedBlendScale
             }
             else -> 0.0
@@ -1908,7 +1914,8 @@ open class SmartInsulinPlugin @Inject constructor(
                     startDow        = openDow,
                     pathway         = pdpActivePathway,
                     nadirBgMmol     = currentBgMmolForEpisode,
-                    peakBlendWeight = pdpBlendWeight
+                    peakBlendWeight = pdpBlendWeight,
+                    openedClean     = pdpCleanForBlending
                 )
                 aapsLogger.debug(LTag.APS,
                                  "PDP episode OPEN [$pdpActivePathway] BG=${String.format("%.1f", currentBgMmolForEpisode)} blend=${String.format("%.2f", pdpBlendWeight)}")
@@ -1949,7 +1956,11 @@ open class SmartInsulinPlugin @Inject constructor(
             val ep = activeEpisode!!
             val durationMins = (System.currentTimeMillis() - ep.startTimeMs) / 60_000.0
             // Only score if episode lasted at least 15min (avoid micro-episodes from noise)
-            if (durationMins >= 15.0 && pdpLearningEnabled && pdpCleanForBlending) {
+            // Only score if episode lasted at least 15min and was opened during clean conditions.
+            // Using ep.openedClean (not pdpCleanForBlending) so episodes that opened clean
+            // are always scored even if the clean flag drops transiently at close time
+            // (e.g. a brief lockout flag flip at the end of a post-meal window).
+            if (durationMins >= 15.0 && pdpLearningEnabled && ep.openedClean) {
                 aapsLogger.debug(LTag.APS,
                                  "PDP episode CLOSE [${ep.pathway}] " +
                                      "landing=${String.format("%.1f", currentBgMmolForEpisode)}mmol " +
@@ -1992,6 +2003,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 )
             } else if (durationMins < 15.0) {
                 aapsLogger.debug(LTag.APS, "PDP episode DISCARDED — too short (${durationMins.toInt()}min < 15min)")
+            } else if (!ep.openedClean) {
+                aapsLogger.debug(LTag.APS, "PDP episode DISCARDED — opened during dirty conditions (rebound/post-meal lockout)")
             }
             activeEpisode = null
         }
@@ -2262,10 +2275,11 @@ open class SmartInsulinPlugin @Inject constructor(
                 delta         = glucoseStatus.delta / 18.0,
                 targetBgMmol  = profile.getTargetMgdl() / 18.0,
                 lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
-                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,           // ADD
-                firstBolusEpochMs  = iobArray.firstOrNull()?.lastBolusTime ?: 0L,  // ADD
-                tbrRateU           = currentTemp.rate,                              // ADD
-                profileRateU       = profile.getBasal()                            // ADD
+                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
+                firstBolusEpochMs  = iobArray.firstOrNull()?.lastBolusTime ?: 0L,
+                smbsDeliveredU     = apsResult.smb,                              // FIX: was missing — SMB phase tracking was always zero
+                tbrRateU           = currentTemp.rate,
+                profileRateU       = profile.getBasal()
             )
         }
 

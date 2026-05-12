@@ -142,6 +142,11 @@ class MealPhaseTracker @Inject constructor(
     private var iobAtCarbExit: Double = 0.0
     private var iobAtPfExit:   Double = 0.0
 
+    // Pending IOB snapshot — updated every confirm cycle so executeTransition()
+    // reads the most recent IOB at the moment the transition actually fires,
+    // not the first confirm cycle (which could be 10 min earlier).
+    private var pendingIobSnapshot: Double = 0.0
+
     // Running AUC above target per phase (mmol·min — (bg - target) × 5 each cycle, floored at 0)
     private var bgAucCarbPhase: Double = 0.0
     private var bgAucPfPhase:   Double = 0.0
@@ -366,9 +371,15 @@ class MealPhaseTracker @Inject constructor(
         // Only fires if we're at least 30 min into P/F or TAIL (early spikes are
         // normal P/F variation, not second meals).
         val avgRecentDeltaForStack = recentAvgDelta(3)
-        val MEAL_STACK_DELTA_MMOL  = 0.40  // sustained 0.4 mmol/5min rise = second meal
+        // Stacking threshold raised to 0.55 mmol/5min (was 0.40) to avoid invalidating
+        // legitimate slow-GI P/F rises from the first meal still digesting.
+        // Additional BG gate: only flag stacking if BG has climbed back above carb-phase peak,
+        // confirming this is a genuinely new absorption wave, not a P/F tail from the first meal.
+        val MEAL_STACK_DELTA_MMOL  = 0.55  // sustained 0.55 mmol/5min rise
+        val bgAboveCarbPeak        = bgMmol > carbPhasePeakBgMmol + 0.5  // BG above first-meal peak + 0.5 mmol
         if (currentPhase != MealPhase.CARB &&
             avgRecentDeltaForStack > MEAL_STACK_DELTA_MMOL &&
+            bgAboveCarbPeak &&
             (now - phaseStartMs) > 30 * 60_000L) {
             aapsLogger.debug(LTag.APS,
                              "MealPhaseTracker: secondary BG spike detected in $currentPhase " +
@@ -469,15 +480,17 @@ class MealPhaseTracker @Inject constructor(
                     val transitionReady = deltaGate || iobPeakPassed
 
                     if (transitionReady) {
-                        // Snapshot IOB at carb exit before handing off
-                        iobAtCarbExit = iobU
+                        // Update pendingIobSnapshot each confirm cycle so executeTransition()
+                        // reads the most recent IOB when the transition actually fires,
+                        // not the first confirm cycle (which could be 10 min earlier).
+                        pendingIobSnapshot = iobU
                         val reason = when {
                             deltaGate && iobPeakPassed -> "delta+iobPeak"
                             iobPeakPassed              -> "iobPeak (prebolus suppressed spike)"
                             else                       -> "delta"
                         }
                         aapsLogger.debug(LTag.APS,
-                                         "MealPhaseTracker CARB→P/F via $reason iobAtExit=${"%.2f".format(iobAtCarbExit)}U")
+                                         "MealPhaseTracker CARB→P/F via $reason iobPending=${"%.2f".format(pendingIobSnapshot)}U")
                         confirmTransition(MealPhase.PROTEIN_FAT, now, phaseElapsedMs)
                     } else {
                         resetTransitionCandidate()
@@ -520,8 +533,26 @@ class MealPhaseTracker @Inject constructor(
 
             MealPhase.PROTEIN_FAT -> {
                 // Transition to TAIL when:
+                // ── Crash-through: immediate forced transition (no min-time gate) ──
+                // If BG is already at or below target with a strongly negative delta,
+                // the user has over-bolused and BG is crashing through target during P/F.
+                // The bgAboveTarget gate would trap this in PROTEIN_FAT forever, misattributing
+                // the tail-window low as a P/F low. Force immediate transition to TAIL
+                // without confirm — a crash is unambiguous, no confirmation needed.
+                val CRASH_DELTA_MMOL = -0.30   // strongly negative: -0.30 mmol/5min (~-5.4 mg/dL)
+                val crashingThroughTarget = bgMmol <= targetBgMmol && delta < CRASH_DELTA_MMOL
+                if (crashingThroughTarget) {
+                    pendingIobSnapshot = iobU
+                    aapsLogger.debug(LTag.APS,
+                                     "MealPhaseTracker P/F→TAIL FORCED (crash-through: bg=${"%.1f".format(bgMmol)}≤target delta=${"%.2f".format(delta)}) iobPending=${"%.2f".format(pendingIobSnapshot)}U")
+                    executeTransition(MealPhase.TAIL, now, phaseElapsedMs)
+                    lastMealMode = mealMode
+                    return
+                }
+
+                // Normal P/F → TAIL transition:
                 // 1. Minimum P/F time elapsed (60 min)
-                // 2. Delta has turned negative — BOTH smoothed avg AND instantaneous
+                // 2. Delta has turned negative — smoothed avg OR instantaneous
                 // 3. BG still above target (natural descent, not a crash)
                 // 4. N consecutive readings confirm
                 if (phaseElapsedMs >= PF_MIN_MS) {
@@ -531,9 +562,9 @@ class MealPhaseTracker @Inject constructor(
                     val deltaNegative   = avgNegative || instantNegative  // either signal is sufficient — avg lags
 
                     if (deltaNegative && bgAboveTarget) {
-                        iobAtPfExit = iobU  // snapshot IOB at P/F→TAIL handoff
+                        pendingIobSnapshot = iobU  // updated each confirm — executeTransition() reads final value
                         aapsLogger.debug(LTag.APS,
-                                         "MealPhaseTracker P/F→TAIL iobAtExit=${"%.2f".format(iobAtPfExit)}U")
+                                         "MealPhaseTracker P/F→TAIL iobPending=${"%.2f".format(pendingIobSnapshot)}U")
                         confirmTransition(MealPhase.TAIL, now, phaseElapsedMs)
                     } else {
                         resetTransitionCandidate()
@@ -705,6 +736,7 @@ class MealPhaseTracker @Inject constructor(
         firstBolusMs             = 0L
         iobAtCarbExit            = 0.0
         iobAtPfExit              = 0.0
+        pendingIobSnapshot       = 0.0
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
         bgAucTailPhase           = 0.0
@@ -751,8 +783,18 @@ class MealPhaseTracker @Inject constructor(
     private fun executeTransition(target: MealPhase, now: Long, phaseElapsedMs: Long) {
         val fromPhase = currentPhase
         when (fromPhase) {
-            MealPhase.CARB        -> { carbPhaseDurationMs = phaseElapsedMs; lastTransitionDebug = "✓ Transitioned to P/F at ${phaseElapsedMs/60_000}min" }
-            MealPhase.PROTEIN_FAT -> { pfPhaseDurationMs   = phaseElapsedMs; lastTransitionDebug = "" }
+            MealPhase.CARB        -> {
+                carbPhaseDurationMs = phaseElapsedMs
+                iobAtCarbExit       = pendingIobSnapshot  // snapshot at actual transition, not first confirm
+                lastTransitionDebug = "✓ Transitioned to P/F at ${phaseElapsedMs/60_000}min"
+                aapsLogger.debug(LTag.APS, "MealPhaseTracker executeTransition CARB→P/F iobAtCarbExit=${"%.2f".format(iobAtCarbExit)}U")
+            }
+            MealPhase.PROTEIN_FAT -> {
+                pfPhaseDurationMs   = phaseElapsedMs
+                iobAtPfExit         = pendingIobSnapshot  // snapshot at actual transition
+                lastTransitionDebug = ""
+                aapsLogger.debug(LTag.APS, "MealPhaseTracker executeTransition P/F→TAIL iobAtPfExit=${"%.2f".format(iobAtPfExit)}U")
+            }
             MealPhase.TAIL        -> { lastTransitionDebug = "" }
         }
         currentPhase             = target
@@ -846,6 +888,7 @@ class MealPhaseTracker @Inject constructor(
         firstBolusMs             = 0L
         iobAtCarbExit            = 0.0
         iobAtPfExit              = 0.0
+        pendingIobSnapshot       = 0.0
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
         bgAucTailPhase           = 0.0
