@@ -222,6 +222,9 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb2LastIobU:              Double = 0.0
     @Volatile var pb2LastMaxIobU:           Double = 0.0
     @Volatile var pb2ProfileTargetMgdl:     Double = 0.0
+    @Volatile private var pb1Notified: Boolean = false
+    @Volatile private var pb2Notified: Boolean = false
+    @Volatile private var pb3Notified: Boolean = false
     // ── PB3 gate snapshot — identical fields, updated separately each invoke() ─
     @Volatile var pb3LastBgMgdl:            Double = 0.0
     @Volatile var pb3LastDeltaMgdl:         Double = 0.0
@@ -1144,6 +1147,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 bgMmol       = glucoseStatus.glucose / 18.0,
                 targetBgMmol = profile.getTargetMgdl() / 18.0
             )
+            pb1Notified = false   // ← ADD
+            pb2Notified = false   // ← ADD
+            pb3Notified = false   // ← ADD
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
@@ -1346,6 +1352,26 @@ open class SmartInsulinPlugin @Inject constructor(
             maxIobU       = pb2MaxIob,
             profile       = profile
         )
+        // Notify MealPhaseTracker of prebolus deliveries (once per bolus, on confirmed fire)
+        val activeState = mealOverrideManager  // already exposed via interface accessors
+
+// PB1 — fires at session start; activeDoseU is non-null once delivered
+        if (!pb1Notified && mealOverrideManager.activeDoseU != null) {
+            mealOverrideManager.activeDoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+            pb1Notified = true
+        }
+
+// PB2 — activePb2DoseU is non-null only after successful delivery
+        if (!pb2Notified && mealOverrideManager.activePb2DoseU != null) {
+            mealOverrideManager.activePb2DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+            pb2Notified = true
+        }
+
+// PB3 — same pattern
+        if (!pb3Notified && mealOverrideManager.activePb3DoseU != null) {
+            mealOverrideManager.activePb3DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+            pb3Notified = true
+        }
         // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
         // post-fire UI still shows what the gate state was on the last tick.
         pb2LastBgMgdl            = glucoseStatus.glucose
@@ -2235,7 +2261,11 @@ open class SmartInsulinPlugin @Inject constructor(
                 shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
                 delta         = glucoseStatus.delta / 18.0,
                 targetBgMmol  = profile.getTargetMgdl() / 18.0,
-                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
+                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
+                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,           // ADD
+                firstBolusEpochMs  = iobArray.firstOrNull()?.lastBolusTime ?: 0L,  // ADD
+                tbrRateU           = currentTemp.rate,                              // ADD
+                profileRateU       = profile.getBasal()                            // ADD
             )
         }
 
