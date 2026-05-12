@@ -215,9 +215,6 @@ open class SmartInsulinPlugin @Inject constructor(
     )
     private var activeEpisode: PdpEpisode? = null
 
-    // Track last prebolus total notified to MealPhaseTracker — delta = new delivery this cycle
-    private var lastNotifiedPrebolusU: Double = 0.0
-
     // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
     @Volatile var pb2LastBgMgdl:            Double = 0.0
     @Volatile var pb2LastDeltaMgdl:         Double = 0.0
@@ -584,22 +581,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
         val mealPhasePF:           MealPhaseTracker.PhaseStatus,
         val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
-        // ── Meal phase learner — active multipliers + insulin model ───────────
-        val mealPhaseCurrentPhase: String,          // "CARB" / "PROTEIN_FAT" / "TAIL" / ""
-        val mealPhasePrebolusU:    Double,          // prebolus delivered this session
-        val mealPhaseCarbSmbsU:    Double,          // SMBs fired during carb phase so far
-        val mealPhasePfSmbsU:      Double,          // SMBs fired during P/F phase so far
-        val mealPhaseTailSmbsU:    Double,          // SMBs fired during tail phase so far
-        val mealPhaseTotalU:       Double,          // prebolus + SMBs + extra TBR + manual so far
-        val mealPhaseExtraBasalU:  Double,          // extra TBR above profile delivered so far
-        val mealPhaseManualU:      Double,          // manual correction boluses this session
-        // Active multipliers (1.0 when not yet confident or not in that phase)
-        val mealPhaseCarbSmbMult:  Double,          // carbSmbFractionMult for current mode
-        val mealPhasePfIsfMult:    Double,          // pfIsfMult for current mode
-        val mealPhaseTailIsfMult:  Double,          // tailIsfMult for current mode
-        // Per-mode insulin fingerprint (all modes, for the learner history section)
-        val mealPhaseInsulinSummaries: Map<String, String>,  // mode.label → insulinSummaryForMode
-        val mealPhaseModeSummaries:    Map<String, String>,  // mode.label → statusForMode
         // ── PDP ───────────────────────────────────────────────────────────────
         val pdpEnabled:            Boolean,
         val pdpBlendWeight:        Double,
@@ -613,7 +594,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveFadeMins:  Double, // learned effective fade for current hour
         val pdpCiStrength:         Double,
         val pdpRisingStrength:     Double, // rising pathway ci scaling (0.5-1.5)
-        val pdpMaxBlend:           Double, // configured max blend weight (e.g. 0.5)
         val pdpFastingMaxIob:      Double,
         val pdpHourlyStrengths:    List<Double>,
         val pdpHourlyConfidences:  List<Double>,
@@ -779,27 +759,6 @@ open class SmartInsulinPlugin @Inject constructor(
             mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
             mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
             mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
-            mealPhaseCurrentPhase = if (mealPhaseTracker.sessionActive)
-                mealPhaseTracker.currentPhase.name else "",
-            mealPhasePrebolusU   = mealPhaseTracker.sessionPrebolusU,
-            mealPhaseCarbSmbsU   = mealPhaseTracker.sessionCarbSmbsU,
-            mealPhasePfSmbsU     = mealPhaseTracker.sessionPfSmbsU,
-            mealPhaseTailSmbsU   = mealPhaseTracker.sessionTailSmbsU,
-            mealPhaseTotalU      = mealPhaseTracker.sessionTotalInsulinU,
-            mealPhaseExtraBasalU = mealPhaseTracker.sessionExtraBasalU,
-            mealPhaseManualU     = mealPhaseTracker.sessionManualU,
-            mealPhaseCarbSmbMult = mealPhaseProfileLearner.carbSmbFractionMult(
-                mealPhaseTracker.sessionMode),
-            mealPhasePfIsfMult   = mealPhaseProfileLearner.pfIsfMult(
-                mealPhaseTracker.sessionMode),
-            mealPhaseTailIsfMult = mealPhaseProfileLearner.tailIsfMult(
-                mealPhaseTracker.sessionMode),
-            mealPhaseInsulinSummaries = MealMode.entries
-                .filter { it != MealMode.FASTING }
-                .associate { it.label to mealPhaseProfileLearner.insulinSummaryForMode(it) },
-            mealPhaseModeSummaries = MealMode.entries
-                .filter { it != MealMode.FASTING }
-                .associate { it.label to mealPhaseProfileLearner.statusForMode(it) },
             fuelTrimStrength     = circadianLearner.trimStrength,
             // ── PDP ───────────────────────────────────────────────────────────
             pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
@@ -814,7 +773,6 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpEffectiveFadeMins = pdpLearner.effectiveFadeMins(hour, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()),
             pdpCiStrength        = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength),
             pdpRisingStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpRisingStrength),
-            pdpMaxBlend          = preferences.get(DoubleKey.ApsSmartInsulinPdpMaxBlendWeight),
             pdpFastingMaxIob     = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob),
             pdpHourlyStrengths   = (0..23).map { h -> pdpLearner.strengthMultAt(h) },
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
@@ -1106,23 +1064,6 @@ open class SmartInsulinPlugin @Inject constructor(
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else SMB_DELIVERY_FRACTION
 
-        // ── Carb-phase SMB fraction from MealPhaseProfileLearner ─────────────
-        // carbSmbFractionMult < 1.0 = learner detected lows during carb phase → cut fraction
-        // carbSmbFractionMult > 1.0 = manual bolus needed → nudge fraction up
-        // Only active during carb phase of an active session.
-        if (mealPhaseTracker.sessionActive &&
-            mealPhaseTracker.currentPhase == MealPhaseTracker.MealPhase.CARB &&
-            mealMode != MealMode.FASTING) {
-            val carbMult = mealPhaseProfileLearner.carbSmbFractionMult(mealMode)
-            if (carbMult != 1.0) {
-                val prev = uamSmbFraction
-                uamSmbFraction = (uamSmbFraction * carbMult).coerceIn(0.1, 0.9)
-                aapsLogger.debug(LTag.APS,
-                                 "CarbPhase SMBfraction mult=${"%.3f".format(carbMult)} " +
-                                     "${"%.2f".format(prev)}→${"%.2f".format(uamSmbFraction)}")
-            }
-        }
-
         // ── Post-meal learning lockout ───────────────────────────────────────
         // When any meal or UAM mode expires (transition back to FASTING), mark BG data
         // as "dirty for learning" for a configurable window. Fat/protein tails and carb
@@ -1335,28 +1276,6 @@ open class SmartInsulinPlugin @Inject constructor(
         var dosingIsfMgdl = when {
             modeIsfMgdl > 0.0 -> modeIsfMgdl                    // user meal-mode override — already mg/dL
             else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → more aggressive → more insulin
-        }
-
-        // ── Phase-aware ISF from MealPhaseProfileLearner ─────────────────────
-        // pfIsfMult > 1.0 → raises ISF → less aggressive during P/F plateau
-        // tailIsfMult > 1.0 → raises ISF → backs off earlier in tail (crash protection)
-        // Only applies once learner has MIN_SESSIONS_FOR_CONFIDENCE sessions.
-        if (mealPhaseTracker.sessionActive && mealMode != MealMode.FASTING) {
-            val phaseIsfMult = when (mealPhaseTracker.currentPhase) {
-                MealPhaseTracker.MealPhase.PROTEIN_FAT ->
-                    mealPhaseProfileLearner.pfIsfMult(mealMode)
-                MealPhaseTracker.MealPhase.TAIL ->
-                    mealPhaseProfileLearner.tailIsfMult(mealMode)
-                else -> 1.0  // carb phase — ISF not adjusted; prebolus + SMB fraction handles it
-            }
-            if (phaseIsfMult != 1.0) {
-                val prev = dosingIsfMgdl
-                dosingIsfMgdl *= phaseIsfMult
-                aapsLogger.debug(LTag.APS,
-                                 "PhaseISF [${mealPhaseTracker.currentPhase}] " +
-                                     "mult=${"%.3f".format(phaseIsfMult)} " +
-                                     "ISF ${"%.1f".format(prev)}→${"%.1f".format(dosingIsfMgdl)} mg/dL")
-            }
         }
 
 
@@ -2186,7 +2105,9 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpRisingStrength        = pdpEffectiveRisingStrength,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
-            pdpSyntheticCi           = pdpSyntheticCi
+            pdpSyntheticCi           = pdpSyntheticCi,
+            pdpStuckHighReadings     = pdpStuckHighReadings,
+            pdpMinReadingsStuck      = pdpMinReadingsStuck
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
@@ -2244,39 +2165,14 @@ open class SmartInsulinPlugin @Inject constructor(
         // the full meal shape even if BolusCurveTracker is paused.
         // Only skips when sensor is completely unreliable (warmup).
         if (!cgmInWarmup) {
-            // ── Notify MealPhaseTracker of prebolus deliveries ────────────────
-            // MealOverrideManager accumulates PB1+PB2+PB3 in activeDoseU+activePb2DoseU+activePb3DoseU.
-            // We track the running total and notify the tracker of each new increment.
-            val totalPrebolusDelivered = (mealOverrideManager.activeDoseU ?: 0.0) +
-                (mealOverrideManager.activePb2DoseU ?: 0.0) +
-                (mealOverrideManager.activePb3DoseU ?: 0.0)
-            if (mealPhaseTracker.sessionActive) {
-                val newPrebolus = totalPrebolusDelivered - lastNotifiedPrebolusU
-                if (newPrebolus > 0.01) {
-                    mealPhaseTracker.notifyPrebolus(newPrebolus)
-                    lastNotifiedPrebolusU = totalPrebolusDelivered
-                }
-            } else {
-                // Session ended — reset tracker
-                lastNotifiedPrebolusU = 0.0
-            }
-
-            // firstBolusEpochMs: use lastBolusTime from IOB array — this is epoch ms of the most
-            // recent bolus (PB1 for a new meal session). 0 if no bolus recorded yet.
-            val firstBolusEpochMs = iobArray.firstOrNull()?.lastBolusTime ?: 0L
             mealPhaseTracker.onLoopCycle(
-                now                = now,
-                mealMode           = mealMode,
-                bgMmol             = glucoseStatus.glucose / 18.0,
-                shortAvgDelta      = glucoseStatus.shortAvgDelta / 18.0,
-                delta              = glucoseStatus.delta / 18.0,
-                targetBgMmol       = profile.getTargetMgdl() / 18.0,
-                lowGuardMmol       = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
-                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
-                firstBolusEpochMs  = firstBolusEpochMs,
-                smbsDeliveredU     = apsResult.smb.coerceAtLeast(0.0),
-                tbrRateU           = currentTemp.rate,
-                profileRateU       = profile.getBasal()
+                now           = now,
+                mealMode      = mealMode,
+                bgMmol        = glucoseStatus.glucose / 18.0,
+                shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
+                delta         = glucoseStatus.delta / 18.0,
+                targetBgMmol  = profile.getTargetMgdl() / 18.0,
+                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
             )
         }
 
