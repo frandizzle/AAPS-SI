@@ -485,10 +485,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
                 val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
 
+                val triggerGapBg = if (pdpEnabled && effectivePdpBlend > 0.0 && pdpSyntheticCi > 0.0)
+                    currentBg   // stuck-high: dosing against current BG gap
+                else
+                    predictedMin  // normal: dosing against predicted min gap
                 val trigger = when {
-                    !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
+                    !iobOk      -> "maxIOB(...)"
                     !smbAllowed -> "blocked"
-                    else        -> "predMinGap(${fmt(predictedMin, isMmol)}->${fmt(targetBg, isMmol)})"
+                    else        -> "predMinGap(${fmt(triggerGapBg, isMmol)}->${fmt(targetBg, isMmol)})"
                 }
 
                 val reboundStr = when {
