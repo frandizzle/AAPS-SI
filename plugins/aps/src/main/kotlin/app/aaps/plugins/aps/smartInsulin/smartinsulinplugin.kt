@@ -208,7 +208,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private data class PdpEpisode(
         val startTimeMs:     Long,
         val startHour:       Int,
-        val pathway:         String,
+        val startDow:        Int,      // day-of-week at episode open — avoids midnight boundary bug
+        var pathway:         String,   // var — can shift mid-episode (stuck→rising or vice versa)
         var nadirBgMmol:     Double,   // lowest BG seen during episode
         var peakBlendWeight: Double    // highest blend weight used
     )
@@ -1663,6 +1664,9 @@ open class SmartInsulinPlugin @Inject constructor(
             && !bgWentLow
             && !inReboundWindow
             && !inPostMealLockout
+        // Note: lastPdpBlendActive and lastCycleHour are from the PREVIOUS cycle — intentional.
+        // We compare last cycle's t+5min predictions against this cycle's actual BG.
+        // lastPathway is derived from cachedPdpSyntheticCi (also previous cycle) — consistent.
         if (pdpLearningEnabled && lastPdpBlendActive && pdpCleanForLearning) {
             val iobPred = determineBasalSmartInsulin.lastIobPredAt5Mgdl
             val pdpPred = determineBasalSmartInsulin.lastPdpPredAt5Mgdl
@@ -1675,8 +1679,10 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         } else if (pdpLearningEnabled) {
             // Tick decay for all hours even when PDP didn't blend — prevents stale confidence
+            // Only when learning is enabled — don't drain confidence when user has disabled learning
             pdpLearner.tickAllDecay(currentHour)
         }
+        // if !pdpLearningEnabled → do nothing — confidence preserved until learning re-enabled
 
         // ── PDP: compute blend weight for this cycle ──────────────────────────
         // ci = observed delta minus expected BGI (same formula as DetermineBasalSmartInsulin)
@@ -1801,9 +1807,11 @@ open class SmartInsulinPlugin @Inject constructor(
             val ep = activeEpisode
             if (ep == null) {
                 // Episode opening — PDP just became active
+                val openDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
                 activeEpisode = PdpEpisode(
                     startTimeMs     = System.currentTimeMillis(),
                     startHour       = currentHour,
+                    startDow        = openDow,
                     pathway         = pdpActivePathway,
                     nadirBgMmol     = currentBgMmolForEpisode,
                     peakBlendWeight = pdpBlendWeight
@@ -1814,6 +1822,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 // Episode ongoing — update nadir and peak blend
                 ep.nadirBgMmol     = minOf(ep.nadirBgMmol, currentBgMmolForEpisode)
                 ep.peakBlendWeight = maxOf(ep.peakBlendWeight, pdpBlendWeight)
+                // Keep pathway current — can shift mid-episode (e.g. stuck→rising)
+                // Episode learner should score against the dominant pathway at close
+                if (pdpActivePathway != "none") ep.pathway = pdpActivePathway
                 // Force-close if episode has been open too long (4h safety timeout)
                 val durationMins = (System.currentTimeMillis() - ep.startTimeMs) / 60_000.0
                 if (durationMins > 240.0 && pdpLearningEnabled) {
@@ -1831,7 +1842,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     // Timeout with BG still above target = missed correction
                     circadianLearner.nudgeIsfFromPdpEpisode(
                         hour    = ep.startHour,
-                        dow     = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+                        dow     = ep.startDow,  // captured at open — avoids midnight boundary bug
                         outcome = if (currentBgMmolForEpisode > profileTargetMmol + 1.0) "MISSED" else "PARTIAL"
                     )
                     activeEpisode = null
@@ -1880,7 +1891,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 // rather than a proxy "BG has been above target for X minutes" signal.
                 circadianLearner.nudgeIsfFromPdpEpisode(
                     hour    = ep.startHour,
-                    dow     = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+                    dow     = ep.startDow,  // captured at open — avoids midnight boundary bug
                     outcome = circOutcome
                 )
             } else if (durationMins < 15.0) {
