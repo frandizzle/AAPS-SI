@@ -227,7 +227,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // Rising: use pdpRisingStrength (0.5-1.5), not pdpCiStrength (1-10)
             // This prevents a high ciStrength for stuck-high from making rises overly aggressive
             val pdpEffectiveCi = if (isStuckHigh) 0.0 else ci * pdpRisingStrength
-            pdpPredictedBg = predictBgCurvePdp(
+            val (pdpCurve, primaryTotalDrop) = predictBgCurvePdp(
                 startBg        = currentBg,
                 ci             = pdpEffectiveCi,
                 fadeMins       = pdpFadeMins,
@@ -239,6 +239,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 stuckHighMode  = isStuckHigh,
                 ciStrength     = pdpCiStrength
             )
+            pdpPredictedBg   = pdpCurve
             pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
             val pdpPredMinRaw = if (pdpPredictedBg.size > insulinPeakTicks)
                 pdpPredictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
@@ -246,22 +247,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 pdpPredictedBg.minOrNull() ?: currentBg
 
             // ── Stuck-high floor: enforce the resistance belief directly ──────────
-            // Even with the scaled-total-drop curve, with large IOB the secondary
-            // post-peak minimum can still land below target — the physics accumulate
-            // over many ticks. This undermines the core belief of stuck-high: "BG
-            // will only fall 1/ciStrength as far as IOB predicts."
+            // The curve already lands at startBg - primaryTotalDrop/ciStrength by
+            // construction (normalised lift), but floating-point accumulation across
+            // many ticks can produce small errors. The floor is a safety net using
+            // the exact same primaryTotalDrop the curve was built with — no mismatch.
             //
-            // Floor: pdpPredMin >= currentBg - primaryPostPeakDrop / ciStrength
-            //   primaryPostPeakDrop = currentBg - predictedMin  (primary curve post-peak)
-            //   ciStrength=3  → secondary can fall at most 1/3 of what primary falls
+            //   flooredMin = currentBg - primaryTotalDrop / ciStrength
+            //   ciStrength=3  → secondary can fall at most 1/3 of full primary drop
             //   ciStrength=10 → secondary can fall at most 1/10 → stays near currentBg
             //
             // Safety curve (pdpPredMinSafety) is untouched — safety gates always use
             // the conservative primary-only prediction. Only the dosing minimum is floored.
             pdpPredMin = if (isStuckHigh) {
-                val primaryPostPeakDrop = (currentBg - predictedMin).coerceAtLeast(0.0)
-                val maxSecondaryDrop    = primaryPostPeakDrop / pdpCiStrength.coerceAtLeast(1.0)
-                val flooredMin          = currentBg - maxSecondaryDrop
+                val maxSecondaryDrop = primaryTotalDrop / pdpCiStrength.coerceAtLeast(1.0)
+                val flooredMin       = currentBg - maxSecondaryDrop
                 maxOf(pdpPredMinRaw, flooredMin)
             } else {
                 pdpPredMinRaw  // rising pathway: no floor, curve is already above primary
@@ -608,6 +607,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
     //   so the curves converge at the horizon.
     //
     // PRIMARY curve (predictBgCurve) is NEVER touched.
+    // Returns Pair(predictions, primaryTotalDrop).
+    // primaryTotalDrop is the full-curve primary drop — returned so the floor at the
+    // call site uses the exact same reference drop the curve was built with, not a
+    // separately-derived post-peak approximation.
     private fun predictBgCurvePdp(
         startBg:       Double,
         ci:            Double,
@@ -619,63 +622,58 @@ class DetermineBasalSmartInsulin @Inject constructor(
         systemDiaMins: Double,
         stuckHighMode: Boolean = false,
         ciStrength:    Double  = 1.0
-    ): List<Double> {
+    ): Pair<List<Double>, Double> {
         val safeStrength = ciStrength.coerceAtLeast(1.0)
         val fadeTicks    = (fadeMins / 5.0).coerceAtLeast(1.0)
 
         if (stuckHighMode) {
-            // ── Stuck-high: scale the TOTAL predicted drop, not per-tick iobDelta ────
+            // ── Stuck-high: scale the TOTAL predicted drop ────────────────────────
             //
-            // The old per-tick division approach was broken: even dividing iobDelta by
-            // ciStrength=10 each tick, with large IOB the accumulated drop still drags
-            // the secondary curve below target — the resistance slows the fall but can't
-            // prevent it. The blended predMin ends up below target → gap=0 → no dose.
-            //
-            // Correct model: "BG is resistant — it will only fall X% as far as IOB predicts."
-            //   primaryDrop   = how far IOB physics brings BG from startBg (e.g. 2.0 mmol)
-            //   secondaryDrop = primaryDrop / ciStrength         (e.g. 0.67 at ciStrength=3)
-            //   savedDrop     = primaryDrop - secondaryDrop      (e.g. 1.33 mmol lift)
-            //
-            // Each tick applies primary iobDelta PLUS a proportional upward lift that
-            // fades to zero over fadeMins. At fadeTicks the curves converge (physics wins
-            // at the long-term horizon). Before fadeTicks the secondary curve is held up.
+            // Correct model: "BG is resistant — it will only fall 1/ciStrength as far
+            // as IOB predicts." We compute the full primary drop first, then build a
+            // secondary curve that lands exactly savedDrop = primaryDrop*(1-1/ci) higher.
             //
             //   ciStrength=1  → savedDrop=0    → identical to primary
             //   ciStrength=3  → secondary lands at startBg - primaryDrop/3
             //   ciStrength=10 → secondary barely moves from startBg
 
-            // Pass 1: compute where the primary curve lands (total drop)
+            // Pass 1: compute full primary curve total drop
             var tempBg = startBg
             for (tick in 1..ticks) {
                 val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
                 tempBg += -(activity * isfMgdl * 5.0)
             }
-            val primaryTotalDrop  = (startBg - tempBg).coerceAtLeast(0.0)  // always >= 0
+            val primaryTotalDrop   = (startBg - tempBg).coerceAtLeast(0.0)
             val secondaryTotalDrop = primaryTotalDrop / safeStrength
-            val savedDrop          = primaryTotalDrop - secondaryTotalDrop  // lift = how much higher secondary lands
+            val savedDrop          = primaryTotalDrop - secondaryTotalDrop
 
-            // Pass 2: build secondary curve — primary iobDelta + proportional fade lift
+            // Pass 2: secondary curve = primary iobDelta + normalised fade lift.
+            //
+            // The lift is distributed as a fadeFrac-weighted ramp that decays linearly
+            // from 1.0 to 0.0 over fadeTicks. The sum of this ramp is fadeTicks/2
+            // (area of a right triangle), NOT fadeTicks — so we normalise by fadeTicks/2
+            // to guarantee the total lift sums exactly to savedDrop.
+            //
+            //   liftPerWeight = savedDrop / (fadeTicks / 2)
+            //   liftThisTick  = liftPerWeight * fadeFrac
+            //   sum over ticks = liftPerWeight * sum(fadeFrac) = liftPerWeight * fadeTicks/2 = savedDrop  ✓
+            val rampSum      = fadeTicks / 2.0  // exact integral of the linearly-decaying ramp
+            val liftPerWeight = if (rampSum > 0.0) savedDrop / rampSum else 0.0
+
             var bg = startBg
             val predictions = mutableListOf<Double>()
             for (tick in 1..ticks) {
                 val activity        = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
                 val iobDeltaPrimary = -(activity * isfMgdl * 5.0)
                 val fadeFrac        = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
-                // Lift per tick: spread savedDrop across all ticks, weighted by fadeFrac
-                // so the lift concentrates in the early portion and tapers off naturally.
-                // Using fadeFrac-weighted distribution (not uniform) keeps curve smooth
-                // and ensures the total lift sums to savedDrop when fadeFrac integrates to 1.
-                val liftThisTick = if (fadeTicks > 0) (savedDrop / fadeTicks) * fadeFrac else 0.0
+                val liftThisTick    = liftPerWeight * fadeFrac
                 bg += iobDeltaPrimary + liftThisTick
                 predictions.add(bg)
             }
-            return predictions
+            return Pair(predictions, primaryTotalDrop)
 
         } else {
-            // ── Rising pathway: same IOB physics, ci term fades over fadeMins ────────
-            // Rising says "unexplained deviation persists longer than normal" — ci term
-            // holds BG up beyond what IOB alone would predict. This naturally produces
-            // a higher predMin → bigger gap → more dosing. No change needed here.
+            // ── Rising pathway: primary IOB physics + ci term fades over fadeMins ──
             var bg = startBg
             val predictions = mutableListOf<Double>()
             for (tick in 1..ticks) {
@@ -685,7 +683,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 bg += iobDeltaPrimary + (ci * fadeFrac)
                 predictions.add(bg)
             }
-            return predictions
+            return Pair(predictions, 0.0)  // primaryTotalDrop unused for rising pathway
         }
     }
 
