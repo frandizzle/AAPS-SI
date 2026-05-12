@@ -332,7 +332,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         if (effectivePdpBlend > 0.0) {
-            val isfStr = if (pdpSyntheticCi > 0.0) " ISF=${fmt(dosingIsfMgdl, isMmol)}→${fmt(effectiveIsfMgdl, isMmol)} gap=${fmt(predMinGapMgdl, isMmol)}" else ""
+            // For stuck-high: secondary curve used pdpIsfMgdl = dosingIsfMgdl/ciStrength
+            // Show primary→secondary ISF so the log reflects what the curve actually used
+            val pdpIsfDisplay = if (pdpSyntheticCi > 0.0)
+                dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
+            else
+                dosingIsfMgdl  // rising: same ISF, ci term does the work
+            val isfStr = if (pdpSyntheticCi > 0.0)
+                " ISF=${fmt(dosingIsfMgdl, isMmol)}→${fmt(pdpIsfDisplay, isMmol)} gap=${fmt(predMinGapMgdl, isMmol)}"
+            else ""
             sb.append(" | PDP(blend=${"%.2f".format(Locale.US, effectivePdpBlend)} ci×${"%.2f".format(Locale.US, pdpCiStrength)} fade=${pdpFadeMins.toInt()}m pdp_min=${fmt(pdpPredMin, isMmol)} blended=${fmt(blendedPredMin, isMmol)}$isfStr)")
         }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
