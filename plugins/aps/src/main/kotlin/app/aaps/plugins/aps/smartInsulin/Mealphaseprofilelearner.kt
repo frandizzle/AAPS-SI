@@ -310,8 +310,13 @@ class MealPhaseProfileLearner @Inject constructor(
 
         aapsLogger.debug(LTag.APS,
                          "MealPhaseProfileLearner [${session.mode.label}] session #${p.sessionCount} " +
-                             "pre=${"%.2f".format(session.prebolusU)}U total=${"%.2f".format(session.totalSessionInsulinU)}U " +
-                             "carbSmbs=${"%.2f".format(session.carbPhaseSmbsU)}U pfSmbs=${"%.2f".format(session.pfPhaseSmbsU)}U " +
+                             "pre=${"%.2f".format(session.prebolusU)}U " +
+                             "carbSmbs=${"%.2f".format(session.carbPhaseSmbsU)}U " +
+                             "pfSmbs=${"%.2f".format(session.pfPhaseSmbsU)}U " +
+                             "tailSmbs=${"%.2f".format(session.tailPhaseSmbsU)}U " +
+                             "extraTBR=${"%.2f".format(session.extraBasalU)}U " +
+                             "manual=${"%.2f".format(session.manualCorrectionU)}U " +
+                             "total=${"%.2f".format(session.totalSessionInsulinU)}U " +
                              "iobCarb=${"%.2f".format(session.iobAtCarbExit)}U iobPf=${"%.2f".format(session.iobAtPfExit)}U " +
                              "smbs=${"%.2f".format(session.totalSmbsDeliveredU)}U " +
                              "auc=carb${"%.0f".format(session.bgAucCarbMmolMin)}/pf${"%.0f".format(session.bgAucPfMmolMin)}/tail${"%.0f".format(session.bgAucTailMmolMin)} " +

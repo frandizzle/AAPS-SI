@@ -584,6 +584,22 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
         val mealPhasePF:           MealPhaseTracker.PhaseStatus,
         val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
+        // ── Meal phase learner — active multipliers + insulin model ───────────
+        val mealPhaseCurrentPhase: String,          // "CARB" / "PROTEIN_FAT" / "TAIL" / ""
+        val mealPhasePrebolusU:    Double,          // prebolus delivered this session
+        val mealPhaseCarbSmbsU:    Double,          // SMBs fired during carb phase so far
+        val mealPhasePfSmbsU:      Double,          // SMBs fired during P/F phase so far
+        val mealPhaseTailSmbsU:    Double,          // SMBs fired during tail phase so far
+        val mealPhaseTotalU:       Double,          // prebolus + SMBs + extra TBR + manual so far
+        val mealPhaseExtraBasalU:  Double,          // extra TBR above profile delivered so far
+        val mealPhaseManualU:      Double,          // manual correction boluses this session
+        // Active multipliers (1.0 when not yet confident or not in that phase)
+        val mealPhaseCarbSmbMult:  Double,          // carbSmbFractionMult for current mode
+        val mealPhasePfIsfMult:    Double,          // pfIsfMult for current mode
+        val mealPhaseTailIsfMult:  Double,          // tailIsfMult for current mode
+        // Per-mode insulin fingerprint (all modes, for the learner history section)
+        val mealPhaseInsulinSummaries: Map<String, String>,  // mode.label → insulinSummaryForMode
+        val mealPhaseModeSummaries:    Map<String, String>,  // mode.label → statusForMode
         // ── PDP ───────────────────────────────────────────────────────────────
         val pdpEnabled:            Boolean,
         val pdpBlendWeight:        Double,
@@ -762,6 +778,27 @@ open class SmartInsulinPlugin @Inject constructor(
             mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
             mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
             mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
+            mealPhaseCurrentPhase = if (mealPhaseTracker.sessionActive)
+                mealPhaseTracker.currentPhase.name else "",
+            mealPhasePrebolusU   = mealPhaseTracker.sessionPrebolusU,
+            mealPhaseCarbSmbsU   = mealPhaseTracker.sessionCarbSmbsU,
+            mealPhasePfSmbsU     = mealPhaseTracker.sessionPfSmbsU,
+            mealPhaseTailSmbsU   = mealPhaseTracker.sessionTailSmbsU,
+            mealPhaseTotalU      = mealPhaseTracker.sessionTotalInsulinU,
+            mealPhaseExtraBasalU = mealPhaseTracker.sessionExtraBasalU,
+            mealPhaseManualU     = mealPhaseTracker.sessionManualU,
+            mealPhaseCarbSmbMult = mealPhaseProfileLearner.carbSmbFractionMult(
+                mealPhaseTracker.sessionMode),
+            mealPhasePfIsfMult   = mealPhaseProfileLearner.pfIsfMult(
+                mealPhaseTracker.sessionMode),
+            mealPhaseTailIsfMult = mealPhaseProfileLearner.tailIsfMult(
+                mealPhaseTracker.sessionMode),
+            mealPhaseInsulinSummaries = MealMode.entries
+                .filter { it != MealMode.FASTING }
+                .associate { it.label to mealPhaseProfileLearner.insulinSummaryForMode(it) },
+            mealPhaseModeSummaries = MealMode.entries
+                .filter { it != MealMode.FASTING }
+                .associate { it.label to mealPhaseProfileLearner.statusForMode(it) },
             fuelTrimStrength     = circadianLearner.trimStrength,
             // ── PDP ───────────────────────────────────────────────────────────
             pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
@@ -2235,7 +2272,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 lowGuardMmol       = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
                 iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
                 firstBolusEpochMs  = firstBolusEpochMs,
-                smbsDeliveredU     = apsResult.smb.coerceAtLeast(0.0)
+                smbsDeliveredU     = apsResult.smb.coerceAtLeast(0.0),
+                tbrRateU           = currentTemp.rate,
+                profileRateU       = profile.getBasal()
             )
         }
 

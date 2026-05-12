@@ -150,6 +150,10 @@ class MealPhaseTracker @Inject constructor(
     // Prebolus total (PB1 + PB2 + PB3) — set once at session start via notifyPrebolus()
     private var prebolusU: Double = 0.0
 
+    // Extra basal above profile rate delivered during session (TBR delta × time)
+    // Only counts insulin above the profile rate — the baseline would have run anyway.
+    private var extraBasalU: Double = 0.0
+
     // Total SMBs delivered during this session (beyond prebolus), split by phase
     private var totalSmbsDeliveredU: Double = 0.0
     private var carbPhaseSmbsU:      Double = 0.0
@@ -202,7 +206,9 @@ class MealPhaseTracker @Inject constructor(
         val carbPhaseSmbsU:      Double,    // SMBs fired during carb phase specifically
         val pfPhaseSmbsU:        Double,    // SMBs fired during P/F phase
         val tailPhaseSmbsU:      Double,    // SMBs fired during tail phase
-        // Total insulin this session: prebolus + all SMBs
+        val extraBasalU:         Double,    // extra TBR insulin above profile rate during session
+        val manualCorrectionU:   Double,    // manual boluses during session (may be intentional fix)
+        // True physiological total: prebolus + SMBs + extra TBR + manual corrections
         val totalSessionInsulinU: Double,
         // ── BG area-above-target per phase (mmol·min) ─────────────────────────
         // 0 = BG never exceeded target during that phase (perfect prebolus)
@@ -244,7 +250,10 @@ class MealPhaseTracker @Inject constructor(
         lowGuardMmol:       Double = 4.0,
         iobU:               Double = 0.0,           // current total IOB in units
         firstBolusEpochMs:  Long   = 0L,            // epoch ms of PB1/first meal bolus (0 = unknown)
-        smbsDeliveredU:     Double = 0.0            // SMBs fired THIS cycle (not cumulative)
+        smbsDeliveredU:     Double = 0.0,           // SMBs fired THIS cycle (not cumulative)
+        tbrRateU:           Double = 0.0,           // current absolute TBR rate (U/h); 0 = no TBR
+        profileRateU:       Double = 0.0,           // profile basal rate (U/h) for TBR delta calc
+        loopIntervalMins:   Double = 5.0            // minutes since last cycle (default 5)
     ) {
         val wasFasting    = lastMealMode == MealMode.FASTING
         val isFasting     = mealMode    == MealMode.FASTING
@@ -253,6 +262,12 @@ class MealPhaseTracker @Inject constructor(
         // Track first bolus timestamp — set once, never overwritten
         if (sessionActive && firstBolusMs == 0L && firstBolusEpochMs > 0L)
             firstBolusMs = firstBolusEpochMs
+
+        // Accumulate extra TBR above profile rate (TBR delta × interval)
+        if (sessionActive && tbrRateU > 0.0 && profileRateU > 0.0) {
+            val extraThisCycle = ((tbrRateU - profileRateU) * (loopIntervalMins / 60.0)).coerceAtLeast(0.0)
+            extraBasalU += extraThisCycle
+        }
 
         // Accumulate SMBs delivered this session, split by phase
         if (sessionActive && smbsDeliveredU > 0.0) {
@@ -692,6 +707,7 @@ class MealPhaseTracker @Inject constructor(
         carbPhaseSmbsU           = 0.0
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
+        extraBasalU              = 0.0
 
         aapsLogger.debug(LTag.APS,
                          "MealPhaseTracker: session START mode=$mode bg=${"%.1f".format(bgMmol)}mmol")
@@ -759,7 +775,10 @@ class MealPhaseTracker @Inject constructor(
             carbPhaseSmbsU       = carbPhaseSmbsU,
             pfPhaseSmbsU         = pfPhaseSmbsU,
             tailPhaseSmbsU       = tailPhaseSmbsU,
-            totalSessionInsulinU = prebolusU + totalSmbsDeliveredU,
+            extraBasalU          = extraBasalU,
+            manualCorrectionU    = manualBolusU,
+            totalSessionInsulinU = prebolusU + totalSmbsDeliveredU +
+                extraBasalU + manualBolusU,
             bgAucCarbMmolMin     = bgAucCarbPhase,
             bgAucPfMmolMin       = bgAucPfPhase,
             bgAucTailMmolMin     = bgAucTailPhase
@@ -813,6 +832,7 @@ class MealPhaseTracker @Inject constructor(
         carbPhaseSmbsU           = 0.0
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
+        extraBasalU              = 0.0
     }
 
     // ── Delta helpers ─────────────────────────────────────────────────────────
@@ -880,6 +900,16 @@ class MealPhaseTracker @Inject constructor(
     }
 
     // ── Public accessors ──────────────────────────────────────────────────────
+
+    // ── Session data accessors for FragmentData ─────────────────────────────
+    val sessionPrebolusU:    Double get() = prebolusU
+    val sessionCarbSmbsU:    Double get() = carbPhaseSmbsU
+    val sessionPfSmbsU:      Double get() = pfPhaseSmbsU
+    val sessionTailSmbsU:    Double get() = tailPhaseSmbsU
+    val sessionTotalSmbsU:   Double get() = totalSmbsDeliveredU
+    val sessionExtraBasalU:  Double get() = extraBasalU
+    val sessionManualU:      Double get() = manualBolusU
+    val sessionTotalInsulinU: Double get() = prebolusU + totalSmbsDeliveredU + extraBasalU + manualBolusU
 
     /** True if currently in TAIL phase — used by dosing to gate crash-protection ISF scaling */
     val isInTailPhase: Boolean get() = sessionActive && currentPhase == MealPhase.TAIL

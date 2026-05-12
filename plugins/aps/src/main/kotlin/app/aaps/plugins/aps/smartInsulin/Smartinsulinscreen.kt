@@ -1201,18 +1201,17 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
 
 @Composable
 private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
-    // Status colours reused from main screen
     val ColorPending    = Color(0xFF555555)
-    val ColorInProgress = Color(0xFF2196F3)   // blue
-    val ColorComplete   = StatusGood          // green
+    val ColorInProgress = Color(0xFF2196F3)
+    val ColorComplete   = StatusGood
 
     SiCard(title = "Meal Phase Tracker") {
-        Text("Learns carb/protein-fat/tail phases of each meal to tune ISF and SMB fraction per phase.",
+        Text("Tracks carb/P-F/tail phases. Learns how much insulin each meal needs and tunes ISF + SMB fraction per phase.",
              style = MaterialTheme.typography.bodySmall,
              color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
 
-        // ── Session status header ──────────────────────────────────────
+        // ── Session header ─────────────────────────────────────────────
         if (!d.mealPhaseActive) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1229,124 +1228,214 @@ private fun MealPhaseTrackerCard(d: SmartInsulinPlugin.FragmentData) {
                 horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("🍽", fontSize = 16.sp)
                 Text("${d.mealPhaseSessionMode} — ${d.mealPhaseLabel}",
-                     fontWeight = FontWeight.Bold,
-                     color = ColorInProgress)
+                     fontWeight = FontWeight.Bold, color = ColorInProgress)
                 Spacer(Modifier.weight(1f))
-                Text("${d.mealPhaseElapsedMins}min elapsed",
-                     fontSize = 11.sp,
+                Text("${d.mealPhaseElapsedMins}min", fontSize = 11.sp,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 
+        // ── Phase progress ─────────────────────────────────────────────
         Spacer(Modifier.height(10.dp))
         HorizontalDivider()
-        Spacer(Modifier.height(10.dp))
-
-        // ── Phase progress rows ────────────────────────────────────────
+        Spacer(Modifier.height(8.dp))
         Text("Phase Progress", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Spacer(Modifier.height(6.dp))
 
-        PhaseRow(
-            label       = "① Carb absorption",
-            minRequired = 40,
-            status      = d.mealPhaseCarb,
-            peakLabel   = "peak BG",
-            isMmol      = d.isMmol,
-            inProgressColor = ColorInProgress,
-            completeColor   = ColorComplete,
-            pendingColor    = ColorPending
-        )
+        PhaseRow("① Carb absorption",       40, d.mealPhaseCarb, "peak BG",   d.isMmol, ColorInProgress, ColorComplete, ColorPending)
         Spacer(Modifier.height(6.dp))
-        PhaseRow(
-            label       = "② Protein / Fat plateau",
-            minRequired = 60,
-            status      = d.mealPhasePF,
-            peakLabel   = "plateau BG",
-            isMmol      = d.isMmol,
-            inProgressColor = ColorInProgress,
-            completeColor   = ColorComplete,
-            pendingColor    = ColorPending
-        )
+        PhaseRow("② Protein / Fat plateau", 60, d.mealPhasePF,   "plateau BG",d.isMmol, ColorInProgress, ColorComplete, ColorPending)
         Spacer(Modifier.height(6.dp))
-        PhaseRow(
-            label       = "③ Tail — returning to target",
-            minRequired = 30,
-            status      = d.mealPhaseTail,
-            peakLabel   = "nadir BG",
-            isMmol      = d.isMmol,
-            inProgressColor = Color(0xFFFF9800),  // orange — crash risk window
-            completeColor   = ColorComplete,
-            pendingColor    = ColorPending
-        )
+        PhaseRow("③ Tail — returning to target", 30, d.mealPhaseTail, "nadir BG", d.isMmol,
+                 Color(0xFFFF9800), ColorComplete, ColorPending)
 
-        Spacer(Modifier.height(10.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-
-        // ── What the learner would change ─────────────────────────────
-        Text("Learned adjustments (once validated)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Spacer(Modifier.height(4.dp))
-        Text("After enough clean sessions, the learner will adjust:",
-             style = MaterialTheme.typography.bodySmall,
-             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(4.dp))
-
-        val adjColor = MaterialTheme.colorScheme.onSurfaceVariant
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            LearnerAdjRow("① Carb phase ISF",    "More aggressive (lower ISF) to handle rapid BG rise", adjColor)
-            LearnerAdjRow("① Carb phase SMB",    "Higher fraction — carbs need fast delivery", adjColor)
-            LearnerAdjRow("② P/F phase ISF",     "Moderate — plateau needs steady correction", adjColor)
-            LearnerAdjRow("② P/F phase SMB",     "Lower fraction — fat slows absorption", adjColor)
-            LearnerAdjRow("③ Tail ISF",          "Raised (less aggressive) to prevent crash", adjColor)
-            LearnerAdjRow("③ Tail SMB",          "Reduced/blocked — BG is already falling", adjColor)
-        }
-
-        Spacer(Modifier.height(10.dp))
-        HorizontalDivider()
-        Spacer(Modifier.height(8.dp))
-
-        // ── Session validity flags ─────────────────────────────────────
-        Text("Session quality", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-        Spacer(Modifier.height(4.dp))
-
+        // ── Live session insulin ───────────────────────────────────────
         if (d.mealPhaseActive) {
-            val debugLines = d.mealPhaseDebug.split(" | ")
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                debugLines.forEach { segment ->
-                    Text(segment.trim(),
-                         fontFamily = FontFamily.Monospace,
-                         fontSize   = 11.sp,
-                         color      = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(8.dp))
+            Text("Insulin this session", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Spacer(Modifier.height(6.dp))
+
+            // Prebolus bar
+            val avgTotal = d.mealPhaseInsulinSummaries.entries
+                .firstOrNull { it.key == d.mealPhaseSessionMode }
+                ?.value?.let {
+                    // parse "avg X.XU total" from insulinSummaryForMode
+                    Regex("""avg ([0-9.]+)U""").find(it)?.groupValues?.get(1)?.toDoubleOrNull()
+                } ?: 0.0
+            val delivered = d.mealPhaseTotalU
+            val fraction  = if (avgTotal > 0.0) (delivered / avgTotal).coerceIn(0f.toDouble(), 1.5) else 0.0
+
+            // Stacked bar: prebolus (blue) | carb SMBs (orange) | P/F SMBs (amber) | tail SMBs (green)
+            //              | extra TBR (teal) | manual correction (red)
+            val totalForBar = delivered.coerceAtLeast(0.01)
+            val ColorExtraTbr = Color(0xFF26C6DA)   // teal
+            val ColorManual   = Color(0xFFAB47BC)   // purple
+            BoxWithConstraints(
+                modifier = Modifier.fillMaxWidth().height(10.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                val w = maxWidth
+                val preF   = (d.mealPhasePrebolusU   / totalForBar).toFloat().coerceIn(0f, 1f)
+                val carbF  = (d.mealPhaseCarbSmbsU   / totalForBar).toFloat().coerceIn(0f, 1f)
+                val pfF    = (d.mealPhasePfSmbsU     / totalForBar).toFloat().coerceIn(0f, 1f)
+                val tailF  = (d.mealPhaseTailSmbsU   / totalForBar).toFloat().coerceIn(0f, 1f)
+                val tbrF   = (d.mealPhaseExtraBasalU / totalForBar).toFloat().coerceIn(0f, 1f)
+                val manF   = (d.mealPhaseManualU     / totalForBar).toFloat().coerceIn(0f, 1f)
+                Row(Modifier.fillMaxSize()) {
+                    if (d.mealPhasePrebolusU   > 0.0) Box(Modifier.width(w * preF) .fillMaxHeight().background(StatusInfo))
+                    if (d.mealPhaseCarbSmbsU   > 0.0) Box(Modifier.width(w * carbF).fillMaxHeight().background(StatusWarn))
+                    if (d.mealPhasePfSmbsU     > 0.0) Box(Modifier.width(w * pfF)  .fillMaxHeight().background(Color(0xFFFDD835)))
+                    if (d.mealPhaseTailSmbsU   > 0.0) Box(Modifier.width(w * tailF).fillMaxHeight().background(StatusGood))
+                    if (d.mealPhaseExtraBasalU > 0.0) Box(Modifier.width(w * tbrF) .fillMaxHeight().background(ColorExtraTbr))
+                    if (d.mealPhaseManualU     > 0.0) Box(Modifier.width(w * manF) .fillMaxHeight().background(ColorManual))
                 }
             }
-        } else {
-            Text(d.mealPhaseDebug,
-                 fontFamily = FontFamily.Monospace,
-                 fontSize   = 11.sp,
-                 color      = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (d.mealPhasePrebolusU   > 0.0)
+                    Text("Pre ${"%.2f".format(d.mealPhasePrebolusU)}U",    fontSize = 10.sp, color = StatusInfo)
+                if (d.mealPhaseCarbSmbsU   > 0.0)
+                    Text("Carb+${"%.2f".format(d.mealPhaseCarbSmbsU)}U",  fontSize = 10.sp, color = StatusWarn)
+                if (d.mealPhasePfSmbsU     > 0.0)
+                    Text("P/F+${"%.2f".format(d.mealPhasePfSmbsU)}U",     fontSize = 10.sp, color = Color(0xFFFDD835))
+                if (d.mealPhaseTailSmbsU   > 0.0)
+                    Text("Tail+${"%.2f".format(d.mealPhaseTailSmbsU)}U",  fontSize = 10.sp, color = StatusGood)
+                if (d.mealPhaseExtraBasalU > 0.0)
+                    Text("TBR+${"%.2f".format(d.mealPhaseExtraBasalU)}U", fontSize = 10.sp, color = ColorExtraTbr)
+                if (d.mealPhaseManualU     > 0.0)
+                    Text("Manual+${"%.2f".format(d.mealPhaseManualU)}U",  fontSize = 10.sp, color = ColorManual)
+            }
+            Spacer(Modifier.height(4.dp))
+            val avgStr = if (avgTotal > 0.0) " / avg ${"%.1f".format(avgTotal)}U" else " (building history)"
+            Text("Total delivered: ${"%.2f".format(delivered)}U$avgStr",
+                 fontSize = 11.sp, fontWeight = FontWeight.Medium,
+                 color = MaterialTheme.colorScheme.onSurface)
+
+            // ── Active multipliers ─────────────────────────────────────
+            Spacer(Modifier.height(8.dp))
+            Text("Active multipliers", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Spacer(Modifier.height(4.dp))
+            val currentPhase = d.mealPhaseCurrentPhase
+            PhaseMultRow(
+                label = "① Carb SMB fraction",
+                mult  = d.mealPhaseCarbSmbMult,
+                active = currentPhase == "CARB"
+            )
+            PhaseMultRow(
+                label = "② P/F ISF",
+                mult  = d.mealPhasePfIsfMult,
+                active = currentPhase == "PROTEIN_FAT"
+            )
+            PhaseMultRow(
+                label = "③ Tail ISF",
+                mult  = d.mealPhaseTailIsfMult,
+                active = currentPhase == "TAIL"
+            )
         }
 
-        // ── Detection thresholds (debug reference) ─────────────────────
+        // ── Insulin fingerprint — all modes ───────────────────────────
         Spacer(Modifier.height(10.dp))
         HorizontalDivider()
         Spacer(Modifier.height(8.dp))
-        Text("Detection thresholds", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Learned insulin fingerprint", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Spacer(Modifier.height(2.dp))
+        Text("Average insulin per meal type across completed sessions. Updates after each session.",
+             style = MaterialTheme.typography.bodySmall,
+             color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(6.dp))
+
+        val modesWithData = d.mealPhaseInsulinSummaries.filter { (_, v) ->
+            !v.contains("Building") && !v.contains("No data")
+        }
+        if (modesWithData.isEmpty()) {
+            Text("No sessions completed yet. Complete a full carb→P/F→tail session to begin learning.",
+                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            modesWithData.forEach { (mode, summary) ->
+                val multSummary = d.mealPhaseModeSummaries[mode] ?: ""
+                MealFingerprintRow(mode = mode, insulinSummary = summary, multSummary = multSummary)
+                Spacer(Modifier.height(4.dp))
+            }
+            // Show modes still building
+            d.mealPhaseInsulinSummaries.filter { (_, v) -> v.contains("Building") }.forEach { (mode, summary) ->
+                Text("$mode: $summary",
+                     fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        // ── Session debug / transition gates ──────────────────────────
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(8.dp))
+        Text("Session debug", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Spacer(Modifier.height(4.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(6.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            ThreshRow("Carb → P/F",  "min 40 min  |  delta must slow below 0.15 mmol/5min for 3 readings")
-            ThreshRow("P/F → Tail",  "min 60 min  |  delta < −0.10 mmol/5min for 3 readings, BG above target")
-            ThreshRow("Tail done",   "min 30 min  |  BG ≤ target + 0.5 mmol")
-            ThreshRow("UAM cancel",  "If mode drops to fasting with BG near target → counts as success")
-            ThreshRow("Invalidated", "BG still elevated when fasting resumes  |  meal stacking detected (Δ > 0.40)")
-            ThreshRow("Flagged",     "Manual bolus detected — SMB fraction may have been too low")
-            ThreshRow("Confirm",     "3 consecutive readings must agree before any transition fires")
+        Text(d.mealPhaseDebug,
+             fontFamily = FontFamily.Monospace, fontSize = 10.sp,
+             color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 14.sp)
+        if (d.mealPhaseTransitionDebug.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(d.mealPhaseTransitionDebug,
+                 fontFamily = FontFamily.Monospace, fontSize = 10.sp,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 14.sp)
+        }
+    }
+}
+
+
+@Composable
+private fun PhaseMultRow(label: String, mult: Double, active: Boolean) {
+    val deviation = mult - 1.0
+    val color = when {
+        !active                -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        kotlin.math.abs(deviation) < 0.01 -> Color(0xFFAAAAAA)
+        deviation > 0.0        -> StatusInfo   // ISF raised = less aggressive
+        else                   -> StatusWarn   // ISF lowered / SMB cut = more aggressive
+    }
+    val arrow = when {
+        deviation > 0.05  -> "↑"
+        deviation < -0.05 -> "↓"
+        else              -> "·"
+    }
+    val activeStr = if (active) " ◀ active" else ""
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, modifier = Modifier.weight(1f), fontSize = 11.sp,
+             color = if (active) MaterialTheme.colorScheme.onSurface
+             else MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("×${"%.3f".format(mult)} $arrow$activeStr",
+             fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = color)
+    }
+}
+
+@Composable
+private fun MealFingerprintRow(mode: String, insulinSummary: String, multSummary: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Text(mode, fontWeight = FontWeight.Bold, fontSize = 12.sp,
+             color = MaterialTheme.colorScheme.onSurface)
+        Spacer(Modifier.height(2.dp))
+        // Parse "avg X.XU total | pre=X.XU carb+=X.XU pf+=X.XU tail+=X.XU"
+        // Display as a mini stacked breakdown
+        val parts = insulinSummary.split("|").map { it.trim() }
+        parts.forEach { part ->
+            Text(part, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (multSummary.isNotEmpty() && !multSummary.startsWith("No data") &&
+            !multSummary.startsWith("Building")) {
+            Spacer(Modifier.height(2.dp))
+            Text(multSummary, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
