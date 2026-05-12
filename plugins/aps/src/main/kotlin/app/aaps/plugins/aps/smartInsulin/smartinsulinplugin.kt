@@ -1280,7 +1280,11 @@ open class SmartInsulinPlugin @Inject constructor(
                 inPostMealLockout        = inPostMealLockout,
                 aggressiveness           = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling()), // actual effective aggressiveness — ceiling is a cap not the score
                 suppressAdaptiveLearning = suppressAdaptiveLearningUpdate,
-                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes
+                fastingPeakMins          = profileLearner.getProfile(app.aaps.core.interfaces.smartInsulin.MealMode.FASTING).peakMinutes,
+                // Suppress fast-path ISF nudge when PDP is actively blending — avoids double-nudging
+                // ISF toward more-aggressive on every cycle. Episode outcome learning handles the
+                // ground-truth feedback when the PDP episode closes.
+                pdpBlendActive           = cachedPdpBlendWeight > 0.1
             )
             // If nudge is suppressed within update() (activity/CGM warmup), mark paused
             if (suppressAdaptiveLearningUpdate) {

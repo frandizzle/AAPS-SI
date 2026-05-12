@@ -169,7 +169,12 @@ class CircadianLearner @Inject constructor(
         nowMs:                    Long    = System.currentTimeMillis(),
         smbDeliveredU:            Double  = 0.0,
         profileBasalU:            Double  = 0.0,
-        actualBasalU:             Double  = 0.0
+        actualBasalU:             Double  = 0.0,
+        // When PDP is actively blending, suppress the fast-path ISF physics learner.
+        // PDP's episode outcome learning (nudgeIsfFromPdpEpisode) is the correct
+        // ground-truth feedback for stuck-high deviations — the fast-path would
+        // double-nudge ISF toward more-aggressive on every cycle during the episode.
+        pdpBlendActive:           Boolean = false
     ) {
         val bg   = glucoseStatus.glucose
         val delta  = glucoseStatus.shortAvgDelta
@@ -255,9 +260,16 @@ class CircadianLearner @Inject constructor(
 
         // ── 1. ISF learning — skip during CGM warmup (unreliable data) ─────
         val isFasting = mealMode == MealMode.FASTING
-        val isfPhysicsDirection: Int = if (!suppressAdaptiveLearning)
-            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, mealMode, smbDeliveredU, profileBasalU, actualBasalU, nowMs, targetMgdl)
-        else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); 0 }
+        val isfPhysicsDirection: Int = when {
+            suppressAdaptiveLearning ->
+            { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); 0 }
+            pdpBlendActive ->
+                // PDP is actively correcting this deviation via its secondary curve.
+                // Suppress the fast-path ISF nudge — episode outcome learning handles feedback.
+            { aapsLogger.debug(LTag.APS, "CircadianLearner ISF fast-path: suppressed (PDP blend active)"); 0 }
+            else ->
+                updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, mealMode, smbDeliveredU, profileBasalU, actualBasalU, nowMs, targetMgdl)
+        }
 
         // ── 2. Basal learning — skip during CGM warmup ───────────────────────
         val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness)
