@@ -1070,22 +1070,15 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         )
         Spacer(Modifier.height(6.dp))
 
-        // Column headers — Hr | Str | confidence bar (fills) | n
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Hr",   modifier = Modifier.width(36.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Str",  modifier = Modifier.width(60.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Confidence (samples/20)", modifier = Modifier.weight(1f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("n",    modifier = Modifier.width(24.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
-                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                 textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        // Column headers — same weight() pattern as circadian table
+        Row(modifier = Modifier.fillMaxWidth()) {
+            Text("Hr",     modifier = Modifier.weight(1.5f), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("StrMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("FadMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("BlnMlt", modifier = Modifier.weight(2f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Conf",   modifier = Modifier.weight(3f),   fontSize = 11.sp, fontWeight = FontWeight.Bold, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        HorizontalDivider(modifier = Modifier.padding(bottom = 2.dp))
+        HorizontalDivider(modifier = Modifier.padding(bottom = 4.dp))
 
         var expandedHour by rememberSaveable { mutableStateOf(-1) }
 
@@ -1097,101 +1090,59 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
             val fadeMult   = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
 
-            // Heatmap cell colour — strength deviation drives the accent
             val strDev = strength - 1.0
             val cellColor: Color = when {
-                samples == 0     -> Color.Transparent
-                strDev > 0.15    -> StatusWarn.copy(alpha = 0.55f)
-                strDev > 0.05    -> StatusWarn.copy(alpha = 0.25f)
-                strDev < -0.15   -> StatusInfo.copy(alpha = 0.55f)
-                strDev < -0.05   -> StatusInfo.copy(alpha = 0.25f)
-                else             -> Color.Transparent
+                samples == 0   -> Color.Transparent
+                strDev > 0.15  -> StatusWarn.copy(alpha = 0.55f)
+                strDev > 0.05  -> StatusWarn.copy(alpha = 0.25f)
+                strDev < -0.15 -> StatusInfo.copy(alpha = 0.55f)
+                strDev < -0.05 -> StatusInfo.copy(alpha = 0.25f)
+                else           -> Color.Transparent
             }
             val textColor: Color = when {
-                isCurrent        -> StatusWarn
-                samples == 0     -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+                isCurrent  -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+                samples == 0 -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                else         -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
             }
 
-            // Confidence bar fills based on samples (20 = full trust)
             val confFraction = (samples.toFloat() / 20f).coerceIn(0f, 1f)
-            val confBarColor = when {
-                confFraction >= 0.6f -> StatusGood
-                confFraction >= 0.3f -> StatusWarn
-                else                 -> StatusBad
-            }
+            val confPct = (confFraction * 100).toInt()
+            fun confColor(pct: Int) = when { pct >= 60 -> StatusGood; pct >= 30 -> StatusWarn; else -> StatusBad }
+
+            fun strColor(s: Double) = when { s > 1.03 -> StatusWarn; s < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+            fun fadColor(f: Double) = when { f > 1.03 -> StatusWarn; f < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+            fun blnColor(b: Double) = when { b > 1.03 -> StatusWarn; b < 0.97 -> StatusInfo; else -> Color(0xFFAAAAAA) }
+
+            val rowBg = if (isCurrent) androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant else cellColor
 
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(3.dp))
-                    .background(cellColor)
+                    .background(rowBg)
                     .clickable { expandedHour = if (expandedHour == h) -1 else h }
-                    .padding(vertical = 2.dp, horizontal = 2.dp)
+                    .padding(vertical = 1.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // Hour label
-                    Text(
-                        if (isCurrent) "►${h.toString().padStart(2)}" else "  ${h.toString().padStart(2)}",
-                        modifier = Modifier.width(36.dp),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-                        color = textColor
-                    )
-                    // Str value + arrow — fixed width so bar always starts at same x
-                    val strArrow = when {
-                        strength > 1.15 -> "↑↑"
-                        strength > 1.05 -> "↑"
-                        strength < 0.85 -> "↓↓"
-                        strength < 0.95 -> "↓"
-                        else            -> " ·"
-                    }
-                    Text(
-                        "${"%.3f".format(strength)}$strArrow",
-                        modifier = Modifier.width(60.dp),
-                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        color = textColor
-                    )
-                    // Confidence bar — stretches to fill remaining space, then pct label
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        BoxWithConstraints(
-                            modifier = Modifier.weight(1f).height(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .width(maxWidth * confFraction)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (samples == 0) Color.Transparent else confBarColor)
-                            )
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (isCurrent) "►$h" else "  $h",
+                         modifier = Modifier.weight(1.5f), fontSize = 11.sp,
+                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                         color = if (isCurrent) androidx.compose.material3.MaterialTheme.colorScheme.onSurface else textColor)
+                    Text("%.3f".format(strength), modifier = Modifier.weight(2f), fontSize = 11.sp, color = strColor(strength))
+                    Text("%.3f".format(fadeMult),  modifier = Modifier.weight(2f), fontSize = 11.sp, color = fadColor(fadeMult))
+                    Text("%.3f".format(blendMult), modifier = Modifier.weight(2f), fontSize = 11.sp, color = blnColor(blendMult))
+                    Row(modifier = Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Box(modifier = Modifier.width(40.dp).height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color(0xFF333333))) {
+                            Box(modifier = Modifier.fillMaxHeight()
+                                .width(40.dp * confFraction)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(if (samples == 0) Color.Transparent else confColor(confPct)))
                         }
-                        Text(
-                            "${(confFraction * 100).toInt()}%",
-                            modifier = Modifier.width(26.dp),
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (samples == 0) androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
-                            else confBarColor
-                        )
+                        Text("$confPct%", fontSize = 10.sp, color = confColor(confPct), fontFamily = FontFamily.Monospace)
                     }
-                    // Sample count
-                    Text(
-                        "$samples",
-                        modifier = Modifier.width(24.dp),
-                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                        color = textColor
-                    )
                 }
 
                 // Expanded detail row — tap to reveal
