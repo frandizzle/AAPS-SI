@@ -422,6 +422,22 @@ class OverviewDataCacheImpl @AssistedInject constructor(
                     .collect { rebuildBasalGraph() }
             }
 
+            // observeChanges() does not fire when the DB is wiped via clearAllTables().
+            // databaseClearedFlow is the dedicated signal for that case. Re-fetching after
+            // reset() restores chips (RM, TT, profile) to their empty-DB defaults so they
+            // remain visible and interactive instead of disappearing entirely.
+            scope.launch {
+                persistenceLayer.databaseClearedFlow.collect {
+                    aapsLogger.debug(LTag.UI, "OverviewDataCache: DB cleared, reloading chip data")
+                    reset()
+                    updateBgInfoFromDatabase()
+                    updateProfileFromDatabase()
+                    updateTempTargetFromDatabase()
+                    updateRunningModeFromDatabase()
+                    updateTbrFromDatabase()
+                }
+            }
+
             // NSClient status: initial load + rxBus subscription + 60s ticker — but only while
             // the nsClientStatusFlow has observers. The cache is a singleton, so without this
             // gate the 60s rebuild would fire 24/7 even though the flow is only consumed by the
@@ -946,7 +962,7 @@ class OverviewDataCacheImpl @AssistedInject constructor(
             val dialogText = buildString {
                 if (sameCycle) {
                     append("Enacted: ${dateUtil.minAgo(rh, clockEnacted)}")
-                    append(" ${enacted!!.reason}")
+                    append(" ${enacted.reason}")
                 } else {
                     processedDeviceStatusData.openAPSData.suggested?.let {
                         append("Suggested: ${dateUtil.minAgo(rh, clockSuggested)}")
@@ -1021,7 +1037,9 @@ class OverviewDataCacheImpl @AssistedInject constructor(
         _bgInfoFlow.value = null
         _tempTargetFlow.value = null
         _profileFlow.value = null
-        _runningModeFlow.value = null
+        // _runningModeFlow intentionally not nulled: getRunningModeActiveAt() always returns
+        // a non-null value (DEFAULT_MODE fallback for empty table), so callers should use
+        // updateRunningModeFromDatabase() to refresh it rather than forcing a null state.
         _tbrFlow.value = null
         // Secondary graph flows
         _iobGraphFlow.value = IobGraphData(emptyList(), emptyList())

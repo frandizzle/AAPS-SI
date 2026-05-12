@@ -250,9 +250,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
             pdpPredMinSafety = predictedMinSafety
         }
 
-        // Blended prediction mins — drive insulinReq when deviation is sustained
-        val blendedPredMin       = predictedMin       * (1.0 - effectivePdpBlend) + pdpPredMin       * effectivePdpBlend
-        val blendedPredMinSafety = predictedMinSafety * (1.0 - effectivePdpBlend) + pdpPredMinSafety * effectivePdpBlend
+        // Blended post-peak predMin — used ONLY for insulinReq calculation.
+        // Safety gates (SUSPEND, CAUTION) always use PRIMARY unblended predictedMinSafety.
+        // Reason: PDP secondary curve predicts BG stays high due to resistance, but at
+        // 90% blend the secondary full-curve minimum can dip below lowGuard (IOB still
+        // pulls BG down eventually), triggering false suspends. The safety system must
+        // always see the most conservative (primary IOB-physics) prediction.
+        val blendedPredMin       = predictedMin * (1.0 - effectivePdpBlend) + pdpPredMin * effectivePdpBlend
+        // Safety minimum: NEVER blended — always primary IOB prediction
+        val blendedPredMinSafety = predictedMinSafety  // unchanged: primary only for all safety gates
 
         // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
         // These are the t+5min values (first tick) — compared against actual BG next cycle.
