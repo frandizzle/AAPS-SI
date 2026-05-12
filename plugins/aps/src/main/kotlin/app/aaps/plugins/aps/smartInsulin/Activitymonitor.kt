@@ -29,8 +29,12 @@ class ActivityMonitor @Inject constructor(
         // HR window — 330s (5.5 minutes) staleness cutoff
         const val HR_WINDOW_MS        = 330 * 1000L
 
-        // Steps — 5-min staleness cutoff
+        // Steps — 5-min staleness cutoff for the computed window value
         const val STEPS_WINDOW_MS     = 5 * 60 * 1000L
+
+        // Step log retention — keep 10 minutes of history so we always have
+        // a "then" baseline to subtract from the latest cumulative count.
+        const val STEPS_LOG_RETAIN_MS = 10 * 60 * 1000L
 
         // HR thresholds — absolute (used when no resting HR configured)
         const val HR_LIGHT_MIN        = 90.0
@@ -52,8 +56,10 @@ class ActivityMonitor @Inject constructor(
     @Volatile private var latestHrBpm: Double = 0.0
     @Volatile private var latestHrTimeMs: Long = 0L
 
-    @Volatile private var cachedSteps5min: Int = 0
-    @Volatile private var latestStepsTimeMs: Long = 0L
+    // Rolling log of (timestampMs, cumulativeSteps) pairs received from Wear OS.
+    // We compute the 5-min delta ourselves in recompute() instead of trusting
+    // a pre-bucketed field on the event (which silently returned 0).
+    private val stepLog = ArrayDeque<Pair<Long, Int>>()
 
     private val disposables = CompositeDisposable()
 
@@ -69,15 +75,29 @@ class ActivityMonitor @Inject constructor(
     }
 
     private fun subscribeToEvents() {
-        // Listening for Wear OS events via RxBus
         rxBus.toObservable(EventData.ActionHeartRate::class.java).subscribe { event ->
-            latestHrBpm = event.beatsPerMinute
+            latestHrBpm    = event.beatsPerMinute
             latestHrTimeMs = System.currentTimeMillis()
         }.also { disposables.add(it) }
 
         rxBus.toObservable(EventData.ActionStepsRate::class.java).subscribe { event ->
-            cachedSteps5min = event.steps5min
-            latestStepsTimeMs = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+
+            // Append the steps5min value with its timestamp. Because the Wear side
+            // sends a fresh 5-min count each time rather than a cumulative total,
+            // we accumulate these samples in the log and sum any entries that fall
+            // within the current 5-min window in recompute() for a rolling total.
+            synchronized(stepLog) {
+                stepLog.addLast(now to event.steps5min)
+
+                // Trim entries older than our retention window to bound memory usage
+                while (stepLog.isNotEmpty() && now - stepLog.first().first > STEPS_LOG_RETAIN_MS) {
+                    stepLog.removeFirst()
+                }
+            }
+
+            aapsLogger.debug(LTag.APS,
+                             "ActivityMonitor: step event received — steps5min=${event.steps5min} logSize=${stepLog.size}")
         }.also { disposables.add(it) }
     }
 
@@ -87,13 +107,12 @@ class ActivityMonitor @Inject constructor(
         val hrIsFresh = (nowMs - latestHrTimeMs) <= HR_WINDOW_MS
         avgHrBpm = if (hrIsFresh) latestHrBpm else 0.0
 
-        // 2. Check RAM for fresh Step data
-        val stepsAreFresh = (nowMs - latestStepsTimeMs) <= STEPS_WINDOW_MS
-        lastSteps5min = if (stepsAreFresh) cachedSteps5min else 0
+        // 2. Compute 5-min step delta from the rolling log
+        lastSteps5min = computeSteps5min(nowMs)
 
         aapsLogger.debug(LTag.APS,
                          "ActivityMonitor: avgHr=${avgHrBpm.toInt()}bpm (fresh=$hrIsFresh) " +
-                             "steps5m=$lastSteps5min (fresh=$stepsAreFresh)")
+                             "steps5m=$lastSteps5min (logSize=${stepLog.size})")
 
         // ── Classify — take higher of HR or steps ────────────────────────────
         val hrLevel = when {
@@ -128,6 +147,33 @@ class ActivityMonitor @Inject constructor(
                              "ActivityMonitor: $level → $newLevel  hr=${avgHrBpm.toInt()}bpm steps=$lastSteps5min/5m")
         }
         level = newLevel
+    }
+
+    /**
+     * Returns the most recent steps5min sample, provided it arrived within
+     * [STEPS_WINDOW_MS]. Because event.steps5min is already a pre-bucketed
+     * 5-minute count from Wear OS (not a cumulative total), we just need the
+     * latest fresh value — no delta math required.
+     *
+     * The log is still useful here: it lets us average a few recent samples
+     * to smooth out any single-event jitter from the Wear side.
+     */
+    private fun computeSteps5min(nowMs: Long): Int {
+        synchronized(stepLog) {
+            if (stepLog.isEmpty()) return 0
+
+            val latest = stepLog.last()
+
+            // Newest entry is stale — treat as no data
+            if (nowMs - latest.first > STEPS_WINDOW_MS) return 0
+
+            // Average all samples within the window for a smoother reading
+            val windowStart = nowMs - STEPS_WINDOW_MS
+            val recentSamples = stepLog.filter { (ts, _) -> ts >= windowStart }
+            if (recentSamples.isEmpty()) return 0
+
+            return recentSamples.map { it.second }.average().toInt()
+        }
     }
 
     fun targetOffsetMmol(lightMmol: Double, moderateMmol: Double, heavyMmol: Double): Double = when (level) {
