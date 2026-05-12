@@ -610,38 +610,47 @@ class DetermineBasalSmartInsulin @Inject constructor(
         stuckHighMode: Boolean = false,
         ciStrength:    Double  = 1.0
     ): List<Double> {
+        val safeStrength = ciStrength.coerceAtLeast(1.0)
+        val fadeTicks    = (fadeMins / 5.0).coerceAtLeast(1.0)
+
+        // For stuck-high: compute total primary drop first so we can scale it.
+        // This ensures secondary predMin = startBg - (primaryDrop / ciStrength),
+        // regardless of how IOB is distributed across ticks.
+        val primaryTotalDrop: Double
+        if (stuckHighMode) {
+            var tempBg = startBg
+            for (tick in 1..ticks) {
+                val activity = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
+                tempBg += -(activity * isfMgdl * 5.0)
+            }
+            primaryTotalDrop = startBg - tempBg  // positive = BG dropped
+        } else {
+            primaryTotalDrop = 0.0
+        }
+        val secondaryTotalDrop = primaryTotalDrop / safeStrength
+        // How much less does BG fall in the secondary curve vs primary?
+        val savedDrop = primaryTotalDrop - secondaryTotalDrop  // this stays as "height" above primary
+
         var bg          = startBg
         val predictions = mutableListOf<Double>()
-        val fadeTicks   = (fadeMins / 5.0).coerceAtLeast(1.0)
-        // Guard: ciStrength must be >= 1.0 to avoid amplifying IOB beyond primary curve
-        val safeStrength = ciStrength.coerceAtLeast(1.0)
 
         for (tick in 1..ticks) {
             val activity        = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
             val iobDeltaPrimary = -(activity * isfMgdl * 5.0)
             val fadeFrac        = (1.0 - minOf(1.0, (tick - 1) / fadeTicks))
 
-            val iobDelta: Double
-            val predUCI:  Double
-
             if (stuckHighMode) {
-                // Resistance model: divide iobDelta by ciStrength so insulin is less effective.
-                //   ciStrength=1 → identical to primary (no resistance)
-                //   ciStrength=2 → insulin half as effective; BG predicted higher
-                //   ciStrength=3 → insulin one-third as effective; BG predicted much higher
-                // Separation scales with actual IOB activity — low IOB overnight = small gap
-                // (correct: model says "small IOB won't move BG much if it's resistant").
-                // Fade from resistance model → primary over fadeMins so curves converge.
-                val iobDeltaResisted = iobDeltaPrimary / safeStrength
-                iobDelta = iobDeltaPrimary * (1.0 - fadeFrac) + iobDeltaResisted * fadeFrac
-                predUCI  = 0.0
+                // Apply primary iobDelta but add back a fraction of the savedDrop
+                // proportional to how far through the curve we are and fadeFrac.
+                // This lifts the secondary curve above primary by savedDrop at tick=1,
+                // converging back to primary at tick=fadeTicks.
+                val liftPerTick = savedDrop / ticks  // spread evenly across ticks
+                bg += iobDeltaPrimary + (liftPerTick * fadeFrac)
             } else {
-                // Rising pathway: same IOB effect, ci term fades over fadeMins not 60min.
-                iobDelta = iobDeltaPrimary
-                predUCI  = ci * fadeFrac
+                // Rising pathway: same IOB effect, ci fades over fadeMins not 60min
+                val predUCI = ci * fadeFrac
+                bg += iobDeltaPrimary + predUCI
             }
-
-            bg += iobDelta + predUCI
             predictions.add(bg)
         }
         return predictions
