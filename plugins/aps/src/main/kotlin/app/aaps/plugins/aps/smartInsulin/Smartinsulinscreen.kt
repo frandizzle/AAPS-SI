@@ -1075,7 +1075,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Hr",     modifier = Modifier.width(28.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+            Text("Hr",     modifier = Modifier.width(36.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
                  color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
             Text("StrMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
                  color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1098,11 +1098,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
             val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
             val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
-            // fadeMult lives in HourSlot but isn't in FragmentData — approximate from blendMult
-            // until a pdpHourlyFadeMults list is added. For now we show blendMult twice to
-            // avoid using the wrong source (the original screen used pdpHourlyStrengths for fadeMult).
-            // TODO: add pdpHourlyFadeMults: List<Double> to FragmentData and PdpLearner accessors.
-            val fadeMult = blendMult  // placeholder — replace when fadeMult accessor is wired
+            val fadeMult   = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
 
             // Heatmap cell colour — strength deviation drives the accent
             // >1.0 = more resistance (orange), <1.0 = less (blue), ~1.0 = neutral (surface)
@@ -1144,7 +1140,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                     // Hour label
                     Text(
                         if (isCurrent) "►${h.toString().padStart(2)}" else "  ${h.toString().padStart(2)}",
-                        modifier = Modifier.width(28.dp),
+                        modifier = Modifier.width(36.dp),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
@@ -1199,7 +1195,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                             )
                         }
                         Text(
-                            "${(confidence * 100).toInt()}%",
+                            "${(confFraction * 100).toInt()}%",
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             color = confBarColor

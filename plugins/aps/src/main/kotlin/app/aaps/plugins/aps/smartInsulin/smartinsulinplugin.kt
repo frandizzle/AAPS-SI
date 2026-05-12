@@ -599,6 +599,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpHourlyConfidences:  List<Double>,
         val pdpHourlySamples:      List<Int>,
         val pdpHourlyBlendMults:   List<Double>,   // learned blend mult per hour (24)
+        val pdpHourlyFadeMults:    List<Double>,   // learned fade mult per hour (24)
         val pdpLearningEnabled:    Boolean,
     )
 
@@ -777,6 +778,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpHourlyConfidences = (0..23).map { h -> pdpLearner.confidenceAt(h) },
             pdpHourlySamples     = (0..23).map { h -> pdpLearner.samplesAt(h) },
             pdpHourlyBlendMults  = (0..23).map { h -> pdpLearner.effectiveBlendMult(h) },
+            pdpHourlyFadeMults   = (0..23).map { h -> pdpLearner.fadeMultAt(h) },
             pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
         )
     }
