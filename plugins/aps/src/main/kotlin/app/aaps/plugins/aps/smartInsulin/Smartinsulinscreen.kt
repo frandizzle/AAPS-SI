@@ -1091,14 +1091,7 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             val fadeMult   = d.pdpHourlyFadeMults.getOrElse(h) { 1.0 }
 
             val strDev = strength - 1.0
-            val cellColor: Color = when {
-                samples == 0   -> Color.Transparent
-                strDev > 0.15  -> StatusWarn.copy(alpha = 0.55f)
-                strDev > 0.05  -> StatusWarn.copy(alpha = 0.25f)
-                strDev < -0.15 -> StatusInfo.copy(alpha = 0.55f)
-                strDev < -0.05 -> StatusInfo.copy(alpha = 0.25f)
-                else           -> Color.Transparent
-            }
+            val cellColor = Color.Transparent
             val textColor: Color = when {
                 isCurrent  -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
                 samples == 0 -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
