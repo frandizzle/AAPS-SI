@@ -208,8 +208,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private data class PdpEpisode(
         val startTimeMs:     Long,
         val startHour:       Int,
-        val startDow:        Int,      // day-of-week at episode open — avoids midnight boundary bug
-        var pathway:         String,   // var — can shift mid-episode (stuck→rising or vice versa)
+        val startDow:        Int,    // day-of-week when episode opened (0=Sun..6=Sat)
+        var pathway:         String,
         var nadirBgMmol:     Double,   // lowest BG seen during episode
         var peakBlendWeight: Double    // highest blend weight used
     )
@@ -1664,9 +1664,6 @@ open class SmartInsulinPlugin @Inject constructor(
             && !bgWentLow
             && !inReboundWindow
             && !inPostMealLockout
-        // Note: lastPdpBlendActive and lastCycleHour are from the PREVIOUS cycle — intentional.
-        // We compare last cycle's t+5min predictions against this cycle's actual BG.
-        // lastPathway is derived from cachedPdpSyntheticCi (also previous cycle) — consistent.
         if (pdpLearningEnabled && lastPdpBlendActive && pdpCleanForLearning) {
             val iobPred = determineBasalSmartInsulin.lastIobPredAt5Mgdl
             val pdpPred = determineBasalSmartInsulin.lastPdpPredAt5Mgdl
@@ -1674,15 +1671,18 @@ open class SmartInsulinPlugin @Inject constructor(
             if (iobPred > 0.0 && pdpPred > 0.0) {
                 val iobErr = kotlin.math.abs(actual - iobPred)
                 val pdpErr = kotlin.math.abs(actual - pdpPred)
+                // lastCycleHour and cachedPdpSyntheticCi are from the PREVIOUS cycle —
+                // intentional: we are scoring last cycle's prediction against today's actual BG.
                 val lastPathway = if (cachedPdpSyntheticCi > 0.0) "stuck" else "rising"
                 pdpLearner.recordAccuracy(lastCycleHour, iobErr, pdpErr, lastPathway)
             }
         } else if (pdpLearningEnabled) {
-            // Tick decay for all hours even when PDP didn't blend — prevents stale confidence
-            // Only when learning is enabled — don't drain confidence when user has disabled learning
+            // Learning enabled but PDP wasn't blending or conditions weren't clean —
+            // tick confidence decay so stale hours don't hold onto high confidence forever.
             pdpLearner.tickAllDecay(currentHour)
         }
-        // if !pdpLearningEnabled → do nothing — confidence preserved until learning re-enabled
+        // If pdpLearningEnabled == false: do nothing. Confidence is frozen until user re-enables
+        // learning — avoids surprising the user by silently draining learned state while disabled.
 
         // ── PDP: compute blend weight for this cycle ──────────────────────────
         // ci = observed delta minus expected BGI (same formula as DetermineBasalSmartInsulin)
@@ -1807,7 +1807,8 @@ open class SmartInsulinPlugin @Inject constructor(
             val ep = activeEpisode
             if (ep == null) {
                 // Episode opening — PDP just became active
-                val openDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+                val openDow = java.util.Calendar.getInstance().also { it.timeInMillis = System.currentTimeMillis() }
+                    .get(java.util.Calendar.DAY_OF_WEEK) - 1
                 activeEpisode = PdpEpisode(
                     startTimeMs     = System.currentTimeMillis(),
                     startHour       = currentHour,
@@ -1819,12 +1820,14 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "PDP episode OPEN [$pdpActivePathway] BG=${String.format("%.1f", currentBgMmolForEpisode)} blend=${String.format("%.2f", pdpBlendWeight)}")
             } else {
-                // Episode ongoing — update nadir and peak blend
+                // Episode ongoing — update nadir, peak blend, and active pathway.
+                // Pathway can shift mid-episode (e.g. stuck wins over rising as readings accumulate),
+                // so we track the CURRENT dominant pathway rather than freezing the one at open time.
+                // This ensures recordEpisodeOutcome() and nudgeIsfFromPdpEpisode() receive the
+                // pathway that was actually dominant when the episode closed, not when it opened.
                 ep.nadirBgMmol     = minOf(ep.nadirBgMmol, currentBgMmolForEpisode)
                 ep.peakBlendWeight = maxOf(ep.peakBlendWeight, pdpBlendWeight)
-                // Keep pathway current — can shift mid-episode (e.g. stuck→rising)
-                // Episode learner should score against the dominant pathway at close
-                if (pdpActivePathway != "none") ep.pathway = pdpActivePathway
+                ep.pathway         = pdpActivePathway
                 // Force-close if episode has been open too long (4h safety timeout)
                 val durationMins = (System.currentTimeMillis() - ep.startTimeMs) / 60_000.0
                 if (durationMins > 240.0 && pdpLearningEnabled) {
@@ -1842,7 +1845,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     // Timeout with BG still above target = missed correction
                     circadianLearner.nudgeIsfFromPdpEpisode(
                         hour    = ep.startHour,
-                        dow     = ep.startDow,  // captured at open — avoids midnight boundary bug
+                        dow     = ep.startDow,
                         outcome = if (currentBgMmolForEpisode > profileTargetMmol + 1.0) "MISSED" else "PARTIAL"
                     )
                     activeEpisode = null
@@ -1891,7 +1894,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 // rather than a proxy "BG has been above target for X minutes" signal.
                 circadianLearner.nudgeIsfFromPdpEpisode(
                     hour    = ep.startHour,
-                    dow     = ep.startDow,  // captured at open — avoids midnight boundary bug
+                    dow     = ep.startDow,
                     outcome = circOutcome
                 )
             } else if (durationMins < 15.0) {

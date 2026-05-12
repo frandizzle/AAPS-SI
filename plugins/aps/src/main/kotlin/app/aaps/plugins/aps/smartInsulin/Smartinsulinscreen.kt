@@ -1057,84 +1057,218 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
         SiRow("Learning stage: $learningStage", null, primaryColor = stageColor)
         Spacer(Modifier.height(4.dp))
 
-        // ── Per-hour 24h table ────────────────────────────────────────────
-        Text("Per-hour learning table",
+        // ── Per-hour 24h heatmap ──────────────────────────────────────────────
+        Text("Per-hour learning heatmap",
              fontSize = 13.sp, fontWeight = FontWeight.Bold,
              color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(2.dp))
         Text(
-            "Columns: Hr | StrMlt | FadMlt | BlnMlt | Progress | n",
-            fontSize = 9.sp, fontFamily = FontFamily.Monospace,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            "StrMlt >1 = more resistance assumed. FadMlt >1 = deviation lasts longer.",
-            fontSize = 9.sp, color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(4.dp))
-
-        for (h in 0..23) {
-            val marker     = if (h == hour) "▶" else " "
-            val strength   = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
-            val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
-            val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
-            val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
-            val fadeMult   = if (h < d.pdpHourlyStrengths.size) d.pdpHourlyStrengths.getOrElse(h) { 1.0 } else 1.0
-
-            // Progress bar: based on samples toward full confidence (20 samples = full)
-            // This is much more readable than raw confidence float
-            val progressFilled = minOf(10, samples / 2)  // 2 samples per bar segment, 10 segments = 20 samples
-            val progressBar = buildString {
-                append("▓".repeat(progressFilled))
-                append("░".repeat(10 - progressFilled))
-            }
-
-            // Color: hours with meaningful learned deviation get highlighted
-            val strDeviation = kotlin.math.abs(strength - 1.0)
-            val rowColor = when {
-                samples == 0     -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                strDeviation > 0.1 && confidence > 0.3 -> StatusWarn   // learned and confident
-                strDeviation > 0.03                     -> StatusInfo   // learning something
-                else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
-            }
-
-            // Deviation indicators — more readable than raw multiplier numbers
-            val strIndicator = when {
-                strength > 1.15 -> "↑↑"
-                strength > 1.05 -> "↑"
-                strength < 0.95 -> "↓"
-                else            -> "·"
-            }
-
-            Text(
-                "$marker ${h.toString().padStart(2)}  " +
-                    "${"%.3f".format(strength)}$strIndicator  " +
-                    "${"%.3f".format(blendMult).padStart(5)}  " +
-                    "$progressBar  " +
-                    "$samples",
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                color = if (h == hour) StatusWarn else rowColor
-            )
-        }
-
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Progress bar: ▓ = 2 obs each, full at 20. ↑↑ = strong resistance. ↑ = mild. · = neutral.",
+            "Tap any hour row for detail. Colour = learned deviation from neutral (orange = more resistance, blue = less).",
             fontSize = 9.sp,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 13.sp
         )
+        Spacer(Modifier.height(6.dp))
 
-        // ── Interpretation footer ─────────────────────────────────────────
-        Spacer(Modifier.height(8.dp))
+        // Column headers
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Hr",     modifier = Modifier.width(28.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("StrMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("FadMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("BlnMlt", modifier = Modifier.weight(1.8f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Confidence",modifier = Modifier.weight(3f), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("n",      modifier = Modifier.width(22.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        HorizontalDivider(modifier = Modifier.padding(bottom = 2.dp))
+
+        var expandedHour by rememberSaveable { mutableStateOf(-1) }
+
+        for (h in 0..23) {
+            val isCurrent  = h == hour
+            val strength   = d.pdpHourlyStrengths.getOrElse(h) { 1.0 }
+            val confidence = d.pdpHourlyConfidences.getOrElse(h) { 0.0 }
+            val samples    = d.pdpHourlySamples.getOrElse(h) { 0 }
+            val blendMult  = d.pdpHourlyBlendMults.getOrElse(h) { 1.0 }
+            // fadeMult lives in HourSlot but isn't in FragmentData — approximate from blendMult
+            // until a pdpHourlyFadeMults list is added. For now we show blendMult twice to
+            // avoid using the wrong source (the original screen used pdpHourlyStrengths for fadeMult).
+            // TODO: add pdpHourlyFadeMults: List<Double> to FragmentData and PdpLearner accessors.
+            val fadeMult = blendMult  // placeholder — replace when fadeMult accessor is wired
+
+            // Heatmap cell colour — strength deviation drives the accent
+            // >1.0 = more resistance (orange), <1.0 = less (blue), ~1.0 = neutral (surface)
+            val strDev = strength - 1.0
+            val cellColor: Color = when {
+                samples == 0     -> Color.Transparent
+                strDev > 0.15    -> StatusWarn.copy(alpha = 0.55f)
+                strDev > 0.05    -> StatusWarn.copy(alpha = 0.25f)
+                strDev < -0.15   -> StatusInfo.copy(alpha = 0.55f)
+                strDev < -0.05   -> StatusInfo.copy(alpha = 0.25f)
+                else             -> Color.Transparent
+            }
+            val textColor: Color = when {
+                isCurrent        -> StatusWarn
+                samples == 0     -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                else             -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            }
+
+            // Confidence mini-bar — filled proportion of 20-sample full-trust threshold
+            val confFraction = (samples.toFloat() / 20f).coerceIn(0f, 1f)
+            val confBarColor = when {
+                confidence >= 0.6 -> StatusGood
+                confidence >= 0.3 -> StatusWarn
+                else              -> StatusBad
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(cellColor)
+                    .clickable { expandedHour = if (expandedHour == h) -1 else h }
+                    .padding(vertical = 2.dp, horizontal = 2.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Hour label
+                    Text(
+                        if (isCurrent) "►${h.toString().padStart(2)}" else "  ${h.toString().padStart(2)}",
+                        modifier = Modifier.width(28.dp),
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                        color = textColor
+                    )
+                    // StrMlt with arrow indicator
+                    val strArrow = when {
+                        strength > 1.15 -> "↑↑"
+                        strength > 1.05 -> "↑"
+                        strength < 0.85 -> "↓↓"
+                        strength < 0.95 -> "↓"
+                        else            -> " ·"
+                    }
+                    Text(
+                        "${"%.3f".format(strength)}$strArrow",
+                        modifier = Modifier.weight(1.8f),
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = textColor
+                    )
+                    // FadMlt
+                    Text(
+                        "%.3f".format(fadeMult),
+                        modifier = Modifier.weight(1.8f),
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = textColor
+                    )
+                    // BlndMlt
+                    Text(
+                        "%.3f".format(blendMult),
+                        modifier = Modifier.weight(1.8f),
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = textColor
+                    )
+                    // Confidence mini bar + pct
+                    Row(
+                        modifier = Modifier.weight(3f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(36.dp).height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .width(36.dp * confFraction)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(confBarColor)
+                            )
+                        }
+                        Text(
+                            "${(confidence * 100).toInt()}%",
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = confBarColor
+                        )
+                    }
+                    // Sample count
+                    Text(
+                        "$samples",
+                        modifier = Modifier.width(22.dp),
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = textColor
+                    )
+                }
+
+                // Expanded detail row — tap to reveal
+                if (expandedHour == h) {
+                    Spacer(Modifier.height(4.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text("Hour $h:00 — detail", fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface)
+                        Text("StrengthMult : ${"%.4f".format(strength)}  (1.0 = neutral, >1 = more resistance assumed)",
+                             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("FadeMult     : ${"%.4f".format(fadeMult)}  (1.0 = base fadeMins, >1 = deviation lasts longer)",
+                             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("BlendMult    : ${"%.4f".format(blendMult)}  (1.0 = base pdpMaxBlend, confidence-weighted)",
+                             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Confidence   : ${"%.3f".format(confidence)}  ($samples observations)",
+                             fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (samples == 0) {
+                            Text("No data yet — using neutral defaults until first observation.",
+                                 fontSize = 10.sp,
+                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            val strDesc = when {
+                                strength > 1.3  -> "Strong resistance — PDP applies significantly more correction here"
+                                strength > 1.1  -> "Moderate resistance — consistent above-target plateau at this hour"
+                                strength > 1.02 -> "Mild resistance — slight upward tendency learned"
+                                strength < 0.7  -> "Primary IOB clearly winning — PDP backs off significantly here"
+                                strength < 0.9  -> "Primary IOB outperforms — nudging PDP back at this hour"
+                                strength < 0.98 -> "Slight IOB advantage — small downward adjustment"
+                                else            -> "Neutral — no consistent deviation at this hour"
+                            }
+                            Text(strDesc, fontSize = 10.sp,
+                                 color = if (kotlin.math.abs(strDev) > 0.05) StatusWarn
+                                 else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                }
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
         Text(
-            "StrMlt >1.0 = more resistance/deviation assumed. FadeMlt >1.0 = deviation lasts longer. BlndMlt >1.0 = blend weight raised. " +
-                "Confidence bar shows how many observations back this up. " +
-                "Low confidence hours blend toward neutral automatically.",
-            fontSize = 10.sp,
+            "↑↑ = strong resistance (str >1.15). ↑ = mild (>1.05). ↓↓ = IOB clearly wins (<0.85). · = neutral. Tap any row for detail.",
+            fontSize = 9.sp,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-            lineHeight = 14.sp
+            lineHeight = 13.sp
         )
     }
 }
