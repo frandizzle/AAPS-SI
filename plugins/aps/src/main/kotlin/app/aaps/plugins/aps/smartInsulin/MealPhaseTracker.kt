@@ -90,6 +90,7 @@ class MealPhaseTracker @Inject constructor(
     private var phaseStartMs        = 0L
     private var lastMealMode        = MealMode.FASTING
 
+
     // Phase durations accumulated this session
     private var carbPhaseDurationMs = 0L
     private var pfPhaseDurationMs   = 0L
@@ -137,6 +138,9 @@ class MealPhaseTracker @Inject constructor(
     // Epoch ms of the first bolus for this session (PB1 or manual start).
     // Supplied each cycle via onLoopCycle — 0L until first bolus is known.
     private var firstBolusMs: Long = 0L
+    private var carbPhaseExtraBasalU: Double = 0.0
+    private var pfPhaseExtraBasalU:   Double = 0.0
+    private var tailPhaseExtraBasalU: Double = 0.0
 
     // IOB snapshots at phase boundaries — primary learning signal
     private var iobAtCarbExit: Double = 0.0
@@ -193,6 +197,9 @@ class MealPhaseTracker @Inject constructor(
         val pfPhaseDurationMs:   Long,
         val tailPhaseDurationMs: Long,
         val carbPhasePeakBgMmol: Double,
+        val carbPhaseExtraBasalU: Double,
+        val pfPhaseExtraBasalU:   Double,
+        val tailPhaseExtraBasalU: Double,
         val pfPhasePeakBgMmol:   Double,
         val tailNadirBgMmol:     Double,
         val manualBolusDetected: Boolean,
@@ -281,12 +288,15 @@ class MealPhaseTracker @Inject constructor(
         }
 
         // Accumulate SMBs delivered this session, split by phase
-        if (sessionActive && smbsDeliveredU > 0.0) {
-            totalSmbsDeliveredU += smbsDeliveredU
+        if (sessionActive && tbrRateU > 0.0 && profileRateU > 0.0) {
+            val extraThisCycle = ((tbrRateU - profileRateU) * (loopIntervalMins / 60.0)).coerceAtLeast(0.0)
+            extraBasalU += extraThisCycle
+
+            // ADD THIS BLOCK:
             when (currentPhase) {
-                MealPhase.CARB        -> carbPhaseSmbsU += smbsDeliveredU
-                MealPhase.PROTEIN_FAT -> pfPhaseSmbsU   += smbsDeliveredU
-                MealPhase.TAIL        -> tailPhaseSmbsU  += smbsDeliveredU
+                MealPhase.CARB        -> carbPhaseExtraBasalU += extraThisCycle
+                MealPhase.PROTEIN_FAT -> pfPhaseExtraBasalU   += extraThisCycle
+                MealPhase.TAIL        -> tailPhaseExtraBasalU  += extraThisCycle
             }
         }
 
@@ -836,6 +846,9 @@ class MealPhaseTracker @Inject constructor(
             iobAtPfExit         = iobAtPfExit,
             prebolusU            = prebolusU,
             totalSmbsDeliveredU  = totalSmbsDeliveredU,
+            carbPhaseExtraBasalU = carbPhaseExtraBasalU,
+            pfPhaseExtraBasalU   = pfPhaseExtraBasalU,
+            tailPhaseExtraBasalU = tailPhaseExtraBasalU,
             carbPhaseSmbsU       = carbPhaseSmbsU,
             pfPhaseSmbsU         = pfPhaseSmbsU,
             tailPhaseSmbsU       = tailPhaseSmbsU,
@@ -891,6 +904,9 @@ class MealPhaseTracker @Inject constructor(
         pendingIobSnapshot       = 0.0
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
+        carbPhaseExtraBasalU = 0.0
+        pfPhaseExtraBasalU   = 0.0
+        tailPhaseExtraBasalU = 0.0
         bgAucTailPhase           = 0.0
         prebolusU                = 0.0
         totalSmbsDeliveredU      = 0.0
