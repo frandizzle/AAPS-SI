@@ -95,9 +95,9 @@ class MealPhaseProfileLearner @Inject constructor(
         val mode:              MealMode,
         var avgTotalU:         Double = 0.0,  // prebolus + all SMBs
         var avgPrebolusU:      Double = 0.0,  // PB1 + PB2 + PB3
-        var avgCarbSmbsU:      Double = 0.0,  // SMBs during carb phase
-        var avgPfSmbsU:        Double = 0.0,  // SMBs during P/F phase
-        var avgTailSmbsU:      Double = 0.0,  // SMBs during tail phase
+        var avgCarbSmbsU:      Double = 0.0,  // SMBs + TBR extra insulin during carb phase
+        var avgPfSmbsU:        Double = 0.0,  // SMBs + TBR extra insulin during P/F phase
+        var avgTailSmbsU:      Double = 0.0,  // SMBs + TBR extra insulin during tail phase
         var sessionCount:      Int    = 0
     ) {
         val hasData: Boolean get() = sessionCount >= 3
@@ -297,18 +297,20 @@ class MealPhaseProfileLearner @Inject constructor(
             m.avgTotalU    = session.totalSessionInsulinU
             m.avgPrebolusU = session.prebolusU
             // For P/F-only sessions, carb SMBs are 0 by definition — don't seed from zero
-            if (!session.carbPhaseSkipped) m.avgCarbSmbsU = session.carbPhaseSmbsU
-            m.avgPfSmbsU   = session.pfPhaseSmbsU
-            m.avgTailSmbsU = session.tailPhaseSmbsU
+            // Seed with combined SMB + TBR extra basal per phase for a complete fingerprint
+            if (!session.carbPhaseSkipped) m.avgCarbSmbsU = session.carbPhaseSmbsU + session.carbPhaseExtraBasalU
+            m.avgPfSmbsU   = session.pfPhaseSmbsU   + session.pfPhaseExtraBasalU
+            m.avgTailSmbsU = session.tailPhaseSmbsU + session.tailPhaseExtraBasalU
         } else {
             val alpha = if (session.isClean) INSULIN_EWMA_ALPHA else INSULIN_EWMA_ALPHA * 0.5
             m.avgTotalU    += alpha * (session.totalSessionInsulinU - m.avgTotalU)
             m.avgPrebolusU += alpha * (session.prebolusU            - m.avgPrebolusU)
             // Only update carb SMBs from sessions that actually had a carb phase
             if (!session.carbPhaseSkipped)
-                m.avgCarbSmbsU += alpha * (session.carbPhaseSmbsU - m.avgCarbSmbsU)
-            m.avgPfSmbsU   += alpha * (session.pfPhaseSmbsU         - m.avgPfSmbsU)
-            m.avgTailSmbsU += alpha * (session.tailPhaseSmbsU       - m.avgTailSmbsU)
+            // Combine SMB + TBR extra basal per phase — TBR insulin is as real as SMB insulin
+                m.avgCarbSmbsU += alpha * ((session.carbPhaseSmbsU + session.carbPhaseExtraBasalU) - m.avgCarbSmbsU)
+            m.avgPfSmbsU   += alpha * ((session.pfPhaseSmbsU   + session.pfPhaseExtraBasalU)   - m.avgPfSmbsU)
+            m.avgTailSmbsU += alpha * ((session.tailPhaseSmbsU + session.tailPhaseExtraBasalU) - m.avgTailSmbsU)
         }
         saveInsulinModel(m)
         aapsLogger.debug(LTag.APS, "MealPhaseProfileLearner insulin model: $m")
@@ -316,9 +318,9 @@ class MealPhaseProfileLearner @Inject constructor(
         aapsLogger.debug(LTag.APS,
                          "MealPhaseProfileLearner [${session.mode.label}] session #${p.sessionCount} " +
                              "pre=${"%.2f".format(session.prebolusU)}U " +
-                             "carbSmbs=${"%.2f".format(session.carbPhaseSmbsU)}U " +
-                             "pfSmbs=${"%.2f".format(session.pfPhaseSmbsU)}U " +
-                             "tailSmbs=${"%.2f".format(session.tailPhaseSmbsU)}U " +
+                             "carbInsulin=${"%.2f".format(session.carbPhaseSmbsU + session.carbPhaseExtraBasalU)}U(smb=${"%.2f".format(session.carbPhaseSmbsU)}+tbr=${"%.2f".format(session.carbPhaseExtraBasalU)}) " +
+                             "pfInsulin=${"%.2f".format(session.pfPhaseSmbsU + session.pfPhaseExtraBasalU)}U(smb=${"%.2f".format(session.pfPhaseSmbsU)}+tbr=${"%.2f".format(session.pfPhaseExtraBasalU)}) " +
+                             "tailInsulin=${"%.2f".format(session.tailPhaseSmbsU + session.tailPhaseExtraBasalU)}U(smb=${"%.2f".format(session.tailPhaseSmbsU)}+tbr=${"%.2f".format(session.tailPhaseExtraBasalU)}) " +
                              "extraTBR=${"%.2f".format(session.extraBasalU)}U " +
                              "manual=${"%.2f".format(session.manualCorrectionU)}U " +
                              "total=${"%.2f".format(session.totalSessionInsulinU)}U " +

@@ -90,7 +90,6 @@ class MealPhaseTracker @Inject constructor(
     private var phaseStartMs        = 0L
     private var lastMealMode        = MealMode.FASTING
 
-
     // Phase durations accumulated this session
     private var carbPhaseDurationMs = 0L
     private var pfPhaseDurationMs   = 0L
@@ -138,9 +137,6 @@ class MealPhaseTracker @Inject constructor(
     // Epoch ms of the first bolus for this session (PB1 or manual start).
     // Supplied each cycle via onLoopCycle — 0L until first bolus is known.
     private var firstBolusMs: Long = 0L
-    private var carbPhaseExtraBasalU: Double = 0.0
-    private var pfPhaseExtraBasalU:   Double = 0.0
-    private var tailPhaseExtraBasalU: Double = 0.0
 
     // IOB snapshots at phase boundaries — primary learning signal
     private var iobAtCarbExit: Double = 0.0
@@ -165,7 +161,11 @@ class MealPhaseTracker @Inject constructor(
 
     // Extra basal above profile rate delivered during session (TBR delta × time)
     // Only counts insulin above the profile rate — the baseline would have run anyway.
-    private var extraBasalU: Double = 0.0
+    private var extraBasalU:         Double = 0.0
+    // Phase-attributed TBR extra insulin — same logic as extraBasalU but split per phase
+    private var carbPhaseExtraBasalU: Double = 0.0
+    private var pfPhaseExtraBasalU:   Double = 0.0
+    private var tailPhaseExtraBasalU: Double = 0.0
 
     // Total SMBs delivered during this session (beyond prebolus), split by phase
     private var totalSmbsDeliveredU: Double = 0.0
@@ -197,9 +197,6 @@ class MealPhaseTracker @Inject constructor(
         val pfPhaseDurationMs:   Long,
         val tailPhaseDurationMs: Long,
         val carbPhasePeakBgMmol: Double,
-        val carbPhaseExtraBasalU: Double,
-        val pfPhaseExtraBasalU:   Double,
-        val tailPhaseExtraBasalU: Double,
         val pfPhasePeakBgMmol:   Double,
         val tailNadirBgMmol:     Double,
         val manualBolusDetected: Boolean,
@@ -225,6 +222,9 @@ class MealPhaseTracker @Inject constructor(
         val pfPhaseSmbsU:        Double,    // SMBs fired during P/F phase
         val tailPhaseSmbsU:      Double,    // SMBs fired during tail phase
         val extraBasalU:         Double,    // extra TBR insulin above profile rate during session
+        val carbPhaseExtraBasalU: Double,   // TBR extra insulin during carb phase
+        val pfPhaseExtraBasalU:   Double,   // TBR extra insulin during P/F phase
+        val tailPhaseExtraBasalU: Double,   // TBR extra insulin during tail phase
         val manualCorrectionU:   Double,    // manual boluses during session (may be intentional fix)
         // True physiological total: prebolus + SMBs + extra TBR + manual corrections
         val totalSessionInsulinU: Double,
@@ -285,18 +285,21 @@ class MealPhaseTracker @Inject constructor(
         if (sessionActive && tbrRateU > 0.0 && profileRateU > 0.0) {
             val extraThisCycle = ((tbrRateU - profileRateU) * (loopIntervalMins / 60.0)).coerceAtLeast(0.0)
             extraBasalU += extraThisCycle
-        }
-
-        // Accumulate SMBs delivered this session, split by phase
-        if (sessionActive && tbrRateU > 0.0 && profileRateU > 0.0) {
-            val extraThisCycle = ((tbrRateU - profileRateU) * (loopIntervalMins / 60.0)).coerceAtLeast(0.0)
-            extraBasalU += extraThisCycle
-
-            // ADD THIS BLOCK:
+            // Attribute TBR extra insulin to whichever phase is currently active
             when (currentPhase) {
                 MealPhase.CARB        -> carbPhaseExtraBasalU += extraThisCycle
                 MealPhase.PROTEIN_FAT -> pfPhaseExtraBasalU   += extraThisCycle
                 MealPhase.TAIL        -> tailPhaseExtraBasalU  += extraThisCycle
+            }
+        }
+
+        // Accumulate SMBs delivered this session, split by phase
+        if (sessionActive && smbsDeliveredU > 0.0) {
+            totalSmbsDeliveredU += smbsDeliveredU
+            when (currentPhase) {
+                MealPhase.CARB        -> carbPhaseSmbsU += smbsDeliveredU
+                MealPhase.PROTEIN_FAT -> pfPhaseSmbsU   += smbsDeliveredU
+                MealPhase.TAIL        -> tailPhaseSmbsU  += smbsDeliveredU
             }
         }
 
@@ -756,6 +759,9 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
         extraBasalU              = 0.0
+        carbPhaseExtraBasalU     = 0.0
+        pfPhaseExtraBasalU       = 0.0
+        tailPhaseExtraBasalU     = 0.0
         isPfOnlySession          = false
 
         // UAM_PROTEIN_FAT fires after a meal is already over — carb phase already happened
@@ -846,13 +852,13 @@ class MealPhaseTracker @Inject constructor(
             iobAtPfExit         = iobAtPfExit,
             prebolusU            = prebolusU,
             totalSmbsDeliveredU  = totalSmbsDeliveredU,
-            carbPhaseExtraBasalU = carbPhaseExtraBasalU,
-            pfPhaseExtraBasalU   = pfPhaseExtraBasalU,
-            tailPhaseExtraBasalU = tailPhaseExtraBasalU,
             carbPhaseSmbsU       = carbPhaseSmbsU,
             pfPhaseSmbsU         = pfPhaseSmbsU,
             tailPhaseSmbsU       = tailPhaseSmbsU,
             extraBasalU          = extraBasalU,
+            carbPhaseExtraBasalU = carbPhaseExtraBasalU,
+            pfPhaseExtraBasalU   = pfPhaseExtraBasalU,
+            tailPhaseExtraBasalU = tailPhaseExtraBasalU,
             manualCorrectionU    = manualBolusU,
             totalSessionInsulinU = prebolusU + totalSmbsDeliveredU +
                 extraBasalU + manualBolusU,
@@ -904,9 +910,6 @@ class MealPhaseTracker @Inject constructor(
         pendingIobSnapshot       = 0.0
         bgAucCarbPhase           = 0.0
         bgAucPfPhase             = 0.0
-        carbPhaseExtraBasalU = 0.0
-        pfPhaseExtraBasalU   = 0.0
-        tailPhaseExtraBasalU = 0.0
         bgAucTailPhase           = 0.0
         prebolusU                = 0.0
         totalSmbsDeliveredU      = 0.0
@@ -914,6 +917,9 @@ class MealPhaseTracker @Inject constructor(
         pfPhaseSmbsU             = 0.0
         tailPhaseSmbsU           = 0.0
         extraBasalU              = 0.0
+        carbPhaseExtraBasalU     = 0.0
+        pfPhaseExtraBasalU       = 0.0
+        tailPhaseExtraBasalU     = 0.0
         isPfOnlySession          = false
     }
 
