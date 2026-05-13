@@ -1360,26 +1360,6 @@ open class SmartInsulinPlugin @Inject constructor(
             maxIobU       = pb2MaxIob,
             profile       = profile
         )
-        // Notify MealPhaseTracker of prebolus deliveries (once per bolus, on confirmed fire)
-        val activeState = mealOverrideManager  // already exposed via interface accessors
-
-// PB1 — fires at session start; activeDoseU is non-null once delivered
-        if (!pb1Notified && mealOverrideManager.activeDoseU != null) {
-            mealOverrideManager.activeDoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
-            pb1Notified = true
-        }
-
-// PB2 — activePb2DoseU is non-null only after successful delivery
-        if (!pb2Notified && mealOverrideManager.activePb2DoseU != null) {
-            mealOverrideManager.activePb2DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
-            pb2Notified = true
-        }
-
-// PB3 — same pattern
-        if (!pb3Notified && mealOverrideManager.activePb3DoseU != null) {
-            mealOverrideManager.activePb3DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
-            pb3Notified = true
-        }
         // PB2 cache — refreshed every cycle regardless of whether PB2 is pending, so that
         // post-fire UI still shows what the gate state was on the last tick.
         pb2LastBgMgdl            = glucoseStatus.glucose
@@ -2285,9 +2265,29 @@ open class SmartInsulinPlugin @Inject constructor(
                 tbrRateU           = currentTemp.rate,
                 profileRateU       = profile.getBasal()
             )
+
+            // ── Notify MealPhaseTracker of prebolus deliveries ───────────────────
+            // MUST run AFTER onLoopCycle — notifyPrebolus() is a no-op when sessionActive=false.
+            // Previously this block ran ~900 lines before onLoopCycle, so on the transition
+            // cycle (first meal mode cycle) sessionActive was still false → pb1Notified was set
+            // to true → prebolus permanently lost → "Total delivered: 0.00U" in UI.
+
+            // PB1 — fires at session start; activeDoseU is non-null once delivered
+            if (!pb1Notified && mealOverrideManager.activeDoseU != null) {
+                mealOverrideManager.activeDoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+                pb1Notified = true
+            }
+            // PB2 — activePb2DoseU is non-null only after successful delivery
+            if (!pb2Notified && mealOverrideManager.activePb2DoseU != null) {
+                mealOverrideManager.activePb2DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+                pb2Notified = true
+            }
+            // PB3 — same pattern
+            if (!pb3Notified && mealOverrideManager.activePb3DoseU != null) {
+                mealOverrideManager.activePb3DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
+                pb3Notified = true
+            }
         }
-
-
 
         // Append per-cycle learner summary to reason — visible in Loop tab
         // Format: circ(ISF×1.00 bas×1.00 ceil=0.85) basal×1.02 aggr=0.92/1.10
