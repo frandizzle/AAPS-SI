@@ -1329,7 +1329,9 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         if (currentDirection != null && currentDirection != lastDirection) {
             nudgeDisplaySessionIsfMgdl = if (isfMultBefore > 0) trueIsfMgdl / isfMultBefore else 0.0
-            nudgeDisplaySessionBasalU  = cachedProfileBasal * totalBasalMultBefore
+            val tbrStep = activePlugin.activePump.pumpDescription.tempAbsoluteStep.takeIf { it > 0.0 } ?: 0.05
+            val rawSessionBasal = cachedProfileBasal * totalBasalMultBefore
+            nudgeDisplaySessionBasalU = Math.round(rawSessionBasal / tbrStep) * tbrStep
             aapsLogger.debug(LTag.APS,
                              "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
                                  "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
