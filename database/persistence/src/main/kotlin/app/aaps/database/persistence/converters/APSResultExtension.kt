@@ -24,9 +24,9 @@ private val rtJson = Json {
 fun app.aaps.database.entities.APSResult.fromDb(apsResultProvider: Provider<APSResult>): APSResult =
     when (algorithm) {
         app.aaps.database.entities.APSResult.Algorithm.AMA,
-        app.aaps.database.entities.APSResult.Algorithm.SMB,
         app.aaps.database.entities.APSResult.Algorithm.SI,
-        app.aaps.database.entities.APSResult.Algorithm.UNKNOWN  ->
+        app.aaps.database.entities.APSResult.Algorithm.SMB      ->
+
             apsResultProvider.get().with(rtJson.decodeFromString(this.resultJson)).also { result ->
                 result.date = this.timestamp
                 result.glucoseStatus = try {
@@ -55,15 +55,16 @@ fun app.aaps.database.entities.APSResult.fromDb(apsResultProvider: Provider<APSR
                 result.mealData = this.mealDataJson?.let { Json.decodeFromString(it) }
                 result.autosensResult = this.autosensDataJson?.let { Json.decodeFromString(it) }
             }
+
+        else                                                    -> error("Unsupported")
     }
 
 @OptIn(ExperimentalSerializationApi::class)
 fun APSResult.toDb(): app.aaps.database.entities.APSResult =
     when (algorithm) {
         APSResult.Algorithm.AMA,
-        APSResult.Algorithm.SMB,
         APSResult.Algorithm.SI,
-        APSResult.Algorithm.UNKNOWN  ->
+        APSResult.Algorithm.SMB      ->
             app.aaps.database.entities.APSResult(
                 timestamp = this.date,
                 algorithm = this.algorithm.toDb(),
@@ -88,22 +89,24 @@ fun APSResult.toDb(): app.aaps.database.entities.APSResult =
                 autosensDataJson = this.autosensResult?.let { Json.encodeToString(AutosensResult.serializer(), it) },
                 resultJson = rtJson.encodeToString(RT.serializer(), this.rawData() as RT)
             )
+
+        else                         -> error("Unsupported")
     }
 
 fun app.aaps.database.entities.APSResult.Algorithm.fromDb(): APSResult.Algorithm =
     when (this) {
         app.aaps.database.entities.APSResult.Algorithm.AMA      -> APSResult.Algorithm.AMA
         app.aaps.database.entities.APSResult.Algorithm.SMB      -> APSResult.Algorithm.SMB
-        app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF -> APSResult.Algorithm.AUTO_ISF
         app.aaps.database.entities.APSResult.Algorithm.SI       -> APSResult.Algorithm.SI
-        app.aaps.database.entities.APSResult.Algorithm.UNKNOWN  -> APSResult.Algorithm.UNKNOWN
+        app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF -> APSResult.Algorithm.AUTO_ISF
+        else                                                    -> error("Unsupported")
     }
 
 fun APSResult.Algorithm.toDb(): app.aaps.database.entities.APSResult.Algorithm =
     when (this) {
         APSResult.Algorithm.AMA      -> app.aaps.database.entities.APSResult.Algorithm.AMA
         APSResult.Algorithm.SMB      -> app.aaps.database.entities.APSResult.Algorithm.SMB
-        APSResult.Algorithm.AUTO_ISF -> app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF
         APSResult.Algorithm.SI       -> app.aaps.database.entities.APSResult.Algorithm.SI
-        APSResult.Algorithm.UNKNOWN  -> app.aaps.database.entities.APSResult.Algorithm.UNKNOWN
+        APSResult.Algorithm.AUTO_ISF -> app.aaps.database.entities.APSResult.Algorithm.AUTO_ISF
+        else                         -> error("Unsupported")
     }
