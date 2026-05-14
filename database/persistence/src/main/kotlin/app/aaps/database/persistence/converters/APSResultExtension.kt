@@ -61,6 +61,7 @@ fun app.aaps.database.entities.APSResult.fromDb(apsResultProvider: Provider<APSR
 fun APSResult.toDb(): app.aaps.database.entities.APSResult =
     when (algorithm) {
         APSResult.Algorithm.AMA,
+        APSResult.Algorithm.SI,
         APSResult.Algorithm.SMB      ->
             app.aaps.database.entities.APSResult(
                 timestamp = this.date,
@@ -86,19 +87,6 @@ fun APSResult.toDb(): app.aaps.database.entities.APSResult =
                 autosensDataJson = this.autosensResult?.let { Json.encodeToString(AutosensResult.serializer(), it) },
                 resultJson = rtJson.encodeToString(RT.serializer(), this.rawData() as RT)
             )
-        APSResult.Algorithm.SI ->
-            app.aaps.database.entities.APSResult(
-                timestamp = this.date,
-                algorithm = this.algorithm.toDb(),
-                glucoseStatusJson = this.glucoseStatus?.let { Json.encodeToString(GlucoseStatusAutoIsf.serializer(), it as GlucoseStatusAutoIsf) },
-                currentTempJson = this.currentTemp?.let { Json.encodeToString(CurrentTemp.serializer(), it) },
-                iobDataJson = this.iobData?.let { Json.encodeToString(ArraySerializer(IobTotal.serializer()), it) },
-                profileJson = this.oapsProfileAutoIsf?.let { Json.encodeToString(OapsProfileAutoIsf.serializer(), it) },
-                mealDataJson = this.mealData?.let { Json.encodeToString(MealData.serializer(), it) },
-                autosensDataJson = this.autosensResult?.let { Json.encodeToString(AutosensResult.serializer(), it) },
-                resultJson = rtJson.encodeToString(RT.serializer(), this.rawData() as RT)
-            )
-
         else                         -> error("Unsupported")
     }
 
