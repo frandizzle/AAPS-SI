@@ -24,6 +24,7 @@ private val rtJson = Json {
 fun app.aaps.database.entities.APSResult.fromDb(apsResultProvider: Provider<APSResult>): APSResult =
     when (algorithm) {
         app.aaps.database.entities.APSResult.Algorithm.AMA,
+        app.aaps.database.entities.APSResult.Algorithm.SI,
         app.aaps.database.entities.APSResult.Algorithm.SMB      ->
             apsResultProvider.get().with(rtJson.decodeFromString(this.resultJson)).also { result ->
                 result.date = this.timestamp
