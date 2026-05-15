@@ -372,12 +372,6 @@ abstract class PluginsListModule {
     @IntKey(615)
     abstract fun bindUnscentedKalmanFilterPlugin(plugin: UnscentedKalmanFilterPlugin): PluginBase
 
-    @Binds
-    @AllConfigs
-    @IntoMap
-    @IntKey(615)
-    abstract fun bindUnscentedKalmanFilterPlugin(plugin: UnscentedKalmanFilterPlugin): PluginBase
-
     @Qualifier
     annotation class AllConfigs
 
