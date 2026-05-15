@@ -18,7 +18,6 @@ import app.aaps.core.nssdk.localmodel.ApiPermissions
 import app.aaps.core.nssdk.localmodel.Status
 import app.aaps.core.nssdk.localmodel.Storage
 import app.aaps.core.nssdk.remotemodel.LastModified
-import app.aaps.core.utils.receivers.DataWorkerStorage
 import app.aaps.plugins.sync.nsShared.compose.NSClientRepositoryImpl
 import app.aaps.plugins.sync.nsclient.ReceiverDelegate
 import app.aaps.plugins.sync.nsclientV3.DataSyncSelectorV3
@@ -54,7 +53,6 @@ internal class LoadStatusWorkerTest : TestBaseWithProfile() {
     private lateinit var nsClientMvvmRepository: NSClientRepositoryImpl
     private lateinit var nsClientV3Plugin: NSClientV3Plugin
     private lateinit var receiverDelegate: ReceiverDelegate
-    private lateinit var dataWorkerStorage: DataWorkerStorage
     private lateinit var sut: LoadStatusWorker
 
     init {
@@ -71,7 +69,6 @@ internal class LoadStatusWorkerTest : TestBaseWithProfile() {
     @BeforeEach
     fun setUp() {
         nsClientMvvmRepository = NSClientRepositoryImpl(rxBus, aapsLogger)
-        dataWorkerStorage = DataWorkerStorage(context)
         whenever(persistenceLayer.observeChanges(anyOrNull<Class<*>>())).thenReturn(emptyFlow())
         whenever(persistenceLayer.observeAnyChange()).thenReturn(emptyFlow())
         whenever(receiverStatusStore.networkStatusFlow).thenReturn(MutableStateFlow(null))

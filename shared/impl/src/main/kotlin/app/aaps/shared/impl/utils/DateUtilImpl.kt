@@ -114,9 +114,9 @@ class DateUtilImpl @Inject constructor(
         val startOfTodayMillis = beginOfDay(nowMillis)
         return if (mills < nowMillis) { // Past
             when {
-                mills > startOfTodayMillis                                  -> rh.gs(R.string.today)
-                mills > startOfTodayMillis - 1.days.inWholeMilliseconds -> rh.gs(R.string.yesterday)
-                mills > startOfTodayMillis - 7.days.inWholeMilliseconds -> dayAgo(mills, rh, true)
+                mills > startOfTodayMillis                                  -> "${rh.gs(R.string.today)} - ${dateString(mills)}"
+                mills > startOfTodayMillis - 1.days.inWholeMilliseconds -> "${rh.gs(R.string.yesterday)} - ${dateString(mills)}"
+                mills > startOfTodayMillis - 7.days.inWholeMilliseconds -> "${dayAgo(mills, rh, true)} - ${dateString(mills)}"
                 else                                                        -> dateString(mills)
             }
         } else { // Future
@@ -215,6 +215,15 @@ class DateUtilImpl @Inject constructor(
             else                         -> { // Otherwise, show seconds
                 rh.gs(R.string.secago, duration.inWholeSeconds.toInt())
             }
+        }
+    }
+
+    override fun minOrSec(rh: ResourceHelper, durationMs: Long): String {
+        if (durationMs < 0) return ""
+        val duration = durationMs.milliseconds
+        return when {
+            duration.inWholeMinutes >= 2 -> rh.gs(R.string.min_plus, duration.inWholeMinutes.toInt())
+            else                         -> rh.gs(R.string.sec_plus, duration.inWholeSeconds.toInt())
         }
     }
 
