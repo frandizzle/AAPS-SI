@@ -26,12 +26,6 @@
         <item quantity="many">%1$s часов назад</item>
         <item quantity="other">%1$s часов назад</item>
     </plurals>
-    <plurals name="plurals_minute_ago">
-        <item quantity="one">только что</item>
-        <item quantity="few">%1$s минуты назад</item>
-        <item quantity="many">%1$s минут назад</item>
-        <item quantity="other">%1$s минут назад</item>
-    </plurals>
     <string name="seconds_ago">секунды назад</string>
     <string name="in_days">через %1$.0f дн</string>
     <string name="in_days_round">через %1$.0f дн</string>
