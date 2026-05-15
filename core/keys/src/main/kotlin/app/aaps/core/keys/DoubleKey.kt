@@ -311,5 +311,16 @@ enum class DoubleKey(
         defaultedBySM = true,
         unitType = UnitType.INSULIN
     ),
+    ApsSmartInsulinPdpMealMaxStrength(
+        key = "si_pdp_meal_max_strength",
+        defaultValue = 2.0,
+        min = 1.1,
+        max = 4.0,
+        titleResId = R.string.pref_title_si_pdp_meal_max_strength,
+        summaryResId = R.string.pref_summary_si_pdp_meal_max_strength,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
+        unitType = UnitType.DOUBLE
+    ),
 
 }

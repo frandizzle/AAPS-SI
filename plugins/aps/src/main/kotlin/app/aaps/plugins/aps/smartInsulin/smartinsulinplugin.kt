@@ -200,6 +200,18 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedPdpBlendWeight:    Double  = 0.0   // last computed blend weight — for statusSummary display
     @Volatile private var cachedPdpSyntheticCi:    Double  = 0.0   // last synthetic ci mg/dL — for display
 
+    // ── PDP meal-stuck state ──────────────────────────────────────────────────
+    // When in meal/UAM mode and BG is stuck high (not correcting), meal-PDP progressively
+    // strengthens the effective ISF — starting at the meal mode's configured ISF and
+    // pulling stronger the longer BG remains stuck.
+    // Counts consecutive qualifying readings during meal mode (flat+high, not yet falling).
+    private var mealPdpStuckReadings:    Int    = 0
+    // The effective ISF (mg/dL) currently being applied by meal-PDP. 0.0 = inactive.
+    // Updated each invoke() when meal-PDP is active; reset to 0.0 when mode exits or BG improves.
+    @Volatile private var cachedMealPdpIsf:      Double  = 0.0
+    // Last meal mode label active when meal-PDP was computing — for display
+    @Volatile private var cachedMealPdpModeLabel: String = ""
+
     // ── PDP episode tracking ──────────────────────────────────────────────────
     // An episode opens when pdpBlendWeight goes from 0 → >0.
     // Tracks outcome metrics (nadir BG, duration) until episode closes.
@@ -370,6 +382,9 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedPdpBlendWeight     = 0.0
         activeEpisode            = null
         lastPdpBlendActive       = false
+        mealPdpStuckReadings     = 0
+        cachedMealPdpIsf         = 0.0
+        cachedMealPdpModeLabel   = ""
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: PDP learner reset (seed=${"%.2f".format(seedStrengthMult)})")
     }
 
@@ -617,6 +632,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpHourlyBlendMults:   List<Double>,   // learned blend mult per hour (24)
         val pdpHourlyFadeMults:    List<Double>,   // learned fade mult per hour (24)
         val pdpLearningEnabled:    Boolean,
+        // ── Meal-PDP stuck-high state ─────────────────────────────────────────
+        val pdpMealStuckEnabled:   Boolean,  // user setting: meal-PDP feature on/off
+        val pdpMealStuckReadings:  Int,      // consecutive qualifying readings in meal mode
+        val pdpMealStuckMinReadings: Int,    // threshold before ISF starts ramping
+        val pdpMealCurrentIsfMgdl: Double,  // active meal-PDP ISF (0.0 = inactive)
+        val pdpMealBaseIsfMgdl:    Double,  // starting ISF (= mode ISF) when meal-PDP activated
+        val pdpMealMaxStrength:    Double,  // max strength multiplier (e.g. 2.0 = up to 2× more aggressive)
+        val pdpMealRampMins:       Int,     // minutes to reach max strength from base ISF
+        val pdpMealModeLabel:      String,  // meal mode label when meal-PDP is active
+        val pdpIsFasting:          Boolean, // true when loop is in fasting mode (for mode display)
     )
 
     fun fragmentData(): FragmentData {
@@ -786,7 +811,17 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpHourlySamples     = (0..23).map { h -> pdpLearner.samplesAt(h) },
             pdpHourlyBlendMults  = (0..23).map { h -> pdpLearner.effectiveBlendMult(h) },
             pdpHourlyFadeMults   = (0..23).map { h -> pdpLearner.fadeMultAt(h) },
-            pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
+            pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled),
+            // ── Meal-PDP ──────────────────────────────────────────────────────
+            pdpMealStuckEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpMealStuckEnabled),
+            pdpMealStuckReadings  = mealPdpStuckReadings,
+            pdpMealStuckMinReadings = preferences.get(IntKey.ApsSmartInsulinPdpMealStuckMinReadings),
+            pdpMealCurrentIsfMgdl = cachedMealPdpIsf,
+            pdpMealBaseIsfMgdl    = 0.0,  // base ISF is the mode ISF at activation; not separately cached (display-only)
+            pdpMealMaxStrength    = preferences.get(DoubleKey.ApsSmartInsulinPdpMealMaxStrength),
+            pdpMealRampMins       = preferences.get(IntKey.ApsSmartInsulinPdpMealRampMins),
+            pdpMealModeLabel      = cachedMealPdpModeLabel,
+            pdpIsFasting          = currentMealMode == MealMode.FASTING,
         )
     }
 
@@ -2075,6 +2110,64 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "iob=${String.format(java.util.Locale.ROOT, "%.2f", iobAtLowTime)}U (<1.0)")
         }
 
+        // ── Meal-PDP: stuck-high ISF strengthening during meal/UAM modes ──────
+        // When BG is stuck high in a meal/UAM mode (rising has stalled but hasn't come down),
+        // progressively strengthen the effective ISF — starting at the mode's own ISF and
+        // getting more aggressive the longer it stays stuck.
+        //
+        // Gate: only active when pdpEnabled AND pdpMealStuckEnabled AND in a meal/UAM mode
+        // (not fasting, not extended). BG must be above target and flat/rising (not already
+        // falling — if it's falling, ISF is working and we leave it alone).
+        // No ci requirement — this is purely "stuck plateau, not correcting".
+        val pdpMealStuckEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpMealStuckEnabled)
+        val inMealModeForMealPdp = mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED
+
+        val MEAL_PDP_STUCK_OFFSET_MGDL = 9.0   // 0.5 mmol above target — needs to be meaningfully high
+        val MEAL_PDP_STUCK_DELTA_MGDL  = 5.4   // ≤0.3 mmol/5min — not actively falling (allows slight rise)
+
+        val mealPdpBgAboveTarget = glucoseStatus.glucose > (profileTargetMgdl + MEAL_PDP_STUCK_OFFSET_MGDL)
+        // "not falling" — allow flat or slowly rising; hard reset if BG is actively dropping
+        val mealPdpNotFalling    = glucoseStatus.shortAvgDelta > -MEAL_PDP_STUCK_DELTA_MGDL
+
+        if (pdpMealStuckEnabled && inMealModeForMealPdp && mealPdpBgAboveTarget && mealPdpNotFalling) {
+            mealPdpStuckReadings++
+        } else {
+            // Hard reset if mode exited, or BG is now below threshold, or BG is actively falling (correcting)
+            mealPdpStuckReadings = 0
+        }
+
+        val pdpMealStuckMinReadings = preferences.get(IntKey.ApsSmartInsulinPdpMealStuckMinReadings)
+        val pdpMealMaxStrength      = preferences.get(DoubleKey.ApsSmartInsulinPdpMealMaxStrength)
+        val pdpMealRampMins         = preferences.get(IntKey.ApsSmartInsulinPdpMealRampMins).toDouble()
+        val pdpMealRampReadings     = (pdpMealRampMins / 5.0).coerceAtLeast(1.0)
+
+        // Meal-PDP ISF: starts at modeISF once min readings hit, then ramps down (stronger)
+        // toward modeISF / maxStrength over rampMins. ISF going DOWN = more aggressive.
+        // e.g. modeISF=36 (2.0 mmol/U), maxStrength=2.0 → floor at 18 (1.0 mmol/U)
+        val mealPdpActive = pdpMealStuckEnabled && inMealModeForMealPdp
+            && mealPdpStuckReadings >= pdpMealStuckMinReadings
+        if (mealPdpActive && dosingIsfMgdl > 0.0) {
+            val readingsBeyondMin = (mealPdpStuckReadings - pdpMealStuckMinReadings).coerceAtLeast(0)
+            // Ramp fraction: 0.0 at min, 1.0 at minReadings + rampReadings cycles
+            val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMealRampReadings)
+            // ISF ramps from modeISF (rampFraction=0) down to modeISF / maxStrength (rampFraction=1)
+            // Dividing by a factor > 1 makes ISF smaller → more aggressive
+            val divisor = 1.0 + rampFraction * (pdpMealMaxStrength - 1.0)
+            val mealPdpIsf = (dosingIsfMgdl / divisor).coerceAtLeast(dosingIsfMgdl / pdpMealMaxStrength)
+            dosingIsfMgdl = mealPdpIsf
+            cachedMealPdpIsf      = mealPdpIsf
+            cachedMealPdpModeLabel = mealMode.label
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin MealPDP[${mealMode.label}]: stuck=${mealPdpStuckReadings}/${pdpMealStuckMinReadings} " +
+                                 "ramp=${"%.2f".format(rampFraction)} div=${"%.2f".format(divisor)} " +
+                                 "ISF ${fmtIsf(cachedMealPdpIsf)}$unitLabel (base was ${fmtIsf(cachedMealPdpIsf * divisor)}$unitLabel)")
+        } else {
+            if (!mealPdpActive || !inMealModeForMealPdp) {
+                cachedMealPdpIsf       = 0.0
+                cachedMealPdpModeLabel = ""
+            }
+        }
+
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(
             ConstraintObject(tempBasalFallback.not(), aapsLogger)
         ).also { inputConstraints.copyReasons(it) }.value()
@@ -2479,7 +2572,11 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinPdpFadeMinutes,
                     IntKey.ApsSmartInsulinPdpMinReadings,
                     DoubleKey.ApsSmartInsulinPdpMaxBlendWeight,
-                    DoubleKey.ApsSmartInsulinFastingMaxIob
+                    DoubleKey.ApsSmartInsulinFastingMaxIob,
+                    BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
+                    IntKey.ApsSmartInsulinPdpMealStuckMinReadings,
+                    IntKey.ApsSmartInsulinPdpMealRampMins,
+                    DoubleKey.ApsSmartInsulinPdpMealMaxStrength
                 )
             )
         ),

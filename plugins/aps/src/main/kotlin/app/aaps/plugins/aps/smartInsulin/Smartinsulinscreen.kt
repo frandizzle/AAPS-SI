@@ -924,15 +924,31 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
 
     SiCard(title = "Persistent Deviation Prediction") {
 
-        // ── Status header ────────────────────────────────────────────────
+        // ── Mode indicator: fasting or meal ──────────────────────────────
+        val pdpModeLabel = when {
+            !d.pdpIsFasting && d.pdpMealStuckEnabled -> "Mode: Meal (${d.pdpMealModeLabel.ifEmpty { "active" }})"
+            !d.pdpIsFasting -> "Mode: Meal — meal-PDP disabled"
+            else -> "Mode: Fasting"
+        }
+        val pdpModeColor = if (!d.pdpIsFasting) StatusWarn
+        else androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        Text(pdpModeLabel, fontSize = 12.sp, color = pdpModeColor)
+        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(4.dp))
         val blending = d.pdpBlendWeight > 0.01
         val ciBuilding   = d.pdpConsecutiveReadings > 0
         val stuckBuilding = d.pdpStuckHighReadings > 0
+        val mealPdpBlending = !d.pdpIsFasting && d.pdpMealStuckEnabled
+            && d.pdpMealCurrentIsfMgdl > 0.0
         val (statusText, statusColor) = when {
+            mealPdpBlending ->
+                "Active [meal-stuck] — strengthening ISF during meal plateau" to StatusWarn
             blending && d.pdpActivePathway == "stuck" ->
                 "Active [stuck-high] — BG plateaued above target, blending secondary" to StatusWarn
             blending ->
                 "Active [rising deviation] — unexplained rise detected, blending secondary" to StatusWarn
+            !d.pdpIsFasting && d.pdpMealStuckEnabled && d.pdpMealStuckReadings > 0 ->
+                "Watching [meal-stuck] — ${d.pdpMealStuckReadings}/${d.pdpMealStuckMinReadings} flat cycles in meal mode" to StatusInfo
             stuckBuilding ->
                 "Watching [stuck-high] — ${d.pdpStuckHighReadings}/${d.pdpMinReadings} flat cycles above target" to StatusInfo
             ciBuilding ->
@@ -1001,6 +1017,34 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
                 "ciStrength 3.0 = 100% resistance (secondary predicts BG stays flat despite IOB).\n" +
                 "Fades over fadeMins so primary and secondary curves eventually converge."
         )
+
+        // ── Meal-PDP stuck row ───────────────────────────────────────────
+        if (d.pdpMealStuckEnabled) {
+            val mealIsfFmt = if (d.pdpMealCurrentIsfMgdl > 0.0) {
+                val isf = if (isMmol) "${"%.1f".format(d.pdpMealCurrentIsfMgdl / 18.0)} mmol/U"
+                else "${"%.0f".format(d.pdpMealCurrentIsfMgdl)} mg/dL/U"
+                " — ISF → $isf"
+            } else ""
+            val mealStuckLabel = if (!d.pdpIsFasting) {
+                "Meal-stuck: ${d.pdpMealStuckReadings}/${d.pdpMealStuckMinReadings} flat cycles$mealIsfFmt"
+            } else {
+                "Meal-stuck: inactive (fasting mode)"
+            }
+            val mealStuckColor = when {
+                d.pdpMealCurrentIsfMgdl > 0.0 -> StatusWarn
+                d.pdpMealStuckReadings > 0     -> StatusInfo
+                else -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+            }
+            SiRow(
+                mealStuckLabel,
+                "During any meal/UAM mode: if BG stays stuck above target and is not falling, " +
+                    "meal-PDP progressively lowers ISF (more aggressive) to break the plateau.\n" +
+                    "Starts at the meal mode's own ISF and ramps down over ${d.pdpMealRampMins} min.\n" +
+                    "Cap: max ${d.pdpMealMaxStrength}× more aggressive than the mode ISF.\n" +
+                    "Hard resets when BG starts falling or mode exits.",
+                primaryColor = mealStuckColor
+            )
+        }
         SiRow(
             "Stuck: ${"%.1f".format(d.pdpCiStrength)} • Rising: ${"%.2f".format(d.pdpRisingStrength)} • Fade: ${d.pdpFadeMins}min (effective: ${"%.0f".format(d.pdpEffectiveFadeMins)}min)",
             "Stuck strength (1-10): scales effective ISF for stuck-high pathway. Learned per-hour — increases at hours where plateaus are real, decreases where they resolve quickly.\n" +

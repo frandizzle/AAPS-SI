@@ -357,4 +357,26 @@ enum class IntKey(
         dependency = BooleanKey.ApsSmartInsulinPdpEnabled,
         unitType = UnitType.NONE
     ),
+    ApsSmartInsulinPdpMealStuckMinReadings(
+        key = "si_pdp_meal_stuck_min_readings",
+        defaultValue = 3,
+        min = 1,
+        max = 12,
+        titleResId = R.string.pref_title_si_pdp_meal_stuck_min_readings,
+        summaryResId = R.string.pref_summary_si_pdp_meal_stuck_min_readings,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
+        unitType = UnitType.NONE
+    ),
+    ApsSmartInsulinPdpMealRampMins(
+        key = "si_pdp_meal_ramp_mins",
+        defaultValue = 30,
+        min = 5,
+        max = 120,
+        titleResId = R.string.pref_title_si_pdp_meal_ramp_mins,
+        summaryResId = R.string.pref_summary_si_pdp_meal_ramp_mins,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
+        unitType = UnitType.MIN
+    ),
 }

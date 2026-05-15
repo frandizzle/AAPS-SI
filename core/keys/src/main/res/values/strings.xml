@@ -580,6 +580,14 @@
     <string name="pref_title_si_pdp_min_readings">Min consecutive readings to blend</string>
     <string name="pref_title_si_pdp_max_blend_weight">Max blend weight (0.1–0.9)</string>
     <string name="pref_title_si_fasting_max_iob">Fasting max IOB — 0 = disabled (U)</string>
+    <string name="pdp_meal_stuck_enabled_title">Meal-stuck ISF strengthening</string>
+<string name="pdp_meal_stuck_enabled_summary">During meal/UAM modes, progressively lower ISF when BG plateaus above target</string>
+<string name="pdp_meal_stuck_min_readings_title">Min flat readings before activating</string>
+<string name="pdp_meal_stuck_min_readings_summary">Number of flat, stuck-high cycles in meal mode before ISF starts strengthening (default 3 = 15 min)</string>
+<string name="pdp_meal_ramp_mins_title">Ramp time to max strength (min)</string>
+<string name="pdp_meal_ramp_mins_summary">Minutes after activation to reach max strength. Longer = gentler ramp. Default 30 min.</string>
+<string name="pdp_meal_max_strength_title">Max ISF strength multiplier</string>
+<string name="pdp_meal_max_strength_summary">How much stronger than meal ISF the correction can get. 2.0 = up to 2× more aggressive (half the ISF value). Default 2.0.</string>
 
     <!-- IntentKey preferences -->
 
