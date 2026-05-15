@@ -94,8 +94,6 @@ open class SmartInsulinPlugin @Inject constructor(
     private val uamController: UamController,
     private val profileLearner: ProfileLearner,
     private val bolusCurveTracker: BolusCurveTracker,
-    private val mealPhaseTracker: MealPhaseTracker,
-    private val mealPhaseProfileLearner: MealPhaseProfileLearner,
     private val pdpLearner: PdpLearner,
     private val aggressionLearner: AggressionLearner,
     private val basalLearner: BasalLearner,
@@ -599,31 +597,6 @@ open class SmartInsulinPlugin @Inject constructor(
         val activePb2DoseU:     Double?,
         val activePb3DoseU:     Double?,
         val pb3Status:          String,
-        // ── Meal Phase Tracker ────────────────────────────────────────────────
-        val mealPhaseActive:       Boolean,
-        val mealPhaseLabel:        String,
-        val mealPhaseDebug:        String,
-        val mealPhaseTransitionDebug: String,
-        val mealPhaseSessionMode:  String,
-        val mealPhaseElapsedMins:  Long,
-        val mealPhaseCarb:         MealPhaseTracker.PhaseStatus,
-        val mealPhasePF:           MealPhaseTracker.PhaseStatus,
-        val mealPhaseTail:         MealPhaseTracker.PhaseStatus,
-        // ── Meal phase learner
-        val mealPhaseCurrentPhase:     String,
-        val mealPhasePrebolusU:        Double,
-        val mealPhaseCarbSmbsU:        Double,
-        val mealPhasePfSmbsU:          Double,
-        val mealPhaseTailSmbsU:        Double,
-        val mealPhaseExtraBasalU:      Double,
-        val mealPhaseManualU:          Double,
-        val mealPhaseTotalU:           Double,
-        val mealPhaseCarbSmbMult:      Double,
-        val mealPhasePfIsfMult:        Double,
-        val mealPhaseTailIsfMult:      Double,
-        val mealPhaseInsulinSummaries: Map<String, String>,
-        val mealPhaseModeSummaries:    Map<String, String>,
-        // ── PDP ───────────────────────────────────────────────────────────────
         val pdpEnabled:            Boolean,
         val pdpBlendWeight:        Double,
         val pdpCiMgdl:             Double,
@@ -792,37 +765,6 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb2DoseU     = mealOverrideManager.activePb2DoseU,
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
             pb3Status          = cachedOverviewState.pb3Line ?: "",
-            // ── Meal Phase Tracker fields ─────────────────────────────────────
-            mealPhaseActive      = mealPhaseTracker.sessionActive,
-            mealPhaseLabel       = mealPhaseTracker.phaseLabel,
-            mealPhaseDebug       = mealPhaseTracker.lastPhaseDebug,
-            mealPhaseTransitionDebug = mealPhaseTracker.lastTransitionDebug,
-            mealPhaseSessionMode = mealPhaseTracker.sessionMode.label,
-            mealPhaseElapsedMins = if (mealPhaseTracker.sessionActive) (System.currentTimeMillis() - mealPhaseTracker.sessionStartMs) / 60_000L else 0L,
-            mealPhaseCarb        = mealPhaseTracker.carbPhaseStatus(),
-            mealPhasePF          = mealPhaseTracker.pfPhaseStatus(),
-            mealPhaseTail        = mealPhaseTracker.tailPhaseStatus(),
-            mealPhaseCurrentPhase     = if (mealPhaseTracker.sessionActive)
-                mealPhaseTracker.currentPhase.name else "",
-            mealPhasePrebolusU        = mealPhaseTracker.sessionPrebolusU,
-            mealPhaseCarbSmbsU        = mealPhaseTracker.sessionCarbSmbsU,
-            mealPhasePfSmbsU          = mealPhaseTracker.sessionPfSmbsU,
-            mealPhaseTailSmbsU        = mealPhaseTracker.sessionTailSmbsU,
-            mealPhaseExtraBasalU      = mealPhaseTracker.sessionExtraBasalU,
-            mealPhaseManualU          = mealPhaseTracker.sessionManualU,
-            mealPhaseTotalU           = mealPhaseTracker.sessionTotalInsulinU,
-            mealPhaseCarbSmbMult      = mealPhaseProfileLearner.carbSmbFractionMult(
-                mealPhaseTracker.sessionMode),
-            mealPhasePfIsfMult        = mealPhaseProfileLearner.pfIsfMult(
-                mealPhaseTracker.sessionMode),
-            mealPhaseTailIsfMult      = mealPhaseProfileLearner.tailIsfMult(
-                mealPhaseTracker.sessionMode),
-            mealPhaseInsulinSummaries = MealMode.entries
-                .filter { it != MealMode.FASTING }
-                .associate { it.label to mealPhaseProfileLearner.insulinSummaryForMode(it) },
-            mealPhaseModeSummaries    = MealMode.entries
-                .filter { it != MealMode.FASTING }
-                .associate { it.label to mealPhaseProfileLearner.statusForMode(it) },
             fuelTrimStrength     = circadianLearner.trimStrength,
             // ── PDP ───────────────────────────────────────────────────────────
             pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
@@ -1146,14 +1088,6 @@ open class SmartInsulinPlugin @Inject constructor(
             previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
         val previousWasPf = previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT
         if (previousWasRealMeal && mealMode == MealMode.FASTING) {
-            mealPhaseTracker.onMealModeExpired(
-                now          = now,
-                bgMmol       = glucoseStatus.glucose / 18.0,
-                targetBgMmol = profile.getTargetMgdl() / 18.0
-            )
-            pb1Notified = false   // ← ADD
-            pb2Notified = false   // ← ADD
-            pb3Notified = false   // ← ADD
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
@@ -2248,45 +2182,21 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: paused ($trackerPauseReason)")
         }
 
-        // ── Meal phase tracker — detection only, no dosing influence yet ──────
         // Runs every cycle regardless of noise/activity gates — we want to track
         // the full meal shape even if BolusCurveTracker is paused.
         // Only skips when sensor is completely unreliable (warmup).
         if (!cgmInWarmup) {
-            mealPhaseTracker.onLoopCycle(
-                now           = now,
-                mealMode      = mealMode,
-                bgMmol        = glucoseStatus.glucose / 18.0,
-                shortAvgDelta = glucoseStatus.shortAvgDelta / 18.0,
-                delta         = glucoseStatus.delta / 18.0,
-                targetBgMmol  = profile.getTargetMgdl() / 18.0,
-                lowGuardMmol  = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0,
-                iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
-                firstBolusEpochMs  = iobArray.firstOrNull()?.lastBolusTime ?: 0L,
-                smbsDeliveredU     = apsResult.smb,                              // FIX: was missing — SMB phase tracking was always zero
-                tbrRateU           = currentTemp.rate,
-                profileRateU       = profile.getBasal()
-            )
-
-            // ── Notify MealPhaseTracker of prebolus deliveries ───────────────────
-            // MUST run AFTER onLoopCycle — notifyPrebolus() is a no-op when sessionActive=false.
-            // Previously this block ran ~900 lines before onLoopCycle, so on the transition
-            // cycle (first meal mode cycle) sessionActive was still false → pb1Notified was set
-            // to true → prebolus permanently lost → "Total delivered: 0.00U" in UI.
 
             // PB1 — fires at session start; activeDoseU is non-null once delivered
             if (!pb1Notified && mealOverrideManager.activeDoseU != null) {
-                mealOverrideManager.activeDoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
                 pb1Notified = true
             }
             // PB2 — activePb2DoseU is non-null only after successful delivery
             if (!pb2Notified && mealOverrideManager.activePb2DoseU != null) {
-                mealOverrideManager.activePb2DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
                 pb2Notified = true
             }
             // PB3 — same pattern
             if (!pb3Notified && mealOverrideManager.activePb3DoseU != null) {
-                mealOverrideManager.activePb3DoseU?.let { mealPhaseTracker.notifyPrebolus(it) }
                 pb3Notified = true
             }
         }
