@@ -211,6 +211,8 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedMealPdpIsf:      Double  = 0.0
     // Last meal mode label active when meal-PDP was computing — for display
     @Volatile private var cachedMealPdpModeLabel: String = ""
+    // Tracks which meal mode was active last cycle — resets counter on mode switch
+    private var lastMealPdpMode:         MealMode = MealMode.FASTING
 
     // ── PDP episode tracking ──────────────────────────────────────────────────
     // An episode opens when pdpBlendWeight goes from 0 → >0.
@@ -385,6 +387,7 @@ open class SmartInsulinPlugin @Inject constructor(
         mealPdpStuckReadings     = 0
         cachedMealPdpIsf         = 0.0
         cachedMealPdpModeLabel   = ""
+        lastMealPdpMode          = MealMode.FASTING
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: PDP learner reset (seed=${"%.2f".format(seedStrengthMult)})")
     }
 
@@ -2130,11 +2133,18 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealPdpNotFalling    = glucoseStatus.shortAvgDelta > -MEAL_PDP_STUCK_DELTA_MGDL
 
         if (pdpMealStuckEnabled && inMealModeForMealPdp && mealPdpBgAboveTarget && mealPdpNotFalling) {
+            // Hard reset if the meal mode changed since last cycle (e.g. Lunch → Dinner)
+            if (mealMode != lastMealPdpMode) {
+                mealPdpStuckReadings = 0
+                cachedMealPdpIsf     = 0.0
+                aapsLogger.debug(LTag.APS, "SmartInsulin MealPDP: mode changed ${lastMealPdpMode} → ${mealMode}, resetting counter")
+            }
             mealPdpStuckReadings++
         } else {
             // Hard reset if mode exited, or BG is now below threshold, or BG is actively falling (correcting)
             mealPdpStuckReadings = 0
         }
+        lastMealPdpMode = mealMode
 
         val pdpMealStuckMinReadings = preferences.get(IntKey.ApsSmartInsulinPdpMealStuckMinReadings)
         val pdpMealMaxStrength      = preferences.get(DoubleKey.ApsSmartInsulinPdpMealMaxStrength)
