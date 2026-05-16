@@ -137,7 +137,7 @@ open class SmartInsulinPlugin @Inject constructor(
     override val algorithm = APSResult.Algorithm.SI
     override var lastAPSResult: APSResult? = null
 
-    // ── Suspend / rebound tracking ────────────────────────────────────────────
+    // -- Suspend / rebound tracking --------------------------------------------
     // Rebound protection only activates if BG actually went under the low threshold
     // during a suspend. A precautionary suspend that never caused a real low does
     // NOT trigger the rebound window.
@@ -151,7 +151,7 @@ open class SmartInsulinPlugin @Inject constructor(
     var uamEntryModeStartMs: Long = 0L             // timestamp when current UAM mode started
     var learningDirtyUntilMs: Long = 0L          // learning suppressed until this time after mode ends
     // Session-start snapshots for nudge "was" display — captured on transition from
-    // INACTIVE/PAUSED → any active state (ACTIVE_HIGH, ACTIVE_LOW, TRIM). Captures the
+    // INACTIVE/PAUSED ? any active state (ACTIVE_HIGH, ACTIVE_LOW, TRIM). Captures the
     // pre-nudge baseline so "was" reflects what the loop was delivering BEFORE the
     // current nudge started applying corrections. Uses full composite values so "was"
     // matches what the loop was actually delivering.
@@ -187,7 +187,7 @@ open class SmartInsulinPlugin @Inject constructor(
         bgWentLow &&
         msSinceLastSuspend < reboundGuardMs
 
-    // ── PDP (Persistent Deviation Prediction) state ─────────────────────────────
+    // -- PDP (Persistent Deviation Prediction) state -----------------------------
     // Tracks consecutive cycles where ci (unexplained BG deviation) is positive and above
     // threshold — used to compute blend weight toward the secondary prediction curve.
     private var consecutivePosCiReadings: Int    = 0
@@ -200,7 +200,7 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedPdpBlendWeight:    Double  = 0.0   // last computed blend weight — for statusSummary display
     @Volatile private var cachedPdpSyntheticCi:    Double  = 0.0   // last synthetic ci mg/dL — for display
 
-    // ── PDP meal-stuck state ──────────────────────────────────────────────────
+    // -- PDP meal-stuck state --------------------------------------------------
     // When in meal/UAM mode and BG is stuck high (not correcting), meal-PDP progressively
     // strengthens the effective ISF — starting at the meal mode's configured ISF and
     // pulling stronger the longer BG remains stuck.
@@ -213,9 +213,12 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedMealPdpModeLabel: String = ""
     // Tracks which meal mode was active last cycle — resets counter on mode switch
     private var lastMealPdpMode:         MealMode = MealMode.FASTING
+    // Rolling 3-reading delta history for decline detection (mg/dL/5min, oldest?newest)
+    // Reset alongside mealPdpStuckReadings whenever the counter resets.
+    private val mealPdpDeltaHistory:     ArrayDeque<Double> = ArrayDeque(3)
 
-    // ── PDP episode tracking ──────────────────────────────────────────────────
-    // An episode opens when pdpBlendWeight goes from 0 → >0.
+    // -- PDP episode tracking --------------------------------------------------
+    // An episode opens when pdpBlendWeight goes from 0 ? >0.
     // Tracks outcome metrics (nadir BG, duration) until episode closes.
     private data class PdpEpisode(
         val startTimeMs:     Long,
@@ -231,7 +234,7 @@ open class SmartInsulinPlugin @Inject constructor(
     )
     private var activeEpisode: PdpEpisode? = null
 
-    // ── PB2 gate snapshot — updated each invoke() for fragment display ────────
+    // -- PB2 gate snapshot — updated each invoke() for fragment display --------
     @Volatile var pb2LastBgMgdl:            Double = 0.0
     @Volatile var pb2LastDeltaMgdl:         Double = 0.0
     @Volatile var pb2LastShortAvgDeltaMgdl: Double = 0.0
@@ -241,7 +244,7 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var pb1Notified: Boolean = false
     @Volatile private var pb2Notified: Boolean = false
     @Volatile private var pb3Notified: Boolean = false
-    // ── PB3 gate snapshot — identical fields, updated separately each invoke() ─
+    // -- PB3 gate snapshot — identical fields, updated separately each invoke() -
     @Volatile var pb3LastBgMgdl:            Double = 0.0
     @Volatile var pb3LastDeltaMgdl:         Double = 0.0
     @Volatile var pb3LastShortAvgDeltaMgdl: Double = 0.0
@@ -249,7 +252,7 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile var pb3LastMaxIobU:           Double = 0.0
     @Volatile var pb3ProfileTargetMgdl:     Double = 0.0
 
-    // ── HbA1c estimation — computed fresh each fragmentData() call from DB ───
+    // -- HbA1c estimation — computed fresh each fragmentData() call from DB ---
     // Formula: (mean_mgdl + 46.7) / 28.7
     // Queries today's readings (midnight to now) via persistenceLayer.
 
@@ -267,7 +270,7 @@ open class SmartInsulinPlugin @Inject constructor(
         private const val HBA1C_CACHE_REFRESH_MS  = 2 * 60 * 60 * 1000L
     }
 
-    // ── Unit-aware display helpers ────────────────────────────────────────────
+    // -- Unit-aware display helpers --------------------------------------------
     // Internal BG values are always mg/dL; deltas from glucoseStatus are mg/dL.
     // shortAvgDeltaAtLow is stored in mmol (converted at capture site).
     // Use these for all user-visible strings.
@@ -291,7 +294,7 @@ open class SmartInsulinPlugin @Inject constructor(
         if (isMmol) String.format(java.util.Locale.ROOT, "%.1f", mgdl / 18.0)
         else        String.format(java.util.Locale.ROOT, "%.0f", mgdl)
 
-    // ── Cached Overview state ────────────────────────────────────────────────
+    // -- Cached Overview state ------------------------------------------------
     // Updated each invoke() so overviewState() can be called any time from UI threads.
     private val _overviewStateFlow = MutableStateFlow<app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState>(
         app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
@@ -311,7 +314,7 @@ open class SmartInsulinPlugin @Inject constructor(
         get() = _overviewStateFlow.value
         set(value) { _overviewStateFlow.value = value }
 
-    // ── Reset all learners ────────────────────────────────────────────────────
+    // -- Reset all learners ----------------------------------------------------
 
     fun resetAllLearners() {
         aggressionLearner.reset()
@@ -388,13 +391,14 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedMealPdpIsf         = 0.0
         cachedMealPdpModeLabel   = ""
         lastMealPdpMode          = MealMode.FASTING
+        mealPdpDeltaHistory.clear()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: PDP learner reset (seed=${"%.2f".format(seedStrengthMult)})")
     }
 
 
 
 
-    // ── Status summary for tab UI ─────────────────────────────────────────────
+    // -- Status summary for tab UI ---------------------------------------------
 
     fun statusSummary(): String {
         val cal  = java.util.Calendar.getInstance()
@@ -407,8 +411,8 @@ open class SmartInsulinPlugin @Inject constructor(
         return buildString {
             appendLine()
 
-            // ── Active cycle values ───────────────────────────────────────────
-            appendLine("── Active (Hour=${hour}:00, Day=$day) ─────────────────")
+            // -- Active cycle values -------------------------------------------
+            appendLine("-- Active (Hour=${hour}:00, Day=$day) -----------------")
             val effectiveAggr = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour))
             appendLine("  Aggressiveness: ${"%.3f".format(effectiveAggr)}")
             appendLine("  TIR score: ${"%.3f".format(aggressionLearner.aggressiveness)} (>1.0=more aggressive, <1.0=backing off)")
@@ -424,9 +428,9 @@ open class SmartInsulinPlugin @Inject constructor(
             val learnedBas = if (profBasal > 0) "${"%.3f".format(profBasal * basalMult)} U/h" else "—"
             appendLine("  Basal: $learnedBas (×${"%.3f".format(basalMult)} flat=×${"%.3f".format(basalLearner.multiplierClamped)} circ=×${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
             appendLine("  ${aggressionLearner.tirSummary}")
-            if (inReboundWindow) appendLine("  ⚠️ REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
+            if (inReboundWindow) appendLine("  ?? REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
 
-            // ── Meal override / pre-bolus 2 status ───────────────────────────
+            // -- Meal override / pre-bolus 2 status ---------------------------
             val activeMode = mealOverrideManager.activeMealMode
             if (activeMode != null) {
                 val modeRemMins = mealOverrideManager.modeTimeRemainingMs / 60_000
@@ -441,9 +445,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine("  ${pb3Status.replace("PB3 waiting:", "PB3:").replace("PB3 active:", "PB3:")}")
             }
 
-            // ── STFT / UAM debug ──────────────────────────────────────────────
+            // -- STFT / UAM debug ----------------------------------------------
             appendLine()
-            appendLine("── STFT / UAM ────────────────────────")
+            appendLine("-- STFT / UAM ------------------------")
             // STFT
             val stftStatus = stftController.statusString(cachedProfileTarget.takeIf { it > 0.0 } ?: (5.5 * 18.0))
             if (stftStatus != null) appendLine("  $stftStatus") else appendLine("  STFT: inactive")
@@ -456,27 +460,27 @@ open class SmartInsulinPlugin @Inject constructor(
             val nowSi = System.currentTimeMillis()
             if (learningDirtyUntilMs > 0L && nowSi < learningDirtyUntilMs) {
                 val minsLeft = (learningDirtyUntilMs - nowSi) / 60_000
-                appendLine("  Post-meal lockout: ${minsLeft}min left — UAM↑ thresholds ON")
+                appendLine("  Post-meal lockout: ${minsLeft}min left — UAM? thresholds ON")
             } else {
                 appendLine("  Post-meal lockout: none")
             }
             // Safety state
             if (inReboundWindow) {
                 val bypassNote = if (softLandingBypass) " — SOFT LANDING BYPASS ACTIVE (UAM allowed)" else " — full lockout"
-                appendLine("  ⚠ Rebound: ${msSinceLastSuspend / 60_000}min elapsed$bypassNote")
+                appendLine("  ? Rebound: ${msSinceLastSuspend / 60_000}min elapsed$bypassNote")
             }
-            if (bgWentLow && !inReboundWindow) appendLine("  ⚠ Recent low: watching for recovery")
+            if (bgWentLow && !inReboundWindow) appendLine("  ? Recent low: watching for recovery")
             if (bgWentLow && minBgDuringLow < Double.MAX_VALUE) {
                 val iob = iobAtLowTime
                 appendLine("  Low detail: minBG=${fmtBg(minBgDuringLow)}$unitLabel " +
                                "velAtLow=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel " +
                                "iobAtLow=${String.format(java.util.Locale.ROOT, "%.2f", iob)}U " +
-                               if (secondLowOccurred) "⚠ SECOND LOW — full lockout" else "")
+                               if (secondLowOccurred) "? SECOND LOW — full lockout" else "")
             }
 
-            // ── Learning state ────────────────────────────────────────────────
+            // -- Learning state ------------------------------------------------
             appendLine()
-            appendLine("── Learning ──────────────────────────")
+            appendLine("-- Learning --------------------------")
             val state = cachedOverviewState
             val learningDisplay = when (state.learningState) {
                 "limited" -> "Limited due to meal mode - DIA/Peak only"
@@ -484,14 +488,14 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             appendLine("  Learning: $learningDisplay")
 
-            // ── Activity ─────────────────────────────────────────────────────
+            // -- Activity -----------------------------------------------------
             val actLevel = activityMonitor.level
             appendLine("  Activity: ${actLevel.label} " +
                            "hr=${activityMonitor.avgHrBpm.toInt()}avg " +
                            "steps=${activityMonitor.lastSteps5min}/5m")
             appendLine()
 
-            // ── PDP table ─────────────────────────────────
+            // -- PDP table ---------------------------------
             val pdpEnabledStatus = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
             if (pdpEnabledStatus) {
                 val pdpBase = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
@@ -505,12 +509,12 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine()
             }
 
-            // ── Circadian tables ──────────────────────────────────────────────
+            // -- Circadian tables ----------------------------------------------
             val isfUnit  = if (isMmolUnit) "mmol/U" else "mg/dL/U"
-            appendLine("── Circadian 24h ─────────────────────")
+            appendLine("-- Circadian 24h ---------------------")
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
-                val marker    = if (h == hour) "▶" else " "
+                val marker    = if (h == hour) "?" else " "
                 val hIsfMult  = circadianLearner.isfMultiplier(h)
                 val hBasMult  = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
                 val hIsf = if (profIsf > 0 && hIsfMult > 0)
@@ -524,8 +528,8 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             appendLine()
 
-            // ── Profiles ──────────────────────────────────────────────────────
-            appendLine("── Insulin Profiles ──────────────────")
+            // -- Profiles ------------------------------------------------------
+            appendLine("-- Insulin Profiles ------------------")
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
                 val p = profileLearner.getProfile(mode)
                 appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
@@ -533,7 +537,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }.trimEnd()
     }
 
-    // ── Structured data for fragment cards ───────────────────────────────────
+    // -- Structured data for fragment cards -----------------------------------
 
     data class Pb2GateData(
         val bgMgdl:            Double,
@@ -635,7 +639,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpHourlyBlendMults:   List<Double>,   // learned blend mult per hour (24)
         val pdpHourlyFadeMults:    List<Double>,   // learned fade mult per hour (24)
         val pdpLearningEnabled:    Boolean,
-        // ── Meal-PDP stuck-high state ─────────────────────────────────────────
+        // -- Meal-PDP stuck-high state -----------------------------------------
         val pdpMealStuckEnabled:   Boolean,  // user setting: meal-PDP feature on/off
         val pdpMealStuckReadings:  Int,      // consecutive qualifying readings in meal mode
         val pdpMealStuckMinReadings: Int,    // threshold before ISF starts ramping
@@ -675,7 +679,7 @@ open class SmartInsulinPlugin @Inject constructor(
             val basUnit  = "U/h"
             appendLine("  Hr  ISF ($isfUnit)   Basal ($basUnit)  Ceil   Conf")
             for (h in 0..23) {
-                val marker    = if (h == hour) "▶" else " "
+                val marker    = if (h == hour) "?" else " "
                 val isfMult   = circadianLearner.isfMultiplier(h)
                 val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
                 val learnedIsf = if (profileIsf > 0 && isfMult > 0)
@@ -794,7 +798,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb3DoseU     = mealOverrideManager.activePb3DoseU,
             pb3Status          = cachedOverviewState.pb3Line ?: "",
             fuelTrimStrength     = circadianLearner.trimStrength,
-            // ── PDP ───────────────────────────────────────────────────────────
+            // -- PDP -----------------------------------------------------------
             pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
             pdpBlendWeight       = cachedPdpBlendWeight,
             pdpCiMgdl            = lastCiMgdl,
@@ -815,7 +819,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpHourlyBlendMults  = (0..23).map { h -> pdpLearner.effectiveBlendMult(h) },
             pdpHourlyFadeMults   = (0..23).map { h -> pdpLearner.fadeMultAt(h) },
             pdpLearningEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled),
-            // ── Meal-PDP ──────────────────────────────────────────────────────
+            // -- Meal-PDP ------------------------------------------------------
             pdpMealStuckEnabled   = preferences.get(BooleanKey.ApsSmartInsulinPdpMealStuckEnabled),
             pdpMealStuckReadings  = mealPdpStuckReadings,
             pdpMealStuckMinReadings = preferences.get(IntKey.ApsSmartInsulinPdpMealStuckMinReadings),
@@ -837,7 +841,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMmolUnit  = isMmol
         return buildString {
             for (h in 0..23) {
-                val marker   = if (dow == currentDow && h == currentHour) "▶" else " "
+                val marker   = if (dow == currentDow && h == currentHour) "?" else " "
                 val hIsfMult = circadianLearner.isfMultiplier(h, dow)
                 val hBasMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h, dow)
                 val hIsf = if (profIsf > 0 && hIsfMult > 0)
@@ -852,7 +856,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
-    // ── Public state accessors for Overview display ─────────────────────────
+    // -- Public state accessors for Overview display -------------------------
 
     /**
      * Returns a one-line suppression reason for the Overview "State" cell,
@@ -902,7 +906,7 @@ open class SmartInsulinPlugin @Inject constructor(
         return cachedOverviewState.copy(modeLine = liveModeLine, learningState = liveLearningState)
     }
 
-    // ── RxBus subscriptions for HR and steps from wear ───────────────────────
+    // -- RxBus subscriptions for HR and steps from wear -----------------------
     override fun onStart() {
         super.onStart()
         // ActivityMonitor now queries persistenceLayer directly each loop cycle.
@@ -926,7 +930,7 @@ open class SmartInsulinPlugin @Inject constructor(
      *
      * Detection: if raw value < threshold (20.0 for BG keys, 36.0 for ISF keys), it was
      * stored in the old mmol format and needs ×18 to convert to mg/dL.
-     * Once AdaptiveUnitPreference has written the correct mg/dL value, raw will be ≥ threshold
+     * Once AdaptiveUnitPreference has written the correct mg/dL value, raw will be = threshold
      * and no conversion is needed.
      *
      * This makes the plugin robust to the stored format — old values work correctly AND
@@ -1087,10 +1091,10 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
 
-        // ── Meal mode — check override first, fall back to auto-detect ────────
+        // -- Meal mode — check override first, fall back to auto-detect --------
         var mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)
 
-        // ── UAM entry SMB fraction tracking ──────────────────────────────────
+        // -- UAM entry SMB fraction tracking ----------------------------------
         // For the first N SMBs after a UAM meal mode fires, apply a reduced delivery
         // fraction. Softens the front-end of the UAM response to avoid overcorrection
         // stacking before existing IOB has had time to affect predictions.
@@ -1109,7 +1113,7 @@ open class SmartInsulinPlugin @Inject constructor(
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else SMB_DELIVERY_FRACTION
 
-        // ── Post-meal learning lockout ───────────────────────────────────────
+        // -- Post-meal learning lockout ---------------------------------------
         // When any meal or UAM mode expires (transition back to FASTING), mark BG data
         // as "dirty for learning" for a configurable window. Fat/protein tails and carb
         // residuals won't corrupt basal/ISF/aggressiveness learning.
@@ -1169,7 +1173,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val modeIsfMgdl = modeIsfMgdl(mealMode, currentHour)
         val trueIsfMgdl   = profile.getIsfMgdl("SmartInsulinPlugin")
 
-        // ── STFT: short-term target reduction for stuck-high fasting BG ──────
+        // -- STFT: short-term target reduction for stuck-high fasting BG ------
         // Only runs in fasting, never overrides a deliberate temp target.
         // Adjusts targetBg downward to make the loop naturally more aggressive
         // without touching ISF, basal, aggressiveness, or any learners.
@@ -1218,7 +1222,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val cgmInWarmup = cgmState.inWarmup
 
-        // ── Circadian learner — fasting + no high TT only ─────────────────────
+        // -- Circadian learner — fasting + no high TT only ---------------------
         // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
         // The circadian learner itself also gates on mealMode==FASTING internally,
         // but we gate highTempTarget here before the call to avoid polluting bgHistory.
@@ -1316,17 +1320,17 @@ open class SmartInsulinPlugin @Inject constructor(
         val circAggrCeil  = circadianLearner.aggrCeiling()
         // Apply circadian ISF multiplier during fasting (>1 = higher ISF = less aggressive)
         // Meal mode ISF overrides are user-set — don't touch them
-        // circIsfMult > 1.0 → divide → dosingISF goes DOWN → more aggressive → more insulin
-        // circIsfMult < 1.0 → divide → dosingISF goes UP   → more insulin (insulin stronger than profile)
+        // circIsfMult > 1.0 ? divide ? dosingISF goes DOWN ? more aggressive ? more insulin
+        // circIsfMult < 1.0 ? divide ? dosingISF goes UP   ? more insulin (insulin stronger than profile)
         // This is correct: circIsfMult is a sensitivity multiplier, not a direct ISF scalar.
         var dosingIsfMgdl = when {
             modeIsfMgdl > 0.0 -> modeIsfMgdl                    // user meal-mode override — already mg/dL
-            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 → lower dosingISF → more aggressive → more insulin
+            else              -> trueIsfMgdl / circIsfMult        // divide: mult>1 ? lower dosingISF ? more aggressive ? more insulin
         }
 
 
 
-        // ── Tick the override manager — fires queued bolus when safe ──────────
+        // -- Tick the override manager — fires queued bolus when safe ----------
         val pb2MaxIob = constraintsChecker.getMaxIOBAllowed().value()
         mealOverrideManager.onLoopCycle(
             glucoseStatus = glucoseStatus,
@@ -1353,7 +1357,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
 
 
-        // ── UAM: auto-detect unannounced meals from BG rise during fasting ────
+        // -- UAM: auto-detect unannounced meals from BG rise during fasting ----
         // Only fires in FASTING mode within configured time windows.
         // Expiry detection is handled internally by UamController via previousMealMode tracking.
         // Safety inputs (bgWentLow, inReboundWindow) prevent false triggers from rebound rises.
@@ -1382,7 +1386,7 @@ open class SmartInsulinPlugin @Inject constructor(
             bgTimestampMs      = glucoseStatus.date
         )
 
-        // ── Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired ──
+        // -- Re-read mealMode after UAM — reassign mealMode and dosingIsfMgdl if UAM fired --
         // Using var reassignment so ALL downstream logic (determine_basal, learners, logging)
         // sees the correct mode and ISF immediately. The previous approach only updated sens
         // in OapsProfile but left dosingIsfMgdl stale everywhere else.
@@ -1412,7 +1416,7 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "${fmtIsf(dosingIsfMgdl)}$unitLabel immediately")
         }
 
-        // ── STFT: run after UAM so it sees the correct mealMode this cycle ────
+        // -- STFT: run after UAM so it sees the correct mealMode this cycle ----
         // If UAM just fired, mealMode is now non-FASTING and STFT will reset cleanly
         // rather than sneaking through one cycle with a lowered target.
         val stftAdjusted = stftController.onLoopCycle(
@@ -1430,7 +1434,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // STFT handles TT/low/meal internally and returns profileTargetMgdl when blocked.
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
-        // ── Build OapsProfile — apply per-meal ISF multiplier to sens ─────────
+        // -- Build OapsProfile — apply per-meal ISF multiplier to sens ---------
         val pump       = activePlugin.activePump
         val smbEnabled = preferences.get(BooleanKey.ApsUseSmb)
         val oapsProfile = OapsProfile(
@@ -1496,7 +1500,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
 
-        // ── Activity monitor — recompute from fed HR/steps data ─────────────
+        // -- Activity monitor — recompute from fed HR/steps data -------------
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
         // See WiringNotes.md for the subscription setup.
         // If no data has been fed (no wear device, watch not worn), defaults to SEDENTARY.
@@ -1505,8 +1509,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Update configurable rebound window — inReboundWindow uses this
         // Extend dynamically if rollercoasters are happening in the same episode:
-        //   Rollercoaster 1 → +15 min
-        //   Rollercoaster 2+ → +15 min additional per count (capped at +45 min total)
+        //   Rollercoaster 1 ? +15 min
+        //   Rollercoaster 2+ ? +15 min additional per count (capped at +45 min total)
         // Rollercoaster counter resets after 2h gap (new episode) in CircadianLearner.
         val baseReboundMs = preferences.get(IntKey.ApsSmartInsulinReboundWindowMins).toLong() * 60_000L
         val rollerCount   = circadianLearner.consecutiveRollercoasters
@@ -1517,10 +1521,10 @@ open class SmartInsulinPlugin @Inject constructor(
         if (rollerExtMs > 0L) {
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: rebound window extended by ${rollerExtMs / 60_000}min " +
-                                 "(rollercoaster #$rollerCount) → total ${reboundGuardMs / 60_000}min")
+                                 "(rollercoaster #$rollerCount) ? total ${reboundGuardMs / 60_000}min")
         }
 
-        // ── CGM warmup guard ─────────────────────────────────────────────────
+        // -- CGM warmup guard -------------------------------------------------
 
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
@@ -1571,7 +1575,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
 
 
-        // ── Cache Overview state — updated here where all conditions are in scope ──
+        // -- Cache Overview state — updated here where all conditions are in scope --
         // highTempTarget, mealMode, cgmState, activityMonitor all available now.
         val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         cachedLearningEnabled = learningEnabledCache
@@ -1700,7 +1704,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val dawnWindowEnd     = preferences.get(IntKey.ApsSmartInsulinDawnWindowEndHour)
         val dawnSmbReduction  = preferences.get(DoubleKey.ApsSmartInsulinDawnSmbReduction)
 
-        // ── PDP: accuracy scoring from previous cycle ─────────────────────────
+        // -- PDP: accuracy scoring from previous cycle -------------------------
         // Compare last cycle's t+5min predictions against actual BG now.
         // Only score when: PDP was active last cycle, we're still fasting, CGM is fresh.
         val pdpEnabled       = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
@@ -1720,8 +1724,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 val lastPathway = if (cachedPdpSyntheticCi > 0.0) "stuck" else "rising"
                 // Stuck-high: secondary curve uses ISF/ciStrength as a dosing model,
                 // not a BG predictor. Scoring its t+5 prediction against actual BG
-                // would always show large error → learner drives strengthMult to minimum
-                // → PDP disabled. Episode outcome (recordEpisodeOutcome) provides the
+                // would always show large error ? learner drives strengthMult to minimum
+                // ? PDP disabled. Episode outcome (recordEpisodeOutcome) provides the
                 // correct feedback for stuck-high: did the dose land BG well?
                 // Rising pathway still uses curve prediction accuracy — ci extension
                 // is genuinely trying to predict where BG will go.
@@ -1739,7 +1743,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // If pdpLearningEnabled == false: do nothing. Confidence is frozen until user re-enables
         // learning — avoids surprising the user by silently draining learned state while disabled.
 
-        // ── PDP: compute blend weight for this cycle ──────────────────────────
+        // -- PDP: compute blend weight for this cycle --------------------------
         // ci = observed delta minus expected BGI (same formula as DetermineBasalSmartInsulin)
         // Positive ci means BG is rising more than IOB alone predicts.
         val bgiMgdlForPdp = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
@@ -1757,7 +1761,7 @@ open class SmartInsulinPlugin @Inject constructor(
             && !inReboundWindow
             && !inPostMealLockout
 
-        // ── Pathway 1: ci-based (unexplained rising deviation) ────────────────
+        // -- Pathway 1: ci-based (unexplained rising deviation) ----------------
         if (pdpEnabled && pdpCleanForBlending && ciMgdl > PDP_CI_THRESHOLD_MGDL) {
             consecutivePosCiReadings++
         } else {
@@ -1768,8 +1772,8 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
-        // ── Pathway 2: stuck-high (BG persistently above target, flat, not correcting) ──
-        // Catches the overnight 8.5 mmol plateau where IOB is low so ci ≈ 0
+        // -- Pathway 2: stuck-high (BG persistently above target, flat, not correcting) --
+        // Catches the overnight 8.5 mmol plateau where IOB is low so ci ˜ 0
         // but BG has been stuck above target for many cycles.
         // No IOB gate — fastingMaxIob handles over-stacking. The signal is purely
         // "BG is above target + offset and not moving" regardless of IOB level.
@@ -1800,7 +1804,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpFadeMins         = preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()
         val fastingMaxIob       = preferences.get(DoubleKey.ApsSmartInsulinFastingMaxIob)
 
-        // ── Active pathway determination ──────────────────────────────────────
+        // -- Active pathway determination --------------------------------------
         // Stuck pathway: requires pdpMinReadingsStuck consecutive qualifying readings
         // Rising pathway: NO minimum readings gate — activates immediately but starts
         //   at very low blend weight so it barely does anything until it's earned trust.
@@ -1815,13 +1819,13 @@ open class SmartInsulinPlugin @Inject constructor(
             else         -> "none"
         }
 
-        // ── Blend weight ──────────────────────────────────────────────────────
-        // Stuck: ramps from 0 → pdpMaxBlend over pdpMinReadingsStuck cycles, then scales
+        // -- Blend weight ------------------------------------------------------
+        // Stuck: ramps from 0 ? pdpMaxBlend over pdpMinReadingsStuck cycles, then scales
         //   by learned blendMult and confidence. Full blend after 2× minReadings.
         // Rising: starts at 5% of max blend per reading, very slowly building up.
         //   No sudden jump — the learner adjusts blendMult over time to find the right level.
-        //   Morning rises that need no PDP: blendMult learns down → near-zero blend → no effect.
-        //   Morning rises that need more: blendMult learns up → meaningful blend.
+        //   Morning rises that need no PDP: blendMult learns down ? near-zero blend ? no effect.
+        //   Morning rises that need more: blendMult learns up ? meaningful blend.
         // effectiveBlendMult is the single confidence gate — no separate blendWeightConfidenceScale
         // (Deepseek review fix: double-applying confidence was keeping blend at 35% despite 0.7 max)
         val learnedBlendScale = pdpLearner.effectiveBlendMult(currentHour)
@@ -1846,7 +1850,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpEffectiveFadeMins        = if (pdpEnabled) pdpLearner.effectiveFadeMins(currentHour, pdpFadeMins) else pdpFadeMins
         val pdpBlendWeight = rawBlendWeight.coerceIn(0.0, pdpMaxBlend)
 
-        // ── Stuck-high pathway flag for DetermineBasalSmartInsulin ─────────────
+        // -- Stuck-high pathway flag for DetermineBasalSmartInsulin -------------
         // When stuck pathway is dominant, pass a non-zero value so DetermineBasal
         // uses the resistance model (counteract IOB) instead of ci extension.
         // The actual resistance strength is derived from pdpCiStrength inside DetermineBasal.
@@ -1854,7 +1858,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpSyntheticCi: Double =
             if (pdpEnabled && pdpBlendWeight > 0.0 && pdpActivePathway == "stuck") 1.0 else 0.0
 
-        // ── PDP episode tracking ──────────────────────────────────────────────
+        // -- PDP episode tracking ----------------------------------------------
         val currentBgMmolForEpisode = glucoseStatus.glucose / 18.0
         val warnGuardMmol     = spMgdl(UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0
         val lowGuardMmolEp    = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
@@ -1984,7 +1988,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         aapsLogger.debug(LTag.APS, "SmartInsulin mode=$mealMode modeISF=${if (modeIsfMgdl > 0.0) fmtIsf(modeIsfMgdl) + unitLabel else null} dosingISF=${fmtIsf(dosingIsfMgdl)}$unitLabel learnedProfile=$learnedProfile")
 
-        // ── Rebound protection tracking ───────────────────────────────────────
+        // -- Rebound protection tracking ---------------------------------------
         // Computed BEFORE determine_basal() so inReboundWindow is correct on the
         // exact cycle where BG first crosses back above the threshold.
         // Matches the lowGuardMmol threshold used in determine_basal's SUSPEND decision.
@@ -2015,7 +2019,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: BG went low (${fmtBg(currentBgMgdl)}$unitLabel) " +
                                      "iob=${String.format(java.util.Locale.ROOT, "%.2f", iobAtLowTime)}U " +
-                                     "shortAvgΔ=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel")
+                                     "shortAvg?=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel")
                 if (mealMode.isUam) {
                     aapsLogger.debug(LTag.APS, "SmartInsulin: cancelling UAM mode ${mealMode.label} due to low BG")
                     mealOverrideManager.cancelOverride()
@@ -2034,7 +2038,7 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
-        // ── UAM / P/F auto-cancel when BG returns to target or below ────────────────────────
+        // -- UAM / P/F auto-cancel when BG returns to target or below ------------------------
         // Insulin did its job — no need to keep the elevated ISF/target active.
         // Gate: BG at or below profile target AND not rising fast (shortAvgDelta < 0.5 mmol/5min)
         // so we don't cancel mid-spike just because a noisy reading dips to target briefly.
@@ -2056,7 +2060,7 @@ open class SmartInsulinPlugin @Inject constructor(
             if (bgAtOrBelowTarget && notStillRising && !bgBelowLowGuard && !inEarlyWindow) {
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin: BG ${fmtBg(currentBgMgdl)}$unitLabel at/below target " +
-                                     "${fmtBg(profileTargetMgdl)}$unitLabel and not rising (Δ=${String.format("%.2f", shortAvgMmol)} mmol) " +
+                                     "${fmtBg(profileTargetMgdl)}$unitLabel and not rising (?=${String.format("%.2f", shortAvgMmol)} mmol) " +
                                      "— auto-cancelling ${mealMode.label}")
                 mealOverrideManager.cancelOverride()
             } else if (bgAtOrBelowTarget && notStillRising) {
@@ -2084,7 +2088,7 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS, "SmartInsulin: rebound window elapsed — clearing")
         }
 
-        // ── Soft landing bypass ───────────────────────────────────────────────
+        // -- Soft landing bypass -----------------------------------------------
         // During rebound, allow UAM detection if the low was borderline (not a genuine crash).
         // All 5 conditions must be met; if BG goes low again the bypass is revoked permanently.
         val lowGuardMmol = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0
@@ -2108,12 +2112,12 @@ open class SmartInsulinPlugin @Inject constructor(
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin: soft landing bypass ACTIVE — " +
                                  "minBG=${fmtBg(minBgDuringLow)}$unitLabel " +
-                                 "(≥${fmtBg(softLandingDepthMgdl)}) " +
+                                 "(=${fmtBg(softLandingDepthMgdl)}) " +
                                  "velAtLow=${fmtDelta(shortAvgDeltaAtLow)}$unitLabel (>-0.15) " +
                                  "iob=${String.format(java.util.Locale.ROOT, "%.2f", iobAtLowTime)}U (<1.0)")
         }
 
-        // ── Meal-PDP: stuck-high ISF strengthening during meal/UAM modes ──────
+        // -- Meal-PDP: stuck-high ISF strengthening during meal/UAM modes ------
         // When BG is stuck high in a meal/UAM mode (rising has stalled but hasn't come down),
         // progressively strengthen the effective ISF — starting at the mode's own ISF and
         // getting more aggressive the longer it stays stuck.
@@ -2125,24 +2129,45 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpMealStuckEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpMealStuckEnabled)
         val inMealModeForMealPdp = mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED
 
-        val MEAL_PDP_STUCK_OFFSET_MGDL = 9.0   // 0.5 mmol above target — needs to be meaningfully high
-        val MEAL_PDP_STUCK_DELTA_MGDL  = 5.4   // ≤0.3 mmol/5min — not actively falling (allows slight rise)
+        val MEAL_PDP_STUCK_OFFSET_MGDL  = 9.0   // 0.5 mmol above target — needs to be meaningfully high
+        val MEAL_PDP_DECLINE_FAST_MGDL  = 2.7   // -0.15 mmol/5min — 2 consecutive = reset
+        val MEAL_PDP_DECLINE_SLOW_MGDL  = 1.8   // -0.10 mmol/5min — 3 consecutive = reset
 
         val mealPdpBgAboveTarget = glucoseStatus.glucose > (profileTargetMgdl + MEAL_PDP_STUCK_OFFSET_MGDL)
-        // "not falling" — allow flat or slowly rising; hard reset if BG is actively dropping
-        val mealPdpNotFalling    = glucoseStatus.shortAvgDelta > -MEAL_PDP_STUCK_DELTA_MGDL
+
+        // Update rolling 3-reading delta history (mg/dL/5min) every cycle
+        val currentDelta = glucoseStatus.shortAvgDelta
+        if (mealPdpDeltaHistory.size >= 3) mealPdpDeltaHistory.removeFirst()
+        mealPdpDeltaHistory.addLast(currentDelta)
+
+        // Declining if: 2 consecutive readings = -2.7 mg/dL (-0.15 mmol/5min)
+        //           or: 3 consecutive readings = -1.8 mg/dL (-0.10 mmol/5min)
+        val hist = mealPdpDeltaHistory
+        val mealPdpDeclining = when {
+            hist.size >= 2 && hist.takeLast(2).all { it <= -MEAL_PDP_DECLINE_FAST_MGDL } -> true
+            hist.size >= 3 && hist.takeLast(3).all { it <= -MEAL_PDP_DECLINE_SLOW_MGDL } -> true
+            else -> false
+        }
+        val mealPdpNotFalling = !mealPdpDeclining
 
         if (pdpMealStuckEnabled && inMealModeForMealPdp && mealPdpBgAboveTarget && mealPdpNotFalling) {
-            // Hard reset if the meal mode changed since last cycle (e.g. Lunch → Dinner)
+            // Hard reset if the meal mode changed since last cycle (e.g. Lunch ? Dinner)
             if (mealMode != lastMealPdpMode) {
                 mealPdpStuckReadings = 0
                 cachedMealPdpIsf     = 0.0
-                aapsLogger.debug(LTag.APS, "SmartInsulin MealPDP: mode changed ${lastMealPdpMode} → ${mealMode}, resetting counter")
+                mealPdpDeltaHistory.clear()
+                aapsLogger.debug(LTag.APS, "SmartInsulin MealPDP: mode changed ${lastMealPdpMode} ? ${mealMode}, resetting counter")
             }
             mealPdpStuckReadings++
         } else {
-            // Hard reset if mode exited, or BG is now below threshold, or BG is actively falling (correcting)
+            // Hard reset if mode exited, BG below threshold, or sustained decline detected
+            if (mealPdpDeclining) {
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin MealPDP: declining BG detected " +
+                                     "(last ${hist.size} deltas: ${hist.joinToString { "%.1f".format(it) }} mg/dL/5min), resetting")
+            }
             mealPdpStuckReadings = 0
+            mealPdpDeltaHistory.clear()
         }
         lastMealPdpMode = mealMode
 
@@ -2153,7 +2178,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Meal-PDP ISF: starts at modeISF once min readings hit, then ramps down (stronger)
         // toward modeISF / maxStrength over rampMins. ISF going DOWN = more aggressive.
-        // e.g. modeISF=36 (2.0 mmol/U), maxStrength=2.0 → floor at 18 (1.0 mmol/U)
+        // e.g. modeISF=36 (2.0 mmol/U), maxStrength=2.0 ? floor at 18 (1.0 mmol/U)
         val mealPdpActive = pdpMealStuckEnabled && inMealModeForMealPdp
             && mealPdpStuckReadings >= pdpMealStuckMinReadings
         if (mealPdpActive && dosingIsfMgdl > 0.0) {
@@ -2161,7 +2186,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // Ramp fraction: 0.0 at min, 1.0 at minReadings + rampReadings cycles
             val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMealRampReadings)
             // ISF ramps from modeISF (rampFraction=0) down to modeISF / maxStrength (rampFraction=1)
-            // Dividing by a factor > 1 makes ISF smaller → more aggressive
+            // Dividing by a factor > 1 makes ISF smaller ? more aggressive
             val divisor = 1.0 + rampFraction * (pdpMealMaxStrength - 1.0)
             val mealPdpIsf = (dosingIsfMgdl / divisor).coerceAtLeast(dosingIsfMgdl / pdpMealMaxStrength)
             dosingIsfMgdl = mealPdpIsf
@@ -2255,7 +2280,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Post-meal lockout in loop output
         if (inPostMealLockout) {
             val minsLeft = (learningDirtyUntilMs - now) / 60_000
-            apsResult.reason += " | postMeal: dirty(${minsLeft}min) UAM↑thresh"
+            apsResult.reason += " | postMeal: dirty(${minsLeft}min) UAM?thresh"
         }
 
         apsResult.inputConstraints = inputConstraints
@@ -2268,7 +2293,7 @@ open class SmartInsulinPlugin @Inject constructor(
         lastAPSResult              = apsResult
         lastAPSRun                 = now
 
-        // ── BolusCurveTracker — meal modes only (peak/DIA learning from bolus curves)
+        // -- BolusCurveTracker — meal modes only (peak/DIA learning from bolus curves)
         // This is intentionally NOT suppressed during high TT — a meal bolus during
         // a high TT is still a valid peak/DIA observation.
         // Skip if activity is detected (insulin acts faster) or sensor is noisy.
