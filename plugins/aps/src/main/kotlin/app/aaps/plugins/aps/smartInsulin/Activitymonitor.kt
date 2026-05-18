@@ -4,6 +4,8 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.weardata.EventData
+import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.interfaces.Preferences
 import javax.inject.Inject
 import javax.inject.Singleton
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -18,7 +20,8 @@ import io.reactivex.rxjava3.disposables.CompositeDisposable
 @Singleton
 class ActivityMonitor @Inject constructor(
     private val aapsLogger: AAPSLogger,
-    private val rxBus: RxBus
+    private val rxBus: RxBus,
+    private val preferences: Preferences
 ) {
     enum class ActivityLevel {
         SEDENTARY, LIGHT, MODERATE, HEAVY;
@@ -134,11 +137,16 @@ class ActivityMonitor @Inject constructor(
             }
         }
 
+// Replace the stepsLevel block:
+        val stepsLightMin    = preferences.get(IntKey.ApsSmartInsulinActivityStepsLightMin)
+        val stepsModerateMin = preferences.get(IntKey.ApsSmartInsulinActivityStepsModerateMin)
+        val stepsHeavyMin    = preferences.get(IntKey.ApsSmartInsulinActivityStepsHeavyMin)
+
         val stepsLevel = when {
-            lastSteps5min >= STEPS_HEAVY_MIN    -> ActivityLevel.HEAVY
-            lastSteps5min >= STEPS_MODERATE_MIN -> ActivityLevel.MODERATE
-            lastSteps5min >= STEPS_LIGHT_MIN    -> ActivityLevel.LIGHT
-            else                                -> ActivityLevel.SEDENTARY
+            lastSteps5min >= stepsHeavyMin    -> ActivityLevel.HEAVY
+            lastSteps5min >= stepsModerateMin -> ActivityLevel.MODERATE
+            lastSteps5min >= stepsLightMin    -> ActivityLevel.LIGHT
+            else                              -> ActivityLevel.SEDENTARY
         }
 
         val newLevel = if (hrLevel.ordinal >= stepsLevel.ordinal) hrLevel else stepsLevel

@@ -77,7 +77,10 @@ enum class IntKey(
     ApsSmartInsulinReboundWindowMins(key = "si_rebound_window_mins", defaultValue = 60, min = 20, max = 90, titleResId = R.string.pref_title_si_rebound_window_mins, defaultedBySM = true),
     ApsSmartInsulinDawnWindowStartHour(key = "si_dawn_start_hour", defaultValue = 3, min = 0, max = 23, titleResId = R.string.pref_title_si_dawn_start_hour, defaultedBySM = true),
     ApsSmartInsulinDawnWindowEndHour(key = "si_dawn_end_hour", defaultValue = 9, min = 0, max = 23, titleResId = R.string.pref_title_si_dawn_end_hour, defaultedBySM = true),
-
+    // Activity Monitor — step thresholds (steps per 5-min window)
+    ApsSmartInsulinActivityStepsLightMin(key = "si_activity_steps_light", defaultValue = 200, min = 50, max = 500, titleResId = R.string.pref_title_si_activity_steps_light, defaultedBySM = true),
+    ApsSmartInsulinActivityStepsModerateMin(key = "si_activity_steps_moderate", defaultValue = 500, min = 100, max = 1000, titleResId = R.string.pref_title_si_activity_steps_moderate, defaultedBySM = true),
+    ApsSmartInsulinActivityStepsHeavyMin(key = "si_activity_steps_heavy", defaultValue = 900, min = 200, max = 2000, titleResId = R.string.pref_title_si_activity_steps_heavy, defaultedBySM = true),
 
     OverviewCageWarning(key = "statuslights_cage_warning", defaultValue = 48, min = 24, max = 240, titleResId = R.string.pref_title_cage_warning, defaultedBySM = true, unitType = UnitType.HOURS),
     OverviewCageCritical(key = "statuslights_cage_critical", defaultValue = 72, min = 24, max = 240, titleResId = R.string.pref_title_cage_critical, defaultedBySM = true, unitType = UnitType.HOURS),

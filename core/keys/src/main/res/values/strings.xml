@@ -590,6 +590,10 @@
     <string name="pref_summary_si_pdp_meal_max_strength">How much stronger than the meal mode ISF the correction can become. 2.0 = up to 2× more aggressive (ISF halved at full ramp). Range 1.1–4.0.</string>
     <!-- IntentKey preferences -->
 
+    <string name="pref_title_si_activity_steps_light">Steps threshold – Light activity (per 5 min)</string>
+    <string name="pref_title_si_activity_steps_moderate">Steps threshold – Moderate activity (per 5 min)</string>
+    <string name="pref_title_si_activity_steps_heavy">Steps threshold – Heavy activity (per 5 min)</string>
+
     <!--    Appearance preferences-->
     <string name="prefs_range_title">Range for visualization</string>
 
