@@ -2134,49 +2134,87 @@ open class SmartInsulinPlugin @Inject constructor(
         // Gate: only active when pdpEnabled AND pdpMealStuckEnabled AND in a meal/UAM mode
         // (not fasting, not extended). BG must be above target and flat/rising (not already
         // falling — if it's falling, ISF is working and we leave it alone).
-        // No ci requirement — this is purely "stuck plateau, not correcting".
+        // No COB requirement — this system doesn't use COB; meal modes time-bound the session.
+        //
+        // Counter dynamics:
+        //   - Qualifying cycle (above-target, not-falling, in-meal-mode): counter increments
+        //   - Falling cycle (sustained 15-min drop ≥ 0.3 mmol AND all 3 deltas negative):
+        //       counter SOFT-DECAYS by 1 per cycle (not hard reset). A real sustained fall
+        //       drains it fully; a single noisy dip costs you one cycle.
+        //   - Mode change: hard reset (different meal, different meaning)
+        //   - Mode exit (back to FASTING): hard reset
+        //   - Below-threshold or non-meal mode: counter holds; history preserved so reset
+        //     logic has continuous context if BG bounces back up.
+        //
+        // End-of-session taper:
+        //   As the active meal mode's remaining time approaches zero, scale the meal-PDP
+        //   divisor back toward 1.0 over the final SESSION_TAPER_FRACTION of the session.
+        //   Example: 4h session, taper fraction 0.25 → start tapering with 1h remaining.
+        //   This mirrors how COB-driven systems naturally relax as carbs run out.
         val pdpMealStuckEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpMealStuckEnabled)
         val inMealModeForMealPdp = mealMode != MealMode.FASTING && mealMode != MealMode.EXTENDED
 
-        val MEAL_PDP_STUCK_OFFSET_MGDL  = 9.0   // 0.5 mmol above target — needs to be meaningfully high
-        val MEAL_PDP_DECLINE_FAST_MGDL  = 2.7   // -0.15 mmol/5min — 2 consecutive = reset
-        val MEAL_PDP_DECLINE_SLOW_MGDL  = 1.8   // -0.10 mmol/5min — 3 consecutive = reset
+        val MEAL_PDP_STUCK_OFFSET_MGDL    = 9.0    // 0.5 mmol above target — needs to be meaningfully high
+        // Falling-detection: require sustained decline, not just slope at the noise floor.
+        // 3 readings must all be negative AND cumulative drop ≥ 0.3 mmol over the 15-min window.
+        // Catches obvious falls like 7.7→7.2 (0.5 mmol in 20 min) without firing on CGM jitter
+        // around the previous -0.10 mmol/5min slope threshold that sat exactly at noise level.
+        val MEAL_PDP_CUMULATIVE_DROP_MGDL = 5.4    // 0.3 mmol over 15-min window (3 deltas)
+        // Fraction of session duration at which end-of-session taper begins.
+        // 0.25 → final 25% of session ramps the meal-PDP boost back down to none.
+        val MEAL_PDP_SESSION_TAPER_FRACTION = 0.25
 
         val mealPdpBgAboveTarget = glucoseStatus.glucose > (profileTargetMgdl + MEAL_PDP_STUCK_OFFSET_MGDL)
 
-        // Update rolling 3-reading delta history (mg/dL/5min) every cycle
+        // Update rolling 3-reading delta history (mg/dL/5min) every cycle.
+        // History persists across non-qualifying cycles so we can detect a sustained fall
+        // even if it dips below the above-target gate momentarily.
         val currentDelta = glucoseStatus.shortAvgDelta
         if (mealPdpDeltaHistory.size >= 3) mealPdpDeltaHistory.removeFirst()
         mealPdpDeltaHistory.addLast(currentDelta)
 
-        // Declining if: 2 consecutive readings = -2.7 mg/dL (-0.15 mmol/5min)
-        //           or: 3 consecutive readings = -1.8 mg/dL (-0.10 mmol/5min)
+        // Declining if: 3 consecutive negative deltas AND cumulative drop ≥ 0.3 mmol/15min.
+        // Single-threshold approach replaces the prior fast/slow split — the slow path was
+        // at the CGM noise floor and missed clear falls like 7.7→7.2; the fast path was
+        // redundant with the cumulative-drop check now in place.
         val hist = mealPdpDeltaHistory
-        val mealPdpDeclining = when {
-            hist.size >= 2 && hist.takeLast(2).all { it <= -MEAL_PDP_DECLINE_FAST_MGDL } -> true
-            hist.size >= 3 && hist.takeLast(3).all { it <= -MEAL_PDP_DECLINE_SLOW_MGDL } -> true
-            else -> false
-        }
-        val mealPdpNotFalling = !mealPdpDeclining
+        val mealPdpDeclining = hist.size >= 3
+            && hist.takeLast(3).all { it < 0.0 }
+            && hist.takeLast(3).sum() <= -MEAL_PDP_CUMULATIVE_DROP_MGDL
 
-        if (pdpMealStuckEnabled && inMealModeForMealPdp && mealPdpBgAboveTarget && mealPdpNotFalling) {
-            // Hard reset if the meal mode changed since last cycle (e.g. Lunch ? Dinner)
-            if (mealMode != lastMealPdpMode) {
+        // ── Counter management ─────────────────────────────────────────────────────
+        // Three outcomes per cycle: hard reset (mode boundary), soft decay (declining),
+        // increment (qualifying), or hold (non-qualifying but not falling — e.g. BG below
+        // threshold momentarily, or briefly at target on the way back up).
+        val modeChanged = mealMode != lastMealPdpMode
+        when {
+            // Hard reset: mode change OR exited meal modes entirely. Counter and history
+            // are stale data once mode boundary is crossed.
+            modeChanged || !inMealModeForMealPdp -> {
+                if (mealPdpStuckReadings > 0 || mealPdpDeltaHistory.isNotEmpty()) {
+                    aapsLogger.debug(LTag.APS,
+                                     "SmartInsulin MealPDP: hard-reset (modeChanged=$modeChanged " +
+                                         "inMealMode=$inMealModeForMealPdp)")
+                }
                 mealPdpStuckReadings = 0
-                cachedMealPdpIsf     = 0.0
                 mealPdpDeltaHistory.clear()
-                aapsLogger.debug(LTag.APS, "SmartInsulin MealPDP: mode changed ${lastMealPdpMode} ? ${mealMode}, resetting counter")
             }
-            mealPdpStuckReadings++
-        } else {
-            // Hard reset if mode exited, BG below threshold, or sustained decline detected
-            if (mealPdpDeclining) {
+            // Soft decay: BG falling meaningfully. Drain the counter gradually so a transient
+            // noise dip doesn't wipe a hard-earned ramp, but a sustained fall (this is the
+            // 7.7→7.2 case) still drains to zero over a few cycles.
+            mealPdpDeclining -> {
+                val prev = mealPdpStuckReadings
+                mealPdpStuckReadings = (mealPdpStuckReadings - 1).coerceAtLeast(0)
                 aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin MealPDP: declining BG detected " +
-                                     "(last ${hist.size} deltas: ${hist.joinToString { "%.1f".format(it) }} mg/dL/5min), resetting")
+                                 "SmartInsulin MealPDP: declining BG (cum=${"%.1f".format(hist.takeLast(3).sum())}mg/dL " +
+                                     "over 15min) — soft decay $prev→$mealPdpStuckReadings")
             }
-            mealPdpStuckReadings = 0
-            mealPdpDeltaHistory.clear()
+            // Qualifying: above target, not falling, in a meal mode. Tick the counter.
+            pdpMealStuckEnabled && mealPdpBgAboveTarget -> {
+                mealPdpStuckReadings++
+            }
+            // Hold: nothing else applies. Counter and history preserved.
+            else -> { /* no-op */ }
         }
         lastMealPdpMode = mealMode
 
@@ -2185,26 +2223,52 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpMealRampMins         = preferences.get(IntKey.ApsSmartInsulinPdpMealRampMins).toDouble()
         val pdpMealRampReadings     = (pdpMealRampMins / 5.0).coerceAtLeast(1.0)
 
+        // ── End-of-session taper fraction ──────────────────────────────────────────
+        // 1.0 = no taper (full strength); 0.0 = fully tapered (no boost).
+        // Linear ramp-down over the final SESSION_TAPER_FRACTION of the session.
+        // If session timing isn't available (override manager not active or expired),
+        // taper = 1.0 (no effect). This is the COB-analogue you described.
+        val sessionTaper: Double = run {
+            val startMs = mealOverrideManager.modeStartMs
+            val remMs   = mealOverrideManager.modeTimeRemainingMs
+            if (!inMealModeForMealPdp || startMs <= 0L || remMs <= 0L) return@run 1.0
+            val elapsedMs    = now - startMs
+            val totalMs      = elapsedMs + remMs
+            if (totalMs <= 0L) return@run 1.0
+            val remFraction  = (remMs.toDouble() / totalMs.toDouble()).coerceIn(0.0, 1.0)
+            // remFraction > taperFraction → still in main phase, no taper.
+            // remFraction == 0 → session over, taper = 0.
+            // Linear between.
+            if (remFraction >= MEAL_PDP_SESSION_TAPER_FRACTION) 1.0
+            else (remFraction / MEAL_PDP_SESSION_TAPER_FRACTION).coerceIn(0.0, 1.0)
+        }
+
         // Meal-PDP ISF: starts at modeISF once min readings hit, then ramps down (stronger)
         // toward modeISF / maxStrength over rampMins. ISF going DOWN = more aggressive.
-        // e.g. modeISF=36 (2.0 mmol/U), maxStrength=2.0 ? floor at 18 (1.0 mmol/U)
+        // e.g. modeISF=36 (2.0 mmol/U), maxStrength=2.0 → floor at 18 (1.0 mmol/U)
+        // sessionTaper scales the effective ramp fraction so end-of-session relaxes the boost.
         val mealPdpActive = pdpMealStuckEnabled && inMealModeForMealPdp
             && mealPdpStuckReadings >= pdpMealStuckMinReadings
         if (mealPdpActive && dosingIsfMgdl > 0.0) {
             val readingsBeyondMin = (mealPdpStuckReadings - pdpMealStuckMinReadings).coerceAtLeast(0)
             // Ramp fraction: 0.0 at min, 1.0 at minReadings + rampReadings cycles
-            val rampFraction = minOf(1.0, readingsBeyondMin.toDouble() / pdpMealRampReadings)
+            val rawRampFraction    = minOf(1.0, readingsBeyondMin.toDouble() / pdpMealRampReadings)
+            // Apply session taper — multiplicatively reduces the effective ramp as session winds down.
+            val rampFraction       = rawRampFraction * sessionTaper
             // ISF ramps from modeISF (rampFraction=0) down to modeISF / maxStrength (rampFraction=1)
-            // Dividing by a factor > 1 makes ISF smaller ? more aggressive
-            val divisor = 1.0 + rampFraction * (pdpMealMaxStrength - 1.0)
-            val mealPdpIsf = (dosingIsfMgdl / divisor).coerceAtLeast(dosingIsfMgdl / pdpMealMaxStrength)
+            // Dividing by a factor > 1 makes ISF smaller → more aggressive
+            val divisor   = 1.0 + rampFraction * (pdpMealMaxStrength - 1.0)
+            val baseIsf   = dosingIsfMgdl
+            val mealPdpIsf = baseIsf / divisor
             dosingIsfMgdl = mealPdpIsf
             cachedMealPdpIsf      = mealPdpIsf
             cachedMealPdpModeLabel = mealMode.label
+            val taperNote = if (sessionTaper < 1.0) " taper=${"%.2f".format(sessionTaper)}" else ""
             aapsLogger.debug(LTag.APS,
                              "SmartInsulin MealPDP[${mealMode.label}]: stuck=${mealPdpStuckReadings}/${pdpMealStuckMinReadings} " +
-                                 "ramp=${"%.2f".format(rampFraction)} div=${"%.2f".format(divisor)} " +
-                                 "ISF ${fmtIsf(cachedMealPdpIsf)}$unitLabel (base was ${fmtIsf(cachedMealPdpIsf * divisor)}$unitLabel)")
+                                 "rawRamp=${"%.2f".format(rawRampFraction)}$taperNote ramp=${"%.2f".format(rampFraction)} " +
+                                 "div=${"%.2f".format(divisor)} ISF ${fmtIsf(mealPdpIsf)}$unitLabel " +
+                                 "(base ${fmtIsf(baseIsf)}$unitLabel)")
         } else {
             if (!mealPdpActive || !inMealModeForMealPdp) {
                 cachedMealPdpIsf       = 0.0
