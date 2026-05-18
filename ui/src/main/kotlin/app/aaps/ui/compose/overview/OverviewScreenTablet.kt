@@ -34,7 +34,6 @@ import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.chips.ChipsViewModel
-import app.aaps.ui.compose.overview.chips.CobUiState
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 import app.aaps.ui.compose.overview.chips.IobUiState
 import app.aaps.ui.compose.overview.chips.SmbUiState
@@ -91,7 +90,6 @@ fun OverviewScreenTablet(
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
     val sensitivityUiState by chipsViewModel.sensitivityUiState.collectAsStateWithLifecycle()
     val iobUiState by chipsViewModel.iobUiState.collectAsStateWithLifecycle()
-    val cobUiState by chipsViewModel.cobUiState.collectAsStateWithLifecycle()
     val smbUiState by chipsViewModel.smbUiState.collectAsStateWithLifecycle()
     val tbrUiState by chipsViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
@@ -182,7 +180,6 @@ fun OverviewScreenTablet(
 
                 IobCobChipsRow(
                     iobUiState = iobUiState,
-                    cobUiState = cobUiState,
                     smbUiState = smbUiState,
                     tbrUiState = tbrUiState,
                     onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) },

@@ -11,7 +11,6 @@ import app.aaps.core.ui.compose.AapsSpacing
 @Composable
 fun IobCobChipsRow(
     iobUiState: IobUiState,
-    cobUiState: CobUiState,
     tbrUiState: TbrUiState,
     smbUiState: SmbUiState,
     onTbrClick: () -> Unit,
@@ -23,12 +22,11 @@ fun IobCobChipsRow(
     ) { constraints ->
         val spacingPx = spacingDp.roundToPx()
         val isWidthBounded = constraints.hasBoundedWidth
-        val availableWidth = if (isWidthBounded) (constraints.maxWidth - (spacingPx * 3)).coerceAtLeast(0) else 0
+        val availableWidth = if (isWidthBounded) (constraints.maxWidth - (spacingPx * 2)).coerceAtLeast(0) else 0
 
         // First pass: measure intrinsic widths with icons
         val withIcons = subcompose("withIcons") {
             IobChip(state = iobUiState, showIcon = true)
-            CobChip(state = cobUiState, showIcon = true)
             TbrChip(state = tbrUiState, showIcon = true, onClick = onTbrClick)
             SmbChip(state = smbUiState, showIcon = true)
         }
@@ -43,7 +41,6 @@ fun IobCobChipsRow(
         } else {
             subcompose("withoutIcons") {
                 IobChip(state = iobUiState, showIcon = false)
-                CobChip(state = cobUiState, showIcon = false)
                 TbrChip(state = tbrUiState, showIcon = false, onClick = onTbrClick)
                 SmbChip(state = smbUiState, showIcon = false)
             }
@@ -83,7 +80,6 @@ private fun IobCobChipsRowPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            cobUiState = CobUiState(text = "24g", cobValue = 24.0),
             tbrUiState = TbrUiState(rate = 1.0, profileBasal = 1.0, arrow = TbrArrow.FLAT),
             smbUiState = SmbUiState(text = "1.0U 5m ago", hasData = true),
             onTbrClick = {}
@@ -97,7 +93,6 @@ private fun IobCobChipsRowCarbsReqPreview() {
     MaterialTheme {
         IobCobChipsRow(
             iobUiState = IobUiState(text = "1.25 U", iobTotal = 1.25),
-            cobUiState = CobUiState(text = "12g\n45 required", carbsReq = 45, cobValue = 12.0),
             tbrUiState = TbrUiState(rate = 1.5, profileBasal = 1.0, arrow = TbrArrow.UP),
             smbUiState = SmbUiState(text = "0.5U 2m ago", hasData = true),
             onTbrClick = {}
