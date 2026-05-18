@@ -413,7 +413,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun executeInsulinMode(entry: QuickWizardEntry) {
+    private suspend fun executeInsulinMode(entry: QuickWizardEntry) {
         val pump = activePlugin.activePump
         if (!pump.isInitialized() || pump.isSuspended()) return
 
@@ -422,6 +422,7 @@ class MainViewModel @Inject constructor(
             ConstraintObject(insulin, aapsLogger)
         ).value()
         if (insulinAfterConstraints <= 0.0) return
+        if (runningModeGuard.checkWithSnackbar(PumpCommandGate.CommandKind.BOLUS)) return
 
         val message = buildString {
             append(rh.gs(app.aaps.core.ui.R.string.bolus) + ": ")
@@ -437,25 +438,23 @@ class MainViewModel @Inject constructor(
                 title = entry.buttonText(),
                 message = message,
                 onOk = {
-                    if (!runningModeGuard.checkWithSnackbar(PumpCommandGate.CommandKind.BOLUS)) {
-                        uel.log(
-                            Action.BOLUS, Sources.QuickWizard,
-                            entry.buttonText(),
-                            ValueWithUnit.Insulin(insulinAfterConstraints)
-                        )
-                        val detailedBolusInfo = DetailedBolusInfo().apply {
-                            eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
-                            this.insulin = insulinAfterConstraints
-                        }
-                        commandQueue.bolus(detailedBolusInfo, object : Callback() {
-                            override fun run() {
-                                if (!result.success) {
-                                    uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
-                                }
-                            }
-                        })
-                        entry.markAsUsed()
+                    uel.log(
+                        Action.BOLUS, Sources.QuickWizard,
+                        entry.buttonText(),
+                        ValueWithUnit.Insulin(insulinAfterConstraints)
+                    )
+                    val detailedBolusInfo = DetailedBolusInfo().apply {
+                        eventType = app.aaps.core.data.model.TE.Type.CORRECTION_BOLUS
+                        this.insulin = insulinAfterConstraints
                     }
+                    commandQueue.bolus(detailedBolusInfo, object : Callback() {
+                        override fun run() {
+                            if (!result.success) {
+                                uiInteraction.runAlarm(result.comment, rh.gs(app.aaps.core.ui.R.string.treatmentdeliveryerror), app.aaps.core.ui.R.raw.boluserror)
+                            }
+                        }
+                    })
+                    entry.markAsUsed()
                 }
             )
         )

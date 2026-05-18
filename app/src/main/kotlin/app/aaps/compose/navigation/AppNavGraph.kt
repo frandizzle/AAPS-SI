@@ -73,6 +73,7 @@ import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
 import app.aaps.ui.compose.maintenance.ImportSettingsScreen
 import app.aaps.ui.compose.maintenance.ImportSource
 import app.aaps.ui.compose.maintenance.ImportViewModel
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.preferences.AllPreferencesScreen
 import app.aaps.ui.compose.preferences.PreferenceScreenView
 import app.aaps.ui.compose.profileHelper.ProfileHelperScreen
@@ -137,6 +138,7 @@ fun NavGraphBuilder.appNavGraph(
     statsViewModel: StatsViewModel,
     siteRotationManagementViewModel: SiteRotationManagementViewModel,
     graphViewModel: app.aaps.ui.compose.overview.graphs.GraphViewModel,
+    chipsViewModel: ChipsViewModel,
     // Dependencies
     swDefinition: SWDefinition,
     rxBus: RxBus,
@@ -292,8 +294,8 @@ fun NavGraphBuilder.appNavGraph(
         CarbsDialogScreen(
             carbsButtonsDef = builtInSearchables.carbsButtons,
             bgInfoState = graphViewModel.bgInfoState,
-            iobUiState = graphViewModel.iobUiState,
-            cobUiState = graphViewModel.cobUiState,
+            iobUiState = chipsViewModel.iobUiState,
+            cobUiState = chipsViewModel.cobUiState,
             onNavigateBack = { navController.safePopBackStack() },
             onShowDeliveryError = { comment ->
                 onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
@@ -305,8 +307,8 @@ fun NavGraphBuilder.appNavGraph(
         InsulinDialogScreen(
             insulinButtonsDef = builtInSearchables.insulinButtons,
             bgInfoState = graphViewModel.bgInfoState,
-            iobUiState = graphViewModel.iobUiState,
-            cobUiState = graphViewModel.cobUiState,
+            iobUiState = chipsViewModel.iobUiState,
+            cobUiState = chipsViewModel.cobUiState,
             onNavigateBack = { navController.safePopBackStack() },
             onShowDeliveryError = { comment ->
                 onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)
@@ -317,8 +319,8 @@ fun NavGraphBuilder.appNavGraph(
     composable(route = AppRoute.TreatmentDialog.route) {
         TreatmentDialogScreen(
             bgInfoState = graphViewModel.bgInfoState,
-            iobUiState = graphViewModel.iobUiState,
-            cobUiState = graphViewModel.cobUiState,
+            iobUiState = chipsViewModel.iobUiState,
+            cobUiState = chipsViewModel.cobUiState,
             onNavigateBack = { navController.safePopBackStack() },
             onShowDeliveryError = { comment ->
                 onShowDeliveryError(comment, app.aaps.core.ui.R.string.treatmentdeliveryerror)

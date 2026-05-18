@@ -31,7 +31,8 @@ data class MarkerData(
     val bgColor: Color,
     val rangeEmoji: String,
     val deltaText: String,
-    val iobText: String
+    val iobText: String,
+    val cobText: String = ""
 )
 
 /**
@@ -76,15 +77,17 @@ private class SmoothedCartesianMarker(
 
             if (targets.isEmpty()) return
 
+            // Prefer the main BG layer (0) for tracking the marker Y position.
             val lineTarget = targets.filterIsInstance<LineCartesianLayerMarkerTarget>()
-                .firstOrNull() ?: return
+                .firstOrNull()
+                ?: return
             val point = lineTarget.points.firstOrNull() ?: return
             val rawY = point.canvasY
             val targetX = lineTarget.canvasX
 
             // Reset smoothing on first frame of a scrub or on a big horizontal jump.
             val reset = smoothedY.isNaN() ||
-                (!lastX.isNaN() && abs(targetX - lastX) > 80f)
+                (!lastX.isNaN() && abs(targetX - lastX) > 120f)
 
             smoothedY = when {
                 reset -> rawY
@@ -113,6 +116,9 @@ private class SmoothedCartesianMarker(
             // fine and it means the finger doesn't cover the tooltip.
             val maxY = layerBounds.bottom - halfH
             val drawY = if (targetY > maxY) maxY else targetY
+
+            // Apply the range color to the label if needed (e.g. for border).
+            // (Ignoring strokeFill reassignment as it is val)
 
             label.draw(
                 context = context,
@@ -153,7 +159,7 @@ fun rememberMarker(
         ),
         background = labelBackground,
         padding = Insets(horizontal = 8.dp, vertical = 4.dp),
-        lineCount = 3
+        lineCount = 4
     )
 
     val guideline = rememberLineComponent(
@@ -164,13 +170,16 @@ fun rememberMarker(
     val valueFormatter = remember(minTimestamp, getDetails, isVisible) {
         DefaultCartesianMarker.ValueFormatter { _, targets ->
             if (!isVisible) return@ValueFormatter ""
-            val bgTarget = targets.firstOrNull() ?: return@ValueFormatter ""
+            val bgTarget = targets.filterIsInstance<LineCartesianLayerMarkerTarget>().firstOrNull()
+                ?: return@ValueFormatter ""
             val x = bgTarget.x
             val timestamp = minTimestamp + (x * 60000).toLong()
             val data = getDetails(timestamp) ?: return@ValueFormatter ""
 
-            "${data.time}\n${data.rangeEmoji} %.1f ${data.deltaText}\n💉 ${data.iobText}"
-                .format(data.bgValue)
+            val bgFormatted = if (data.bgValue > 30) data.bgValue.toInt().toString() else "%.1f".format(data.bgValue)
+            val cobLine = if (data.cobText.isNotEmpty()) "  🥪 ${data.cobText}" else ""
+
+            "${data.time}\n${data.rangeEmoji} $bgFormatted ${data.deltaText}\n💉 ${data.iobText}$cobLine"
         }
     }
 

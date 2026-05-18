@@ -102,6 +102,7 @@ fun BgGraphCompose(
     val rawBasalData by viewModel.basalGraphFlow.collectAsStateWithLifecycle()
     val targetData by viewModel.targetLineFlow.collectAsStateWithLifecycle()
     val iobData by viewModel.iobGraphFlow.collectAsStateWithLifecycle()
+    val cobData by viewModel.cobGraphFlow.collectAsStateWithLifecycle()
     val epsPoints by viewModel.epsGraphFlow.collectAsStateWithLifecycle()
     val showActivity = SeriesType.ACTIVITY in bgOverlays
     val activityData by viewModel.activityGraphFlow.collectAsStateWithLifecycle()
@@ -129,7 +130,7 @@ fun BgGraphCompose(
     val ztPredColor = AapsTheme.generalColors.ztPrediction
 
 // 4. Data Lookups (for Tooltip)
-    val getBgDetails = remember(bgReadings, bucketedData, iobData, viewModel.profileUtil, lowColor, inRangeColor, highColor) {
+    val getBgDetails = remember(bgReadings, bucketedData, iobData, cobData, viewModel.profileUtil, lowColor, inRangeColor, highColor) {
         { ts: Long ->
             val allBg = bgReadings + bucketedData
             val closest = allBg.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
@@ -146,6 +147,11 @@ fun BgGraphCompose(
                 val iobText = if (closestIob != null && kotlin.math.abs(closestIob.timestamp - ts) < 5 * 60000) {
                     "%.2f U".format(closestIob.value)
                 } else "—"
+
+                val closestCob = cobData.cob.minByOrNull { kotlin.math.abs(it.timestamp - ts) }
+                val cobText = if (closestCob != null && kotlin.math.abs(closestCob.timestamp - ts) < 5 * 60000) {
+                    "%.0f g".format(closestCob.value)
+                } else ""
 
                 val timeStr = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(closest.timestamp))
 
@@ -168,7 +174,8 @@ fun BgGraphCompose(
                     bgColor = bgColor,
                     rangeEmoji = rangeEmoji,
                     deltaText = deltaText,
-                    iobText = iobText
+                    iobText = iobText,
+                    cobText = cobText
                 )
             } else null
         }

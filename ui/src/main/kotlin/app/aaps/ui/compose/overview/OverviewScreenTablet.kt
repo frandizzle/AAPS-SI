@@ -33,6 +33,7 @@ import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
@@ -67,6 +68,7 @@ fun OverviewScreenTablet(
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
+    chipsViewModel: ChipsViewModel,
     manageViewModel: ManageViewModel,
     statusViewModel: StatusViewModel,
     statusLightsDef: PreferenceSubScreenDef,
@@ -82,10 +84,11 @@ fun OverviewScreenTablet(
 ) {
     val config = LocalConfig.current
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
-    val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
-    val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
-    val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
-    val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
+    val sensitivityUiState by chipsViewModel.sensitivityUiState.collectAsStateWithLifecycle()
+    val iobUiState by chipsViewModel.iobUiState.collectAsStateWithLifecycle()
+    val cobUiState by chipsViewModel.cobUiState.collectAsStateWithLifecycle()
+    val smbUiState by chipsViewModel.smbUiState.collectAsStateWithLifecycle()
+    val tbrUiState by chipsViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
@@ -174,6 +177,7 @@ fun OverviewScreenTablet(
 
                 IobCobChipsRow(
                     iobUiState = iobUiState,
+                    cobUiState = cobUiState,
                     smbUiState = smbUiState,
                     tbrUiState = tbrUiState,
                     onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) },

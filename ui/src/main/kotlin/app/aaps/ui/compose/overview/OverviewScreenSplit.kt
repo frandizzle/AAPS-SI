@@ -25,7 +25,6 @@ import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
-import app.aaps.core.interfaces.overview.graph.TbrState
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.LocalConfig
 import app.aaps.core.ui.compose.navigation.ElementType
@@ -34,11 +33,9 @@ import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
-import app.aaps.ui.compose.overview.graphs.IobUiState
-import app.aaps.ui.compose.overview.graphs.SmbUiState
-import app.aaps.ui.compose.overview.graphs.TbrUiState
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import app.aaps.ui.compose.scenes.ActiveSceneBanner
@@ -62,6 +59,7 @@ fun OverviewScreenSplit(
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
+    chipsViewModel: ChipsViewModel,
     manageViewModel: ManageViewModel,
     statusViewModel: StatusViewModel,
     statusLightsDef: PreferenceSubScreenDef,
@@ -73,16 +71,15 @@ fun OverviewScreenSplit(
     onDismissScene: () -> Unit = {},
     formatDuration: (Long) -> String = { ms -> "${(ms / 60000L).toInt()}m" },
     siOverviewState: SmartInsulinOverview.OverviewState? = null,
-    iobUiState: IobUiState,
-    smbUiState: SmbUiState,
-    tbrUiState: TbrUiState,
     modifier: Modifier = Modifier
 ) {
     val config = LocalConfig.current
     val bgInfoState by graphViewModel.bgInfoState.collectAsStateWithLifecycle()
-    val sensitivityUiState by graphViewModel.sensitivityUiState.collectAsStateWithLifecycle()
-    val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
-    val cobUiState by graphViewModel.cobUiState.collectAsStateWithLifecycle()
+    val sensitivityUiState by chipsViewModel.sensitivityUiState.collectAsStateWithLifecycle()
+    val iobUiState by chipsViewModel.iobUiState.collectAsStateWithLifecycle()
+    val cobUiState by chipsViewModel.cobUiState.collectAsStateWithLifecycle()
+    val smbUiState by chipsViewModel.smbUiState.collectAsStateWithLifecycle()
+    val tbrUiState by chipsViewModel.tbrUiState.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
@@ -168,6 +165,7 @@ fun OverviewScreenSplit(
 
                 IobCobChipsRow(
                     iobUiState = iobUiState,
+                    cobUiState = cobUiState,
                     smbUiState = smbUiState,
                     tbrUiState = tbrUiState,
                     onTbrClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_BASAL)) },

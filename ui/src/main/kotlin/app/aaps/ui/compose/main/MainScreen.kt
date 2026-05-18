@@ -60,6 +60,7 @@ import app.aaps.ui.compose.maintenance.MaintenanceViewModel
 import app.aaps.ui.compose.manageSheet.ManageSheetState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.OverviewScreen
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import app.aaps.ui.compose.quickLaunch.QuickLaunchAction
@@ -128,6 +129,7 @@ fun MainScreen(
     onQuickLaunchActionClick: (QuickLaunchAction) -> Unit = {},
     calcProgress: Int,
     graphViewModel: GraphViewModel,
+    chipsViewModel: ChipsViewModel,
     statusLightsDef: PreferenceSubScreenDef,
     treatmentButtonsDef: PreferenceSubScreenDef,
     // Pump activity
@@ -246,6 +248,7 @@ fun MainScreen(
                         isSimpleMode = uiState.isSimpleMode,
                         calcProgress = calcProgress,
                         graphViewModel = graphViewModel,
+                        chipsViewModel = chipsViewModel,
                         manageViewModel = manageViewModel,
                         statusViewModel = statusViewModel,
                         statusLightsDef = statusLightsDef,

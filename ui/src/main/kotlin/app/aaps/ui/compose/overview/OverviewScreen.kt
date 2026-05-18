@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.data.model.ActiveSceneState
 import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
@@ -32,6 +31,7 @@ import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.notificationsSheet.NotificationBottomSheet
 import app.aaps.ui.compose.notificationsSheet.NotificationFab
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 
@@ -56,6 +56,7 @@ fun OverviewScreen(
     isSimpleMode: Boolean,
     calcProgress: Int,
     graphViewModel: GraphViewModel,
+    chipsViewModel: ChipsViewModel,
     manageViewModel: ManageViewModel,
     statusViewModel: StatusViewModel,
     statusLightsDef: PreferenceSubScreenDef,
@@ -83,10 +84,6 @@ fun OverviewScreen(
     var showNotificationSheet by remember { mutableStateOf(false) }
     var showPumpActivityDialog by remember { mutableStateOf(false) }
     val showPumpFab = isPumpCommunicating || (bolusState != null && bolusState.isSMB)
-
-    val iobUiState by graphViewModel.iobUiState.collectAsStateWithLifecycle()
-    val smbUiState by graphViewModel.smbUiState.collectAsStateWithLifecycle()
-    val tbrUiState by graphViewModel.tbrUiState.collectAsStateWithLifecycle()
 
     LaunchedEffect(bolusState) {
         if (bolusState == null) showPumpActivityDialog = false
@@ -128,6 +125,7 @@ fun OverviewScreen(
                 isSimpleMode = isSimpleMode,
                 calcProgress = calcProgress,
                 graphViewModel = graphViewModel,
+                chipsViewModel = chipsViewModel,
                 manageViewModel = manageViewModel,
                 statusViewModel = statusViewModel,
                 statusLightsDef = statusLightsDef,
@@ -160,6 +158,7 @@ fun OverviewScreen(
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
                     graphViewModel = graphViewModel,
+                    chipsViewModel = chipsViewModel,
                     manageViewModel = manageViewModel,
                     statusViewModel = statusViewModel,
                     statusLightsDef = statusLightsDef,
@@ -170,10 +169,7 @@ fun OverviewScreen(
                     onEndScene = onEndScene,
                     onDismissScene = onDismissScene,
                     formatDuration = formatDuration,
-                    siOverviewState = siOverviewState,
-                    iobUiState = iobUiState,
-                    smbUiState = smbUiState,
-                    tbrUiState = tbrUiState
+                    siOverviewState = siOverviewState
                 )
             } else {
                 OverviewScreenStacked(
@@ -194,6 +190,7 @@ fun OverviewScreen(
                     isSimpleMode = isSimpleMode,
                     calcProgress = calcProgress,
                     graphViewModel = graphViewModel,
+                    chipsViewModel = chipsViewModel,
                     manageViewModel = manageViewModel,
                     statusViewModel = statusViewModel,
                     statusLightsDef = statusLightsDef,
@@ -204,10 +201,7 @@ fun OverviewScreen(
                     onEndScene = onEndScene,
                     onDismissScene = onDismissScene,
                     formatDuration = formatDuration,
-                    siOverviewState = siOverviewState,
-                    iobUiState = iobUiState,
-                    smbUiState = smbUiState,
-                    tbrUiState = tbrUiState
+                    siOverviewState = siOverviewState
                 )
             }
         }

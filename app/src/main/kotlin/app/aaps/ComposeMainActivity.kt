@@ -148,6 +148,7 @@ import app.aaps.ui.compose.maintenance.ImportViewModel
 import app.aaps.ui.compose.maintenance.MaintenanceViewModel
 import app.aaps.ui.compose.manageSheet.ManageSheetHost
 import app.aaps.ui.compose.manageSheet.ManageViewModel
+import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
 import app.aaps.ui.compose.permissionsSheet.PermissionsSheet
@@ -210,6 +211,7 @@ class ComposeMainActivity : AppCompatActivity() {
     @Inject lateinit var bgQualityCheck: BgQualityCheck
     @Inject lateinit var objectives: Objectives
     @Inject lateinit var graphViewModelFactory: GraphViewModel.Factory
+    @Inject lateinit var chipsViewModelFactory: ChipsViewModel.Factory
     @Inject lateinit var overviewDataCache: OverviewDataCache
 
     private var accessTree: ActivityResultLauncher<Uri?>? = null
@@ -226,6 +228,9 @@ class ComposeMainActivity : AppCompatActivity() {
     private val loopActionViewModel: LoopActionViewModel by viewModels()
     private val graphViewModel: GraphViewModel by viewModels {
         viewModelFactory { initializer { graphViewModelFactory.create(overviewDataCache) } }
+    }
+    private val chipsViewModel: ChipsViewModel by viewModels {
+        viewModelFactory { initializer { chipsViewModelFactory.create(overviewDataCache) } }
     }
     private val treatmentsViewModel: TreatmentsViewModel by viewModels()
     private val insulinManagementViewModel: InsulinManagementViewModel by viewModels()
@@ -715,6 +720,7 @@ class ComposeMainActivity : AppCompatActivity() {
                     onQuickLaunchActionClick = { action -> handleQuickLaunchAction(action, navController) },
                     calcProgress = calcProgress,
                     graphViewModel = graphViewModel,
+                    chipsViewModel = chipsViewModel,
                     statusLightsDef = builtInSearchables.statusLights,
                     treatmentButtonsDef = builtInSearchables.treatmentButtons,
                     // Pump activity
@@ -745,6 +751,7 @@ class ComposeMainActivity : AppCompatActivity() {
                 statsViewModel = statsViewModel,
                 siteRotationManagementViewModel = siteRotationManagementViewModel,
                 graphViewModel = graphViewModel,
+                chipsViewModel = chipsViewModel,
                 swDefinition = swDefinition,
                 rxBus = rxBus,
                 activePlugin = activePlugin,
