@@ -2572,7 +2572,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinRestingHrBpm,
                     UnitDoubleKey.ApsSmartInsulinActivityLightTarget,
                     UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,
-                    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget
+                    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,
+                    IntKey.ApsSmartInsulinActivityStepsLightMin,
+                    IntKey.ApsSmartInsulinActivityStepsModerateMin,
+                    IntKey.ApsSmartInsulinActivityStepsHeavyMin
                 )
             ),
             PreferenceSubScreenDef(
