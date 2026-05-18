@@ -26,8 +26,6 @@ import app.aaps.core.ui.compose.icons.IcTbrHigh
 import app.aaps.core.ui.compose.icons.IcTbrLow
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.color
-import app.aaps.ui.compose.overview.graphs.TbrArrow
-import app.aaps.ui.compose.overview.graphs.TbrUiState
 import java.util.Locale
 
 @Composable

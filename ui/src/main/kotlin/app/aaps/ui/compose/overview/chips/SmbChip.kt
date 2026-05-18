@@ -19,7 +19,6 @@ import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.icons.IcSmb
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.color
-import app.aaps.ui.compose.overview.graphs.SmbUiState
 
 @Composable
 internal fun SmbChip(

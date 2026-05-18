@@ -28,6 +28,7 @@ import app.aaps.core.ui.compose.icons.IcAsBelowX
 import app.aaps.core.ui.compose.icons.IcAsX
 import app.aaps.core.ui.compose.navigation.ElementType
 import app.aaps.core.ui.compose.navigation.color
+import app.aaps.ui.compose.overview.chips.SensitivityUiState
 
 @Composable
 internal fun SensitivityChip(
