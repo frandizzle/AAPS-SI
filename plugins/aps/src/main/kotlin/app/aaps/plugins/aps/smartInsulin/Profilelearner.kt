@@ -65,8 +65,17 @@ class ProfileLearner @Inject constructor(
         // peak signal — the steepest BG drop is dominated by absorption dynamics, not insulin
         // kinetics. Restricting peak learning to FASTING and LOW_CARB ensures the learned
         // peakMinutes reflects insulin pharmacology (site age, hydration, scar tissue) rather
-        // than glycemic index. DIA learning is unaffected and continues per mode.diaLearningEnabled.
+        // than glycemic index.
         private val PEAK_LEARNING_MODES = setOf(MealMode.FASTING, MealMode.LOW_CARB)
+
+        // Modes that contribute to DIA learning. FASTING-only because DIA is observed as
+        // "BG returned to baseline after X minutes" — any carb tail in a meal/UAM/low-carb
+        // mode adds upward glucose flux that hides the late insulin tail, producing a
+        // systematically truncated DIA reading. Only fasting corrections give a clean
+        // signal. The per-mode `diaMinutes` field on non-FASTING profiles is retained for
+        // schema compatibility but is no longer updated and should not be consulted by
+        // consumers — `getEffectiveProfile(mode)` returns the FASTING DIA universally.
+        private val DIA_LEARNING_MODES = setOf(MealMode.FASTING)
     }
 
     init {
@@ -82,9 +91,40 @@ class ProfileLearner @Inject constructor(
     /**
      * Returns the current learned profile for [mode].
      * Falls back to [LearnedInsulinProfile.defaultFor] if nothing persisted yet.
+     *
+     * NOTE: For determine_basal consumers, prefer [getEffectiveProfile] — it returns peak
+     * from [mode] but DIA universally from FASTING (the only mode with a clean DIA signal).
      */
     fun getProfile(mode: MealMode): LearnedInsulinProfile =
         profiles[mode] ?: profileSeededDefault(mode)
+
+    /**
+     * Returns a composed profile suitable for use in dosing: peak from [mode]'s learned
+     * profile, DIA from the FASTING profile. This is the right shape because:
+     *
+     *  - Peak (time to maximum insulin action) has weak mode-dependence — injection-site
+     *    temperature, perfusion, dehydration can shift it. Per-mode peak learning is
+     *    justified and already restricted to clean-signal modes via PEAK_LEARNING_MODES.
+     *
+     *  - DIA (full duration of action) is a pharmacokinetic property of the insulin
+     *    molecule. It does not change because food is on board. Per-mode DIA learning
+     *    was measuring "how long until BG looks flat again" — a proxy contaminated by
+     *    carb tails in every non-fasting mode. One global DIA, learned from clean
+     *    fasting observations, is the correct model.
+     *
+     * Consumers downstream of this function never need to know about the per-mode/global
+     * split — they get one LearnedInsulinProfile with both fields populated correctly.
+     *
+     * Sample-count and confidence on the returned profile reflect the requesting [mode]'s
+     * peak learning history, not the FASTING DIA history. That's the right call: dosing
+     * decisions that key off confidence (e.g. insulinPeakTicks rails) care about whether
+     * we trust this mode's peak, not the global DIA.
+     */
+    fun getEffectiveProfile(mode: MealMode): LearnedInsulinProfile {
+        val modeProfile    = getProfile(mode)
+        val fastingProfile = getProfile(MealMode.FASTING)
+        return modeProfile.copy(diaMinutes = fastingProfile.diaMinutes)
+    }
 
     /** Seed default from actual profile DIA and peak so first-run values are meaningful. */
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
@@ -166,13 +206,18 @@ class ProfileLearner @Inject constructor(
 
         // ── DIA EWMA update — gated by MealMode flag ────────────────────────────────
         // Suppressed for EXTENDED mode where the carb tail distorts apparent insulin duration.
+        // ── DIA EWMA update — gated by mode set AND per-mode flag ───────────────────
+        // DIA_LEARNING_MODES restricts updates to FASTING (clean signal — no carb tail
+        // contaminating the "BG returned to baseline" measurement). The existing
+        // mode.diaLearningEnabled flag is kept as an additional gate for compatibility
+        // (currently used to exclude EXTENDED). Both must pass.
         val clampedDia = observedDiaMins.coerceIn(
             LearnedInsulinProfile.DIA_MIN_MINUTES,
             LearnedInsulinProfile.DIA_MAX_MINUTES
         )
         val newDia: Double
         val diaUpdated: Boolean
-        if (mode.diaLearningEnabled) {
+        if (mode in DIA_LEARNING_MODES && mode.diaLearningEnabled) {
             newDia     = ewma(current.diaMinutes, clampedDia, alpha)
             diaUpdated = true
         } else {

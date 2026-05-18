@@ -66,8 +66,14 @@ data class LearnedInsulinProfile(
         // ── Hard bounds — physiologically reasonable limits ──────────────────
         const val PEAK_MIN_MINUTES = 35.0
         const val PEAK_MAX_MINUTES = 120.0
-        const val DIA_MIN_MINUTES  = 120.0
-        const val DIA_MAX_MINUTES  = 480.0
+        // DIA floor of 240 min (4h). Learned DIA is observed as "BG returned to pre-bolus
+        // level after X minutes" — a proxy that systematically *underestimates* pharmacokinetic
+        // DIA because counter-regulation, ongoing basal, and sub-noise activity hide the
+        // late tail. NovoRapid's labeled DOA is 5–7 hours; 4h is a defensible minimum that
+        // prevents the prediction curve's timeScale (= systemDia / learnedDia) from inflating
+        // beyond ~2× and producing dangerously aggressive forward projections.
+        const val DIA_MIN_MINUTES  = 240.0
+        const val DIA_MAX_MINUTES  = 540.0
 
         // Fallback constants used only when profileFunction/activeInsulin are unavailable at seed time
         const val FALLBACK_PEAK_MINS = 75.0

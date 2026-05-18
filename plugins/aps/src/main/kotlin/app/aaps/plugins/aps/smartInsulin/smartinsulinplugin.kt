@@ -529,9 +529,12 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
 
             // -- Profiles ------------------------------------------------------
+            // Use getEffectiveProfile: peak per-mode (learned), DIA always from FASTING.
+            // This matches what dosing actually uses, so the display never disagrees with
+            // the loop's behaviour.
             appendLine("-- Insulin Profiles ------------------")
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
+                val p = profileLearner.getEffectiveProfile(mode)
                 appendLine("  ${mode.label.padEnd(10)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }.trimEnd()
@@ -696,8 +699,10 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val profRaw = buildString {
+            // Use getEffectiveProfile so the displayed DIA matches what dosing actually uses
+            // (FASTING-sourced) — see ProfileLearner.getEffectiveProfile doc.
             app.aaps.core.interfaces.smartInsulin.MealMode.entries.forEach { mode ->
-                val p = profileLearner.getProfile(mode)
+                val p = profileLearner.getEffectiveProfile(mode)
                 appendLine("${mode.label.padEnd(16)}: peak=${p.peakMinutes.toInt()}m  dia=${p.diaMinutes.toInt()}m  n=${p.sampleCount}")
             }
         }
@@ -1498,7 +1503,11 @@ open class SmartInsulinPlugin @Inject constructor(
             MealMode.UAM_PROTEIN_FAT  -> MealMode.LOW_CARB
             else                   -> mealMode
         }
-        val learnedProfile    = profileLearner.getProfile(learnedProfileMode)
+        // getEffectiveProfile returns peak from `learnedProfileMode` but DIA universally
+        // from FASTING — DIA is a pharmacokinetic property of NovoRapid that doesn't shift
+        // by meal context, only by sensor confounding. One global DIA, learned only from
+        // clean fasting observations, applies across all modes. See ProfileLearner doc.
+        val learnedProfile    = profileLearner.getEffectiveProfile(learnedProfileMode)
 
         // -- Activity monitor — recompute from fed HR/steps data -------------
         // ActivityMonitor queries persistenceLayer directly — no feed calls needed.
