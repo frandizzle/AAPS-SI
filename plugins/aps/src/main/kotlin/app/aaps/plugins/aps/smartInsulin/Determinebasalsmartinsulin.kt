@@ -47,6 +47,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (isMmol) String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
         else        String.format(Locale.US, "%.0f", mgdl)
 
+    /**
+     * Appends ` | label=value` to the running reason string. Use this for any new fields
+     * to keep the log format consistent and reduce risk of malformed delimiters when
+     * editing complex conditional log sections. Not retrofitting all existing sb.append
+     * calls — they work and changing them would be churn without value.
+     */
+    private fun StringBuilder.appendField(label: String, value: String): StringBuilder {
+        append(" | ").append(label).append('=').append(value)
+        return this
+    }
+
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
@@ -121,6 +132,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
             fuelTrim = fuelTrimStrength * 100.0
         )
 
+        // Empty iobArray should never happen — IOB calculator in SmartInsulinPlugin pre-fills
+        // DIA-length entries even at zero IOB. If we get here with an empty array something is
+        // genuinely wrong upstream. Crash the loop is worse than abort-this-cycle, so log and
+        // bail. consoleError surfaces in the AAPS APS result tab so the upstream bug is visible.
+        if (iobArray.isEmpty()) {
+            rT.consoleError?.add("SmartInsulin: iobArray is empty — aborting cycle (upstream IOB calc failure?)")
+            result.with(rT)
+            return result
+        }
+
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -170,8 +191,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
-        val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
+        // iobArray[0] is safe — explicit isEmpty() guard above ensures the array has entries.
+        val bgi = -(iobArray[0].activity * dosingIsfMgdl * 5.0)
         val ci  = min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
+
+        // Prediction-curve length: clamp DIA between 6h and 8h, convert to 5-min ticks.
+        // Used by primary curve, PDP secondary curve, and graph-population (predBGs).
+        // Single source of truth — bounds changes only need to happen here.
+        val predictionTicks = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / TICK_MINUTES
 
         val predictedBg = predictBgCurve(
             startBg       = currentBg,
@@ -179,7 +206,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+            ticks         = predictionTicks,
             systemDiaMins  = systemDiaMins
         )
 
@@ -205,8 +232,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         else
             predictedBg.minOrNull() ?: currentBg
 
-        val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
-        val predictedAt60 = if (predictedBg.size > 11) predictedBg[11] else predictedBg.lastOrNull() ?: currentBg
+        val predictedAt30 = predictedBg.getOrNull(TICKS_AT_30MIN_INDEX) ?: predictedBg.lastOrNull() ?: currentBg
+        val predictedAt60 = predictedBg.getOrNull(TICKS_AT_60MIN_INDEX) ?: predictedBg.lastOrNull() ?: currentBg
 
         // ── PDP: secondary prediction curve ──────────────────────────────────
         // Only computed during FASTING when pdpEnabled and blendWeight > 0.
@@ -223,8 +250,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // pdpSyntheticCi > 0 = stuck-high. pdpSyntheticCi = 0 = rising or inactive.
             val isStuckHigh    = pdpSyntheticCi > 0.0
             // Rising: use pdpRisingStrength (0.5-1.5), not pdpCiStrength (1-10)
-            // This prevents a high ciStrength for stuck-high from making rises overly aggressive
-            val pdpEffectiveCi = if (isStuckHigh) 0.0 else ci * pdpRisingStrength
+            // This prevents a high ciStrength for stuck-high from making rises overly aggressive.
+            // Clamp ci to ≥ 0 — the rising pathway models BG climbing (ci pushes BG up). If ci
+            // goes negative on a transient (CGM stall, brief flat after a rise), feeding it through
+            // multiplied by pdpRisingStrength would drag the secondary curve below primary. Not
+            // a safety issue (safety gates use primary only), but semantically incoherent for a
+            // "rising" pathway, and makes the secondary curve strictly ≥ primary on minimum.
+            val pdpEffectiveCi = if (isStuckHigh) 0.0 else maxOf(0.0, ci) * pdpRisingStrength
             // Stuck-high: secondary curve uses ISF / ciStrength.
             // Lower ISF = insulin less effective = BG doesn't fall as far = higher predMin.
             // This is the correct physical model: if ciStrength=3, each unit of insulin
@@ -241,7 +273,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 iobArray       = iobArray,
                 isfMgdl        = pdpIsfMgdl,
                 learnedProfile = learnedProfile,
-                ticks          = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
+                ticks          = predictionTicks,
                 systemDiaMins  = systemDiaMins
             )
             pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
@@ -278,7 +310,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // Populate rT.predBGs.IOB for the overview prediction graph
         val rawPrediction = mutableListOf<Int>()
-        predictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
+        predictedBg.take(predictionTicks)
             .forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
@@ -288,7 +320,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Also populate ZT as fallback in case enableUAM is false in OapsProfile.
         if (effectivePdpBlend > 0.0 && pdpPredictedBg.isNotEmpty()) {
             val rawPdpPrediction = mutableListOf<Int>()
-            pdpPredictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
+            pdpPredictedBg.take(predictionTicks)
                 .forEach { rawPdpPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
             // UAM = orange line (visually distinct from cyan IOB line)
             rT.predBGs?.UAM = rawPdpPrediction
@@ -521,10 +553,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
         }
 
-        // Store prediction snapshots for next-cycle PDP accuracy scoring
-        lastIobPredAt5Mgdl = iobPredAt5
-        lastPdpPredAt5Mgdl = pdpPredAt5
-        lastPdpBlendWeight  = effectivePdpBlend
+        // Store prediction snapshot for next-cycle PDP accuracy scoring.
+        // Single atomic write — reader on a different thread always sees a matched tuple.
+        predictionSnapshot = PredictionSnapshot(
+            iobPredAt5Mgdl = iobPredAt5,
+            pdpPredAt5Mgdl = pdpPredAt5,
+            pdpBlendWeight = effectivePdpBlend
+        )
 
         rT.reason.append(sb)
         rT.units = smbOut.takeIf { it > 0.0 }
@@ -540,12 +575,27 @@ class DetermineBasalSmartInsulin @Inject constructor(
     // ── Last-cycle prediction snapshots — read by SmartInsulinPlugin for PDP accuracy scoring ──
     // Set on every determine_basal() call. SmartInsulinPlugin reads these on the NEXT cycle
     // to compare against actual BG and score PDP vs IOB accuracy.
-    var lastIobPredAt5Mgdl: Double = 0.0
+    //
+    // Thread-safety: a single @Volatile data-class reference replaces three loose primitives.
+    // Atomic publication of the whole tuple prevents torn reads (e.g. reader seeing a new
+    // IOB pred paired with the previous cycle's PDP pred, which would corrupt accuracy
+    // scoring). Read all three via `predictionSnapshot` to guarantee they're a matched set.
+    data class PredictionSnapshot(
+        val iobPredAt5Mgdl: Double,
+        val pdpPredAt5Mgdl: Double,
+        val pdpBlendWeight: Double
+    )
+
+    @Volatile
+    var predictionSnapshot: PredictionSnapshot = PredictionSnapshot(0.0, 0.0, 0.0)
         private set
-    var lastPdpPredAt5Mgdl: Double = 0.0
-        private set
-    var lastPdpBlendWeight: Double = 0.0
-        private set
+
+    // Compatibility getters — keep existing call sites in SmartInsulinPlugin working.
+    // For correctness when reading multiple fields, prefer `predictionSnapshot` directly
+    // so all three come from the same cycle.
+    val lastIobPredAt5Mgdl: Double get() = predictionSnapshot.iobPredAt5Mgdl
+    val lastPdpPredAt5Mgdl: Double get() = predictionSnapshot.pdpPredAt5Mgdl
+    val lastPdpBlendWeight: Double get() = predictionSnapshot.pdpBlendWeight
 
     // ── Prediction curve ──────────────────────────────────────────────────────
     private fun predictBgCurve(
@@ -649,10 +699,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MMOL_TO_MGDL           = 18.0
         private const val TBR_WINDOW_HOURS       = 0.5
         private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
-        // delta is mg/dL per 5-min CGM cycle — threshold is 2.0 mmol in a single reading.
+        // Tick size for prediction curves. All BG forecasts step in 5-min increments to align
+        // with CGM cadence. Changing this requires re-deriving all *_TICK constants below.
+        private const val TICK_MINUTES               = 5
+        private const val TICKS_AT_30MIN_INDEX       = 5    // tick 6 = t+30min; list is 0-indexed → index 5
+        private const val TICKS_AT_60MIN_INDEX       = 11   // tick 12 = t+60min; list is 0-indexed → index 11
+        // delta is mg/dL per 5-min CGM cycle — threshold is 1.0 mmol in a single reading.
         // The previous formula divided by 5 which would give 0.4 mmol/min — wrong unit,
-        // and far too sensitive (any moderate drop would qualify).
-        private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL  // 36 mg/dL = 2.0 mmol per 5-min cycle
+        // and far too sensitive. 2.0 mmol/5min was the previous correction but rarely fires
+        // in practice (catches only CGM artifacts). 1.0 mmol/5min (18 mg/dL) is the
+        // middle ground that catches genuine fast drops without false-positives.
+        private const val FALLING_FAST_MGDL_PER_5MIN = 1.0 * MMOL_TO_MGDL  // 18 mg/dL = 1.0 mmol per 5-min cycle
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
         private const val NEUTRAL_TEMP_EPSILON       = 1e-6  // floating-point tolerance for neutral-temp detection
         // Floor for rebound taper in caution zone — prevents delivering near-zero basal

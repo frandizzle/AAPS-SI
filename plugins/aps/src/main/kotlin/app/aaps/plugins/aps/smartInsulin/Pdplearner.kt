@@ -61,10 +61,13 @@ class PdpLearner @Inject constructor(
 
     // Thread-safe copy-on-write array — written from loop coroutine,
     // read from UI thread. @Volatile ensures writes are immediately visible.
+    // synchronized(this) on updateSlot prevents lost updates when recordAccuracy
+    // and recordEpisodeOutcome touch the same hour concurrently (rare, but possible
+    // when an episode closes on the same cycle as a t+5min accuracy observation).
     @Volatile
     private var hours: Array<HourSlot> = Array(24) { HourSlot() }
 
-    private fun updateSlot(h: Int, newSlot: HourSlot) {
+    private fun updateSlot(h: Int, newSlot: HourSlot) = synchronized(this) {
         hours = hours.clone().also { it[h] = newSlot }
     }
 
@@ -126,12 +129,14 @@ class PdpLearner @Inject constructor(
         val slot = hours[h]
 
         // Artifact detection — both predictions far off → CGM noise, skip
+        // No decay tick on skip: decay should only fire from the successful-update path,
+        // or once-per-cycle via tickAllDecay() from the plugin. Ticking on every skip path
+        // triples the effective decay rate when recordAccuracy is called each 5-min cycle.
         if (primaryErrMgdl > ARTIFACT_THRESHOLD_MGDL && secondaryErrMgdl > ARTIFACT_THRESHOLD_MGDL) {
             aapsLogger.debug(LTag.APS,
                              "PdpLearner[$pathway h=$h]: ARTIFACT — " +
                                  "pErr=${String.format(Locale.US, "%.1f", primaryErrMgdl)} " +
                                  "sErr=${String.format(Locale.US, "%.1f", secondaryErrMgdl)} both > 2mmol, skipping")
-            tickDecayExcept(h)
             return
         }
 
@@ -140,7 +145,6 @@ class PdpLearner @Inject constructor(
         if (errDiff < MIN_ERROR_MGDL) {
             aapsLogger.debug(LTag.APS,
                              "PdpLearner[$pathway h=$h]: skip — errDiff=${String.format(Locale.US, "%.1f", errDiff)} < noise floor")
-            tickDecayExcept(h)
             return
         }
 
@@ -373,13 +377,21 @@ class PdpLearner @Inject constructor(
     /**
      * Effective ciStrength for stuck-high pathway at [hour].
      * confidence=0 → baseCiStrength unchanged; confidence=1 → baseCiStrength * learnedMult
+     *
+     * Clamp is RELATIVE to baseCiStrength on both ends (matches effectiveFadeMins).
+     * Previous version floored at absolute MIN_STRENGTH_MULT (0.3) which behaved
+     * inconsistently across users — a base of 5.0 could drop 94%, but a base of
+     * 0.5 could only drop 40%. Relative floor gives consistent ±range behaviour.
      */
     fun effectiveCiStrength(hour: Int, baseCiStrength: Double): Double {
         if (baseCiStrength <= 0.0) return 0.0  // guard: coerceIn(min, 0) would crash if min > 0
         val slot  = hours[hour.coerceIn(0, 23)]
         val blend = slot.confidence.coerceIn(0.0, 1.0)
         val mult  = 1.0 + blend * (slot.strengthMult - 1.0)
-        return (baseCiStrength * mult).coerceIn(MIN_STRENGTH_MULT, baseCiStrength * MAX_STRENGTH_MULT)
+        return (baseCiStrength * mult).coerceIn(
+            baseCiStrength * MIN_STRENGTH_MULT,
+            baseCiStrength * MAX_STRENGTH_MULT
+        )
     }
 
     /**
