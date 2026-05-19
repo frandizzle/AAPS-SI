@@ -567,6 +567,8 @@ class ComposeMainActivity : AppCompatActivity() {
 
         val state by mainViewModel.uiState.collectAsStateWithLifecycle()
         val bolusState by bolusProgressData.state.collectAsStateWithLifecycle()
+        val pumpStatusBanner by pumpCommunicationStatus.statusBannerFlow.collectAsStateWithLifecycle()
+        val pumpQueueStatus by pumpCommunicationStatus.queueStatusFlow.collectAsStateWithLifecycle()
 
         NavHost(
             navController = navController,
@@ -725,9 +727,9 @@ class ComposeMainActivity : AppCompatActivity() {
                     treatmentButtonsDef = builtInSearchables.treatmentButtons,
                     // Pump activity
                     bolusState = bolusState,
-                    pumpStatusText = pumpCommunicationStatus.statusBanner()?.text ?: "",
-                    queueStatusText = pumpCommunicationStatus.queueStatus(),
-                    isPumpCommunicating = pumpCommunicationStatus.statusBanner() != null,
+                    pumpStatusText = pumpStatusBanner?.text ?: "",
+                    queueStatusText = pumpQueueStatus,
+                    isPumpCommunicating = pumpStatusBanner != null,
                     siOverviewState = siOverviewStateFlow
                         .collectAsState().value,
                     onStopBolus = {
