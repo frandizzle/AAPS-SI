@@ -14,8 +14,11 @@ import javax.inject.Inject
 import javax.inject.Provider
 import javax.inject.Singleton
 import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToLong
 
 /**
  * SmartInsulin APS — core basal/SMB determination.
@@ -142,6 +145,49 @@ class DetermineBasalSmartInsulin @Inject constructor(
             return result
         }
 
+        // ── Validate the ISF arriving from upstream ──────────────────────────
+        // dosingIsfMgdl is the multiplier-blended ISF computed in SmartInsulinPlugin.
+        // It is THE central divisor for insulinReq, suspendDuration, and the target-
+        // respect basal calc. If upstream returns 0 / negative / NaN / Inf (e.g. an
+        // isfMult corruption, division-by-zero in the blend, malformed profile), the
+        // raw value would produce catastrophic dosing:
+        //   • dosingIsfMgdl == 0   → insulinReq = +Infinity → max SMB + max TBR
+        //   • dosingIsfMgdl == NaN → tbrRate = NaN → undefined pump behaviour
+        //   • dosingIsfMgdl < 0    → silently disables SMB / TBR escalation
+        //
+        // Three-layer fallback:
+        //   1. Use dosingIsfMgdl if finite and positive (the normal path)
+        //   2. Else fall back to the user's raw profile ISF (un-multiplied)
+        //   3. Else fall back to ABSOLUTE_FALLBACK_ISF_MGDL — chosen high (50 mg/dL/U
+        //      ≈ 2.8 mmol/U) because higher ISF = smaller insulinReq = LESS insulin,
+        //      the safe direction when we have no reliable sensitivity at all.
+        //
+        // Substituted everywhere downstream — not just at the divisor sites — because
+        // if the ISF is broken, every downstream computation built on it (BGI, the
+        // prediction curve, PDP secondary curve, display strings) would also be
+        // corrupted. Validating once at the boundary keeps the whole function
+        // operating on a known-good value.
+        val effectiveDosingIsfMgdl: Double = if (dosingIsfMgdl.isFinite() && dosingIsfMgdl > 0.0) {
+            dosingIsfMgdl
+        } else {
+            val profileIsf = try {
+                profile.getIsfMgdl("DetermineBasalSmartInsulin")
+            } catch (e: Exception) {
+                Double.NaN
+            }
+            val (fallback, source) = if (profileIsf.isFinite() && profileIsf > 0.0) {
+                profileIsf to "profile ISF"
+            } else {
+                ABSOLUTE_FALLBACK_ISF_MGDL to "absolute floor"
+            }
+            rT.consoleError?.add(
+                ("SmartInsulin: dosingIsfMgdl=%.3f invalid (not finite or non-positive) " +
+                    "— falling back to %s=%.1f mg/dL/U")
+                    .format(Locale.US, dosingIsfMgdl, source, fallback)
+            )
+            fallback
+        }
+
         val currentBg      = glucoseStatus.glucose
         val delta          = glucoseStatus.delta
         val shortAvgDelta  = glucoseStatus.shortAvgDelta
@@ -164,8 +210,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 currentHour in dawnWindowStartHour until dawnWindowEndHour
             else currentHour >= dawnWindowStartHour || currentHour < dawnWindowEndHour
         }
-        val dawnFraction = if (inDawnWindow) dawnSmbReduction else 1.0
-        val cgmFraction  = if (!cgmDeltaPlausible) 0.0 else cgmSmbFraction
+        // SMB-delivery multipliers — both must stay in [0, 1]. They can only REDUCE
+        // delivery, never boost it. The (uam*aggr).coerceIn(0.1, 0.9) cap at the SMB
+        // calc site runs BEFORE these are applied, so without the clamp a misconfigured
+        // dawnSmbReduction (e.g. 1.5 thinking "150% during dawn", or a percentage like
+        // 50.0) would multiply through and bypass the upstream safety cap. Same on
+        // cgmSmbFraction — both come from user prefs / upstream calcs that could be wrong.
+        val dawnFraction = (if (inDawnWindow) dawnSmbReduction else 1.0).coerceIn(0.0, 1.0)
+        val cgmFraction  = (if (!cgmDeltaPlausible) 0.0 else cgmSmbFraction).coerceIn(0.0, 1.0)
 
         // Rebound taper — only applies during the active rebound window (BG crossed back above
         // lowGuard after a real low). Starts at 40% and tapers linearly back to 100% over
@@ -192,7 +244,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
         // iobArray[0] is safe — explicit isEmpty() guard above ensures the array has entries.
-        val bgi = -(iobArray[0].activity * dosingIsfMgdl * 5.0)
+        val bgi = -(iobArray[0].activity * effectiveDosingIsfMgdl * 5.0)
         val ci  = min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
 
         // Prediction-curve length: clamp DIA between 6h and 8h, convert to 5-min ticks.
@@ -204,7 +256,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             startBg       = currentBg,
             ci            = ci,
             iobArray      = iobArray,
-            isfMgdl       = dosingIsfMgdl,
+            isfMgdl       = effectiveDosingIsfMgdl,
             learnedProfile = learnedProfile,
             ticks         = predictionTicks,
             systemDiaMins  = systemDiaMins
@@ -241,11 +293,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // instead of 60min, scaled by pdpCiStrength — models sustained unexplained deviation
         // (stress, dawn phenomenon, protein/fat tail, illness) persisting longer than normal.
         // Safety: pdpBlendWeight=0 when mealMode != FASTING so meal modes are never affected.
-        val effectivePdpBlend = if (pdpEnabled && mealMode == app.aaps.core.interfaces.smartInsulin.MealMode.FASTING) pdpBlendWeight else 0.0
+        val effectivePdpBlend = if (pdpEnabled && mealMode == MealMode.FASTING) pdpBlendWeight else 0.0
 
         val pdpPredictedBg: List<Double>
         val pdpPredMin: Double
-        val pdpPredMinSafety: Double
         if (effectivePdpBlend > 0.0) {
             // pdpSyntheticCi > 0 = stuck-high. pdpSyntheticCi = 0 = rising or inactive.
             val isStuckHigh    = pdpSyntheticCi > 0.0
@@ -263,9 +314,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // only moves BG 1/3 as far, so the prediction line lands much higher.
             // Rising pathway keeps primary ISF — ci term lifts it, not ISF scaling.
             val pdpIsfMgdl = if (isStuckHigh)
-                dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
+                effectiveDosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
             else
-                dosingIsfMgdl
+                effectiveDosingIsfMgdl
             pdpPredictedBg = predictBgCurvePdp(
                 startBg        = currentBg,
                 ci             = pdpEffectiveCi,
@@ -276,7 +327,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 ticks          = predictionTicks,
                 systemDiaMins  = systemDiaMins
             )
-            pdpPredMinSafety = pdpPredictedBg.minOrNull() ?: currentBg
 
             // Graph curve stored for display. Safety minimum is primary-only (unchanged).
             // pdpPredMin = post-peak minimum of the secondary curve.
@@ -290,18 +340,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         } else {
             pdpPredictedBg   = emptyList()
             pdpPredMin       = predictedMin
-            pdpPredMinSafety = predictedMinSafety
         }
 
         // Blended post-peak predMin — used ONLY for insulinReq calculation.
-        // Safety gates (SUSPEND, CAUTION) always use PRIMARY unblended predictedMinSafety.
-        // Reason: PDP secondary curve predicts BG stays high due to resistance, but at
-        // 90% blend the secondary full-curve minimum can dip below lowGuard (IOB still
-        // pulls BG down eventually), triggering false suspends. The safety system must
-        // always see the most conservative (primary IOB-physics) prediction.
-        val blendedPredMin       = predictedMin * (1.0 - effectivePdpBlend) + pdpPredMin * effectivePdpBlend
-        // Safety minimum: NEVER blended — always primary IOB prediction
-        val blendedPredMinSafety = predictedMinSafety  // unchanged: primary only for all safety gates
+        // Safety gates (SUSPEND, CAUTION) always use the primary predictedMinSafety
+        // directly. Reason: PDP secondary curve predicts BG stays high due to resistance,
+        // but at 90% blend the secondary full-curve minimum can dip below lowGuard
+        // (IOB still pulls BG down eventually), triggering false suspends. The safety
+        // system must always see the most conservative (primary IOB-physics) prediction.
+        //
+        // (Previously assigned to a `blendedPredMinSafety` alias of predictedMinSafety
+        // whose name implied blending — confusing because no blending actually happened.
+        // Removed to make the architectural property impossible to miss: safety reads
+        // predictedMinSafety directly; all blending is in blendedPredMin, which is
+        // dosing-only.)
+        val blendedPredMin = predictedMin * (1.0 - effectivePdpBlend) + pdpPredMin * effectivePdpBlend
 
         // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
         // These are the t+5min values (first tick) — compared against actual BG next cycle.
@@ -332,7 +385,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // drives more aggressive dosing. 0.0 = disabled (use global max IOB).
         val effectiveMaxIob = if (
             fastingMaxIobU > 0.0 &&
-            mealMode == app.aaps.core.interfaces.smartInsulin.MealMode.FASTING
+            mealMode == MealMode.FASTING
         ) minOf(oapsProfile.max_iob, fastingMaxIobU)
         else oapsProfile.max_iob
 
@@ -341,19 +394,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val bgAboveGuard = currentBg - lowGuardMgdl
 
         // ── insulinReq ────────────────────────────────────────────────────────
-        // Uses blended prediction for the gap, but blends the effective ISF for the
-        // divisor. This is the key PDP mechanism for stuck-high:
+        // Uses the PDP-blended post-peak predMin for the gap. The secondary curve
+        // was already built with ISF/ciStrength when stuck-high mode is active, so
+        // blendedPredMin already encodes the resistance — no separate ISF blend.
         //
-        // Primary ISF = dosingIsfMgdl (e.g. 36 mg/dL/U at ISF=2.0 mmol/U)
+        // The previous design had a separate "effective ISF" intermediate (a blend
+        // of primary and secondary ISFs) here, but the cleaner curve-based blending
+        // made it redundant. Vestigial `effectiveGapMgdl = predMinGapMgdl` and
+        // `effectiveIsfMgdl = dosingIsfMgdl` identity aliases removed.
         val predMinGapMgdl = (blendedPredMin - targetBg).coerceAtLeast(0.0)
-
-        // effectiveGapMgdl = predMinGapMgdl.
-        // The secondary curve was built with ISF/ciStrength so blendedPredMin is
-        // already higher — gap is real. No separate ISF blend needed.
-        // dosingIsfMgdl is used directly: the curve ISF already captured the resistance.
-        val effectiveGapMgdl = predMinGapMgdl
-        val effectiveIsfMgdl = dosingIsfMgdl
-        val insulinReq = effectiveGapMgdl / effectiveIsfMgdl
+        val insulinReq     = predMinGapMgdl / effectiveDosingIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -364,12 +414,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         if (effectivePdpBlend > 0.0) {
-            // For stuck-high: secondary curve used pdpIsfMgdl = dosingIsfMgdl/ciStrength
+            // For stuck-high: secondary curve used pdpIsfMgdl = effectiveDosingIsfMgdl/ciStrength
             // Show primary→secondary ISF so the log reflects what the curve actually used
             val pdpIsfDisplay = if (pdpSyntheticCi > 0.0)
-                dosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
+                effectiveDosingIsfMgdl / pdpCiStrength.coerceAtLeast(1.0)
             else
-                dosingIsfMgdl  // rising: same ISF, ci term does the work
+                effectiveDosingIsfMgdl  // rising: same ISF, ci term does the work
             // Show as "secISF=0.38mmol (÷5)" so it's clear this is the secondary
             // curve ISF, not the dosing ISF, and why it's that value
             val isfStr = if (pdpSyntheticCi > 0.0)
@@ -378,7 +428,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(" | PDP(blend=${"%.2f".format(Locale.US, effectivePdpBlend)} ci×${"%.2f".format(Locale.US, pdpCiStrength)} fade=${pdpFadeMins.toInt()}m pdp_min=${fmt(pdpPredMin, isMmol)} blended=${fmt(blendedPredMin, isMmol)}$isfStr)")
         }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
-        sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
+        sb.append(" | ISF=${fmt(effectiveDosingIsfMgdl, isMmol)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
         sb.append(" | ${pkLabel}=${learnedProfile.safePeakMinutes.toInt()}m DIA=${learnedProfile.safeDiaMinutes.toInt()}m")
@@ -404,14 +454,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the loop doesn't run again for 60+ minutes (connectivity loss, etc).
         fun suspendDurationMins(worstBgMgdl: Double): Int {
             val bgUndershoot    = targetBg - worstBgMgdl  // how far below target worst case goes
-            val insulinReqU     = bgUndershoot / dosingIsfMgdl
+            val insulinReqU     = bgUndershoot / effectiveDosingIsfMgdl
             // Defensive floor on profileBasal — prevents Inf/NaN from profileBasal=0
             // (pump-off, misconfigured profile, or near-zero basalMultiplier).
             // 0.01 U/hr is well below any realistic basal rate but non-zero.
             val effectiveBasal  = profileBasal.coerceAtLeast(0.01)
             val durationHours   = insulinReqU / effectiveBasal
             val durationMins    = (durationHours * 60.0).coerceIn(30.0, 90.0)
-            return (Math.round(durationMins / 30.0) * 30).toInt().coerceIn(30, 90)
+            return ((durationMins / 30.0).roundToLong() * 30).toInt().coerceIn(30, 90)
         }
 
 
@@ -430,20 +480,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
-            blendedPredMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
+            predictedMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
                 val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
-                    else           -> "SUSPEND pred_min=${fmt(blendedPredMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
-            blendedPredMinSafety < effectiveCautionMgdl -> {
-                val guardGap   = effectiveCautionMgdl - blendedPredMinSafety
+            predictedMinSafety < effectiveCautionMgdl -> {
+                val guardGap   = effectiveCautionMgdl - predictedMinSafety
                 val warnFrac   = 1.0 - (guardGap / (effectiveCautionMgdl - effectiveSuspendMgdl).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
                 // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
@@ -451,7 +501,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                sb.append(" | CAUTION | pred_min=${fmt(blendedPredMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -474,7 +524,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val rawSmb         = if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
+                val rawSmb         = if (correctionUnits > 0.0) (ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
                 val smbCap         = minOf(maxSmbU, iobHeadroom)
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0
@@ -497,7 +547,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     predictedMin < targetBg &&
                         (targetRespectEnabled || targetBg > (6.0 * MMOL_TO_MGDL)) -> {
                         val missingBgMgdl   = targetBg - predictedMin
-                        val missingInsulinU = missingBgMgdl / dosingIsfMgdl
+                        val missingInsulinU = missingBgMgdl / effectiveDosingIsfMgdl
                         val reducedBasal    = profileBasal - (missingInsulinU / TBR_WINDOW_HOURS)
                         reducedBasal.coerceIn(0.0, profileBasal)
                     }
@@ -687,7 +737,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // Exponential decay from the end of the array if we ran off
             val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
             val extraTicks = idx - iobArray.size + 1
-            lastActivity * Math.exp(-extraTicks * 0.05)
+            lastActivity * exp(-extraTicks * 0.05)
         }
 
         // Multiply by timeScale to preserve AUC.
@@ -715,5 +765,19 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Floor for rebound taper in caution zone — prevents delivering near-zero basal
         // while BG is already heading toward the warn guard.
         private const val CAUTION_REBOUND_TAPER_FLOOR = 0.5
+        // Last-resort ISF when BOTH dosingIsfMgdl and profile ISF are invalid (not finite
+        // or non-positive). 50 mg/dL/U ≈ 2.8 mmol/U — high end of typical adult T1D.
+        //
+        // Direction-of-safety rationale: higher ISF means smaller insulinReq for the same
+        // BG gap, which means LESS insulin delivered. Under total uncertainty we want the
+        // conservative (under-delivery) failure mode rather than the aggressive (over-
+        // delivery) one. Under-response leaves the user mildly high until upstream
+        // recovers — recoverable. Over-delivery on broken inputs is not.
+        //
+        // This branch should never actually fire — dosingIsfMgdl and profile ISF would
+        // have to be simultaneously invalid, which requires a deep upstream failure plus
+        // a corrupted profile. If you see this fallback used in console errors, that's
+        // a signal something is seriously wrong upstream that needs investigating.
+        private const val ABSOLUTE_FALLBACK_ISF_MGDL = 50.0
     }
 }
