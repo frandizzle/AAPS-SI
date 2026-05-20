@@ -23,6 +23,31 @@ import kotlin.math.sign
  *
  * All three use 24-bucket EWMA. Only update during FASTING mode with zero COB.
  * Persisted as JSON in SharedPreferences.
+ *
+ * ──────────────────────────────────────────────────────────────────────────────
+ * MULTIPLIER DIRECTION CONVENTION — read this before editing any penalty path.
+ * ──────────────────────────────────────────────────────────────────────────────
+ *
+ *   dosingISF  = profileISF  / isfMult      (ISF mult is a DIVISOR)
+ *   finalBasal = profileBasal * basalMult   (basal mult is a multiplier)
+ *
+ * Because ISF mult is a divisor, isfMult and basalMult have OPPOSITE relationships
+ * with "amount of insulin delivered":
+ *
+ *   isfMult   UP   → dosingISF DOWN  → MORE insulin per BG gap (more aggressive)
+ *   isfMult   DOWN → dosingISF UP    → LESS insulin per BG gap (less aggressive)
+ *   basalMult UP   → finalBasal UP   → MORE continuous insulin
+ *   basalMult DOWN → finalBasal DOWN → LESS continuous insulin
+ *
+ * So "less insulin" intent → multiply BOTH mults by < 1.0.
+ *    "more insulin" intent → multiply BOTH mults by > 1.0.
+ *
+ * This is the trap: it's easy to write `prevIsf * 1.05` thinking of the displayed
+ * ISF value (where higher = less insulin) rather than the multiplier (where higher
+ * = more insulin). Several penalty paths previously had this bug — see git history
+ * for fixes to the rollercoaster, sustained-below, and PDP-episode handlers.
+ *
+ * Reference correct paths: hard-low penalty (line ~960) and aggrNudge (line ~647).
  */
 @Singleton
 class CircadianLearner @Inject constructor(
@@ -878,13 +903,16 @@ class CircadianLearner @Inject constructor(
             } else {
                 val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
                 aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
-                // Rollercoaster: also nudge ISF up (less aggressive) and basal down.
-                // 5% ISF nudge up = profile ISF × 1.05 → slightly less insulin per gap.
-                // 5% basal nudge down → reduces steady-state delivery at this hour.
+                // Rollercoaster: nudge isfMult DOWN (less aggressive) and basalMult DOWN.
+                // dosingISF = profileISF / isfMult, so isfMult DOWN → dosingISF UP → less insulin per gap.
+                // PREVIOUS BUG: this path multiplied isfMult by 1.05 (UP), which lowers dosingISF
+                // and produces MORE insulin — the opposite of the rollercoaster's intent.
+                // 5% isfMult down → ~5% higher dosingISF → ~5% less insulin per BG gap.
+                // 5% basalMult down → reduces steady-state delivery at this hour.
                 val prevIsf   = isfState.get(dow, hour)
                 val prevBasal = basalState.get(dow, hour)
                 isfState   = isfState.updated(dow, hour,
-                                              (prevIsf   * 1.05).coerceIn(ISF_MULT_MIN,   ISF_MULT_MAX),   ISF_ALPHA_FAST)
+                                              (prevIsf   * 0.95).coerceIn(ISF_MULT_MIN,   ISF_MULT_MAX),   ISF_ALPHA_FAST)
                 basalState = basalState.updated(dow, hour,
                                                 (prevBasal * 0.95).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
                 lastPenaltyMs = System.currentTimeMillis()
@@ -914,8 +942,11 @@ class CircadianLearner @Inject constructor(
             val prevIsf   = isfState.get(dow, hour)
             val prevBasal = basalState.get(dow, hour)
             // Scale nudge by how much time was spent below — 60%→3%, 80%→5%, 100%→7%
+            // dosingISF = profileISF / isfMult, so isfMult DOWN → dosingISF UP → less insulin per gap.
+            // PREVIOUS BUG: isfNudge was 1.03–1.07 (mult UP), which produces MORE insulin —
+            // exactly opposite of the intent for a sustained-below-target pattern.
             val nudgeStrength = ((belowFrac - 0.60) / 0.40).coerceIn(0.0, 1.0)
-            val isfNudge   = 1.0 + (0.03 + nudgeStrength * 0.04)   // 1.03–1.07
+            val isfNudge   = 1.0 - (0.03 + nudgeStrength * 0.04)   // 0.93–0.97 (mult DOWN → less insulin)
             val basalNudge = 1.0 - (0.02 + nudgeStrength * 0.03)   // 0.95–0.98
             isfState   = isfState.updated(dow, hour,
                                           (prevIsf   * isfNudge).coerceIn(ISF_MULT_MIN,   ISF_MULT_MAX),   ISF_ALPHA_FAST)
@@ -1209,12 +1240,16 @@ class CircadianLearner @Inject constructor(
      * the episode correction was too much, too little, or just right.
      *
      * PERFECT / GOOD / PARTIAL → hold (don't touch what's working or nearly working)
-     * MISSED                   → ISF mult DOWN + basal mult UP (need more aggression)
-     * OVERSHOT                 → ISF mult UP + basal mult DOWN (too much insulin)
+     * MISSED                   → ISF mult UP   + basal mult UP   (need more insulin)
+     * OVERSHOT                 → ISF mult DOWN + basal mult DOWN (too much insulin)
      * SEVERE_LOW               → stronger pull in same direction as OVERSHOT
      *
      * Uses ISF_ALPHA_SLOW (0.12) — same authority as the episode learner, ground truth signal.
-     * dosingISF = profileISF / isfMult, so mult DOWN = more aggressive.
+     *
+     * Convention reminder (and this is where this file had inverted nudges previously):
+     *   dosingISF = profileISF / isfMult
+     *   → isfMult UP   → dosingISF DOWN → MORE insulin per BG gap (more aggressive)
+     *   → isfMult DOWN → dosingISF UP   → LESS insulin per BG gap (less aggressive)
      */
     fun nudgeIsfFromPdpEpisode(
         hour:    Int,
@@ -1229,23 +1264,23 @@ class CircadianLearner @Inject constructor(
         // Only nudge on definitive outcomes — hold on PERFECT, GOOD, PARTIAL
         val (isfTarget, basTarget) = when (outcome) {
             "MISSED"     -> {
-                // Need more insulin: ISF mult DOWN (more aggressive), basal mult UP
+                // Need more insulin: isfMult UP (lower dosingISF = more aggressive), basalMult UP
                 Pair(
-                    (isfCurr * 0.97).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (isfCurr * 1.03).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
                     (basCurr * 1.03).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                 )
             }
             "OVERSHOT"   -> {
-                // Too much insulin: ISF mult UP (less aggressive), basal mult DOWN
+                // Too much insulin: isfMult DOWN (higher dosingISF = less aggressive), basalMult DOWN
                 Pair(
-                    (isfCurr * 1.03).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (isfCurr * 0.97).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
                     (basCurr * 0.97).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                 )
             }
             "SEVERE_LOW" -> {
-                // Significantly too much insulin: stronger pull
+                // Significantly too much insulin: stronger pull — both mults DOWN
                 Pair(
-                    (isfCurr * 1.06).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (isfCurr * 0.94).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
                     (basCurr * 0.94).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                 )
             }

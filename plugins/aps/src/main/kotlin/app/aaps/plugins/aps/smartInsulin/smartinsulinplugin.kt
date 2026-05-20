@@ -424,9 +424,12 @@ open class SmartInsulinPlugin @Inject constructor(
                 else "${"%.1f".format(profIsf / isfMult)} mg/dL/U"
             else "—"
             appendLine("  ISF: $learnedIsf (×${"%.3f".format(isfMult)})")
-            val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
+            val flatBasalMult427 = basalLearner.multiplierClamped
+            val circBasalMult427 = circadianLearner.basalMultiplier(hour)
+            val circConf427      = (circadianLearner.confidencePct(hour) / 100.0).coerceIn(0.0, 1.0)
+            val basalMult        = (1.0 - circConf427) * flatBasalMult427 + circConf427 * circBasalMult427
             val learnedBas = if (profBasal > 0) "${"%.3f".format(profBasal * basalMult)} U/h" else "—"
-            appendLine("  Basal: $learnedBas (×${"%.3f".format(basalMult)} flat=×${"%.3f".format(basalLearner.multiplierClamped)} circ=×${"%.3f".format(circadianLearner.basalMultiplier(hour))})")
+            appendLine("  Basal: $learnedBas (×${"%.3f".format(basalMult)} flat=×${"%.3f".format(flatBasalMult427)} circ=×${"%.3f".format(circBasalMult427)} conf=${"%.0f".format(circConf427 * 100)}%)")
             appendLine("  ${aggressionLearner.tirSummary}")
             if (inReboundWindow) appendLine("  ?? REBOUND ACTIVE ${msSinceLastSuspend / 60_000}min elapsed")
 
@@ -516,7 +519,10 @@ open class SmartInsulinPlugin @Inject constructor(
             for (h in 0..23) {
                 val marker    = if (h == hour) "?" else " "
                 val hIsfMult  = circadianLearner.isfMultiplier(h)
-                val hBasMult  = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
+                val hFlatMult = basalLearner.multiplierClamped
+                val hCircMult = circadianLearner.basalMultiplier(h)
+                val hConf     = (circadianLearner.confidencePct(h) / 100.0).coerceIn(0.0, 1.0)
+                val hBasMult  = (1.0 - hConf) * hFlatMult + hConf * hCircMult
                 val hIsf = if (profIsf > 0 && hIsfMult > 0)
                     if (isMmolUnit) "${"%.2f".format(profIsf / hIsfMult / 18.0)}"
                     else "${"%.1f".format(profIsf / hIsfMult)}"
@@ -663,7 +669,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val profileIsf   = cachedProfileIsf
         val profileBasal = cachedProfileBasal
         val isfMult      = circadianLearner.isfMultiplier(hour)
-        val basalMult    = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
+        // Match the production blend formula (see ~line 1709). The screen's "current basal"
+        // reading must equal what's actually delivered, or the user can't reconcile dosing.
+        val flatBasalMult672 = basalLearner.multiplierClamped
+        val circBasalMult672 = circadianLearner.basalMultiplier(hour)
+        val circConf672      = (circadianLearner.confidencePct(hour) / 100.0).coerceIn(0.0, 1.0)
+        val basalMult        = (1.0 - circConf672) * flatBasalMult672 + circConf672 * circBasalMult672
         val activeMode   = mealOverrideManager.activeMealMode
         val currentMealMode = activeMode ?: MealMode.FASTING
         val isLearningEnabled = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
@@ -684,7 +695,10 @@ open class SmartInsulinPlugin @Inject constructor(
             for (h in 0..23) {
                 val marker    = if (h == hour) "?" else " "
                 val isfMult   = circadianLearner.isfMultiplier(h)
-                val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
+                val hFlatMult = basalLearner.multiplierClamped
+                val hCircMult = circadianLearner.basalMultiplier(h)
+                val hConf     = (circadianLearner.confidencePct(h) / 100.0).coerceIn(0.0, 1.0)
+                val basalMult = (1.0 - hConf) * hFlatMult + hConf * hCircMult
                 val learnedIsf = if (profileIsf > 0 && isfMult > 0)
                     if (isMmol) "${"%.2f".format(profileIsf / isfMult / 18.0)}"
                     else "${"%.1f".format(profileIsf / isfMult)}"
@@ -848,7 +862,10 @@ open class SmartInsulinPlugin @Inject constructor(
             for (h in 0..23) {
                 val marker   = if (dow == currentDow && h == currentHour) "?" else " "
                 val hIsfMult = circadianLearner.isfMultiplier(h, dow)
-                val hBasMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h, dow)
+                val hFlatMult = basalLearner.multiplierClamped
+                val hCircMult = circadianLearner.basalMultiplier(h, dow)
+                val hConf     = (circadianLearner.confidencePct(h, dow) / 100.0).coerceIn(0.0, 1.0)
+                val hBasMult = (1.0 - hConf) * hFlatMult + hConf * hCircMult
                 val hIsf = if (profIsf > 0 && hIsfMult > 0)
                     if (isMmolUnit) "${"%.2f".format(profIsf / hIsfMult / 18.0)}"
                     else "${"%.1f".format(profIsf / hIsfMult)}"
@@ -1241,7 +1258,16 @@ open class SmartInsulinPlugin @Inject constructor(
         // ISF learning also runs during lockout — activity-based deviation is independent of meals.
         // The negIOB gate is handled inside CircadianLearner via inPostMealLockout parameter.
         val isfMultBefore = circadianLearner.isfMultiplier()
-        val totalBasalMultBefore = basalLearner.multiplierClamped * circadianLearner.basalMultiplier()
+        // Match the blend formula used in production dosing (see ~line 1709).
+        // Display capture: at this point we're BEFORE circadianLearner.update(), so all reads
+        // here reflect the pre-update state. The "was basal" shown on the SI screen must use
+        // the same formula as the basal that was actually being delivered.
+        // basalLearningEnabled is defined later in this function (~line 1607); read it locally
+        // here so the "was" capture respects the same gate as production dosing.
+        val basalLearningEnabledForCapture = preferences.get(BooleanKey.ApsSmartInsulinBasalLearningEnabled)
+        val flatBasalMultBefore = if (basalLearningEnabledForCapture) basalLearner.multiplierClamped else 1.0
+        val circConfBefore       = (circadianLearner.confidencePct(currentHour) / 100.0).coerceIn(0.0, 1.0)
+        val totalBasalMultBefore = (1.0 - circConfBefore) * flatBasalMultBefore + circConfBefore * circadianLearner.basalMultiplier(currentHour)
         val lastDirection = run {
             val parts = lastSeenNudgeState.split("|")
             val p = parts.getOrNull(0) ?: "INACTIVE"
@@ -1691,22 +1717,28 @@ open class SmartInsulinPlugin @Inject constructor(
         } else {
             aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
         }
-        // Blend flat BasalLearner with circadian per-hour learning.
-        // Circadian takes over proportionally as its confidence grows.
+        // Blend flat BasalLearner with circadian per-hour learning, weighted by
+        // CircadianLearner's confidence at this hour:
+        //   conf = 0 → use BasalLearner's global multiplier (cold start, sparse hour)
+        //   conf = 1 → use CircadianLearner's per-hour multiplier (mature bucket)
+        //   in between → linear blend
         //
-        // SAFETY NOTE on multiplicative stacking:
-        //   flatBasalMult is clamped to [0.5, 1.5] by BasalLearner (MIN/MAX_MULTIPLIER)
-        //   circBasalMult is clamped to [0.5, 1.5] by CircadianLearner (BASAL_MULT_MIN/MAX)
-        //   Worst case: 1.5 * 1.5 = 2.25x profile basal.
-        // This is acceptable because the final TBR rate is independently capped downstream by:
-        //   - oapsProfile.max_basal (preferences.ApsMaxBasal)
-        //   - max_daily_safety_multiplier * max_daily_basal
-        //   - current_basal_safety_multiplier * current_basal
-        // These caps are applied in DetermineBasalSmartInsulin.setTempBasal() before any
-        // TBR is issued to the pump. So even a compounded 2.25x learner multiplier cannot
-        // exceed the user's configured max_basal ceiling.
+        // PREVIOUS BEHAVIOUR (pure multiplication: flatBasalMult * circBasalMult)
+        // produced two stacked integral controllers writing the same actuator.
+        // When circadian penalised a particular hour DOWN, BG drifted UP, BasalLearner
+        // interpreted that drift as profile-basal-too-low and pulled UP — fighting the
+        // circadian correction every cycle. Net result depended on relative speeds of
+        // the two controllers rather than on what the user actually needed.
+        // The screenshot diagnosis at h=9 Weds confirmed this: circadian 0.939 × flat
+        // 1.118 = 1.05 — controllers cancelling rather than converging.
+        //
+        // SAFETY NOTE on the new blend:
+        //   Both inputs are in [0.5, 1.5]. A weighted average of values in [0.5, 1.5]
+        //   is also in [0.5, 1.5] — STRICTLY tighter than the previous multiplicative
+        //   range of [0.25, 2.25]. The downstream max_basal cap still applies.
         val flatBasalMult  = if (basalLearningEnabled) basalLearner.multiplierClamped else 1.0
-        val basalMultiplier = flatBasalMult * circBasalMult
+        val circConf       = (circadianLearner.confidencePct(currentHour) / 100.0).coerceIn(0.0, 1.0)
+        val basalMultiplier = (1.0 - circConf) * flatBasalMult + circConf * circBasalMult
 
         val maxSmbU           = preferences.get(DoubleKey.ApsSmartInsulinMaxSmb)
         val dawnWindowStart   = preferences.get(IntKey.ApsSmartInsulinDawnWindowStartHour)
