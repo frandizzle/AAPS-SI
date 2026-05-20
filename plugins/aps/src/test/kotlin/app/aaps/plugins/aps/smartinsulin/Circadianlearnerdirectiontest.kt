@@ -195,6 +195,55 @@ class CircadianLearnerDirectionTest {
         assertEquals(basBefore, learner.basalMultiplier(hour, dow), 1e-9)
     }
 
+    @Test
+    fun `MILD_OVER outcome moves both mults DOWN (sub-target landing, no guard hit)`() {
+        val hour = 9
+        val dow  = 3
+        val isfBefore = learner.isfMultiplier(hour, dow)
+        val basBefore = learner.basalMultiplier(hour, dow)
+
+        learner.nudgeIsfFromPdpEpisode(hour, dow, "MILD_OVER")
+
+        val isfAfter = learner.isfMultiplier(hour, dow)
+        val basAfter = learner.basalMultiplier(hour, dow)
+
+        assertTrue(
+            isfAfter < isfBefore,
+            "MILD_OVER must lower isfMult (still over-delivered even without guard breach). before=$isfBefore after=$isfAfter"
+        )
+        assertTrue(
+            basAfter < basBefore,
+            "MILD_OVER must lower basalMult. before=$basBefore after=$basAfter"
+        )
+    }
+
+    @Test
+    fun `MILD_OVER moves mults DOWN less than OVERSHOT (gentler — no guard tripped)`() {
+        // Use two fresh learners to measure magnitudes from the same starting point.
+        val mildLearner   = freshLearner()
+        val severeLearner = freshLearner()
+        val hour = 9
+        val dow  = 3
+
+        val mildIsfBefore = mildLearner.isfMultiplier(hour, dow)
+        val ovIsfBefore   = severeLearner.isfMultiplier(hour, dow)
+
+        mildLearner.nudgeIsfFromPdpEpisode(hour, dow, "MILD_OVER")
+        severeLearner.nudgeIsfFromPdpEpisode(hour, dow, "OVERSHOT")
+
+        val mildDelta = mildIsfBefore - mildLearner.isfMultiplier(hour, dow)
+        val ovDelta   = ovIsfBefore   - severeLearner.isfMultiplier(hour, dow)
+
+        assertTrue(
+            mildDelta > 0.0 && ovDelta > 0.0,
+            "both outcomes must reduce isfMult — mild=$mildDelta ov=$ovDelta"
+        )
+        assertTrue(
+            mildDelta < ovDelta,
+            "MILD_OVER must move LESS than OVERSHOT. mild=$mildDelta vs ov=$ovDelta"
+        )
+    }
+
     // ── Monotonicity tests — guards against arithmetic drift / EWMA interaction ──
 
     @Test

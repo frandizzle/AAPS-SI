@@ -69,9 +69,20 @@ class AggressionLearner @Inject constructor(
 
         private const val STEP_UP              = 0.03
         private const val STEP_DOWN            = 0.05
+        // Up-step branch only fires when meaningful high time accumulates — prevents the
+        // "ramp into lows" limit cycle where any non-zero high% with TIR>=60% would
+        // step aggression up until it manufactured enough lows to trip the down-step
+        // branch, then get slapped back. The MIN_HIGH_FOR_UPSTEP floor establishes a
+        // dead zone where good control (TIR>=60, low high%, no lows) is allowed to
+        // simply hold rather than escalate. Set just above the floor of the decay
+        // branch (highPct < 10%) so the regions are contiguous.
+        private const val MIN_HIGH_FOR_UPSTEP  = 10.0
         private const val MIN_DAY_SAMPLES_FOR_BLEND = 20
-        // Day score can't drag aggressiveness more than this below the global score.
-        // Prevents a corrupted day score from dominating when it's fully blended.
+        // Day score can't drag aggressiveness more than this in EITHER direction from
+        // the global score. Symmetric cap — prevents a single corrupted day score from
+        // dominating once fully blended, regardless of whether the corruption pulled it
+        // up (toward more insulin — unsafe direction) or down (toward less). Previous
+        // version only floored the downward drag, leaving the unsafe direction uncapped.
         private const val MAX_DAY_DEVIATION    = 0.15
         val DAY_LABELS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
@@ -92,10 +103,15 @@ class AggressionLearner @Inject constructor(
             val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
             val rawScore = globalScore * (1.0 - blend) + dayScores[dow] * blend
 
-            // Cap: day score can't drag the result more than MAX_DAY_DEVIATION below global.
-            // Prevents a single bad day weeks ago from overriding 6 days of good global data
-            // when the day score is fully blended (daySampleCount >= MIN_DAY_SAMPLES_FOR_BLEND).
-            val cappedScore = rawScore.coerceAtLeast(globalScore - MAX_DAY_DEVIATION)
+            // Cap: day score can't deviate more than MAX_DAY_DEVIATION from global
+            // in EITHER direction once fully blended. Prevents a single corrupted day
+            // score from dominating — symmetric guard (previous version only floored the
+            // downward drag and left the upward — i.e. more-insulin, less-safe — direction
+            // uncapped).
+            val cappedScore = rawScore.coerceIn(
+                globalScore - MAX_DAY_DEVIATION,
+                globalScore + MAX_DAY_DEVIATION
+            )
 
             return cappedScore.coerceIn(1.0 / max, max)
         }
@@ -161,11 +177,29 @@ class AggressionLearner @Inject constructor(
 
     // ── Score update — fasting samples only ───────────────────────────────────
 
-    /** Shared step logic for both global and day-of-week score updates */
+    /**
+     * Shared step logic for both global and day-of-week score updates.
+     *
+     * Behaviour by zone (in priority order — first matching branch wins):
+     *  - lowPct > MAX_LOW_PCT (4%)        → step DOWN (less aggressive)
+     *  - highPct > MAX_HIGH_PCT (18%)     → step UP 1.5× (much too high — push aggression up)
+     *  - highPct in [MIN_HIGH_FOR_UPSTEP, MAX_HIGH_PCT] (10–18%) AND TIR >= 60%
+     *                                     → step UP 1× (moderately high — push aggression up)
+     *  - highPct < 10% AND lowPct < 2%    → decay toward 1.0 (good control — relax)
+     *  - else                             → hold (mixed signal — don't change)
+     *
+     * Previous bug: the up-step branch fired for ANY non-zero highPct with TIR>=60%,
+     * which is the most common fasting pattern there is. The system ramped aggression
+     * upward until it manufactured enough lows (>4%) to trip the down-step branch,
+     * then got slapped back. Net effect was a limit cycle that spent time in lows.
+     * Requiring highPct >= MIN_HIGH_FOR_UPSTEP (10%) establishes a hold zone where
+     * good control is allowed to simply persist instead of escalating.
+     */
     private fun stepScore(current: Double, stats: TirStats, floor: Double, ceil: Double): Double = when {
         stats.lowPct > MAX_LOW_PCT                              -> (current - STEP_DOWN).coerceAtLeast(floor)
-        stats.inRangePct >= TARGET_TIR_PCT && stats.highPct > 0 -> (current + STEP_UP).coerceAtMost(ceil)
         stats.highPct > MAX_HIGH_PCT                            -> (current + STEP_UP * 1.5).coerceAtMost(ceil)
+        stats.inRangePct >= TARGET_TIR_PCT &&
+            stats.highPct >= MIN_HIGH_FOR_UPSTEP                -> (current + STEP_UP).coerceAtMost(ceil)
         else                                                    -> {
             // Only decay when genuinely in good control — high time minimal AND no lows.
             // If still running meaningful high time, hold position — don't decay and undo

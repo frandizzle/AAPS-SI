@@ -85,18 +85,51 @@ class CircadianLearner @Inject constructor(
 
     // ── Public outputs ────────────────────────────────────────────────────────
 
-    /** ISF multiplier for current hour (0.7–1.5). >1.0 = less aggressive ISF */
-    fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        isfState.get(dow, hour).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+    /** ISF multiplier for current hour (0.7–1.5). >1.0 = less aggressive ISF.
+     *  Staleness-attenuated: after STALENESS_THRESHOLD_DAYS of no substantive updates,
+     *  the deviation from 1.0 is halved (lean toward the safe default when learning is
+     *  stale — physiology shifts, site changes, illness recovery, time-zone moves). */
+    fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double {
+        val raw = isfState.get(dow, hour)
+        return applyStalenessAttenuation(raw).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+    }
 
-    /** Basal multiplier for current hour (0.5–1.5) */
-    fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        basalState.get(dow, hour).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+    /** Basal multiplier for current hour (0.5–1.5). Staleness-attenuated, see isfMultiplier. */
+    fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double {
+        val raw = basalState.get(dow, hour)
+        return applyStalenessAttenuation(raw).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+    }
 
     /** Aggressiveness ceiling for current hour (0.6–1.2).
-     *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling) */
+     *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling).
+     *  NOT staleness-attenuated: the ceiling is a safety guard rail — if it's been
+     *  pulled DOWN (toward 1.0 means LESS protective), staleness-blending would weaken
+     *  the rail when we have least evidence to do so. Hold the rail as-is. */
     fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow()): Double =
         aggrState.get(dow, hour).coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
+
+    // ── Staleness attenuation ────────────────────────────────────────────────
+    // After a long gap with no substantive updates (illness, hiatus, sensor failure,
+    // travel/timezone change), the learned multipliers may reflect a physiological
+    // state the user is no longer in. Rather than reset them outright — which discards
+    // good information that probably remains mostly valid — attenuate the deviation
+    // from 1.0 by 50% once the staleness threshold is crossed. This biases dosing
+    // toward the profile defaults (the safer prior) while preserving the learned
+    // structure for fast recovery once fresh data flows again.
+    //
+    // Single binary threshold rather than a gradient — simple to reason about and
+    // doesn't oscillate around a boundary. lastSubstantiveUpdateMs is bumped at the
+    // end of update() whenever any of isfState/basalState/aggrState was replaced.
+    private fun applyStalenessAttenuation(raw: Double): Double {
+        if (lastSubstantiveUpdateMs <= 0L) return raw
+        val ageMs = System.currentTimeMillis() - lastSubstantiveUpdateMs
+        return if (ageMs > STALENESS_THRESHOLD_MS) {
+            // raw=1.2, stale → 1.1 ; raw=0.85, stale → 0.925 ; raw=1.0 unchanged
+            1.0 + (raw - 1.0) * 0.5
+        } else {
+            raw
+        }
+    }
 
     // Last basal learning signal for SI tab display
     var lastBasalSignal:  String = "No signal yet"
@@ -112,6 +145,18 @@ class CircadianLearner @Inject constructor(
     private var lastPenaltyMs: Long = 0L
     private var lastPenaltyWasFasting: Boolean = false
     private var lastPenaltyReason: String = "penalty"  // used in cooldown note label
+    // Last time any of isfState/basalState/aggrState was substantively updated (an EWMA
+    // write or penalty write). Bumped at the end of update() when any state reference
+    // changed, and reset when individual state classes are reset. Drives staleness
+    // attenuation in the multiplier accessors — see applyStalenessAttenuation.
+    // Persisted across app restarts so the threshold reflects real elapsed time.
+    private var lastSubstantiveUpdateMs: Long = 0L
+    // Timezone offset (minutes from UTC) at the time of last restore. Compared against
+    // the device's current offset on restore to detect travel/DST shifts that would
+    // invalidate the per-hour bucket assumptions (hours are keyed by local wall time).
+    // No automatic state reset — too invasive — but a warning is logged so the user
+    // can decide whether to reset learning manually.
+    private var lastTimezoneOffsetMin: Int = 0
     // Hour-start multiplier snapshot — captured once when the nudge fires for the first time
     // in a given hour. Used as "was" baseline so the display shows cumulative learning
     // within the hour rather than a single per-cycle step.
@@ -256,18 +301,36 @@ class CircadianLearner @Inject constructor(
             // One-time low guard penalty — 20% ISF mult and basal mult reduction at this hour.
             // Only fires once per low event. Tells the learner "too much insulin at this hour".
             // Does NOT keep firing so recovery BG behaviour doesn't compound the penalty.
+            //
+            // Compression-gated: a sensor compression artifact (e.g. sleeping on the sensor)
+            // produces a BG signature that looks exactly like a real fasting low to a naive
+            // detector. Without this gate, repeated compression at the same hour bucket
+            // (same sleep position, same time of night) compounds: each artifact bucket-down,
+            // night after night, until that hour delivers far too little insulin and the user
+            // hyperglycaemias when compression doesn't happen. We rely on the shape-based
+            // isLikelyCompression() heuristic to skip the penalty in those cases.
+            // Note: on the FIRST cycle of a low, bgHistory may not yet have enough samples to
+            // diagnose compression — the check is best-effort. Detection improves on cycles 2+
+            // and on repeated compression events at the same hour.
             if (!lowGuardPenaltyFired) {
-                lowGuardPenaltyFired = true
-                val d = dow.coerceIn(0, 6)
-                val prevIsf = isfState.days[d].get(hour)
-                val prevBas = basalState.days[d].get(hour)
-                val penalisedIsf = (prevIsf * 0.90).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                val penalisedBas = (prevBas * 0.90).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                isfState   = isfState.updatedDayOnly(dow, hour, penalisedIsf, 1.0)
-                basalState = basalState.updatedDayOnly(dow, hour, penalisedBas, 1.0)
-                aapsLogger.debug(LTag.APS,
-                                 "LowGuard penalty h=$hour: ISF mult ${"%.3f".format(prevIsf)}→${"%.3f".format(penalisedIsf)} " +
-                                     "basal mult ${"%.3f".format(prevBas)}→${"%.3f".format(penalisedBas)}")
+                if (isLikelyCompression(targetMgdl, lowGuardMgdl)) {
+                    // Mark fired to avoid re-checking each cycle while BG remains low.
+                    lowGuardPenaltyFired = true
+                    aapsLogger.debug(LTag.APS,
+                                     "LowGuard penalty h=$hour: SKIPPED — shape suggests compression low, learner protected")
+                } else {
+                    lowGuardPenaltyFired = true
+                    val d = dow.coerceIn(0, 6)
+                    val prevIsf = isfState.days[d].get(hour)
+                    val prevBas = basalState.days[d].get(hour)
+                    val penalisedIsf = (prevIsf * 0.90).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                    val penalisedBas = (prevBas * 0.90).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                    isfState   = isfState.updatedDayOnly(dow, hour, penalisedIsf, 1.0)
+                    basalState = basalState.updatedDayOnly(dow, hour, penalisedBas, 1.0)
+                    aapsLogger.debug(LTag.APS,
+                                     "LowGuard penalty h=$hour: ISF mult ${"%.3f".format(prevIsf)}→${"%.3f".format(penalisedIsf)} " +
+                                         "basal mult ${"%.3f".format(prevBas)}→${"%.3f".format(penalisedBas)}")
+                }
             }
         } else {
             // BG recovered above low guard — reset so penalty can fire again next low
@@ -318,6 +381,11 @@ class CircadianLearner @Inject constructor(
 
         // Only persist if any EWMA state was actually updated this cycle
         if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr) {
+            // Mark this as a substantive learning update — drives staleness attenuation
+            // on the next read of any multiplier. Bumping inside the gate (rather than
+            // every cycle) means a long period with no learning correctly registers as
+            // stale even if update() is being called continuously.
+            lastSubstantiveUpdateMs = nowMs
             persist()
         }
     }
@@ -380,7 +448,12 @@ class CircadianLearner @Inject constructor(
                 ep.basalDeviationU += (actualBasalU / 12.0) - per5
             }
             val delta = glucoseStatus.shortAvgDelta
-            val targetMgdl = iobArray.firstOrNull()?.let { 99.0 } ?: 99.0  // fallback; ideally thread targetMgdl through
+            // Use the real targetMgdl threaded in via the function parameter, not the
+            // hardcoded 99 mg/dL fallback that used to live here. Previous bug: a local
+            // `val targetMgdl = iobArray.firstOrNull()?.let { 99.0 } ?: 99.0` shadowed
+            // the outer parameter, making the entire "ground truth" ISF episode resolver
+            // judge nearTarget/overshoot against 99 mg/dL regardless of the user's actual
+            // target. Removed — the outer parameter is now visible at this scope.
             val isStable = abs(delta) <= EPISODE_STABLE_DELTA
             val nearTarget = abs(bg - targetMgdl) <= EPISODE_FULL_RESOLVE_BAND
             if (isStable && nearTarget) ep.stableMinutes     += 5 else ep.stableMinutes     = 0
@@ -976,7 +1049,14 @@ class CircadianLearner @Inject constructor(
             lastHardLowPenaltyMs = nowMs
             lastPenaltyWasFasting = isFasting
 
-            if (isNewLowEvent) {
+            // Compression-gated penalty — see lowGuard one-time penalty for rationale.
+            // Skip the entire penalty if shape suggests a sensor compression artifact rather
+            // than a real fasting low. Without this, repeated compression at the same hour
+            // bucket (same sleep position, same hour every night) trains that hour to deliver
+            // less insulin, producing real hyperglycaemia on nights without compression.
+            val compressionSuspected = isLikelyCompression(targetMgdl, lowGuardMgdl)
+
+            if (isNewLowEvent && !compressionSuspected) {
                 // Short term: 20% ceiling cut — once per event
                 val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
                 aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -992,6 +1072,9 @@ class CircadianLearner @Inject constructor(
                                  "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
                                      "fasting=$isFasting → ceil=%.3f basal %.4f→%.4f isf %.4f→%.4f"
                                          .format(aggrState.get(dow, hour), prevBasMult, nudgedBasMult, prevIsfMult, nudgedIsfMult))
+            } else if (isNewLowEvent && compressionSuspected) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} — SKIPPED, shape suggests compression low, learner protected")
             } else {
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour HARD_LOW (ongoing, gated) bg=${"%.1f".format(bg)} → no further penalty until next event"
@@ -1010,6 +1093,15 @@ class CircadianLearner @Inject constructor(
             bg >= lowGuardMgdl && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
             delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
+            // Compression-gated — see lowGuard/hard-low for rationale. A compression artifact
+            // produces a rapid fall toward (and past) the low guard; if the shape matches the
+            // compression signature, suppress the soft-low penalty so the artifact doesn't
+            // train this hour bucket toward less insulin.
+            if (isLikelyCompression(targetMgdl, lowGuardMgdl)) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour SOFT_LOW_APPROACH bg=$bg delta=$delta — SKIPPED, shape suggests compression low, learner protected")
+                return
+            }
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             lastPenaltyMs   = System.currentTimeMillis()
@@ -1146,6 +1238,8 @@ class CircadianLearner @Inject constructor(
                 put("isf",   isfState.toJson())
                 put("basal", basalState.toJson())
                 put("aggr",  aggrState.toJson())
+                put("lastSubstantiveUpdateMs", lastSubstantiveUpdateMs)
+                put("lastTimezoneOffsetMin",   currentTimezoneOffsetMin())
             }
             preferences.put(StringKey.ApsSmartInsulinCircadianState, json.toString())
         } catch (e: Exception) {
@@ -1177,11 +1271,35 @@ class CircadianLearner @Inject constructor(
             isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
             basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
             aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
-            aapsLogger.debug(LTag.APS, "CircadianLearner restored (day-of-week)")
+
+            // Restore staleness/timezone tracking (missing in older saves → 0L is fine,
+            // no staleness applied until the first new update)
+            lastSubstantiveUpdateMs = json.optLong("lastSubstantiveUpdateMs", 0L)
+            val savedTzOffsetMin    = json.optInt("lastTimezoneOffsetMin", Int.MIN_VALUE)
+            val currentTzOffsetMin  = currentTimezoneOffsetMin()
+            if (savedTzOffsetMin != Int.MIN_VALUE && savedTzOffsetMin != currentTzOffsetMin) {
+                val deltaHours = (currentTzOffsetMin - savedTzOffsetMin) / 60.0
+                aapsLogger.error(
+                    LTag.APS,
+                    "CircadianLearner: TIMEZONE CHANGE detected — was UTC${if (savedTzOffsetMin >= 0) "+" else ""}${savedTzOffsetMin / 60.0}h, " +
+                        "now UTC${if (currentTzOffsetMin >= 0) "+" else ""}${currentTzOffsetMin / 60.0}h (Δ${"%+.1f".format(deltaHours)}h). " +
+                        "Per-hour buckets are keyed to LOCAL wall time. Buckets will be addressed by the new local hour " +
+                        "from now on — bucket data is preserved but a bucket trained on physiology at one local hour will " +
+                        "now apply at a different physiological time of day. Consider calling resetIsf() / resetBasal() / " +
+                        "resetAggr() if the time shift is large or persistent."
+                )
+            }
+            lastTimezoneOffsetMin = currentTzOffsetMin
+
+            aapsLogger.debug(LTag.APS, "CircadianLearner restored (day-of-week, lastUpdate=$lastSubstantiveUpdateMs, tzOffset=$currentTzOffsetMin)")
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner restore failed: ${e.message}")
         }
     }
+
+    /** Current timezone offset from UTC in minutes (positive = east of UTC). */
+    private fun currentTimezoneOffsetMin(): Int =
+        java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000
 
     /**
      * Migrate a flat 24h JSON object to a [DayOfWeekCircadianState].
@@ -1250,11 +1368,18 @@ class CircadianLearner @Inject constructor(
      *   dosingISF = profileISF / isfMult
      *   → isfMult UP   → dosingISF DOWN → MORE insulin per BG gap (more aggressive)
      *   → isfMult DOWN → dosingISF UP   → LESS insulin per BG gap (less aggressive)
+     *
+     * Outcome handling (must match PdpLearner.recordEpisodeOutcome bands):
+     *   PERFECT / GOOD / PARTIAL    → hold
+     *   MILD_OVER                    → small DOWN (sub-target landing without guard breach)
+     *   OVERSHOT                     → DOWN
+     *   SEVERE_LOW                   → strong DOWN
+     *   MISSED                       → UP
      */
     fun nudgeIsfFromPdpEpisode(
         hour:    Int,
         dow:     Int = currentDow(),
-        outcome: String  // "PERFECT", "GOOD", "PARTIAL", "MISSED", "OVERSHOT", "SEVERE_LOW"
+        outcome: String  // "PERFECT", "GOOD", "PARTIAL", "MILD_OVER", "MISSED", "OVERSHOT", "SEVERE_LOW"
     ) {
         val d        = dow.coerceIn(0, 6)
         val h        = hour.coerceIn(0, 23)
@@ -1268,6 +1393,15 @@ class CircadianLearner @Inject constructor(
                 Pair(
                     (isfCurr * 1.03).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
                     (basCurr * 1.03).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                )
+            }
+            "MILD_OVER"  -> {
+                // Sub-target landing without guard breach. Small step DOWN on both mults —
+                // gentler than OVERSHOT because no guard tripped, but still in the safe
+                // direction since the episode over-delivered (BG ended below target).
+                Pair(
+                    (isfCurr * 0.985).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
+                    (basCurr * 0.985).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                 )
             }
             "OVERSHOT"   -> {
@@ -1427,5 +1561,13 @@ class CircadianLearner @Inject constructor(
         // General
         private const val COB_THRESHOLD_G = 5.0   // ignore cycles with active carbs
         private const val MAX_HISTORY     = 30     // ring buffer size
+
+        // Staleness threshold: when no substantive update has happened in this many days,
+        // multiplier accessors halve the deviation from 1.0 (lean toward profile defaults).
+        // 21 days is conservative — long enough that genuine multi-week patterns aren't
+        // accidentally attenuated, short enough to catch real physiological shifts
+        // (illness recovery, season change, training cycle, weight change, travel).
+        private const val STALENESS_THRESHOLD_DAYS = 21L
+        private const val STALENESS_THRESHOLD_MS   = STALENESS_THRESHOLD_DAYS * 24L * 60L * 60L * 1000L
     }
 }

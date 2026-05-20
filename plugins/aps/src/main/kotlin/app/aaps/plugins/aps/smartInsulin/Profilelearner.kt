@@ -68,14 +68,24 @@ class ProfileLearner @Inject constructor(
         // than glycemic index.
         private val PEAK_LEARNING_MODES = setOf(MealMode.FASTING, MealMode.LOW_CARB)
 
-        // Modes that contribute to DIA learning. FASTING-only because DIA is observed as
-        // "BG returned to baseline after X minutes" — any carb tail in a meal/UAM/low-carb
-        // mode adds upward glucose flux that hides the late insulin tail, producing a
-        // systematically truncated DIA reading. Only fasting corrections give a clean
-        // signal. The per-mode `diaMinutes` field on non-FASTING profiles is retained for
-        // schema compatibility but is no longer updated and should not be consulted by
-        // consumers — `getEffectiveProfile(mode)` returns the FASTING DIA universally.
-        private val DIA_LEARNING_MODES = setOf(MealMode.FASTING)
+        // DIA learning has been retired. The observable previously used — "BG returned
+        // to pre-bolus baseline after X minutes" — systematically underestimates
+        // pharmacokinetic DIA because counter-regulation, ongoing basal, and sub-noise
+        // late-tail activity all mask the long pharmacokinetic tail. After clamping to
+        // the DIA_MIN_MINUTES floor (240 min), the learner provided essentially no signal:
+        // most observations either clamped to the floor or were rejected by the peak/DIA
+        // gap check. In practice the "learned" DIA was the floor constant.
+        //
+        // DIA is now treated as a profile-derived value (iCfg.dia). The diaMinutes field
+        // on LearnedInsulinProfile is seeded from the profile at construction/reset and
+        // never updated by observeBolusCurve. Peak learning continues normally for the
+        // modes listed in PEAK_LEARNING_MODES.
+        //
+        // Implementation: leaving DIA_LEARNING_MODES empty makes the DIA EWMA branch in
+        // observeBolusCurve unreachable for any mode. The branch itself is preserved as a
+        // no-op so the diff is minimal and a future correctly-designed DIA observable can
+        // be slotted back in without restructuring.
+        private val DIA_LEARNING_MODES = emptySet<MealMode>()
     }
 
     init {

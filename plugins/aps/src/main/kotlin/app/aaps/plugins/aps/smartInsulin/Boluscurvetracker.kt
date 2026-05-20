@@ -80,6 +80,16 @@ class BolusCurveTracker @Inject constructor(
     companion object {
         private const val MIN_TRACK_IOB_U        = 0.3
         private const val MIN_BOLUS_SPIKE_U      = 0.3   // IOB must rise ≥0.3U in one cycle to count as a new bolus
+        // The new bolus must constitute at least this fraction of total IOB to start a track.
+        // Without this gate, a small correction on top of decaying meal IOB would start a
+        // "FASTING" peak/DIA track whose curve is the superposition of the new bolus AND the
+        // residual prior bolus. Peak velocity timing and DIA endpoint would both be biased
+        // toward the prior bolus's pharmacokinetics rather than the new one's, contaminating
+        // per-mode learning. Requiring the new bolus to dominate IOB ensures the observed
+        // curve mostly reflects the bolus we're trying to characterise.
+        // Threshold of 0.6 means: new bolus ≥ 60% of total IOB, prior IOB ≤ 40%. Errs toward
+        // collecting cleaner samples at the cost of skipping some learning opportunities.
+        private const val MIN_NEW_BOLUS_FRACTION = 0.6
         private const val RECOVERY_MGDL          = 12.0  // ~0.7 mmol recovery above nadir
         // Minimum drop below bgAtStart for the nadir to count as a real insulin trough.
         // Fasting requires a meaningful drop (clean signal). Meal/UAM modes allow a smaller
@@ -211,7 +221,14 @@ class BolusCurveTracker @Inject constructor(
             // Require IOB to have risen by at least MIN_BOLUS_SPIKE_U since last cycle
             val iobSpike = currentIob - prevIob
             prevIob = currentIob
-            if (iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U) {
+            // IOB-superposition guard: refuse to start a track when the new bolus is a small
+            // fraction of total IOB (i.e. a lot of residual prior-bolus IOB is already on
+            // board). The post-bolus BG curve in that case reflects the superposition of
+            // multiple boluses, so peak velocity timing and DIA endpoint would both be
+            // biased by the prior bolus's pharmacokinetics rather than this one's.
+            val newBolusFraction = if (currentIob > 0.0) iobSpike / currentIob else 0.0
+            val priorIobDominates = newBolusFraction < MIN_NEW_BOLUS_FRACTION
+            if (iobSpike >= MIN_BOLUS_SPIKE_U && currentIob >= MIN_TRACK_IOB_U && !priorIobDominates) {
                 tracking        = true
                 trackStartMs    = nowMs
                 trackMode       = mealMode
@@ -226,7 +243,10 @@ class BolusCurveTracker @Inject constructor(
                 curveHistory.add(nowMs to smoothedBg)
                 stateDirty      = true
                 aapsLogger.debug(LTag.APS,
-                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg (smoothed=$smoothedBg)")
+                                 "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} newFrac=${"%.2f".format(Locale.US, newBolusFraction)} bg=$currentBg (smoothed=$smoothedBg)")
+            } else if (iobSpike >= MIN_BOLUS_SPIKE_U && priorIobDominates) {
+                aapsLogger.debug(LTag.APS,
+                                 "BolusCurveTracker: skipping start — new bolus only ${"%.0f".format(Locale.US, newBolusFraction * 100)}% of IOB (need ≥${"%.0f".format(Locale.US, MIN_NEW_BOLUS_FRACTION * 100)}%) — prior IOB would contaminate curve")
             }
             // prevIob already updated above — no else branch needed
             if (stateDirty) saveState()

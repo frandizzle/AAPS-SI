@@ -73,17 +73,50 @@ class BasalLearner @Inject constructor(
         private const val K_SAMPLES                = "samples"
         private const val K_TS                     = "ts"
         private const val K_BG                     = "bg"
+        // Staleness: when no learning step has fired for this long, multiplierClamped
+        // attenuates the deviation from 1.0 by 50%. Addresses BasalLearner's structural
+        // "stable but wrong attractor" — if gate conditions stop being met (mealy days,
+        // illness, sensor noise), the existing multiplier freezes at whatever value it
+        // last reached. Staleness attenuation makes a frozen-but-undertrained value
+        // gracefully decay toward the profile default rather than persist indefinitely.
+        //
+        // Mirrors the CircadianLearner staleness logic. Threshold and depth chosen
+        // symmetric (21d, 50% attenuation) so the two learners age out at the same rate;
+        // the blend formula in SmartInsulinPlugin will naturally tip toward Circadian as
+        // both stale, leaving the profile defaults — the safe prior — in charge if both
+        // learners are stale.
+        private const val STALENESS_THRESHOLD_DAYS = 21L
+        private const val STALENESS_THRESHOLD_MS   = STALENESS_THRESHOLD_DAYS * 24L * 60L * 60L * 1000L
     }
     // ── Public API ────────────────────────────────────────────────────────────
     val multiplierClamped: Double
         get() {
             val dow   = currentDow()
             val blend = (daySampleCount[dow].toDouble() / MIN_DAY_SAMPLES_FOR_BLEND).coerceIn(0.0, 1.0)
-            return (globalMultiplier * (1.0 - blend) + dayMultipliers[dow] * blend)
-                .coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+            val raw   = globalMultiplier * (1.0 - blend) + dayMultipliers[dow] * blend
+            // Staleness-attenuated. When the gate conditions have stopped firing for
+            // STALENESS_THRESHOLD_MS, the learned value freezes at whatever it last
+            // reached — possibly wrong, since the population of observations that
+            // produced it may no longer be representative. Pull the deviation from 1.0
+            // by 50% so a stale BasalLearner gracefully fades out of the blend formula
+            // (in SmartInsulinPlugin) and lets Circadian + profile defaults take over.
+            // lastLearnMs == 0L on cold start → no attenuation (multiplier is 1.0 anyway).
+            val attenuated = applyStalenessAttenuation(raw)
+            return attenuated.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
         }
     val reasonSummary: String
-        get() = "basal_x%.2f(g=%.2f)".format(Locale.US, multiplierClamped, globalMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER))
+        get() {
+            val stale = lastLearnMs > 0L && (System.currentTimeMillis() - lastLearnMs) > STALENESS_THRESHOLD_MS
+            val staleMark = if (stale) " STALE" else ""
+            return "basal_x%.2f(g=%.2f)%s".format(Locale.US, multiplierClamped, globalMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER), staleMark)
+        }
+
+    /** Attenuate raw multiplier toward 1.0 when learning is stale. See companion staleness constants. */
+    private fun applyStalenessAttenuation(raw: Double): Double {
+        if (lastLearnMs <= 0L) return raw
+        val ageMs = System.currentTimeMillis() - lastLearnMs
+        return if (ageMs > STALENESS_THRESHOLD_MS) 1.0 + (raw - 1.0) * 0.5 else raw
+    }
     /**
      * @param bgMgdl         Current BG mg/dL
      * @param deltaMgdl      5-min BG delta mg/dL

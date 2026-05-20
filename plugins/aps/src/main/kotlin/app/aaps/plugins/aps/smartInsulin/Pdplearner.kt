@@ -231,24 +231,22 @@ class PdpLearner @Inject constructor(
      *
      * An episode opens when PDP starts blending and closes when blend returns to 0
      * (BG resolved and pathway counters reset). The outcome tells the learner whether
-     * the overall dosing decision during the episode was correct:
+     * the overall dosing decision during the episode was correct.
      *
-     * ## Outcome scoring
+     * ## Outcome bands (relative to target)
      *
-     * PERFECT landing (no low, BG ends in target–5.5 mmol):
-     *   → Gentle positive reinforcement on strength and blend — "this was right"
+     * SEVERE_LOW       : nadir crossed lowGuard               → strong DOWN nudge
+     * OVERSHOT         : nadir crossed warnGuard (above lowG) → DOWN nudge
+     * MILD_OVER        : landing < target − 0.3, no guard hit → small DOWN nudge
+     * PERFECT          : landing within ±0.3 of target        → HOLD
+     * GOOD             : landing in (target+0.3, target+0.5]  → tiny UP nudge
+     * PARTIAL          : landing in (target+0.5, target+1.0]  → small UP nudge
+     * MISSED           : landing > target + 1.0               → meaningful UP nudge
      *
-     * GOOD landing (no low, BG ends in 5.5–6.0 mmol):
-     *   → Very small positive nudge — could have been slightly more aggressive
-     *
-     * MISSED (BG still above 6.5 mmol when episode closed, no low):
-     *   → Nudge strength and blend UP — PDP didn't deliver enough
-     *
-     * OVERSHOT into warnGuard:
-     *   → Nudge strength and blend DOWN — PDP was too aggressive
-     *
-     * OVERSHOT into lowGuard:
-     *   → Stronger pull down — significant over-correction
+     * MILD_OVER was added to fix a classification bug where any sub-target landing
+     * that didn't trip a guard was scored as GOOD and received a +nudge UP — training
+     * more aggression for landings that were already below target. See in-line comment
+     * on the classifier for details.
      *
      * ## Fade scoring
      *
@@ -279,74 +277,94 @@ class PdpLearner @Inject constructor(
         val slot = hours[h]
 
         // ── Classify outcome ─────────────────────────────────────────────────
+        // Bands (relative to target):
+        //   SEVERE_LOW     : nadir < lowGuard                  → strong DOWN
+        //   OVERSHOT       : nadir < warnGuard (above lowG)    → DOWN
+        //   MILD_OVER      : landing < target − 0.3, no guard  → small DOWN  ← NEW
+        //   PERFECT        : landing within ±0.3 of target     → HOLD
+        //   GOOD           : landing in (target+0.3, target+0.5]  → tiny UP
+        //   PARTIAL        : landing in (target+0.5, target+1.0]  → small UP
+        //   MISSED         : landing > target + 1.0            → meaningful UP
+        //
+        // PREVIOUS BUG: goodLanding was defined as `!overshot && !perfectLanding &&
+        // landingBg ≤ target + 0.5`. The lower bound was missing — so any sub-target
+        // landing that didn't trip a guard (e.g. target − 0.4) qualified as GOOD and
+        // received a +nudge UP, training MORE aggression for landings that were already
+        // below target. The fix tightens GOOD to a strict above-target band and routes
+        // sub-target-but-safe landings to MILD_OVER (small DOWN nudge instead).
         val severeOvershot = nadirBgMmol < lowGuardMmol
         val overshot       = nadirBgMmol < warnGuardMmol
-        // Perfect: landed within ±0.3 mmol of target, no low at all
         val perfectLanding = !overshot
             && landingBgMmol >= (targetMmol - LANDING_PERFECT_BAND_MMOL)
             && landingBgMmol <= (targetMmol + LANDING_PERFECT_BAND_MMOL)
-        // Good: landed within target + 0.5 mmol (slightly high but acceptable)
-        val goodLanding    = !overshot && !perfectLanding
+        // Sub-target, but no guard tripped. The system over-delivered slightly even though
+        // BG didn't enter the warn/low zone. Treat as a small over-correction signal.
+        val mildOver       = !overshot && !perfectLanding
+            && landingBgMmol < (targetMmol - LANDING_PERFECT_BAND_MMOL)
+        // GOOD now strictly above the perfect band's upper edge AND within +0.5 of target.
+        val goodLanding    = !overshot && !perfectLanding && !mildOver
+            && landingBgMmol > (targetMmol + LANDING_PERFECT_BAND_MMOL)
             && landingBgMmol <= (targetMmol + LANDING_GOOD_HI_OFFSET)
-        // Missed: still more than 1.0 mmol above target when episode closed
         val missed         = !overshot && landingBgMmol > (targetMmol + LANDING_MISS_OFFSET)
+        // PARTIAL = the band between GOOD's ceiling and MISSED's floor: (+0.5, +1.0]
+        val partialLanding = !overshot && !perfectLanding && !goodLanding && !missed && !mildOver
+            && landingBgMmol > (targetMmol + LANDING_GOOD_HI_OFFSET)
+            && landingBgMmol <= (targetMmol + LANDING_MISS_OFFSET)
         val longEpisode    = durationMins > 120.0
 
         val outcomeLabel = when {
             severeOvershot -> "SEVERE_LOW"
             overshot       -> "OVERSHOT"
+            mildOver       -> "MILD_OVER"
             perfectLanding -> "PERFECT"
             goodLanding    -> "GOOD"
             missed         -> "MISSED"
-            else           -> "PARTIAL"
+            partialLanding -> "PARTIAL"
+            else           -> "PARTIAL"  // catch-all — shouldn't be reachable but safe default
         }
 
         // ── Strength nudge ───────────────────────────────────────────────────
-        // Perfect → ZERO — settings are exactly right, don't change them
-        // Good    → tiny nudge up — slightly short of perfect, could be marginally more aggressive
-        // Partial → small nudge up — needed a bit more
-        // Missed  → meaningful nudge up — clearly not enough
-        // Overshot → pull down proportional to severity
         val strengthDelta = when {
             severeOvershot -> -0.40  // crossed low guard — significantly too aggressive
             overshot       -> -0.20  // crossed warn guard — too aggressive
+            mildOver       -> -0.08  // landed sub-target without guard breach — slight over
             perfectLanding -> 0.0    // perfect — settings are right, hold completely
-            goodLanding    -> +0.03  // slightly short, very small nudge
+            goodLanding    -> +0.03  // slightly above target, very small nudge UP
             missed         -> +0.18  // clearly needed more
-            else           -> +0.08  // partial (6.0–6.5) — needed a bit more
+            partialLanding -> +0.08  // partial (target+0.5 .. target+1.0) — needed a bit more
+            else           -> 0.0    // catch-all hold
         }
         val newStrengthTarget = (slot.strengthMult + strengthDelta).coerceIn(MIN_STRENGTH_MULT, MAX_STRENGTH_MULT)
         val newStrengthMult   = (slot.strengthMult + EPISODE_STRENGTH_ALPHA * (newStrengthTarget - slot.strengthMult))
             .coerceIn(MIN_STRENGTH_MULT, MAX_STRENGTH_MULT)
 
         // ── Blend nudge ──────────────────────────────────────────────────────
-        // Same logic as strength — perfect = 0, everything else nudges proportionally
         val blendDelta = when {
             severeOvershot -> -0.35  // crossed low guard — pull blend down hard
             overshot       -> -0.18  // crossed warn guard — meaningful pull down
+            mildOver       -> -0.06  // sub-target landing — small pull down
             perfectLanding -> 0.0    // perfect — hold blend steady
-            goodLanding    -> +0.02  // slightly short — very small nudge
+            goodLanding    -> +0.02  // slightly above target — very small nudge UP
             missed         -> +0.15  // clearly not enough blend
-            else           -> +0.06  // partial — needed a bit more blend
+            partialLanding -> +0.06  // partial — needed a bit more blend
+            else           -> 0.0
         }
         val newBlendTarget = (slot.blendMult + blendDelta).coerceIn(MIN_BLEND_MULT, MAX_BLEND_MULT)
         val newBlendMult   = (slot.blendMult + EPISODE_BLEND_ALPHA * (newBlendTarget - slot.blendMult))
             .coerceIn(MIN_BLEND_MULT, MAX_BLEND_MULT)
 
         // ── Fade nudge ───────────────────────────────────────────────────────
-        // Long episode + missed → fade too short (deviation resolved before BG corrected)
-        // Short episode + overshot → fade too long (kept blending after BG corrected)
-        // Perfect landing regardless of duration → fade was broadly correct, hold
-        // Fade scoring: perfect = hold; overshoot = shorten; miss = lengthen if slow
         val fadeDelta = when {
             severeOvershot              -> -0.20  // crossed low guard → shorten fade significantly
             overshot && !longEpisode    -> -0.12  // quick overshoot → fade dragged on too long
             overshot && longEpisode     -> -0.06  // slow overshoot → slight trim
+            mildOver                    -> -0.04  // sub-target — fade was slightly too long
             missed && longEpisode       -> +0.10  // BG slow to correct → extend fade
             missed && !longEpisode      -> +0.04  // quick miss → small nudge
             perfectLanding              -> 0.0    // perfect → hold fade completely
             goodLanding                 -> 0.0    // good → hold fade
-            else                        -> +0.03  // partial → slight fade extension
+            partialLanding              -> +0.03  // partial → slight fade extension
+            else                        -> 0.0
         }
         val newFadeTarget = (slot.fadeMult + fadeDelta).coerceIn(MIN_FADE_MULT, MAX_FADE_MULT)
         val newFadeMult   = (slot.fadeMult + EPISODE_FADE_ALPHA * (newFadeTarget - slot.fadeMult))
