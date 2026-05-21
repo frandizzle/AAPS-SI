@@ -68,4 +68,26 @@ interface SmartInsulinOverview {
 
     /** Clear any active announced meal. The loop reverts to observed-only ICE behaviour. */
     fun clearAnnouncedMeal()
+
+    /**
+     * Edit the macros and/or GI bucket of the currently-active announced meal,
+     * preserving its announce timestamp so absorption tracking continues from
+     * where it was. No-op if there is no active meal.
+     *
+     * Use this when the user discovers mid-meal that their initial macro
+     * estimate was wrong. A cancel + fresh announce would reset the absorption
+     * timer and double-count the early portion of the meal.
+     *
+     * @param carbsG new total carbohydrates in grams
+     * @param proteinG new total protein in grams
+     * @param fatG new total fat in grams
+     * @param giBucketName "FAST" / "MEDIUM" / "SLOW" (case-insensitive); unrecognised
+     *                     values keep the current bucket
+     */
+    fun editActiveMeal(
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String
+    )
 }

@@ -899,6 +899,11 @@ fun SmartInsulinScreen(
         // disabled by warmup/exercise/etc — the card itself shows WHY it's disabled.
         if (d.iceEnabled) { IceCard(d) }
 
+        // ── Active meal card ─────────────────────────────────────────────────────
+        // Renders when an announced meal is in progress. Edit fields pre-fill with
+        // current macros; Save replaces in place (timer preserved); Cancel clears.
+        if (d.isMealActive) { ActiveMealCard(d, plugin) }
+
         // ── ICE test-meal card ───────────────────────────────────────────────────
         // Debug/test surface for announcing meals to the loop. Allows exercising the
         // announced-meal pre-positioning logic in the emulator before SmartMealDialog
@@ -1469,6 +1474,187 @@ private fun IceSparkline(values: List<Double?>) {
                 }
             }
         }
+    }
+}
+
+// ── Active meal card ──────────────────────────────────────────────────────────
+//
+// Renders only when an announced meal is in progress. Provides:
+//   - Read-only header showing age + remaining macros + total window
+//   - Editable carbs / protein / fat inputs, pre-filled with current values
+//   - High / Medium / Low GI selector
+//   - "Save changes" → plugin.editActiveMeal() — replaces values, KEEPS the timer
+//   - "Cancel meal" → plugin.clearAnnouncedMeal() — wipes the announcement
+//
+// The fields use the LaunchedEffect-on-value-change pattern so the local
+// editable state stays in sync with FragmentData when the loop cycle updates,
+// but doesn't get stomped while the user is mid-typing.
+
+@Composable
+private fun ActiveMealCard(d: SmartInsulinPlugin.FragmentData, plugin: SmartInsulinPlugin) {
+    SiCard(title = "Active Meal", titleColor = StatusWarn) {
+
+        // ── Header line: age + remaining + window ───────────────────────────
+        val ageMin = d.activeMealAgeMinutes
+        val totalMin = d.activeMealTotalDurationMin
+        val remainingMin = (totalMin - ageMin).coerceAtLeast(0)
+        Text(
+            "Announced ${ageMin}min ago · ${remainingMin}min remaining of ${totalMin}min window",
+            fontSize = 12.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Originally entered: ${"%.0f".format(d.activeMealCarbsTotalG)}g carbs · " +
+                "${"%.0f".format(d.activeMealProteinTotalG)}g protein · " +
+                "${"%.0f".format(d.activeMealFatTotalG)}g fat",
+            fontSize = 11.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+
+        // ── Carbs editable field ────────────────────────────────────────────
+        var carbsText by rememberSaveable {
+            mutableStateOf("%.0f".format(d.activeMealCarbsTotalG))
+        }
+        LaunchedEffect(d.activeMealCarbsTotalG) {
+            carbsText = "%.0f".format(d.activeMealCarbsTotalG)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Carbs", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.OutlinedTextField(
+                value = carbsText,
+                onValueChange = { carbsText = it },
+                suffix = { Text("g") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                singleLine = true,
+                modifier = Modifier.width(110.dp)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+
+        // ── Protein editable field ──────────────────────────────────────────
+        var proteinText by rememberSaveable {
+            mutableStateOf("%.0f".format(d.activeMealProteinTotalG))
+        }
+        LaunchedEffect(d.activeMealProteinTotalG) {
+            proteinText = "%.0f".format(d.activeMealProteinTotalG)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Protein", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.OutlinedTextField(
+                value = proteinText,
+                onValueChange = { proteinText = it },
+                suffix = { Text("g") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                singleLine = true,
+                modifier = Modifier.width(110.dp)
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+
+        // ── Fat editable field ──────────────────────────────────────────────
+        var fatText by rememberSaveable {
+            mutableStateOf("%.0f".format(d.activeMealFatTotalG))
+        }
+        LaunchedEffect(d.activeMealFatTotalG) {
+            fatText = "%.0f".format(d.activeMealFatTotalG)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Fat", fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.OutlinedTextField(
+                value = fatText,
+                onValueChange = { fatText = it },
+                suffix = { Text("g") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                ),
+                singleLine = true,
+                modifier = Modifier.width(110.dp)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // ── GI bucket selector ──────────────────────────────────────────────
+        // Local state to allow editing the GI; initialized from current meal's bucket.
+        // Mapped High/Medium/Low ↔ FAST/MEDIUM/SLOW for display labels.
+        val initialGiIndex = when (d.activeMealGiBucketName) {
+            "FAST" -> 0
+            "SLOW" -> 2
+            else   -> 1
+        }
+        var giIndex by rememberSaveable(d.activeMealGiBucketName) {
+            mutableStateOf(initialGiIndex)
+        }
+        Text("Glycemic Index", fontSize = 13.sp,
+             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
+                if (giIndex == idx) {
+                    androidx.compose.material3.FilledTonalButton(
+                        onClick = { giIndex = idx },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(label, fontSize = 12.sp) }
+                } else {
+                    OutlinedButton(
+                        onClick = { giIndex = idx },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(label, fontSize = 12.sp) }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // ── Action buttons ──────────────────────────────────────────────────
+        Row(modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            // Save changes — edits in place, timer preserved
+            Button(
+                onClick = {
+                    val giName = when (giIndex) {
+                        0 -> "FAST"
+                        2 -> "SLOW"
+                        else -> "MEDIUM"
+                    }
+                    plugin.editActiveMeal(
+                        carbsG       = carbsText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealCarbsTotalG,
+                        proteinG     = proteinText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealProteinTotalG,
+                        fatG         = fatText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealFatTotalG,
+                        giBucketName = giName
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("Save changes") }
+
+            // Cancel meal — clears the announcement, wipes the timer
+            Button(
+                onClick = { plugin.clearAnnouncedMeal() },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer,
+                    contentColor   = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer
+                )
+            ) { Text("Cancel meal") }
+        }
+
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Save changes preserves the absorption timer. Cancel meal wipes the announcement " +
+                "entirely; the loop falls back to observed-only ICE.",
+            fontSize = 9.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 13.sp
+        )
     }
 }
 

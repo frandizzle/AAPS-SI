@@ -66,6 +66,41 @@ class AnnouncedMealManager @Inject constructor(
     }
 
     /**
+     * Replace the macros and/or GI bucket of the currently-active meal *without*
+     * resetting [AnnouncedMeal.announceTimestampMs]. Critical UX requirement: when
+     * the user realises mid-meal that they entered the wrong amount, they want to
+     * correct the number without losing the absorption progress already tracked.
+     * A naive cancel + re-announce would reset the timer and double-count the
+     * early absorption.
+     *
+     * No-op if there is no active meal.
+     *
+     * Validation: macros are coerced to ≥ 0; GI bucket name is parsed
+     * case-insensitively, falling back to the existing bucket if the input is
+     * unrecognised.
+     */
+    fun editActiveMeal(carbsG: Double, proteinG: Double, fatG: Double, giBucketName: String) {
+        val existing = _activeMeal.value ?: return
+        val newBucket = when (giBucketName.uppercase()) {
+            "FAST"   -> GiBucket.FAST
+            "MEDIUM" -> GiBucket.MEDIUM
+            "SLOW"   -> GiBucket.SLOW
+            else     -> existing.giBucket
+        }
+        val edited = existing.copy(
+            carbsG   = carbsG.coerceAtLeast(0.0),
+            proteinG = proteinG.coerceAtLeast(0.0),
+            fatG     = fatG.coerceAtLeast(0.0),
+            giBucket = newBucket
+            // announceTimestampMs deliberately preserved
+        )
+        aapsLogger.debug(LTag.APS,
+                         "AnnouncedMealManager: meal edited — carbs=${edited.carbsG}g protein=${edited.proteinG}g " +
+                             "fat=${edited.fatG}g GI=${edited.giBucket.label} (timer preserved)")
+        _activeMeal.value = edited
+    }
+
+    /**
      * Look up the expected ICE rate at the given moment.
      *
      * Returns 0.0 when there is no active meal, or when the active meal is

@@ -443,6 +443,19 @@ open class SmartInsulinPlugin @Inject constructor(
         announcedMealManager.clearMeal()
     }
 
+    /**
+     * Edit the macros / GI of the currently-active announced meal in place.
+     * Preserves the announce timestamp so absorption progress is not reset.
+     */
+    override fun editActiveMeal(
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String
+    ) {
+        announcedMealManager.editActiveMeal(carbsG, proteinG, fatG, giBucketName)
+    }
+
 
 
 
@@ -720,6 +733,14 @@ open class SmartInsulinPlugin @Inject constructor(
         val iceLearningBlocked:    Boolean,     // ICE is causing ISF/basal learners to pause
         val icePdpOverridden:      Boolean,     // PDP is forced off because ICE is driving
         val iceRecentMmol:         List<Double?>,  // last ~3h of ICE values (mmol/h) for sparkline
+        // -- Active announced meal (for the ActiveMealCard edit/cancel UI) -----
+        val isMealActive:          Boolean,        // true when an announced meal is in progress
+        val activeMealCarbsTotalG: Double,         // total grams as currently announced (post-edits)
+        val activeMealProteinTotalG: Double,
+        val activeMealFatTotalG:   Double,
+        val activeMealGiBucketName: String,        // "FAST" / "MEDIUM" / "SLOW", empty when none
+        val activeMealAgeMinutes:  Int,            // minutes since announcement
+        val activeMealTotalDurationMin: Int,       // expected total absorption window
     )
 
     fun fragmentData(): FragmentData {
@@ -943,6 +964,15 @@ open class SmartInsulinPlugin @Inject constructor(
                 driving && preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
             },
             iceRecentMmol         = iceTracker.snapshot.value?.recentHistory?.map { it.iceMmolPerHour } ?: emptyList(),
+            isMealActive             = announcedMealManager.activeMeal.value != null,
+            activeMealCarbsTotalG    = announcedMealManager.activeMeal.value?.carbsG ?: 0.0,
+            activeMealProteinTotalG  = announcedMealManager.activeMeal.value?.proteinG ?: 0.0,
+            activeMealFatTotalG      = announcedMealManager.activeMeal.value?.fatG ?: 0.0,
+            activeMealGiBucketName   = announcedMealManager.activeMeal.value?.giBucket?.name ?: "",
+            activeMealAgeMinutes     = announcedMealManager.activeMeal.value?.let {
+                ((dateUtil.now() - it.announceTimestampMs) / 60_000L).toInt().coerceAtLeast(0)
+            } ?: 0,
+            activeMealTotalDurationMin = announcedMealManager.activeMeal.value?.giBucket?.totalDurationMinutes ?: 0,
         )
     }
 
