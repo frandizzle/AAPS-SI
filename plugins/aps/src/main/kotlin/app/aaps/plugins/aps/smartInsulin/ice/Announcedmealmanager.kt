@@ -142,7 +142,7 @@ class AnnouncedMealManager @Inject constructor(
         val meal = _activeMeal.value ?: return null
         if (!meal.isActive(nowMs)) return null
         val elapsedMin = (nowMs - meal.announceTimestampMs) / 60_000.0
-        val fraction = (elapsedMin / meal.giBucket.totalDurationMinutes.toDouble()).coerceIn(0.0, 1.0)
+        val fraction = (elapsedMin / meal.effectiveTotalDurationMin.toDouble()).coerceIn(0.0, 1.0)
         val absorbed = fraction
         return MealRemaining(
             carbsG   = meal.carbsG   * (1.0 - absorbed),

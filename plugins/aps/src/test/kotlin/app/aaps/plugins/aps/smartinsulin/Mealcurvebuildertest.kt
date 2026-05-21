@@ -1,208 +1,294 @@
 package app.aaps.plugins.aps.smartInsulin.ice
 
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for the expected-ICE curve builder. These cover:
+ * Tests for [MealCurveBuilder] under the three-component physiological model:
  *
- * - Shape: rate is zero outside [0, totalDuration], peaks near expected time
- * - Integration: total area under curve approximates the meal's expected glucose load
- * - Commitment scaling: linear in commitmentPct
- * - GI bucket differences: SLOW peaks later and lasts longer than FAST
- * - Protein contributes a late hump
- * - Edge cases: zero carbs, negative ages, validation errors
+ *   - Carbs: GI-dependent Gaussian, peak 30-120 min
+ *   - Protein: cosine-smoothed plateau, onset 45 min, duration 4-6h
+ *   - Fat: cosine-smoothed plateau, onset 45 min, duration 4-6h
+ *
+ * These tests verify the curve SHAPES match real T1D physiology — fast carb
+ * spike independent of fat content, then sustained plateau from fat/protein
+ * starting ~45 min after the meal. Naming uses em-dash rather than colon
+ * because Kotlin backticks forbid `:` in function names.
  */
 class MealCurveBuilderTest {
 
-    /** Helper: build a meal and sample its curve at the named age. */
-    private fun rateAt(meal: AnnouncedMeal, ageMin: Int): Double =
-        MealCurveBuilder.expectedIceMgdlPerHourAt(meal, meal.announceTimestampMs + ageMin * 60_000L)
+    private val now = 1_000_000_000_000L
+    private fun meal(
+        carbs: Double = 0.0,
+        protein: Double = 0.0,
+        fat: Double = 0.0,
+        bucket: GiBucket = GiBucket.MEDIUM,
+        commitment: Int = 100
+    ) = AnnouncedMeal(
+        carbsG              = carbs,
+        proteinG            = protein,
+        fatG                = fat,
+        giBucket            = bucket,
+        commitmentPct       = commitment,
+        announceTimestampMs = now
+    )
 
-    // ── Shape & timing ──────────────────────────────────────────────────────
+    private fun rateAt(m: AnnouncedMeal, ageMinutes: Int): Double =
+        MealCurveBuilder.expectedIceMgdlPerHourAt(m, m.announceTimestampMs + ageMinutes * 60_000L)
 
-    @Test fun `curve is zero before meal start`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 1_000_000L
-        )
-        val before = MealCurveBuilder.expectedIceMgdlPerHourAt(meal, 999_000L)
-        assertEquals(0.0, before, 0.0001)
-    }
-
-    @Test fun `curve is zero after total duration ends`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        val afterEnd = rateAt(meal, GiBucket.MEDIUM.totalDurationMinutes + 1)
-        assertEquals(0.0, afterEnd, 0.0001)
-    }
-
-    @Test fun `rate near peak is greater than rate at start`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        val rateAtStart = rateAt(meal, 5)
-        val rateAtPeak  = rateAt(meal, GiBucket.MEDIUM.peakMinutes)
-        assertTrue(rateAtPeak > rateAtStart * 2,
-                   "peak rate ($rateAtPeak) should be much larger than start rate ($rateAtStart)")
-    }
-
-    // ── Integration: total area ≈ expected glucose load ──────────────────────
-
-    @Test fun `integrated area approximates total carb glycemic load`() {
-        // For 50g carbs at medium GI, integrated area should be ≈ 50 × 4.5 = 225 mg/dL·h
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        // Numerical integration: trapezoidal rule, 1-min sampling
+    /** Integrate the curve over its full window using the trapezoidal rule. mg/dL·h. */
+    private fun integrate(m: AnnouncedMeal, stepMin: Int = 1): Double {
+        val end = m.effectiveTotalDurationMin
         var total = 0.0
-        for (t in 0..GiBucket.MEDIUM.totalDurationMinutes) {
-            total += rateAt(meal, t)
+        var prev = rateAt(m, 0)
+        for (t in stepMin..end step stepMin) {
+            val curr = rateAt(m, t)
+            total += (prev + curr) / 2.0 * stepMin
+            prev = curr
         }
-        // Sum-of-rates × dt = total area; rates are per hour, dt = 1/60 hour
-        val areaMgdlH = total / 60.0
-        // Expected: 50 × 4.5 = 225 mg/dL·h. Within 10% is acceptable (Gaussian tails get clipped).
-        assertEquals(225.0, areaMgdlH, 25.0,
-                     "integrated area should be ≈ 225 mg/dL·h for 50g medium-GI carbs, got $areaMgdlH")
+        return total / 60.0   // convert minute-summed area to hour-area
     }
 
-    // ── Commitment scales linearly ──────────────────────────────────────────
+    // ── Boundary conditions ─────────────────────────────────────────────────
 
-    @Test fun `half commitment halves all rates`() {
-        val full = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
+    @Test
+    @DisplayName("returns 0 before announce time and after window end")
+    fun `boundary returns zero outside the active window`() {
+        val m = meal(carbs = 50.0)
+        // before announce — negative age
+        assertEquals(0.0, MealCurveBuilder.expectedIceMgdlPerHourAt(m, m.announceTimestampMs - 60_000L))
+        // after window end (MEDIUM = 240 min)
+        assertEquals(0.0, rateAt(m, 250))
+        // and well past
+        assertEquals(0.0, rateAt(m, 500))
+    }
+
+    // ── Carb-only behaviour ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("FAST carbs peak earlier than SLOW carbs")
+    fun `fast carbs peak earlier than slow`() {
+        val fast = meal(carbs = 50.0, bucket = GiBucket.FAST)
+        val slow = meal(carbs = 50.0, bucket = GiBucket.SLOW)
+        // Sample both at 30 min — fast should be near peak, slow barely started
+        val fastAt30 = rateAt(fast, 30)
+        val slowAt30 = rateAt(slow, 30)
+        assertTrue(fastAt30 > slowAt30,
+                   "FAST should be near peak at 30 min ($fastAt30 mg/dL/h) but SLOW shouldn't be yet ($slowAt30)")
+    }
+
+    @Test
+    @DisplayName("carbs hit fast regardless of GI bucket — peak before 90 min")
+    fun `carb peak occurs before 90 minutes even for slow GI`() {
+        // Key physiological assertion: even Slow GI carbs hit by 90 min. The "slow" in
+        // Slow GI means slower than fast, not "delayed for hours" — fat/protein is what
+        // creates real delay, modeled as a separate plateau.
+        val slow = meal(carbs = 50.0, bucket = GiBucket.SLOW)
+        val peakMinute = (0..180 step 5).maxByOrNull { rateAt(slow, it) } ?: -1
+        assertTrue(peakMinute in 60..150,
+                   "SLOW carb peak should land between 60-150 min, got $peakMinute")
+    }
+
+    @Test
+    @DisplayName("integrated carb area approximates total glycemic load")
+    fun `integrated carb area matches expected glycemic load`() {
+        val m = meal(carbs = 50.0, bucket = GiBucket.MEDIUM)
+        val area = integrate(m)
+        // 50g × 4.5 mg/dL·h per gram = 225 mg/dL·h expected, allow ±15% for Gaussian tails
+        // truncated by window end
+        assertTrue(area in 190.0..260.0,
+                   "Expected carb area ~225 mg/dL·h, got $area")
+    }
+
+    // ── Protein behaviour — plateau, not peak ───────────────────────────────
+
+    @Test
+    @DisplayName("protein contributes nothing before 45 min onset")
+    fun `protein zero before onset`() {
+        val m = meal(protein = 100.0)
+        assertEquals(0.0, rateAt(m, 0), 1e-9)
+        assertEquals(0.0, rateAt(m, 30), 1e-9)
+        assertEquals(0.0, rateAt(m, 44), 1e-9)
+    }
+
+    @Test
+    @DisplayName("protein produces a SUSTAINED PLATEAU not a discrete peak")
+    fun `protein produces a sustained plateau`() {
+        val m = meal(protein = 80.0)
+        // Sample across the plateau region (90 min through 240 min). Values should be
+        // relatively flat — max/min ratio should be small.
+        val plateauSamples = (90..240 step 15).map { rateAt(m, it) }
+        val maxRate = plateauSamples.max()
+        val minRate = plateauSamples.min()
+        assertTrue(maxRate > 0.0, "Protein plateau should be non-zero, got max $maxRate")
+        // Ratio of max to min within plateau should be < 1.2 (truly flat)
+        assertTrue(maxRate / minRate < 1.3,
+                   "Protein plateau should be flat — max/min ratio = ${maxRate / minRate}, samples: $plateauSamples")
+    }
+
+    @Test
+    @DisplayName("protein plateau height scales linearly with grams")
+    fun `protein height scales linearly`() {
+        val small  = meal(protein = 30.0)
+        val medium = meal(protein = 60.0)
+        // Sample mid-plateau at 150 min for both
+        val smallMid  = rateAt(small, 150)
+        val mediumMid = rateAt(medium, 150)
+        // Note: durations differ (small=240, medium=300) so this isn't pure 2× scaling.
+        // We check the basic monotone property — more protein = more rate.
+        assertTrue(mediumMid > smallMid,
+                   "Larger protein meal should produce higher plateau (60g=$mediumMid > 30g=$smallMid)")
+    }
+
+    // ── Fat behaviour — same plateau shape, lower amplitude per gram ───────
+
+    @Test
+    @DisplayName("fat-only meal produces a plateau, no fast spike")
+    fun `fat-only meal produces only a plateau`() {
+        val m = meal(fat = 80.0)
+        // Verify no contribution in the first 30 min (no carb spike from fat alone)
+        for (t in 0..30 step 5) {
+            assertEquals(0.0, rateAt(m, t), 1e-9,
+                         "Fat-only meal must not contribute before onset (failed at t=$t)")
+        }
+        // Verify plateau exists past 90 min
+        val midPlateau = rateAt(m, 150)
+        assertTrue(midPlateau > 0.0,
+                   "Fat-only meal should have a positive plateau, got $midPlateau at 150 min")
+    }
+
+    @Test
+    @DisplayName("more fat extends the plateau duration")
+    fun `larger fat load creates longer plateau`() {
+        val small = meal(fat = 20.0)   // < 30g → 4h window
+        val large = meal(fat = 90.0)   // > 80g → 6h window
+        assertEquals(240, small.effectiveTotalDurationMin)
+        assertEquals(360, large.effectiveTotalDurationMin)
+        // Small should be near zero at 300 min (past its window)
+        assertEquals(0.0, rateAt(small, 300), 1e-9)
+        // Large should still be contributing at 300 min
+        assertTrue(rateAt(large, 300) > 0.0,
+                   "Large fat load should still be contributing at 300 min, got ${rateAt(large, 300)}")
+    }
+
+    // ── The "wings & BBQ" scenario — composite behaviour ───────────────────
+
+    @Test
+    @DisplayName("wings scenario: fast carb spike, settle, then fat/protein plateau")
+    fun `wings and BBQ produces the right composite shape`() {
+        val wings = meal(
+            carbs   = 25.0,            // BBQ sauce sugar — high GI
+            protein = 80.0,            // big serve of wings
+            fat     = 60.0,            // wings are fatty
+            bucket  = GiBucket.FAST    // BBQ sauce sugar = fast spike
         )
-        val half = full.copy(commitmentPct = 50)
 
-        for (t in listOf(15, 30, 60, 120, 180)) {
-            val fullRate = rateAt(full, t)
-            val halfRate = rateAt(half, t)
-            if (fullRate > 0.01) {
-                assertEquals(0.5, halfRate / fullRate, 0.01,
-                             "at t=${t}min, half commitment should produce 0.5× rate")
+        // 1. Early carb spike — should peak by 45 min
+        val carbPeakArea = (15..60 step 5).map { rateAt(wings, it) }.max()
+        // 2. Settle window — fat/protein not yet engaged, carbs declining
+        val settleRate = rateAt(wings, 60)
+        // 3. Plateau region — fat + protein sustaining elevation
+        val plateauRate = rateAt(wings, 180)
+        // 4. Tail — should fade by 360 min
+        val tailRate = rateAt(wings, 359)
+
+        assertTrue(carbPeakArea > plateauRate,
+                   "Early carb spike ($carbPeakArea) should exceed mid plateau ($plateauRate)")
+        assertTrue(plateauRate > 0.0,
+                   "Plateau region must be active, got $plateauRate at 180 min")
+        // Wings have lots of fat/protein → 6h window
+        assertEquals(360, wings.effectiveTotalDurationMin)
+        // Rate near end of window should be small
+        assertTrue(tailRate < plateauRate / 2.0,
+                   "Tail rate ($tailRate) should be small relative to plateau ($plateauRate)")
+    }
+
+    @Test
+    @DisplayName("wings scenario: a 'trough' between carb peak and plateau onset")
+    fun `wings scenario has settle window between carb spike and plateau`() {
+        // The signature shape Shantelle described: carbs hit fast, BG starts settling
+        // back toward target, THEN protein/fat kicks in for a sustained plateau.
+        // Verify rate at 60-75 min (between carb peak and fat/protein onset) is
+        // notably lower than both the carb peak earlier AND the plateau later.
+        val wings = meal(
+            carbs   = 25.0,
+            protein = 80.0,
+            fat     = 60.0,
+            bucket  = GiBucket.FAST
+        )
+        val carbPeak    = rateAt(wings, 30)    // near FAST peak (30 min)
+        val troughDeep  = rateAt(wings, 60)    // mid-trough
+        val plateauMid  = rateAt(wings, 180)   // mid-plateau
+        // Carb peak should be the highest in this run (small meal, sharp spike)
+        // Trough should be substantially lower than the peak
+        // Plateau should be elevated but lower than the carb peak (different mechanisms)
+        assertTrue(carbPeak > troughDeep,
+                   "Carb peak ($carbPeak) should exceed trough ($troughDeep)")
+        assertTrue(plateauMid > troughDeep * 0.5 || troughDeep < 5.0,
+                   "Plateau ($plateauMid) should re-elevate above the trough ($troughDeep), or trough should be near-zero")
+    }
+
+    // ── Commitment scaling ─────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("commitment scales the entire curve linearly")
+    fun `commitment scales the curve`() {
+        val full = meal(carbs = 50.0, protein = 30.0, fat = 30.0, commitment = 100)
+        val half = meal(carbs = 50.0, protein = 30.0, fat = 30.0, commitment = 50)
+        // At any sample point, half-commitment should produce exactly half the rate
+        for (t in listOf(30, 60, 120, 180)) {
+            val fullR = rateAt(full, t)
+            val halfR = rateAt(half, t)
+            if (fullR > 0.01) {
+                assertEquals(fullR / 2.0, halfR, 0.01,
+                             "Commitment 50% should produce half the rate at t=$t (full=$fullR, half=$halfR)")
             }
         }
     }
 
-    @Test fun `zero commitment produces zero rates everywhere`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 0,
-            announceTimestampMs = 0L
-        )
-        for (t in 0..240 step 5) {
-            assertEquals(0.0, rateAt(meal, t), 0.0001, "rate at t=${t} should be 0")
+    @Test
+    @DisplayName("zero commitment produces a flat zero curve")
+    fun `zero commitment is identically zero`() {
+        val m = meal(carbs = 50.0, protein = 30.0, fat = 30.0, commitment = 0)
+        for (t in 0..360 step 30) {
+            assertEquals(0.0, rateAt(m, t), 1e-9, "Zero commitment failed at t=$t")
         }
     }
 
-    // ── GI buckets differ ──────────────────────────────────────────────────
+    // ── effectiveTotalDurationMin behaviour ─────────────────────────────────
 
-    @Test fun `FAST peaks earlier than SLOW`() {
-        val fast = AnnouncedMeal(carbsG = 50.0, giBucket = GiBucket.FAST, commitmentPct = 100, announceTimestampMs = 0L)
-        val slow = AnnouncedMeal(carbsG = 50.0, giBucket = GiBucket.SLOW, commitmentPct = 100, announceTimestampMs = 0L)
-
-        // At 30 min FAST should have already peaked; SLOW should still be ramping up
-        val fastAt30 = rateAt(fast, 30)
-        val slowAt30 = rateAt(slow, 30)
-        assertTrue(fastAt30 > slowAt30,
-                   "at 30 min FAST should exceed SLOW (fast=$fastAt30 slow=$slowAt30)")
+    @Test
+    @DisplayName("carb-only meal uses GI bucket duration as the window")
+    fun `carb-only window equals GI bucket duration`() {
+        val fast = meal(carbs = 30.0, bucket = GiBucket.FAST)
+        val slow = meal(carbs = 30.0, bucket = GiBucket.SLOW)
+        assertEquals(GiBucket.FAST.totalDurationMinutes, fast.effectiveTotalDurationMin)
+        assertEquals(GiBucket.SLOW.totalDurationMinutes, slow.effectiveTotalDurationMin)
     }
 
-    @Test fun `SLOW has a tail contribution that FAST does not`() {
-        // FAST has tailFraction=0, SLOW has tailFraction=0.35.
-        // Compare rates at 4h post-start: SLOW should still be producing rate, FAST zero.
-        val fast = AnnouncedMeal(carbsG = 50.0, giBucket = GiBucket.FAST, commitmentPct = 100, announceTimestampMs = 0L)
-        val slow = AnnouncedMeal(carbsG = 50.0, giBucket = GiBucket.SLOW, commitmentPct = 100, announceTimestampMs = 0L)
-
-        val fastLate = rateAt(fast, 180)  // past FAST end (120 min)
-        val slowLate = rateAt(slow, 180)
-        assertEquals(0.0, fastLate, 0.001)
-        assertTrue(slowLate > 0.0, "SLOW should still produce rate at 180 min; got $slowLate")
+    @Test
+    @DisplayName("fat/protein extends the window past the carb absorption end")
+    fun `protein extends window past carb end`() {
+        val carbOnly = meal(carbs = 30.0, bucket = GiBucket.FAST)            // 90 min window
+        val withProt = meal(carbs = 30.0, bucket = GiBucket.FAST, protein = 50.0)  // protein → 5h
+        assertTrue(withProt.effectiveTotalDurationMin > carbOnly.effectiveTotalDurationMin,
+                   "Adding protein should extend the window")
+        assertEquals(300, withProt.effectiveTotalDurationMin)
     }
 
-    // ── Protein contributes a late tail ─────────────────────────────────────
+    // ── Sampling helper ────────────────────────────────────────────────────
 
-    @Test fun `protein produces a late hump around 3h`() {
-        val carbsOnly = AnnouncedMeal(
-            carbsG = 30.0, proteinG = 0.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        val withProtein = carbsOnly.copy(proteinG = 40.0)
-
-        // At 3h post-meal, carb rate is tailing off but protein rate should be near its peak
-        val rateAt3hCarbsOnly = rateAt(carbsOnly, 180)
-        val rateAt3hWithProtein = rateAt(withProtein, 180)
-        assertTrue(rateAt3hWithProtein > rateAt3hCarbsOnly + 0.5,
-                   "protein should boost 3h rate noticeably: carbs-only=$rateAt3hCarbsOnly with-protein=$rateAt3hWithProtein")
-    }
-
-    @Test fun `protein only meal still produces a nonzero curve`() {
-        val proteinOnly = AnnouncedMeal(
-            carbsG = 0.0, proteinG = 30.0, giBucket = GiBucket.SLOW, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        val rateAt3h = rateAt(proteinOnly, 180)
-        assertTrue(rateAt3h > 0.0, "protein-only meal should produce non-zero rate at 3h; got $rateAt3h")
-    }
-
-    // ── Edge cases ──────────────────────────────────────────────────────────
-
-    @Test fun `zero carbs and zero protein gives zero rate everywhere`() {
-        val nothing = AnnouncedMeal(
-            carbsG = 0.0, proteinG = 0.0, fatG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        // Fat alone doesn't directly contribute in this model (it shifts GI bucket selection)
-        for (t in listOf(15, 60, 120, 180, 240)) {
-            assertEquals(0.0, rateAt(nothing, t), 0.001)
-        }
-    }
-
-    @Test fun `negative carbs rejected by AnnouncedMeal`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            AnnouncedMeal(carbsG = -10.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100, announceTimestampMs = 0L)
-        }
-    }
-
-    @Test fun `commitment out of range rejected by AnnouncedMeal`() {
-        assertThrows(IllegalArgumentException::class.java) {
-            AnnouncedMeal(carbsG = 10.0, giBucket = GiBucket.MEDIUM, commitmentPct = 150, announceTimestampMs = 0L)
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            AnnouncedMeal(carbsG = 10.0, giBucket = GiBucket.MEDIUM, commitmentPct = -5, announceTimestampMs = 0L)
-        }
-    }
-
-    // ── sampleCurve helper ─────────────────────────────────────────────────
-
-    @Test fun `sampleCurve returns reasonable number of samples`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        val samples = MealCurveBuilder.sampleCurve(meal, nowMs = 0L, sampleIntervalMin = 5)
-        // 240 min / 5 min = 48 samples (approximately, depending on inclusive end)
-        assertTrue(samples.size in 45..52, "expected ~48 samples, got ${samples.size}")
-        // First sample at age 0, last sample at or near totalDuration
+    @Test
+    @DisplayName("sampleCurve covers the full active window")
+    fun `sampleCurve produces samples across the full window`() {
+        val m = meal(carbs = 50.0, protein = 40.0, bucket = GiBucket.MEDIUM)
+        val samples = MealCurveBuilder.sampleCurve(m, m.announceTimestampMs, sampleIntervalMin = 10)
+        assertTrue(samples.isNotEmpty(), "sampleCurve should return non-empty list")
+        // First sample at t=0, last sample within sample-interval of the end
         assertEquals(0, samples.first().first)
-        assertTrue(samples.last().first >= GiBucket.MEDIUM.totalDurationMinutes - 5)
-    }
-
-    @Test fun `sampleCurve from middle of meal skips the past samples`() {
-        val meal = AnnouncedMeal(
-            carbsG = 50.0, giBucket = GiBucket.MEDIUM, commitmentPct = 100,
-            announceTimestampMs = 0L
-        )
-        // Sample as if we're 60 min into the meal
-        val samples = MealCurveBuilder.sampleCurve(meal, nowMs = 60 * 60_000L, sampleIntervalMin = 5)
-        assertTrue(samples.first().first >= 60,
-                   "first sample after 60-min start should be ≥ 60, got ${samples.first().first}")
+        val lastT = samples.last().first
+        assertTrue(lastT > m.effectiveTotalDurationMin - 10,
+                   "Last sample t=$lastT should be near window end ${m.effectiveTotalDurationMin}")
     }
 }

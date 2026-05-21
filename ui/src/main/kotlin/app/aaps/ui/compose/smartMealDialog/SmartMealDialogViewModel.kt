@@ -185,7 +185,15 @@ class SmartMealDialogViewModel @Inject constructor(
         val pb3 = if (s.preBolus3Enabled) s.preBolus3U.coerceAtMost(maxPb) else 0.0
         // Mode window derived from the GI bucket's absorption duration so it matches
         // when the ICE expected curve will go quiet.
-        val durationMin = giDurationMinFor(s.giBucketIndex)
+        // Mode window derived from the effective absorption duration — for fatty
+        // / high-protein meals the plateau extends well past the carb window, so
+        // the meal-mode gate needs to stay open the whole time.
+        val durationMin = effectiveDurationMinFor(
+            giBucketIndex = s.giBucketIndex,
+            carbsG        = s.carbsG,
+            proteinG      = s.proteinG,
+            fatG          = s.fatG
+        )
         mealOverrideManager.activateOverride(
             mode = mode,
             doseU = if (pb1 > 0.0) pb1 else null,
@@ -204,7 +212,7 @@ class SmartMealDialogViewModel @Inject constructor(
         return buildString {
             appendLine("Mode: ${mode.label}")
             appendLine("Macros: ${"%.0f".format(s.carbsG)}g carbs · ${"%.0f".format(s.proteinG)}g protein · ${"%.0f".format(s.fatG)}g fat")
-            appendLine("GI: ${giLabel(s.giBucketIndex)} (${giDurationMinFor(s.giBucketIndex)} min window)")
+            appendLine("GI: ${giLabel(s.giBucketIndex)} (${effectiveDurationMinFor(s.giBucketIndex, s.carbsG, s.proteinG, s.fatG)} min window)")
             if (s.preBolus1Enabled && s.preBolus1U > 0.0) appendLine("Pre-bolus 1: ${"%.2f".format(s.preBolus1U)}U (now)")
             if (s.preBolus2Enabled && s.preBolus2U > 0.0) appendLine("Pre-bolus 2: ${"%.2f".format(s.preBolus2U)}U in ${s.preBolus2DelayMins}min")
             if (s.preBolus3Enabled && s.preBolus3U > 0.0) appendLine("Pre-bolus 3: ${"%.2f".format(s.preBolus3U)}U ${s.preBolus3DelayMins}min after PB2")
@@ -223,6 +231,30 @@ class SmartMealDialogViewModel @Inject constructor(
         0    -> 120   // FAST
         2    -> 360   // SLOW
         else -> 240   // MEDIUM
+    }
+
+    /**
+     * Effective absorption-window duration accounting for fat/protein plateau.
+     * Mirrors [AnnouncedMeal.effectiveTotalDurationMin] on the plugin side. The
+     * meal-mode window needs to stay open until the loop's expected ICE curve
+     * actually settles — for fatty / high-protein meals that's well past when
+     * the carbs are done absorbing.
+     */
+    private fun effectiveDurationMinFor(
+        giBucketIndex: Int,
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double
+    ): Int {
+        val carbDur = if (carbsG > 0.0) giDurationMinFor(giBucketIndex) else 0
+        val fpGrams = proteinG + fatG
+        val fpDur = when {
+            fpGrams <= 0.0  -> 0
+            fpGrams < 30.0  -> 240   // 4h
+            fpGrams < 80.0  -> 300   // 5h
+            else            -> 360   // 6h
+        }
+        return maxOf(carbDur, fpDur, 60)   // never under 1h — covers carb-free, fat-free edge case
     }
 
     fun giLabel(uiIndex: Int): String = when (uiIndex) {

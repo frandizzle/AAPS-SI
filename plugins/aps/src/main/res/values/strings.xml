@@ -148,6 +148,7 @@
     <string name="pref_title_si_pdp_max_blend_weight">PDP: Max blend weight</string>
     <string name="pref_title_si_fasting_max_iob">Fasting max IOB (0=disabled)</string>
     <string name="si_screen_pdp_title">PDP — Deviation Prediction</string>
+    <string name="si_screen_ice_title">ICE — Insulin Counteraction Effect</string>
 
     <string name="increasing_max_basal">Increasing max basal value because setting is lower than your max basal in profile</string>
     <string name="max_basal_multiplier">max basal multiplier</string>

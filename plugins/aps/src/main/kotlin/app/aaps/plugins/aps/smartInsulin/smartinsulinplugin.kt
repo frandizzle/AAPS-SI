@@ -972,7 +972,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activeMealAgeMinutes     = announcedMealManager.activeMeal.value?.let {
                 ((dateUtil.now() - it.announceTimestampMs) / 60_000L).toInt().coerceAtLeast(0)
             } ?: 0,
-            activeMealTotalDurationMin = announcedMealManager.activeMeal.value?.giBucket?.totalDurationMinutes ?: 0,
+            activeMealTotalDurationMin = announcedMealManager.activeMeal.value?.effectiveTotalDurationMin ?: 0,
         )
     }
 
@@ -2956,6 +2956,31 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinPdpMealStuckMinReadings,
                     IntKey.ApsSmartInsulinPdpMealRampMins,
                     DoubleKey.ApsSmartInsulinPdpMealMaxStrength
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_screen_ice",
+                titleResId = R.string.si_screen_ice_title,
+                items = listOf(
+                    // Master toggle — all other ICE prefs depend on this via the
+                    // dependency declared on each key.
+                    BooleanKey.ApsSmartInsulinIceEnabled,
+                    // Primary user knob — blends ICE influence into dosing
+                    // (0.0 = off, 1.0 = full). Default 0.5 gives moderate influence.
+                    DoubleKey.ApsSmartInsulinIceUserWeight,
+                    // Magnitude thresholds — what counts as "real" ICE vs noise,
+                    // and what counts as a "strong" signal worth acting aggressively on.
+                    DoubleKey.ApsSmartInsulinIceFloorMgdlH,
+                    DoubleKey.ApsSmartInsulinIceStrongMgdlH,
+                    // When ICE confidence exceeds this threshold the loop suspends
+                    // ISF/basal learners and overrides PDP to avoid double-counting.
+                    DoubleKey.ApsSmartInsulinIceLearningBlockThreshold,
+                    // How many consecutive cycles ICE must persist before influencing
+                    // dose decisions — guards against single-reading spikes.
+                    IntKey.ApsSmartInsulinIcePersistCycles,
+                    // How many recent samples to score for consistency. Higher =
+                    // smoother but slower-reacting confidence signal.
+                    IntKey.ApsSmartInsulinIceConsistWindow
                 )
             )
         ),

@@ -43,9 +43,40 @@ data class AnnouncedMeal(
     /** Commitment as a 0.0–1.0 multiplier. */
     val commitmentFraction: Double get() = commitmentPct / 100.0
 
+    /**
+     * Duration of the fat/protein plateau window. Scales with total protein+fat
+     * grams to match observed behaviour: small fat/protein loads create short
+     * plateaus (~4h), large loads sustain elevation for 6h+.
+     *
+     * Returns 0 when there's no protein or fat (carb-only meal).
+     */
+    val fatProteinDurationMin: Int
+        get() {
+            val totalFpGrams = proteinG + fatG
+            return when {
+                totalFpGrams <= 0.0  -> 0
+                totalFpGrams < 30.0  -> 240   // 4h
+                totalFpGrams < 80.0  -> 300   // 5h
+                else                 -> 360   // 6h
+            }
+        }
+
+    /**
+     * The effective end of the meal's active window, in minutes from announce.
+     *
+     * For pure-carb meals this is just [GiBucket.totalDurationMinutes] (90/180/240
+     * depending on GI). For meals with fat/protein, the plateau extends well past
+     * the carb absorption — the active window is the max of both.
+     */
+    val effectiveTotalDurationMin: Int
+        get() {
+            val carbDur = if (carbsG > 0.0) giBucket.totalDurationMinutes else 0
+            return maxOf(carbDur, fatProteinDurationMin)
+        }
+
     /** Is this meal still within its absorption window at the given moment? */
     fun isActive(nowMs: Long): Boolean {
         val ageMin = (nowMs - announceTimestampMs) / 60_000.0
-        return ageMin in 0.0..giBucket.totalDurationMinutes.toDouble()
+        return ageMin in 0.0..effectiveTotalDurationMin.toDouble()
     }
 }
