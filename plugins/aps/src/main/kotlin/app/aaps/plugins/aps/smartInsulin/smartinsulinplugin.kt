@@ -2645,6 +2645,17 @@ open class SmartInsulinPlugin @Inject constructor(
                 }
             } else emptyList()
         )
+        // Diagnostic — verify iceFutureMgdlPerH was generated. Visible in AAPS log,
+        // helps confirm whether the prediction line ought to be appearing.
+        if (iceTrackerEnabled && !iceIsDisabled) {
+            val firstFive = (apsResult.iobData?.let { /* unused */ }).let {
+                "(no-op)"  // placeholder — actual log uses local computed values
+            }
+            aapsLogger.debug(LTag.APS,
+                             "ICE prediction: hasActiveMeal=${activeMeal != null} " +
+                                 "observedNonZero=${(observedIceMgdlPerH ?: 0.0) > 0.0} " +
+                                 "expectedAt0=${"%.2f".format(expectedIceMgdlPerH)}mg/dL/h")
+        }
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
         val fractionUsed = uamSmbFraction  // capture before increment

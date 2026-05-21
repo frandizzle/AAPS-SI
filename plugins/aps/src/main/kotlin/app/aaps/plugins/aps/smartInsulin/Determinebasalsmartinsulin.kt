@@ -431,8 +431,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // will do — distinct from the cyan IOB line (which subtracts insulin) so the user
         // can visually compare and see exactly what contribution ICE is making.
         //
-        // Curve: COB slot in predBGs — renders in a colour distinct from IOB (cyan) and
-        // UAM/PDP (orange). Falls back to empty list = no line rendered.
+        // **Slot selection**: AAPS chart renders UAM and IOB slots unconditionally. The COB
+        // slot is gated on AAPS having tracked carbs > 0 (which isn't the case for announced
+        // meals — they bypass the AAPS COB system). So we prefer UAM when PDP isn't using
+        // it, and fall back to COB only as a secondary (where rendering may not happen).
         if (iceFutureMgdlPerH.isNotEmpty()) {
             val icePrediction = mutableListOf<Int>()
             var iceBg = currentBg
@@ -441,6 +443,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 iceBg += mgdlPerH * (5.0 / 60.0)
                 icePrediction.add(iceBg.coerceIn(39.0, 401.0).toInt())
             }
+            // If PDP didn't claim UAM this cycle, use it for ICE — guarantees rendering.
+            // PDP only takes UAM when effectivePdpBlend > 0 AND pdpPredictedBg is non-empty.
+            if (rT.predBGs?.UAM.isNullOrEmpty()) {
+                rT.predBGs?.UAM = icePrediction
+            }
+            // Always also write to COB as a secondary — works on builds that do render the
+            // slot, no harm on builds that don't.
             rT.predBGs?.COB = icePrediction
         }
 
