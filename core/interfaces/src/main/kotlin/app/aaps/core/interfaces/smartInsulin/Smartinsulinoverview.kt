@@ -34,4 +34,38 @@ interface SmartInsulinOverview {
     fun overviewState(): OverviewState
 
     val overviewStateFlow: kotlinx.coroutines.flow.StateFlow<OverviewState?>
+
+    /**
+     * Announce a meal to the loop. Replaces any active announced meal.
+     *
+     * The loop uses the macros and GI bucket to build an expected ICE absorption curve,
+     * which pre-positions dosing before observed ICE catches up to reality. Lives on this
+     * interface (rather than a separate one) so the SmartMealDialog ViewModel — which only
+     * sees [SmartInsulinOverview] via `activePlugin.smartInsulin` — can call it without a
+     * compile-time dependency on the plugins/aps module.
+     *
+     * @param carbsG total carbohydrates in grams (≥ 0).
+     * @param proteinG total protein in grams (≥ 0). Contributes a late hump (~3h) because
+     *                 a fraction of protein converts to glucose.
+     * @param fatG total fat in grams (≥ 0). Currently used only for the user's record —
+     *             its delaying effect on absorption is captured by GI bucket selection.
+     * @param giBucketName one of "FAST" / "MEDIUM" / "SLOW" (case-insensitive). FAST = high
+     *                     GI (juice, candy, fast carbs). MEDIUM = standard (bread, rice,
+     *                     pasta — default). SLOW = low GI (pizza, fatty / large meals,
+     *                     bimodal absorption). String rather than enum to avoid a
+     *                     core/interfaces dependency on the plugin module.
+     * @param commitmentPct user's confidence in these numbers, 0–100. Scales the expected
+     *                      curve linearly. 100 = weighed meal / certain; lower values
+     *                      reduce the loop's reliance on the prediction.
+     */
+    fun announceMeal(
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String,
+        commitmentPct: Int
+    )
+
+    /** Clear any active announced meal. The loop reverts to observed-only ICE behaviour. */
+    fun clearAnnouncedMeal()
 }
