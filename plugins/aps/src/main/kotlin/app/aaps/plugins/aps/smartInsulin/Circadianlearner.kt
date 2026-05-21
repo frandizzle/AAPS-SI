@@ -1114,10 +1114,16 @@ class CircadianLearner @Inject constructor(
         }
 
         // ── Recovery signal: good outcome ────────────────────────────────────
+        // NOTE: uses updatedNoConf() — recovery cycles unwind the ceiling but
+        // do NOT count as confidence observations. The recovery path only fires
+        // when ceiling<1.0, so crediting recovery cycles toward confidence
+        // would mean a penalised hour ends up MORE confident than an hour that
+        // was stable the whole time (and never needed to recover). Real events
+        // (penalties above) still bump confidence via updated().
         val stableNearTarget = abs(bg - targetMgdl) < STABLE_BAND_MGDL && abs(delta) < STABLE_DELTA_MGDL
         if (stableNearTarget && currentCeil < 1.0) {
             val recovered = (currentCeil + AGGR_RECOVERY_STEP).coerceAtMost(AGGR_CEIL_MAX)
-            aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
+            aggrState = aggrState.updatedNoConf(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Aggr h=$hour STABLE_RECOVERY → ceil=%.3f"
                                  .format(aggrState.get(dow, hour)))

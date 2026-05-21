@@ -1,0 +1,329 @@
+package app.aaps.plugins.aps.smartInsulin.ice
+
+import app.aaps.core.interfaces.logging.AAPSLogger
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.mockito.kotlin.mock
+
+/**
+ * Unit tests for IceTracker + computeIceConfidence.
+ *
+ * ## Test strategy
+ *
+ * - Tracker tests build sample sequences manually with controlled timestamps so we
+ *   can verify ICE math against hand-computed values.
+ * - Confidence tests use computeIceConfidence directly on synthetic IceSample lists.
+ * - All BG values in mg/dL throughout — consistent with internal AAPS convention.
+ *
+ * ## Reference scenarios
+ *
+ * "Steady fasting": flat BG, modest insulin activity → modeled drop, observed flat →
+ *   ICE positive small (sensor noise + slight liver glucose production).
+ *
+ * "Real meal": rising BG faster than insulin can drop it → ICE strongly positive.
+ *
+ * "Exercise": falling BG faster than insulin alone explains → ICE negative.
+ */
+class IceTrackerTest {
+
+    private val logger: AAPSLogger = mock()
+    private lateinit var tracker: IceTracker
+
+    @BeforeEach fun setUp() {
+        tracker = IceTracker(logger)
+    }
+
+    // ── First-sample behaviour ──────────────────────────────────────────────
+
+    @Test fun `first sample has no ICE — needs a previous to diff against`() {
+        val s = tracker.recordCycle(
+            timestampMs     = 1_000_000L,
+            bgMgdl          = 120.0,
+            activityUperMin = 0.0,
+            isfMgdlPerU     = 50.0
+        )
+        assertNull(s.iceMgdlPerHour)
+        assertNull(s.observedDeltaMgdl)
+        assertNull(s.intervalMin)
+        assertEquals(120.0, s.bgMgdl, 0.001)
+    }
+
+    // ── ICE math: flat BG, no insulin ───────────────────────────────────────
+
+    @Test fun `flat BG no insulin produces zero ICE`() {
+        tracker.recordCycle(0L,         120.0, 0.0, 50.0)
+        val s = tracker.recordCycle(300_000L, 120.0, 0.0, 50.0)  // +5 min
+
+        // observed = 0, modeled = -(0 × 50 × 5) = 0, ICE = 0
+        assertEquals(0.0, s.iceMgdlPerHour ?: error("null ICE"), 0.001)
+    }
+
+    // ── ICE math: BG drop that matches insulin action exactly ───────────────
+
+    @Test fun `BG drop matching insulin model produces zero ICE`() {
+        // 0.01 U/min × 50 mg/dL/U × 5 min = 2.5 mg/dL expected drop
+        tracker.recordCycle(0L,         120.0, 0.01, 50.0)
+        val s = tracker.recordCycle(300_000L, 117.5, 0.01, 50.0)
+
+        // observed = -2.5, modeled = -2.5, ICE = 0
+        assertEquals(0.0, s.iceMgdlPerHour ?: error("null ICE"), 0.001)
+    }
+
+    // ── ICE math: meal rising faster than insulin ───────────────────────────
+
+    @Test fun `BG rising despite insulin action produces strongly positive ICE`() {
+        // Insulin should drop BG 2.5 mg/dL in 5 min, but it ROSE 10 mg/dL instead.
+        // Net unmodeled rise: 10 - (-2.5) = 12.5 mg/dL in 5 min = 150 mg/dL/h
+        tracker.recordCycle(0L,         120.0, 0.01, 50.0)
+        val s = tracker.recordCycle(300_000L, 130.0, 0.01, 50.0)
+
+        val ice = s.iceMgdlPerHour ?: error("null ICE")
+        assertEquals(150.0, ice, 0.1)
+        assertEquals(150.0 / 18.0, s.iceMmolPerHour ?: 0.0, 0.01)
+    }
+
+    // ── ICE math: BG falling faster than insulin (exercise) ─────────────────
+
+    @Test fun `BG falling faster than insulin model produces negative ICE (exercise signature)`() {
+        // Insulin should drop 2.5 mg/dL, actually dropped 12.5. Extra -10 over 5 min = -120 mg/dL/h
+        tracker.recordCycle(0L,         120.0, 0.01, 50.0)
+        val s = tracker.recordCycle(300_000L, 107.5, 0.01, 50.0)
+
+        val ice = s.iceMgdlPerHour ?: error("null ICE")
+        assertEquals(-120.0, ice, 0.1)
+    }
+
+    // ── Gap handling ────────────────────────────────────────────────────────
+
+    @Test fun `interval longer than max-gap discards the delta`() {
+        tracker.recordCycle(0L,           120.0, 0.0, 50.0)
+        // 11 min gap (> MAX_GAP_MIN of 10)
+        val s = tracker.recordCycle(660_000L, 140.0, 0.0, 50.0)
+
+        // Sample recorded but ICE not computed — gap too big to trust.
+        assertNotNull(s.intervalMin)
+        assertTrue(s.intervalMin!! > 10.0)
+        assertNull(s.iceMgdlPerHour, "ICE must not be computed across a >10-min gap")
+        assertNull(s.observedDeltaMgdl)
+    }
+
+    @Test fun `interval shorter than min-gap discards the delta (duplicate)`() {
+        tracker.recordCycle(0L,        120.0, 0.0, 50.0)
+        val s = tracker.recordCycle(30_000L, 120.5, 0.0, 50.0)  // 0.5 min — duplicate-ish
+
+        assertNull(s.iceMgdlPerHour)
+    }
+
+    @Test fun `after a gap, next clean interval produces ICE again`() {
+        tracker.recordCycle(0L,            120.0, 0.0, 50.0)
+        tracker.recordCycle(900_000L,      140.0, 0.0, 50.0)  // gap — no ICE
+        val s = tracker.recordCycle(1_200_000L, 145.0, 0.0, 50.0)  // 5 min after gap — clean
+
+        // observed = +5, modeled = 0, ICE = 60 mg/dL/h
+        assertEquals(60.0, s.iceMgdlPerHour ?: error("null ICE"), 0.1)
+    }
+
+    // ── Disable reasons carry through ───────────────────────────────────────
+
+    @Test fun `disable reason on sample is recorded`() {
+        tracker.recordCycle(0L,         120.0, 0.0, 50.0)
+        val s = tracker.recordCycle(
+            timestampMs     = 300_000L,
+            bgMgdl          = 130.0,
+            activityUperMin = 0.0,
+            isfMgdlPerU     = 50.0,
+            disableReason   = IceDisableReason.EXERCISE_TEMP_TARGET
+        )
+        assertEquals(IceDisableReason.EXERCISE_TEMP_TARGET, s.disabled)
+        // ICE is STILL computed — buffer is intact for when ICE re-enables.
+        assertNotNull(s.iceMgdlPerHour)
+        // But confidence will be zero.
+        val snap = tracker.snapshot.value
+        assertNotNull(snap)
+        assertEquals(0.0, snap!!.confidence.score, 0.001)
+        assertEquals(IceDisableReason.EXERCISE_TEMP_TARGET, snap.confidence.disabled)
+    }
+
+    // ── Buffer eviction ─────────────────────────────────────────────────────
+
+    @Test fun `buffer evicts oldest when over capacity`() {
+        // Push 80 samples — well past the 72-sample cap.
+        for (i in 0 until 80) {
+            tracker.recordCycle(i.toLong() * 300_000L, 120.0, 0.0, 50.0)
+        }
+        assertTrue(tracker.fullBuffer().size <= 72, "buffer must not grow beyond cap")
+        // Last sample should still be the most recent.
+        assertEquals(79L * 300_000L, tracker.fullBuffer().last().timestampMs)
+    }
+
+    // ── Reset ───────────────────────────────────────────────────────────────
+
+    @Test fun `reset clears buffer and snapshot`() {
+        tracker.recordCycle(0L,         120.0, 0.0, 50.0)
+        tracker.recordCycle(300_000L,   130.0, 0.0, 50.0)
+        assertTrue(tracker.fullBuffer().isNotEmpty())
+
+        tracker.reset()
+
+        assertTrue(tracker.fullBuffer().isEmpty())
+        assertNull(tracker.snapshot.value)
+    }
+
+    // ── Snapshot publishing ─────────────────────────────────────────────────
+
+    @Test fun `snapshot publishes after each recordCycle`() {
+        assertNull(tracker.snapshot.value)
+        tracker.recordCycle(0L, 120.0, 0.0, 50.0)
+        assertNotNull(tracker.snapshot.value)
+        tracker.recordCycle(300_000L, 130.0, 0.0, 50.0)
+        // Snapshot updated — currentIceMgdlH non-null for the second sample.
+        assertNotNull(tracker.snapshot.value!!.currentIceMgdlH)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Confidence scoring tests — pure function, no IceTracker needed
+// ═══════════════════════════════════════════════════════════════════════════
+
+class IceConfidenceTest {
+
+    /** Helper: build a sample with just the ICE value set. */
+    private fun s(
+        iceMgdlH: Double?,
+        ts: Long = 0L,
+        disabled: IceDisableReason? = null
+    ) = IceSample(
+        timestampMs       = ts,
+        bgMgdl            = 120.0,
+        activityUperMin   = 0.0,
+        isfMgdlPerU       = 50.0,
+        iceMgdlPerHour    = iceMgdlH,
+        disabled          = disabled
+    )
+
+    // ── Empty / insufficient history ────────────────────────────────────────
+
+    @Test fun `empty samples returns INSUFFICIENT_HISTORY`() {
+        val c = computeIceConfidence(emptyList())
+        assertEquals(0.0, c.score, 0.001)
+        assertEquals(IceDisableReason.INSUFFICIENT_HISTORY, c.disabled)
+    }
+
+    @Test fun `samples with no ICE values returns INSUFFICIENT_HISTORY`() {
+        val c = computeIceConfidence(listOf(s(null), s(null)))
+        assertEquals(0.0, c.score, 0.001)
+        assertEquals(IceDisableReason.INSUFFICIENT_HISTORY, c.disabled)
+    }
+
+    // ── Forced disable wins over everything ─────────────────────────────────
+
+    @Test fun `forcedDisable returns zero score regardless of signal`() {
+        val strong = (1..5).map { s(50.0, ts = it * 300_000L) }  // strong ICE for 5 cycles
+        val c = computeIceConfidence(strong, forcedDisable = IceDisableReason.EXERCISE_TEMP_TARGET)
+        assertEquals(0.0, c.score, 0.001)
+        assertEquals(IceDisableReason.EXERCISE_TEMP_TARGET, c.disabled)
+    }
+
+    // ── Magnitude scoring ───────────────────────────────────────────────────
+
+    @Test fun `ICE below floor scores zero magnitude`() {
+        // Single cycle at sub-floor.
+        val c = computeIceConfidence(listOf(s(2.0)))   // 2 < 5.4 floor
+        assertEquals(0.0, c.magnitude, 0.001)
+        assertEquals(0.0, c.score, 0.001)
+    }
+
+    @Test fun `ICE at strong threshold scores full magnitude`() {
+        // 4 cycles to get persistence too, otherwise score is zero.
+        val samples = (1..4).map { s(30.0, ts = it * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertEquals(1.0, c.magnitude, 0.01)
+    }
+
+    // ── Persistence scoring ─────────────────────────────────────────────────
+
+    @Test fun `single strong sample has full magnitude but minimal persistence`() {
+        val c = computeIceConfidence(listOf(s(50.0)))  // 1 cycle = 1/3 persistence
+        assertTrue(c.magnitude > 0.9)
+        assertTrue(c.persistence < 0.5, "persistence=${c.persistence} should be < 0.5 for 1 cycle")
+    }
+
+    @Test fun `three consecutive strong same-sign samples give full persistence`() {
+        val samples = (1..3).map { s(30.0, ts = it * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertEquals(1.0, c.persistence, 0.001)
+    }
+
+    @Test fun `sign change breaks the persistence streak`() {
+        val samples = listOf(
+            s(-30.0, ts = 1 * 300_000L),  // negative
+            s(-30.0, ts = 2 * 300_000L),  // negative
+            s(  30.0, ts = 3 * 300_000L)  // now positive — streak resets, this is cycle 1
+        )
+        val c = computeIceConfidence(samples)
+        // Current sample is positive; only ONE positive cycle exists.
+        assertTrue(c.persistence < 0.5, "persistence=${c.persistence} should be < 0.5 (only 1 in streak)")
+    }
+
+    // ── Consistency scoring ─────────────────────────────────────────────────
+
+    @Test fun `low-variance samples give high consistency`() {
+        // ICE values all around 30 with small jitter
+        val samples = listOf(28.0, 30.0, 31.0, 29.0, 30.5)
+            .mapIndexed { i, ice -> s(ice, ts = (i + 1) * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertTrue(c.consistency > 0.7, "consistency=${c.consistency} should be > 0.7 for low-variance signal")
+    }
+
+    @Test fun `high-variance samples give low consistency`() {
+        // ICE values all over the place
+        val samples = listOf(10.0, 50.0, 20.0, 60.0, 15.0)
+            .mapIndexed { i, ice -> s(ice, ts = (i + 1) * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertTrue(c.consistency < 0.5, "consistency=${c.consistency} should be < 0.5 for noisy signal")
+    }
+
+    // ── Composite scoring ──────────────────────────────────────────────────
+
+    @Test fun `realistic meal scenario produces high overall confidence`() {
+        // Steady-rising ICE matching a real meal: 4 consecutive cycles, low jitter, strong magnitude.
+        val samples = listOf(15.0, 22.0, 28.0, 30.0)
+            .mapIndexed { i, ice -> s(ice, ts = (i + 1) * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertTrue(c.score > 0.5, "realistic meal score=${c.score} should be > 0.5")
+        assertNull(c.disabled, "active meal must not be marked disabled")
+    }
+
+    @Test fun `noise signal produces low overall confidence`() {
+        // ICE bouncing around zero, never sustaining above floor.
+        val samples = listOf(2.0, -1.0, 3.0, -2.0, 1.0)
+            .mapIndexed { i, ice -> s(ice, ts = (i + 1) * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertTrue(c.score < 0.2, "noise score=${c.score} should be < 0.2")
+    }
+
+    @Test fun `CGM warmup sample zeros the cgmQuality and thus the score`() {
+        val samples = (1..4).map { s(30.0, ts = it * 300_000L) }.toMutableList()
+        // Last sample marked with CGM warmup
+        samples[3] = samples[3].copy(disabled = IceDisableReason.CGM_WARMUP)
+        val c = computeIceConfidence(samples)
+        assertEquals(0.0, c.cgmQuality, 0.001)
+        assertEquals(0.0, c.score, 0.001)
+    }
+
+    // ── Reason text is informative ──────────────────────────────────────────
+
+    @Test fun `reasonText includes all four component values`() {
+        val samples = (1..3).map { s(20.0, ts = it * 300_000L) }
+        val c = computeIceConfidence(samples)
+        assertTrue(c.reasonText.contains("mag="))
+        assertTrue(c.reasonText.contains("persist="))
+        assertTrue(c.reasonText.contains("consist="))
+        assertTrue(c.reasonText.contains("cgm="))
+    }
+}

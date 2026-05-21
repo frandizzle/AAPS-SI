@@ -61,7 +61,9 @@ data class DayOfWeekCircadianState(
 
     /**
      * EWMA update for [hour] on [dayOfWeek].
-     * Writes to both the day bucket and global.
+     * Writes to both the day bucket and global. Both the value AND
+     * confidence are bumped — use for genuine observations of this
+     * hour's physiology.
      *
      * @param dayOfWeek  0=Sun, 1=Mon … 6=Sat
      */
@@ -86,6 +88,30 @@ data class DayOfWeekCircadianState(
         return DayOfWeekCircadianState(newDays, global)  // global unchanged
     }
 
+    /**
+     * EWMA update for [hour] on [dayOfWeek] — value only, NO confidence bump.
+     * Writes to both the day bucket and global.
+     *
+     * Used for "bookkeeping" updates that shouldn't count as observations of
+     * this hour's physiology. The motivating case is the aggr recovery
+     * branch: it only ever fires when the ceiling is below 1.0, so counting
+     * recovery cycles as confidence observations structurally biases
+     * confidence toward hours that have been penalised. An hour with one
+     * rollercoaster + 10 stable recovery cycles ends up with HIGHER
+     * confidence than an hour that was stable the whole time and never
+     * needed to recover. That's backwards.
+     *
+     * Real events (penalties, episode closes, drift firings) still bump
+     * confidence via [updated]. Recovery just unwinds the value.
+     */
+    fun updatedNoConf(dayOfWeek: Int, hour: Int, newValue: Double, alpha: Double): DayOfWeekCircadianState {
+        val d       = dayOfWeek.coerceIn(0, 6)
+        val newDays = days.copyOf()
+        newDays[d]  = days[d].updatedNoConf(hour, newValue, alpha)
+        val newGlobal = global.updatedNoConf(hour, newValue, alpha)
+        return DayOfWeekCircadianState(newDays, newGlobal)
+    }
+
     // ── Serialisation ─────────────────────────────────────────────────────────
 
     fun toJson(): JSONObject = JSONObject().apply {
@@ -99,8 +125,16 @@ data class DayOfWeekCircadianState(
         /**
          * Minimum day-bucket confidence before day-specific values are
          * fully trusted over the global average.
-         * At CONF_ALPHA=0.10, ~7 obs → conf≈0.52 (threshold met in ~35 min).
-         * Lowered from 0.5 to 0.3 so day bucket influences blend after ~4 observations (~20 min).
+         *
+         * At CONF_ALPHA=0.02, ~18 observations are needed to reach this
+         * threshold — i.e. day-specific values start to take over from
+         * global once we've seen this hour-of-week roughly 18 times.
+         * For an ISF fast-path firing ~20–40×/day during fasting windows
+         * that's typically achieved within the first day or two of a given
+         * day-of-week recurring. For rarer learners (episode close, drift
+         * firing) it's a few weeks of the same weekday before the day
+         * bucket starts dominating, which correctly reflects how much
+         * weekday-specific data we actually have.
          */
         const val DAY_CONFIDENCE_THRESHOLD = 0.3
 
