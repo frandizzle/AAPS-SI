@@ -2607,7 +2607,10 @@ open class SmartInsulinPlugin @Inject constructor(
             // alternative.
             // Gated off when ICE is disabled or in warmup so the line disappears cleanly.
             iceFutureMgdlPerH        = if (iceTrackerEnabled && !iceIsDisabled) {
-                val predictionTicks = 24  // 2h at 5-min ticks — matches the chart's typical horizon
+                // 96 ticks × 5 min = 8h — covers the full prediction horizon used in
+                // determineBasal (predictionTicks = safeDiaMinutes/5, capped 72-96).
+                // Long enough for the 5-6h plateau of fatty/high-protein meals.
+                val predictionTicks = 96
                 if (activeMeal != null) {
                     // Announced meal → use the expected curve
                     (1..predictionTicks).map { tick ->

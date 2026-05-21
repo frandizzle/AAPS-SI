@@ -2,6 +2,8 @@ package app.aaps.plugins.aps.smartInsulin.ice
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.utils.DateUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +23,13 @@ import javax.inject.Singleton
  * - When the meal's absorption window expires (or [clearMeal] is called),
  *   the manager returns 0.0 and the loop falls back to observed-only ICE.
  *
+ * ## Persistence
+ *
+ * The active meal is persisted to [SP] as a delimited string on every
+ * mutation, and restored on construction. Survives process restarts, app
+ * updates, and device reboots. On restore, expired meals are discarded so
+ * a long reboot doesn't resurrect ancient state.
+ *
  * ## Why a separate manager
  *
  * Decouples the meal description (data) from the curve math (pure functions
@@ -37,13 +46,33 @@ import javax.inject.Singleton
  */
 @Singleton
 class AnnouncedMealManager @Inject constructor(
-    private val aapsLogger: AAPSLogger
+    private val aapsLogger: AAPSLogger,
+    private val sp: SP,
+    private val dateUtil: DateUtil
 ) {
 
-    private val _activeMeal = MutableStateFlow<AnnouncedMeal?>(null)
+    companion object {
+        /** SharedPreferences key for the serialized active meal. */
+        private const val SP_KEY = "smartinsulin_active_announced_meal"
+        /** Delimited serialization format version — bump if the format changes. */
+        private const val SERIAL_VERSION = "v1"
+        /** Field delimiter — chosen because none of the fields can contain it. */
+        private const val DELIM = "|"
+    }
+
+    private val _activeMeal = MutableStateFlow<AnnouncedMeal?>(restoreFromSp())
 
     /** Observable handle for the UI — null when no meal is announced. */
     val activeMeal: StateFlow<AnnouncedMeal?> = _activeMeal.asStateFlow()
+
+    init {
+        _activeMeal.value?.let { restored ->
+            aapsLogger.debug(LTag.APS,
+                             "AnnouncedMealManager: restored meal from SP — carbs=${restored.carbsG}g " +
+                                 "protein=${restored.proteinG}g fat=${restored.fatG}g GI=${restored.giBucket.label} " +
+                                 "age=${((dateUtil.now() - restored.announceTimestampMs) / 60_000L).toInt()}min")
+        }
+    }
 
     /**
      * Register a new announced meal. Replaces any existing meal (only one active
@@ -55,6 +84,7 @@ class AnnouncedMealManager @Inject constructor(
                          "AnnouncedMealManager: meal announced — carbs=${meal.carbsG}g protein=${meal.proteinG}g " +
                              "fat=${meal.fatG}g GI=${meal.giBucket.label} commitment=${meal.commitmentPct}%")
         _activeMeal.value = meal
+        writeToSp(meal)
     }
 
     /** Discard the active meal — used when the user cancels or the loop force-clears. */
@@ -62,6 +92,7 @@ class AnnouncedMealManager @Inject constructor(
         if (_activeMeal.value != null) {
             aapsLogger.debug(LTag.APS, "AnnouncedMealManager: meal cleared")
             _activeMeal.value = null
+            writeToSp(null)
         }
     }
 
@@ -98,6 +129,7 @@ class AnnouncedMealManager @Inject constructor(
                          "AnnouncedMealManager: meal edited — carbs=${edited.carbsG}g protein=${edited.proteinG}g " +
                              "fat=${edited.fatG}g GI=${edited.giBucket.label} (timer preserved)")
         _activeMeal.value = edited
+        writeToSp(edited)
     }
 
     /**
@@ -130,6 +162,7 @@ class AnnouncedMealManager @Inject constructor(
                              "AnnouncedMealManager: meal auto-cleared (expired at age=${ageMin.toInt()}min, " +
                                  "window=${meal.effectiveTotalDurationMin}min)")
             _activeMeal.value = null
+            writeToSp(null)
             return 0.0
         }
 
@@ -182,6 +215,87 @@ class AnnouncedMealManager @Inject constructor(
             if (r.fatG     > 0.5) add("F ${"%.0f".format(r.fatG)}g")
         }
         return if (parts.isEmpty()) "" else " · " + parts.joinToString(" · ")
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────────────
+    //
+    // Serializes the active meal to SharedPreferences as a delimited string. Format:
+    //   v1|carbsG|proteinG|fatG|giBucketName|commitmentPct|announceTimestampMs
+    //
+    // Chose delimited over JSON to avoid pulling in a serialization dependency for
+    // a single tiny data class. The format is versioned so future migrations are
+    // possible — older versions will fail the prefix check and restore returns null.
+
+    /** Write the current active meal (or clear) to SharedPreferences. */
+    private fun writeToSp(meal: AnnouncedMeal?) {
+        if (meal == null) {
+            sp.remove(SP_KEY)
+            return
+        }
+        val serialized = listOf(
+            SERIAL_VERSION,
+            meal.carbsG.toString(),
+            meal.proteinG.toString(),
+            meal.fatG.toString(),
+            meal.giBucket.name,                  // "FAST" / "MEDIUM" / "SLOW"
+            meal.commitmentPct.toString(),
+            meal.announceTimestampMs.toString()
+        ).joinToString(DELIM)
+        sp.putString(SP_KEY, serialized)
+    }
+
+    /**
+     * Restore the active meal from SharedPreferences on startup. Returns null when:
+     *   - No SP entry exists (first run / previously cleared)
+     *   - SP entry exists but format is unrecognised (corrupt / from a future version)
+     *   - The restored meal is past its absorption window (stale after a long reboot)
+     *
+     * Any restore failure is logged but never propagates — startup continues with no
+     * active meal, which is the safe default.
+     */
+    private fun restoreFromSp(): AnnouncedMeal? {
+        val raw = sp.getString(SP_KEY, "")
+        if (raw.isBlank()) return null
+        return try {
+            val parts = raw.split(DELIM)
+            if (parts.size != 7 || parts[0] != SERIAL_VERSION) {
+                aapsLogger.debug(LTag.APS,
+                                 "AnnouncedMealManager: discarding unrecognised SP entry (parts=${parts.size}, version=${parts.firstOrNull()})")
+                sp.remove(SP_KEY)
+                return null
+            }
+            val bucket = when (parts[4].uppercase()) {
+                "FAST"   -> GiBucket.FAST
+                "MEDIUM" -> GiBucket.MEDIUM
+                "SLOW"   -> GiBucket.SLOW
+                else     -> {
+                    aapsLogger.debug(LTag.APS, "AnnouncedMealManager: unrecognised GI bucket '${parts[4]}' on restore")
+                    return null
+                }
+            }
+            val restored = AnnouncedMeal(
+                carbsG              = parts[1].toDouble(),
+                proteinG            = parts[2].toDouble(),
+                fatG                = parts[3].toDouble(),
+                giBucket            = bucket,
+                commitmentPct       = parts[5].toInt(),
+                announceTimestampMs = parts[6].toLong()
+            )
+            // Discard if already past the absorption window — don't resurrect ancient state
+            val ageMin = (dateUtil.now() - restored.announceTimestampMs) / 60_000.0
+            if (ageMin > restored.effectiveTotalDurationMin.toDouble()) {
+                aapsLogger.debug(LTag.APS,
+                                 "AnnouncedMealManager: discarding restored meal — expired (age=${ageMin.toInt()}min, " +
+                                     "window=${restored.effectiveTotalDurationMin}min)")
+                sp.remove(SP_KEY)
+                return null
+            }
+            restored
+        } catch (e: Throwable) {
+            aapsLogger.debug(LTag.APS, "AnnouncedMealManager: SP restore failed — ${e.message}")
+            sp.remove(SP_KEY)
+            null
+        }
     }
 }
 

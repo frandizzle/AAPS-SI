@@ -1,16 +1,21 @@
 package app.aaps.plugins.aps.smartInsulin.ice
 
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.utils.DateUtil
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.DisplayName
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 
 /**
- * Tests for [AnnouncedMealManager], focused on the auto-clear / lifecycle paths.
+ * Tests for [AnnouncedMealManager], focused on auto-clear, lifecycle, and persistence.
  *
- * The most important assertion here is the **negative-age regression test**:
+ * The most important assertion is the **negative-age regression test**:
  * a meal queried with a timestamp *older* than its announce time must NOT be
  * cleared. The loop calls [AnnouncedMealManager.expectedIceMgdlPerHour] with
  * `glucoseStatus.date` (the last CGM reading), which can routinely be a few
@@ -20,12 +25,32 @@ import org.mockito.kotlin.mock
 class AnnouncedMealManagerTest {
 
     private val logger: AAPSLogger = mock()
+    private val sp: SP = mock()
+    private val dateUtil: DateUtil = mock()
     private lateinit var manager: AnnouncedMealManager
     private val baseTime = 1_700_000_000_000L  // arbitrary fixed clock
 
+    /** In-memory store backing the SP mock so tests can exercise the persistence path. */
+    private val spStore = mutableMapOf<String, String>()
+
     @BeforeEach
     fun setup() {
-        manager = AnnouncedMealManager(logger)
+        spStore.clear()
+        // Wire mock SP through the in-memory store. Every any() needs an explicit type
+        // parameter — Kotlin can't infer T across overloaded SP methods otherwise.
+        whenever(sp.getString(any<String>(), any<String>())).doAnswer { inv ->
+            spStore[inv.arguments[0] as String] ?: (inv.arguments[1] as String)
+        }
+        whenever(sp.putString(any<String>(), any<String>())).doAnswer { inv ->
+            spStore[inv.arguments[0] as String] = inv.arguments[1] as String
+            Unit
+        }
+        whenever(sp.remove(any<String>())).doAnswer { inv ->
+            spStore.remove(inv.arguments[0] as String)
+            Unit
+        }
+        whenever(dateUtil.now()).thenReturn(baseTime)
+        manager = AnnouncedMealManager(logger, sp, dateUtil)
     }
 
     private fun meal(
@@ -173,5 +198,95 @@ class AnnouncedMealManagerTest {
         assertTrue(late.isNotEmpty(), "Late suffix should be present: '$late'")
         // Both should contain COB / P / F markers
         assertTrue(early.contains("COB") || early.contains("P ") || early.contains("F "))
+    }
+
+    // ── Persistence ─────────────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("announcing a meal writes to SharedPreferences")
+    fun `announce persists to SP`() {
+        manager.announceMeal(meal(announceAt = baseTime))
+        assertTrue(spStore.isNotEmpty(), "SP should have an entry after announce")
+    }
+
+    @Test
+    @DisplayName("clearing a meal removes the SP entry")
+    fun `clear removes SP entry`() {
+        manager.announceMeal(meal(announceAt = baseTime))
+        assertTrue(spStore.isNotEmpty())
+        manager.clearMeal()
+        assertTrue(spStore.isEmpty(), "SP entry should be removed after clearMeal")
+    }
+
+    @Test
+    @DisplayName("editing a meal persists the new values")
+    fun `edit persists changes`() {
+        manager.announceMeal(meal(carbs = 30.0, announceAt = baseTime))
+        manager.editActiveMeal(carbsG = 80.0, proteinG = 40.0, fatG = 40.0, giBucketName = "SLOW")
+        // Construct a fresh manager — it must restore the EDITED values
+        val restored = AnnouncedMealManager(logger, sp, dateUtil)
+        val active = restored.activeMeal.value
+        assertNotNull(active)
+        assertEquals(80.0, active!!.carbsG)
+        assertEquals(40.0, active.proteinG)
+        assertEquals(GiBucket.SLOW, active.giBucket)
+        assertEquals(baseTime, active.announceTimestampMs, "edit must preserve announce timestamp through reboot")
+    }
+
+    @Test
+    @DisplayName("meal survives a simulated reboot")
+    fun `meal survives reboot`() {
+        manager.announceMeal(meal(carbs = 50.0, protein = 30.0, fat = 20.0, announceAt = baseTime))
+        // Construct a fresh manager (simulating reboot — new process, same SP)
+        val restored = AnnouncedMealManager(logger, sp, dateUtil)
+        val active = restored.activeMeal.value
+        assertNotNull(active, "Meal should be restored from SP after a fresh manager is constructed")
+        assertEquals(50.0, active!!.carbsG)
+        assertEquals(30.0, active.proteinG)
+        assertEquals(20.0, active.fatG)
+        assertEquals(GiBucket.MEDIUM, active.giBucket)
+        assertEquals(baseTime, active.announceTimestampMs)
+    }
+
+    @Test
+    @DisplayName("expired meals are discarded on restore — no resurrection after long reboot")
+    fun `expired meal is discarded on restore`() {
+        // Announce at baseTime
+        manager.announceMeal(meal(carbs = 30.0, announceAt = baseTime))
+        // Simulate a fresh manager 8 hours later — the meal's 5h window is long past
+        whenever(dateUtil.now()).thenReturn(baseTime + 8 * 60 * 60 * 1000L)
+        val restored = AnnouncedMealManager(logger, sp, dateUtil)
+        assertNull(restored.activeMeal.value, "Expired meal must not be restored")
+        assertTrue(spStore.isEmpty(), "SP entry must be cleared for expired meal")
+    }
+
+    @Test
+    @DisplayName("corrupt SP entry is silently ignored")
+    fun `corrupt SP ignored`() {
+        spStore["smartinsulin_active_announced_meal"] = "garbage|nonsense|format"
+        val restored = AnnouncedMealManager(logger, sp, dateUtil)
+        assertNull(restored.activeMeal.value)
+        assertTrue(spStore.isEmpty(), "Corrupt SP entry must be removed")
+    }
+
+    @Test
+    @DisplayName("unknown version prefix is discarded")
+    fun `unknown version discarded`() {
+        spStore["smartinsulin_active_announced_meal"] =
+            "v99|30.0|30.0|30.0|MEDIUM|100|$baseTime"
+        val restored = AnnouncedMealManager(logger, sp, dateUtil)
+        assertNull(restored.activeMeal.value, "Future-version SP entry must be discarded")
+    }
+
+    @Test
+    @DisplayName("auto-clear on expiry also wipes SP")
+    fun `auto-clear on expiry wipes SP`() {
+        manager.announceMeal(meal(carbs = 30.0, announceAt = baseTime))
+        assertTrue(spStore.isNotEmpty())
+        // Query well past the window — should auto-clear and wipe SP
+        val pastExpiry = baseTime + 6 * 60 * 60 * 1000L
+        manager.expectedIceMgdlPerHour(pastExpiry)
+        assertNull(manager.activeMeal.value)
+        assertTrue(spStore.isEmpty(), "SP entry must be wiped on auto-clear")
     }
 }
