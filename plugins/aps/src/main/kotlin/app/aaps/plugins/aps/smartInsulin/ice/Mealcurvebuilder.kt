@@ -133,6 +133,101 @@ object MealCurveBuilder {
         return out
     }
 
+    /**
+     * Fraction of carbs absorbed by [ageMin], in 0.0–1.0. Uses the Gaussian CDF
+     * truncated to the carb absorption window — so 0 returned when the curve
+     * hasn't ramped up yet, 1.0 once past the window.
+     *
+     * Matches the rate function [carbRateAt] (same Gaussian centred at
+     * [GiBucket.peakMinutes], width = peak/2). Used by UI "remaining COB"
+     * displays where calling [sampleCurve] just to integrate would be overkill.
+     */
+    fun carbAbsorbedFraction(meal: AnnouncedMeal, ageMin: Double): Double {
+        if (meal.carbsG <= 0.0) return 0.0
+        if (ageMin <= 0.0) return 0.0
+        val totalDur = meal.giBucket.totalDurationMinutes.toDouble()
+        if (ageMin >= totalDur) return 1.0
+        val peak  = meal.giBucket.peakMinutes.toDouble()
+        val width = peak / 2.0
+        // CDF at age, normalised by CDF range across the truncated window
+        val cdfAtAge   = normalCdf((ageMin   - peak) / width)
+        val cdfAtStart = normalCdf((0.0      - peak) / width)
+        val cdfAtEnd   = normalCdf((totalDur - peak) / width)
+        val denom = cdfAtEnd - cdfAtStart
+        if (denom < 1e-9) return 0.0
+        return ((cdfAtAge - cdfAtStart) / denom).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * Fraction of protein-or-fat absorbed by [ageMin], in 0.0–1.0. Returns 0.0
+     * before onset (45 min), 1.0 past the window, and analytical cumulative
+     * integral of the cosine-smoothed plateau in between.
+     *
+     * Used for both protein and fat — they share the same plateau shape and
+     * window length. Caller scales by the respective gram counts.
+     */
+    fun plateauAbsorbedFraction(ageMin: Double, totalDurationMin: Int): Double {
+        if (totalDurationMin <= FAT_PROTEIN_ONSET_MIN) return 0.0
+        if (ageMin <= FAT_PROTEIN_ONSET_MIN) return 0.0
+        if (ageMin >= totalDurationMin.toDouble()) return 1.0
+
+        val onsetStart  = FAT_PROTEIN_ONSET_MIN.toDouble()
+        val onsetEnd    = onsetStart + FAT_PROTEIN_ONSET_DURATION_MIN
+        val fadeEnd     = totalDurationMin.toDouble()
+        val fadeStart   = fadeEnd - FAT_PROTEIN_FADE_DURATION_MIN
+        if (fadeStart <= onsetEnd) return 0.0
+
+        // Total "area" in plateau-height-equivalent minutes. The cosine ramps
+        // each integrate to half their duration × peak height — so each
+        // contributes (duration/2) units of area.
+        val plateauWidth   = fadeStart - onsetEnd
+        val totalArea      = plateauWidth +
+            FAT_PROTEIN_ONSET_DURATION_MIN / 2.0 +
+            FAT_PROTEIN_FADE_DURATION_MIN / 2.0
+
+        // Compute cumulative area swept from t=0 up to ageMin.
+        val absorbedArea = when {
+            ageMin < onsetEnd -> {
+                // Inside ramp-up. Cumulative ∫₀ˢ (1−cos(πu/D))/2 du
+                //   = s/2 − D/(2π) · sin(πs/D)
+                // where s = age − onsetStart, D = onset duration.
+                val s = ageMin - onsetStart
+                val d = FAT_PROTEIN_ONSET_DURATION_MIN.toDouble()
+                s / 2.0 - d / (2.0 * Math.PI) * Math.sin(Math.PI * s / d)
+            }
+            ageMin < fadeStart -> {
+                // Past ramp-up, in plateau. Ramp contributed D/2 = half-duration.
+                val rampUpArea = FAT_PROTEIN_ONSET_DURATION_MIN / 2.0
+                rampUpArea + (ageMin - onsetEnd)
+            }
+            else -> {
+                // In fade region. Add ramp + full plateau + cumulative fade.
+                // Cumulative fade ∫₀ˢ (1+cos(πu/D))/2 du
+                //   = s/2 + D/(2π) · sin(πs/D)
+                val rampUpArea = FAT_PROTEIN_ONSET_DURATION_MIN / 2.0
+                val s = ageMin - fadeStart
+                val d = FAT_PROTEIN_FADE_DURATION_MIN.toDouble()
+                val fadeArea = s / 2.0 + d / (2.0 * Math.PI) * Math.sin(Math.PI * s / d)
+                rampUpArea + plateauWidth + fadeArea
+            }
+        }
+
+        return (absorbedArea / totalArea).coerceIn(0.0, 1.0)
+    }
+
+    /**
+     * Standard normal CDF — Abramowitz & Stegun approximation, accurate to ~7.5e-8.
+     * Used to compute cumulative carb absorption via the Gaussian rate function.
+     */
+    private fun normalCdf(z: Double): Double {
+        val absZ = Math.abs(z)
+        val t = 1.0 / (1.0 + 0.2316419 * absZ)
+        val d = 0.3989422804014327 * Math.exp(-0.5 * z * z)
+        val p = d * t * (0.31938153 + t * (-0.356563782 +
+            t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))))
+        return if (z >= 0.0) 1.0 - p else p
+    }
+
     // ── Internals: per-component contribution functions ─────────────────────
 
     /** Carb absorption — Gaussian centred at the GI bucket's peak time. */

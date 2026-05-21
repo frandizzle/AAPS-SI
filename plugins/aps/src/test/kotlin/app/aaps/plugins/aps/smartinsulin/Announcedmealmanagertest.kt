@@ -200,6 +200,53 @@ class AnnouncedMealManagerTest {
         assertTrue(early.contains("COB") || early.contains("P ") || early.contains("F "))
     }
 
+    // ── Per-component remaining macros — regression for lockstep-decrease bug ──
+
+    @Test
+    @DisplayName("protein and fat stay at full grams before their 45-min onset")
+    fun `protein and fat do not decrease before plateau onset`() {
+        // Announce 30/30/30 — the exact scenario where the bug was visible
+        manager.announceMeal(meal(carbs = 30.0, protein = 30.0, fat = 30.0, announceAt = baseTime))
+        // Sample at 10 min — well before the 45 min plateau onset
+        val r = manager.remainingMacros(baseTime + 10 * 60_000L)
+        assertNotNull(r)
+        // Carbs should have started absorbing (Gaussian rising) — small but nonzero
+        assertTrue(r!!.carbsG < 30.0, "Carbs should have started absorbing by age=10min, got ${r.carbsG}g")
+        assertTrue(r.carbsG > 28.0, "Carbs should have only absorbed a small amount by age=10min, got ${r.carbsG}g")
+        // Protein and fat must still be at FULL grams — plateau hasn't onset yet
+        assertEquals(30.0, r.proteinG, 0.01, "Protein should be untouched before 45 min onset")
+        assertEquals(30.0, r.fatG, 0.01, "Fat should be untouched before 45 min onset")
+    }
+
+    @Test
+    @DisplayName("protein and fat begin absorbing once past the 45-min onset")
+    fun `protein and fat start absorbing past onset`() {
+        manager.announceMeal(meal(carbs = 30.0, protein = 30.0, fat = 30.0, announceAt = baseTime))
+        // Sample at 90 min — well into the plateau
+        val r = manager.remainingMacros(baseTime + 90 * 60_000L)
+        assertNotNull(r)
+        assertTrue(r!!.proteinG < 30.0, "Protein should have started absorbing past onset, got ${r.proteinG}g")
+        assertTrue(r.fatG < 30.0, "Fat should have started absorbing past onset, got ${r.fatG}g")
+        // Protein and fat decrease at the same rate (same plateau shape)
+        assertEquals(r.proteinG, r.fatG, 0.01, "Protein and fat plateau in lockstep with equal grams")
+    }
+
+    @Test
+    @DisplayName("carbs absorb on a different timeline than protein/fat — not lockstep")
+    fun `macros do not decrease in lockstep`() {
+        manager.announceMeal(meal(carbs = 30.0, protein = 30.0, fat = 30.0, announceAt = baseTime))
+        // At age=30 min: carbs are well into their Gaussian peak (MEDIUM peak=75min),
+        // but protein/fat haven't onsetted yet
+        val r = manager.remainingMacros(baseTime + 30 * 60_000L)
+        assertNotNull(r)
+        // Carb absorption should be significantly ahead of protein/fat at this point
+        val carbsAbsorbed   = 30.0 - r!!.carbsG
+        val proteinAbsorbed = 30.0 - r.proteinG
+        assertTrue(carbsAbsorbed > proteinAbsorbed,
+                   "Carbs ($carbsAbsorbed g absorbed) should be ahead of protein ($proteinAbsorbed g) at 30 min — not lockstep")
+        assertEquals(0.0, proteinAbsorbed, 0.01, "Protein still at zero absorption at 30 min")
+    }
+
     // ── Persistence ─────────────────────────────────────────────────────────
 
     @Test

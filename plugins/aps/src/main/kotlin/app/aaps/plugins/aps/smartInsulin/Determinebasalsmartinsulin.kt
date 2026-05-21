@@ -267,14 +267,29 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // rawCi is a one-cycle measurement (noisy). When the IceTracker reports a
         // confident, persistent ICE signal, blend its smoothed value in.
         //
-        //   effectiveCi = rawCi × (1 − w) + iceCi × w     where w = iceBlendWeight
+        //   effectiveCi = ci × (1 − w) + iceCi × w     where w = iceBlendWeight
         //
         // iceCi is the per-tick equivalent of iceMgdlPerH (× 5 min / 60 min).
-        // Defaults give w=0 → effectiveCi = rawCi → identical to legacy behaviour.
+        // Defaults give w=0 → effectiveCi = ci → identical to legacy behaviour.
+        //
+        // **Special case for announced-meal-only signal**: When ci is 0 (user
+        // didn't enter carbs into AAPS — only announced via ICE), the weighted
+        // average dilutes iceCi to (iceCi × w). For an announced meal at 50%
+        // user-weight, that halves the meal's effect on the prediction line,
+        // causing the loop to under-dose. When ci is 0 and ICE is the only
+        // signal, use iceCi at minimum 50% strength regardless of userWeight —
+        // the announcement itself is consent to act on it.
         val effectiveCi: Double = if (iceMgdlPerH != null && iceMgdlPerH.isFinite() && iceBlendWeight > 0.0) {
             val iceCi = iceMgdlPerH * (TICK_MINUTES.toDouble() / 60.0)
             val w     = iceBlendWeight.coerceIn(0.0, 1.0)
-            ci * (1.0 - w) + iceCi * w
+            if (ci > 0.0) {
+                // Both signals present — weighted blend
+                ci * (1.0 - w) + iceCi * w
+            } else {
+                // ICE is the only signal — apply with a 50% floor so a
+                // configured-low userWeight doesn't silently neutralize ICE
+                iceCi * w.coerceAtLeast(0.5)
+            }
         } else ci
 
         // Prediction-curve length: clamp DIA between 6h and 8h, convert to 5-min ticks.

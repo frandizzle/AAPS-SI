@@ -1439,9 +1439,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val expectedIceMgdlPerH = announcedMealManager.expectedIceMgdlPerHour(glucoseStatus.date)
         val mealOverridesObserved = activeMeal != null && expectedIceMgdlPerH > (observedIceMgdlPerH ?: 0.0)
         val iceMgdlPerHEffective: Double? = if (mealOverridesObserved) expectedIceMgdlPerH else observedIceMgdlPerH
-        // When the announced meal is providing the signal, the user's commitment % serves
-        // as the confidence — they've committed to those numbers, so we trust the curve.
-        val iceConfidenceScore  = if (mealOverridesObserved) (activeMeal!!.commitmentFraction).coerceIn(0.0, 1.0) else observedConfidence
+        // Confidence — when an announcement exists, the user's commitment is the FLOOR
+        // (not a fallback only when expected > observed). The announcement justifies
+        // trusting any concurrent ICE signal as real rather than noise, which solves
+        // the cold-start problem where observed ICE is already huge but the
+        // persistence/consistency scorers need several cycles to build confidence.
+        // Observed confidence can boost above the commitment but never below it.
+        val iceConfidenceScore  = if (activeMeal != null)
+            maxOf(activeMeal.commitmentFraction, observedConfidence).coerceIn(0.0, 1.0)
+        else
+            observedConfidence
         // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
         // Threshold-gated rather than smooth — these are on/off decisions.
         val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= iceLearningThreshold
@@ -1456,7 +1463,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         lastIceAggrAdjust = iceAggrAdjust  // cache for fragmentData() / UI status card
         if (iceIsDriving || iceAggrAdjust != 1.0 || activeMeal != null) {
-            val mealNote = if (activeMeal != null) " meal=${activeMeal.giBucket.label}@${activeMeal.commitmentPct}% expected=${"%.1f".format(expectedIceMgdlPerH)}mg/dL/h" else ""
+            val mealNote = if (activeMeal != null) " meal=${activeMeal.giBucket.name}@${activeMeal.commitmentPct}% expected=${"%.1f".format(expectedIceMgdlPerH)}mg/dL/h" else ""
             aapsLogger.debug(LTag.APS,
                              "ICE: snapshot=${iceSnapshot?.summaryText} driving=$iceIsDriving aggrAdjust=${"%.2f".format(iceAggrAdjust)}$mealNote")
         }
@@ -2612,14 +2619,22 @@ open class SmartInsulinPlugin @Inject constructor(
                 // Long enough for the 5-6h plateau of fatty/high-protein meals.
                 val predictionTicks = 96
                 if (activeMeal != null) {
-                    // Announced meal → use the expected curve
+                    // Sample the announced meal's curve forward — use MealCurveBuilder
+                    // DIRECTLY, NOT announcedMealManager.expectedIceMgdlPerHour(). The
+                    // manager wrapper auto-clears the meal when the query age exceeds
+                    // the meal window; that fires during forward sampling and destroys
+                    // _activeMeal in the middle of building the prediction list,
+                    // truncating the curve. MealCurveBuilder is pure — returns 0.0
+                    // past expiry without side effects.
                     (1..predictionTicks).map { tick ->
                         val futureMs = now + tick * 5 * 60_000L
-                        announcedMealManager.expectedIceMgdlPerHour(futureMs)
+                        app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                            .expectedIceMgdlPerHourAt(activeMeal, futureMs)
                     }
                 } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
-                    // No announcement, but observed ICE is positive → decay linearly over 60 min
-                    // (12 ticks). After that, return to zero.
+                    // No announcement, but observed ICE is positive → decay linearly
+                    // over 60 min (12 ticks). Represents "this momentum will fade
+                    // unless something keeps driving it".
                     val startRate = observedIceMgdlPerH ?: 0.0
                     (1..predictionTicks).map { tick ->
                         val decayFraction = (1.0 - tick / 12.0).coerceAtLeast(0.0)
@@ -2750,18 +2765,24 @@ open class SmartInsulinPlugin @Inject constructor(
             val effMmolPerH = (iceMgdlPerHEffective ?: 0.0) / 18.0
             val srcLabel    = if (mealOverridesObserved) "exp" else "obs"
             val disableTag  = iceDisableReason?.let { " disabled=${it.name}" } ?: ""
+            val blendWeight = if (!iceIsDisabled)
+                (iceConfidenceScore * preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)).coerceIn(0.0, 1.0)
+            else 0.0
             apsResult.reason += " | ICE: $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
                 " (obs=${"%.2f".format(obsMmolPerH)} exp=${"%.2f".format(expMmolPerH)})" +
                 " conf=${"%.2f".format(iceConfidenceScore)}" +
+                " blend=${"%.2f".format(blendWeight)}" +
                 " aggr×${"%.2f".format(iceAggrAdjust)}" +
                 (if (iceIsDriving) " DRIVING" else "") +
                 disableTag
         }
         // Announced-meal diagnostic — only when a meal is actually announced.
         // Tells you at a glance whether the dialog's announceMeal() call succeeded.
+        // Uses giBucket.name (FAST/MEDIUM/SLOW) for compactness; the verbose label
+        // with examples is for the dialog UI.
         activeMeal?.let { m ->
             val ageMin = ((dateUtil.now() - m.announceTimestampMs) / 60_000L).toInt()
-            apsResult.reason += " | meal=${m.giBucket.label}@${m.commitmentPct}%" +
+            apsResult.reason += " | meal=${m.giBucket.name}@${m.commitmentPct}%" +
                 " age=${ageMin}m/${m.effectiveTotalDurationMin}m" +
                 " carbs=${"%.0f".format(m.carbsG)}g" +
                 " P=${"%.0f".format(m.proteinG)}g" +

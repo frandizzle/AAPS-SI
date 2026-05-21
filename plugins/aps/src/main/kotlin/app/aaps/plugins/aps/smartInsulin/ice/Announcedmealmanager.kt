@@ -183,23 +183,30 @@ class AnnouncedMealManager @Inject constructor(
     }
 
     /**
-     * Approximate remaining macros at the given time. Linear time-decay across the
-     * meal's absorption window — accurate enough for a UI display ("how much carb
-     * is left to absorb"). Dosing decisions use the full curve via [expectedIceMgdlPerHour],
-     * which is non-linear and more precise.
+     * Remaining macros at the given time, computed PER COMPONENT from the actual
+     * absorption curves. Each macro decreases on its own timeline — not in
+     * lockstep. For a fresh announcement at age=10 min:
+     *
+     *   - Carbs: ~2% absorbed (Gaussian rising) → ~98% remaining
+     *   - Protein: 0% absorbed (plateau hasn't onsetted yet) → 100% remaining
+     *   - Fat: 0% absorbed (same plateau) → 100% remaining
+     *
+     * This matches real physiology, where protein/fat sit at zero contribution
+     * until ~45 min post-meal before the gluconeogenesis / insulin-resistance
+     * plateau kicks in.
      *
      * Returns null when no meal is active or it has expired.
      */
     fun remainingMacros(nowMs: Long): MealRemaining? {
         val meal = _activeMeal.value ?: return null
         if (!meal.isActive(nowMs)) return null
-        val elapsedMin = (nowMs - meal.announceTimestampMs) / 60_000.0
-        val fraction = (elapsedMin / meal.effectiveTotalDurationMin.toDouble()).coerceIn(0.0, 1.0)
-        val absorbed = fraction
+        val ageMin = (nowMs - meal.announceTimestampMs) / 60_000.0
+        val carbAbsorbed    = MealCurveBuilder.carbAbsorbedFraction(meal, ageMin)
+        val plateauAbsorbed = MealCurveBuilder.plateauAbsorbedFraction(ageMin, meal.fatProteinDurationMin)
         return MealRemaining(
-            carbsG   = meal.carbsG   * (1.0 - absorbed),
-            proteinG = meal.proteinG * (1.0 - absorbed),
-            fatG     = meal.fatG     * (1.0 - absorbed)
+            carbsG   = meal.carbsG   * (1.0 - carbAbsorbed),
+            proteinG = meal.proteinG * (1.0 - plateauAbsorbed),
+            fatG     = meal.fatG     * (1.0 - plateauAbsorbed)
         )
     }
 
@@ -228,20 +235,28 @@ class AnnouncedMealManager @Inject constructor(
 
     /** Write the current active meal (or clear) to SharedPreferences. */
     private fun writeToSp(meal: AnnouncedMeal?) {
-        if (meal == null) {
-            sp.remove(SP_KEY)
-            return
+        try {
+            if (meal == null) {
+                sp.remove(SP_KEY)
+                aapsLogger.debug(LTag.APS, "AnnouncedMealManager: SP cleared (key=$SP_KEY)")
+                return
+            }
+            val serialized = listOf(
+                SERIAL_VERSION,
+                meal.carbsG.toString(),
+                meal.proteinG.toString(),
+                meal.fatG.toString(),
+                meal.giBucket.name,
+                meal.commitmentPct.toString(),
+                meal.announceTimestampMs.toString()
+            ).joinToString(DELIM)
+            sp.putString(SP_KEY, serialized)
+            aapsLogger.debug(LTag.APS,
+                             "AnnouncedMealManager: SP persist OK (key=$SP_KEY, payload=$serialized)")
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.APS,
+                             "AnnouncedMealManager: SP write FAILED — ${e.javaClass.simpleName}: ${e.message}")
         }
-        val serialized = listOf(
-            SERIAL_VERSION,
-            meal.carbsG.toString(),
-            meal.proteinG.toString(),
-            meal.fatG.toString(),
-            meal.giBucket.name,                  // "FAST" / "MEDIUM" / "SLOW"
-            meal.commitmentPct.toString(),
-            meal.announceTimestampMs.toString()
-        ).joinToString(DELIM)
-        sp.putString(SP_KEY, serialized)
     }
 
     /**
@@ -254,8 +269,18 @@ class AnnouncedMealManager @Inject constructor(
      * active meal, which is the safe default.
      */
     private fun restoreFromSp(): AnnouncedMeal? {
-        val raw = sp.getString(SP_KEY, "")
-        if (raw.isBlank()) return null
+        val raw = try {
+            sp.getString(SP_KEY, "")
+        } catch (e: Throwable) {
+            aapsLogger.error(LTag.APS,
+                             "AnnouncedMealManager: SP read FAILED — ${e.javaClass.simpleName}: ${e.message}")
+            return null
+        }
+        if (raw.isBlank()) {
+            aapsLogger.debug(LTag.APS, "AnnouncedMealManager: no SP entry at startup (key=$SP_KEY)")
+            return null
+        }
+        aapsLogger.debug(LTag.APS, "AnnouncedMealManager: SP entry found, attempting restore — '$raw'")
         return try {
             val parts = raw.split(DELIM)
             if (parts.size != 7 || parts[0] != SERIAL_VERSION) {
