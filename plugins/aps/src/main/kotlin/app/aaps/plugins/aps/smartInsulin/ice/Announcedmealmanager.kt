@@ -103,20 +103,39 @@ class AnnouncedMealManager @Inject constructor(
     /**
      * Look up the expected ICE rate at the given moment.
      *
-     * Returns 0.0 when there is no active meal, or when the active meal is
-     * outside its absorption window. Also auto-clears expired meals as a
-     * convenience (so the manager doesn't accumulate stale state if no one
-     * calls [clearMeal] explicitly).
+     * Returns 0.0 when there is no active meal. Auto-clears genuinely expired
+     * meals (past the end of their absorption window) so the manager doesn't
+     * accumulate stale state.
+     *
+     * **Important**: a meal queried with [nowMs] *earlier* than its
+     * [AnnouncedMeal.announceTimestampMs] is NOT expired — it's in the future
+     * relative to this query. The loop routinely calls this with
+     * `glucoseStatus.date`, which is the last CGM reading and can be a few
+     * minutes older than the meal announcement. We return 0.0 in that case
+     * (no expected ICE *at that earlier moment*) but leave the meal alive so
+     * the next cycle with a fresher reading can pick it up.
+     *
+     * Without this distinction, announcing a meal between CGM readings would
+     * cause the next loop cycle to silently wipe the announcement.
      *
      * @return Expected ICE in mg/dL/h. Always finite, always ≥ 0.0 for sensible inputs.
      */
     fun expectedIceMgdlPerHour(nowMs: Long): Double {
         val meal = _activeMeal.value ?: return 0.0
-        if (!meal.isActive(nowMs)) {
-            // Expired — auto-clear so future polls don't keep checking
-            clearMeal()
+        val ageMin = (nowMs - meal.announceTimestampMs) / 60_000.0
+
+        // Past expiry → auto-clear and return 0
+        if (ageMin > meal.effectiveTotalDurationMin.toDouble()) {
+            aapsLogger.debug(LTag.APS,
+                             "AnnouncedMealManager: meal auto-cleared (expired at age=${ageMin.toInt()}min, " +
+                                 "window=${meal.effectiveTotalDurationMin}min)")
+            _activeMeal.value = null
             return 0.0
         }
+
+        // Pre-announce relative to this query (negative age) → return 0 but keep the meal
+        if (ageMin < 0.0) return 0.0
+
         return MealCurveBuilder.expectedIceMgdlPerHourAt(meal, nowMs)
     }
 
