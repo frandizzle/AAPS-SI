@@ -209,72 +209,109 @@ fun SmartMealDialogScreen(
                         }
                     }
 
-                    // Duration slider + text field
-                    var durationText by rememberSaveable { mutableStateOf(uiState.durationMins.toString()) }
-                    androidx.compose.runtime.LaunchedEffect(uiState.durationMins) {
-                        durationText = uiState.durationMins.toString()
+                    // ── Macros: carbs / protein / fat ──────────────────────────
+                    var carbsText by rememberSaveable {
+                        mutableStateOf(if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else "")
+                    }
+                    androidx.compose.runtime.LaunchedEffect(uiState.carbsG) {
+                        carbsText = if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else ""
                     }
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Duration", style = MaterialTheme.typography.bodyLarge,
+                        Text("Carbs", style = MaterialTheme.typography.bodyLarge,
                              modifier = Modifier.weight(1f))
                         OutlinedTextField(
-                            value = durationText,
+                            value = carbsText,
                             onValueChange = { v ->
-                                durationText = v
-                                v.toIntOrNull()?.coerceIn(30, 480)?.let { viewModel.setDuration(it) }
+                                carbsText = v
+                                viewModel.setCarbsG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
                             },
-                            suffix = { Text("min") },
+                            suffix = { Text("g") },
+                            placeholder = { Text("0") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             modifier = Modifier.width(110.dp)
                         )
                     }
-                    Slider(
-                        value = uiState.durationMins.toFloat(),
-                        onValueChange = { v ->
-                            viewModel.setDuration(v.toInt())
-                            durationText = v.toInt().toString()
-                        },
-                        valueRange = 30f..480f,
-                        steps = ((480 - 30) / 30) - 1,
-                        modifier = Modifier.fillMaxWidth()
-                    )
 
-                    // ISF slider + text field
-                    val isfUnit = if (uiState.isMmol) "mmol/U" else "mg/dL/U"
-                    val isfMax = if (uiState.isMmol) 20.0 else 360.0
-                    val isfStep = if (uiState.isMmol) 0.1 else 1.0
-                    var isfText by rememberSaveable { mutableStateOf(if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else "") }
-                    androidx.compose.runtime.LaunchedEffect(uiState.isfValue) {
-                        isfText = if (uiState.isfValue > 0.0) "%.1f".format(uiState.isfValue) else ""
+                    var proteinText by rememberSaveable {
+                        mutableStateOf(if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else "")
+                    }
+                    androidx.compose.runtime.LaunchedEffect(uiState.proteinG) {
+                        proteinText = if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else ""
                     }
                     Row(verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("ISF override", style = MaterialTheme.typography.bodyLarge,
+                        Text("Protein", style = MaterialTheme.typography.bodyLarge,
                              modifier = Modifier.weight(1f))
                         OutlinedTextField(
-                            value = isfText,
+                            value = proteinText,
                             onValueChange = { v ->
-                                isfText = v
-                                v.toDoubleOrNull()?.coerceIn(0.0, isfMax)?.let { viewModel.setIsf(it) }
+                                proteinText = v
+                                viewModel.setProteinG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
                             },
-                            suffix = { Text(isfUnit) },
-                            placeholder = { Text("0 = profile") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            suffix = { Text("g") },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
-                            modifier = Modifier.width(130.dp)
+                            modifier = Modifier.width(110.dp)
                         )
                     }
-                    Slider(
-                        value = uiState.isfValue.toFloat(),
-                        onValueChange = { v ->
-                            val snapped = (v / isfStep).toLong() * isfStep
-                            viewModel.setIsf(snapped)
-                            isfText = if (snapped > 0.0) "%.1f".format(snapped) else "0"
+
+                    var fatText by rememberSaveable {
+                        mutableStateOf(if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else "")
+                    }
+                    androidx.compose.runtime.LaunchedEffect(uiState.fatG) {
+                        fatText = if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else ""
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Fat", style = MaterialTheme.typography.bodyLarge,
+                             modifier = Modifier.weight(1f))
+                        OutlinedTextField(
+                            value = fatText,
+                            onValueChange = { v ->
+                                fatText = v
+                                viewModel.setFatG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
+                            },
+                            suffix = { Text("g") },
+                            placeholder = { Text("0") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.width(110.dp)
+                        )
+                    }
+
+                    // ── GI bucket: High / Medium / Low ─────────────────────────
+                    // Drives the expected ICE absorption window. High = juice/candy (fast peak),
+                    // Medium = bread/rice/pasta (default), Low = pizza/fatty/large meals (long tail).
+                    Spacer(Modifier.height(4.dp))
+                    Text("Glycemic Index", style = MaterialTheme.typography.bodyLarge)
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
+                            val isSelected = uiState.giBucketIndex == idx
+                            if (isSelected) {
+                                FilledTonalButton(
+                                    onClick = { viewModel.setGiBucketIndex(idx) },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(label) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { viewModel.setGiBucketIndex(idx) },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(label) }
+                            }
+                        }
+                    }
+                    Text(
+                        text = when (uiState.giBucketIndex) {
+                            0    -> "Fast-acting: juice, candy, soft drinks · 2h window"
+                            2    -> "Slow / bimodal: pizza, fatty meals, large portions · 6h window"
+                            else -> "Standard: bread, rice, pasta, most cooked meals · 4h window"
                         },
-                        valueRange = 0f..isfMax.toFloat(),
-                        modifier = Modifier.fillMaxWidth()
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

@@ -324,4 +324,20 @@
     <string name="si_uam_proteinfat_overnnight_start_title">P/F Overnight window start hour (inclusive).</string>
     <string name="si_uam_proteinfat_overnight_end_title">P/F Overnight window end hour (inclusive). Hours outside both windows use fallback ISF</string>
 
+    <!-- ICE (Insulin Counteraction Effect) — dynamic, observation-driven dosing -->
+    <string name="pref_title_si_ice_enabled">ICE: Enable observation-driven dosing</string>
+    <string name="pref_summary_si_ice_enabled">Observes the unexplained part of BG movement (carbs, stress, exercise) and modulates loop aggressiveness in real time. Replaces PDP when active. EXPERIMENTAL — keep OFF until validated.</string>
+    <string name="pref_title_si_ice_user_weight">ICE: Influence on dosing (0.0–1.0)</string>
+    <string name="pref_summary_si_ice_user_weight">How strongly ICE modulates aggressiveness. 0 = no influence; 0.5 = balanced; 1.0 = ICE fully drives aggression when confident.</string>
+    <string name="pref_title_si_ice_floor_mgdl_h">ICE: Magnitude floor (mg/dL/h)</string>
+    <string name="pref_summary_si_ice_floor_mgdl_h">BG-rate below this scores zero confidence (treated as noise). 5.4 ≈ 0.3 mmol/h. Lower = more sensitive.</string>
+    <string name="pref_title_si_ice_strong_mgdl_h">ICE: Magnitude strong threshold (mg/dL/h)</string>
+    <string name="pref_summary_si_ice_strong_mgdl_h">BG-rate at/above this scores full confidence. 27 ≈ 1.5 mmol/h. Higher = needs stronger signal to fully react.</string>
+    <string name="pref_title_si_ice_persist_cycles">ICE: Persistence cycles for full credit</string>
+    <string name="pref_summary_si_ice_persist_cycles">Consecutive cycles of same-sign signal required for full persistence (3 cycles ≈ 15 min).</string>
+    <string name="pref_title_si_ice_consist_window">ICE: Consistency window (cycles)</string>
+    <string name="pref_summary_si_ice_consist_window">Number of recent cycles evaluated for variance. Higher = smoother but slower to respond.</string>
+    <string name="pref_title_si_ice_learning_block_threshold">ICE: Block learners above confidence</string>
+    <string name="pref_summary_si_ice_learning_block_threshold">When ICE confidence exceeds this, ISF/basal learners pause — prevents contamination when ICE is driving dosing.</string>
+
 </resources>

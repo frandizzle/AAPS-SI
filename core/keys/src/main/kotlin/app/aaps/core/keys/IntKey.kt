@@ -382,4 +382,28 @@ enum class IntKey(
         dependency = BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
         unitType = UnitType.MIN
     ),
+
+    // ── ICE (Insulin Counteraction Effect) — confidence-scoring window sizes ────
+    ApsSmartInsulinIcePersistCycles(
+        key = "si_ice_persist_cycles",
+        defaultValue = 3,
+        min = 1,
+        max = 10,
+        titleResId = R.string.pref_title_si_ice_persist_cycles,
+        summaryResId = R.string.pref_summary_si_ice_persist_cycles,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.NONE
+    ),
+    ApsSmartInsulinIceConsistWindow(
+        key = "si_ice_consist_window",
+        defaultValue = 5,
+        min = 2,
+        max = 20,
+        titleResId = R.string.pref_title_si_ice_consist_window,
+        summaryResId = R.string.pref_summary_si_ice_consist_window,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.NONE
+    ),
 }

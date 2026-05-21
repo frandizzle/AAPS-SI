@@ -323,4 +323,50 @@ enum class DoubleKey(
         unitType = UnitType.DOUBLE
     ),
 
+    // ── ICE (Insulin Counteraction Effect) — dynamic, observation-driven dosing ─
+    ApsSmartInsulinIceUserWeight(
+        key = "si_ice_user_weight",
+        defaultValue = 0.5,
+        min = 0.0,
+        max = 1.0,
+        titleResId = R.string.pref_title_si_ice_user_weight,
+        summaryResId = R.string.pref_summary_si_ice_user_weight,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinIceFloorMgdlH(
+        key = "si_ice_floor_mgdl_h",
+        defaultValue = 5.4,
+        min = 1.8,
+        max = 18.0,
+        titleResId = R.string.pref_title_si_ice_floor_mgdl_h,
+        summaryResId = R.string.pref_summary_si_ice_floor_mgdl_h,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinIceStrongMgdlH(
+        key = "si_ice_strong_mgdl_h",
+        defaultValue = 27.0,
+        min = 9.0,
+        max = 54.0,
+        titleResId = R.string.pref_title_si_ice_strong_mgdl_h,
+        summaryResId = R.string.pref_summary_si_ice_strong_mgdl_h,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinIceLearningBlockThreshold(
+        key = "si_ice_learning_block_threshold",
+        defaultValue = 0.5,
+        min = 0.0,
+        max = 1.0,
+        titleResId = R.string.pref_title_si_ice_learning_block_threshold,
+        summaryResId = R.string.pref_summary_si_ice_learning_block_threshold,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+
 }

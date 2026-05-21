@@ -894,6 +894,18 @@ fun SmartInsulinScreen(
         // ── PDP card ─────────────────────────────────────────────────────────────
         if (d.pdpEnabled) { PdpCard(d) }
 
+        // ── ICE card ─────────────────────────────────────────────────────────────
+        // Always render when the user has enabled the feature, even if currently
+        // disabled by warmup/exercise/etc — the card itself shows WHY it's disabled.
+        if (d.iceEnabled) { IceCard(d) }
+
+        // ── ICE test-meal card ───────────────────────────────────────────────────
+        // Debug/test surface for announcing meals to the loop. Allows exercising the
+        // announced-meal pre-positioning logic in the emulator before SmartMealDialog
+        // is wired to call announceMeal() directly. Remove or hide once the dialog
+        // takes over.
+        if (d.iceEnabled) { IceTestMealCard(plugin) }
+
         // ── Reset card ─────────────────────────────────────────────────
         SiCard(title = "Reset Learners") {
             ResetRow("Aggressiveness score") { plugin.resetAggression() }
@@ -1263,6 +1275,274 @@ private fun PdpCard(d: SmartInsulinPlugin.FragmentData) {
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 13.sp
         )
+    }
+}
+
+// ── ICE card ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun IceCard(d: SmartInsulinPlugin.FragmentData) {
+    val isMmol = d.isMmol
+
+    /** Format ICE value with sign and unit. mg/dL/h internally, displayed in user's unit. */
+    fun fmtIce(mmolH: Double?): String {
+        if (mmolH == null) return "—"
+        val signStr = if (mmolH >= 0) "+" else ""
+        return if (isMmol) "$signStr${"%.2f".format(mmolH)} mmol/h"
+        else                "$signStr${"%.1f".format(mmolH * 18.0)} mg/dL/h"
+    }
+
+    SiCard(title = "Insulin Counteraction Effect") {
+
+        // ── Status line ─────────────────────────────────────────────────────
+        val (statusText, statusColor) = when {
+            d.iceDisableReason.isNotEmpty() ->
+                "Disabled — ${d.iceDisableReason}" to androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+            d.iceIsDriving && (d.iceMmolPerHour ?: 0.0) > 0 ->
+                "Driving — pushing harder on observed rise" to StatusWarn
+            d.iceIsDriving && (d.iceMmolPerHour ?: 0.0) < 0 ->
+                "Driving — backing off on observed drop" to StatusInfo
+            d.iceIsDriving ->
+                "Driving — flat momentum, neutral effect" to StatusInfo
+            d.iceConfidenceScore > 0.0 ->
+                "Watching — signal building, low confidence" to StatusInfo
+            else ->
+                "Idle — no measurable counteraction" to androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+        }
+        SiRow(statusText, null, primaryColor = statusColor)
+        Spacer(Modifier.height(4.dp))
+
+        // ── Current ICE value ───────────────────────────────────────────────
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Current ICE: ", fontSize = 13.sp,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            val iceColor = when {
+                d.iceMmolPerHour == null         -> androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                d.iceMmolPerHour > 0.3           -> StatusWarn        // pushing up
+                d.iceMmolPerHour < -0.3          -> StatusInfo        // pulling down
+                else                              -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            }
+            Text(fmtIce(d.iceMmolPerHour), fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                 fontFamily = FontFamily.Monospace, color = iceColor)
+        }
+        Spacer(Modifier.height(8.dp))
+
+        // ── Confidence bar ──────────────────────────────────────────────────
+        Text("Confidence: ${"%.2f".format(d.iceConfidenceScore)}",
+             fontSize = 12.sp,
+             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxWidth().height(12.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceVariant)
+        ) {
+            val totalWidth = maxWidth
+            val confPct    = d.iceConfidenceScore.coerceIn(0.0, 1.0).toFloat()
+            val confColor  = when {
+                d.iceConfidenceScore >= 0.7 -> StatusGood
+                d.iceConfidenceScore >= 0.4 -> StatusWarn
+                else                         -> StatusInfo
+            }
+            if (confPct > 0f) {
+                Box(
+                    Modifier
+                        .width(totalWidth * confPct)
+                        .fillMaxHeight()
+                        .background(confColor)
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+
+        // ── 4-component breakdown ───────────────────────────────────────────
+        // mag×persist×consist×cgmQuality = score (product). Showing each lets the
+        // user diagnose which component is bottlenecking confidence.
+        Text(
+            "mag=${"%.2f".format(d.iceMagnitude)}  " +
+                "persist=${"%.2f".format(d.icePersistence)}  " +
+                "consist=${"%.2f".format(d.iceConsistency)}  " +
+                "cgm=${"%.2f".format(d.iceCgmQuality)}",
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // ── Active effects on the loop ──────────────────────────────────────
+        // Two indicators side by side: aggression multiplier, then override flags
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Aggression ×", fontSize = 12.sp,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            val adjColor = when {
+                d.iceAggrAdjust > 1.05 -> StatusWarn   // boosting
+                d.iceAggrAdjust < 0.95 -> StatusInfo   // backing off
+                else                   -> androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            }
+            Text("${"%.2f".format(d.iceAggrAdjust)}", fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                 fontFamily = FontFamily.Monospace, color = adjColor)
+        }
+        if (d.iceLearningBlocked || d.icePdpOverridden) {
+            Spacer(Modifier.height(4.dp))
+            val flags = buildList {
+                if (d.iceLearningBlocked) add("ISF/basal learners paused")
+                if (d.icePdpOverridden)   add("PDP overridden (off)")
+            }.joinToString(" · ")
+            Text(flags, fontSize = 11.sp, color = StatusInfo)
+        }
+
+        // ── Mini sparkline of recent ICE history (last ~3h) ─────────────────
+        if (d.iceRecentMmol.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("Recent (3h)", fontSize = 11.sp,
+                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            IceSparkline(d.iceRecentMmol)
+        }
+
+        // ── Footer help ─────────────────────────────────────────────────────
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "ICE = observed BG change minus modeled insulin BG change. Positive = food/stress/dawn. " +
+                "Negative = exercise/sensitivity. When confident, scales aggression (asymmetric: 1.5× stronger backoff) " +
+                "and shifts the prediction curve. Disable conditions: CGM warmup, exercise temp target, activity, kill switch.",
+            fontSize = 9.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 13.sp
+        )
+    }
+}
+
+/**
+ * Minimal horizontal sparkline of recent ICE values. Each cell is a thin vertical
+ * bar; positive ICE bars grow upward (orange), negative bars grow downward (blue).
+ * Null/missing samples render as gaps. Auto-scaled to the absolute max in the window.
+ */
+@Composable
+private fun IceSparkline(values: List<Double?>) {
+    val maxAbs = values.filterNotNull().maxOfOrNull { kotlin.math.abs(it) } ?: 0.0
+    if (maxAbs <= 0.0) {
+        Text("(no signal yet)", fontSize = 10.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    val midline = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxWidth().height(36.dp)
+    ) {
+        val totalWidth = maxWidth
+        val cellWidth  = totalWidth / values.size.coerceAtLeast(1)
+        Row(modifier = Modifier.fillMaxSize()) {
+            for (v in values) {
+                Box(
+                    Modifier
+                        .width(cellWidth)
+                        .fillMaxHeight(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    // Midline strip (zero axis)
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(midline)
+                    )
+                    if (v != null && kotlin.math.abs(v) > 0.001) {
+                        val normalized = (v / maxAbs).coerceIn(-1.0, 1.0).toFloat()
+                        val barHeight  = 16.dp * kotlin.math.abs(normalized)
+                        val color      = if (v >= 0) StatusWarn else StatusInfo
+                        // Position bar above (positive) or below (negative) the midline
+                        Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = if (v >= 0) Alignment.TopCenter else Alignment.BottomCenter
+                        ) {
+                            Box(
+                                Modifier
+                                    .width(2.dp)
+                                    .height(barHeight)
+                                    .padding(top = if (v >= 0) (18.dp - barHeight).coerceAtLeast(0.dp) else 0.dp,
+                                             bottom = if (v < 0) (18.dp - barHeight).coerceAtLeast(0.dp) else 0.dp)
+                                    .background(color)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── ICE test-meal card ────────────────────────────────────────────────────────
+//
+// Temporary debug surface for exercising announced-meal pre-positioning. Provides
+// preset meal buttons (FAST 30g, MEDIUM 50g, SLOW 60g) and a clear button.
+// Once SmartMealDialog is updated to call plugin.announceMeal() directly, this
+// card can be removed or hidden behind an engineering-mode flag.
+
+@Composable
+private fun IceTestMealCard(plugin: SmartInsulinPlugin) {
+    SiCard(title = "ICE Test Meals (debug)") {
+        Text(
+            "Announce a test meal to exercise pre-positioning. The expected curve will " +
+                "override observed ICE when it's stronger — visible as Aggression × > 1 in the ICE card above.",
+            fontSize = 11.sp,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            lineHeight = 14.sp
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    plugin.announceMeal(
+                        carbsG        = 30.0,
+                        proteinG      = 0.0,
+                        fatG          = 0.0,
+                        giBucketName  = "FAST",
+                        commitmentPct = 100
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("30g FAST", fontSize = 11.sp) }
+
+            OutlinedButton(
+                onClick = {
+                    plugin.announceMeal(
+                        carbsG        = 50.0,
+                        proteinG      = 0.0,
+                        fatG          = 0.0,
+                        giBucketName  = "MEDIUM",
+                        commitmentPct = 100
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("50g MED", fontSize = 11.sp) }
+
+            OutlinedButton(
+                onClick = {
+                    plugin.announceMeal(
+                        carbsG        = 60.0,
+                        proteinG      = 25.0,
+                        fatG          = 30.0,
+                        giBucketName  = "SLOW",
+                        commitmentPct = 100
+                    )
+                },
+                modifier = Modifier.weight(1f)
+            ) { Text("60g SLOW+P/F", fontSize = 11.sp) }
+        }
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = { plugin.clearAnnouncedMeal() },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer,
+                contentColor   = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer
+            )
+        ) { Text("Clear active meal") }
     }
 }
 

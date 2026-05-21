@@ -29,6 +29,8 @@ import app.aaps.core.interfaces.plugin.PluginDescription
 import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.core.ui.compose.icons.IcPluginInsulin
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinScreen
+import app.aaps.plugins.aps.smartInsulin.ice.IceTracker
+import app.aaps.plugins.aps.smartInsulin.ice.IceDisableReason
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.ToolbarConfig
 import androidx.compose.runtime.Composable
@@ -100,6 +102,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val circadianLearner: CircadianLearner,
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
+    private val iceTracker:       IceTracker,
+    private val announcedMealManager: app.aaps.plugins.aps.smartInsulin.ice.AnnouncedMealManager,
     private val aapsSchedulers:   app.aaps.core.interfaces.rx.AapsSchedulers,
     private val overviewData: OverviewData,
     private val ch: ConcentrationHelper
@@ -178,6 +182,9 @@ open class SmartInsulinPlugin @Inject constructor(
     // Timestamp of last HbA1c DB query — refreshed at most once per HBA1C_CACHE_REFRESH_MS.
     // Today's CGM readings change slowly; querying all of them every 5-min cycle is wasteful.
     @Volatile private var cachedHba1cRefreshedAtMs: Long = 0L
+    // Cached ICE aggression adjust — set during invoke(), read during fragmentData().
+    // Defaults to 1.0 (no influence) until the first cycle has run.
+    @Volatile private var lastIceAggrAdjust: Double = 1.0
     var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
@@ -393,6 +400,47 @@ open class SmartInsulinPlugin @Inject constructor(
         lastMealPdpMode          = MealMode.FASTING
         mealPdpDeltaHistory.clear()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: PDP learner reset (seed=${"%.2f".format(seedStrengthMult)})")
+    }
+
+    // ── Announced meal API ────────────────────────────────────────────────────
+    // Public entry points for SmartMealDialog (or test/debug UI) to declare meals.
+    // The plugin reads from announcedMealManager.expectedIceMgdlPerHour() each cycle
+    // and blends with observed ICE — see the ICE block in invoke() for the blending rule.
+
+    /**
+     * Announce a meal to the loop. Replaces any active announced meal.
+     *
+     * Interface signature uses String for giBucketName so the UI module (and tests)
+     * don't have to depend on the plugin module's GiBucket enum. Accepted values:
+     * "FAST" (high GI / juice/candy), "MEDIUM" (default / bread/rice/pasta),
+     * "SLOW" (low GI / pizza/fatty/large). Anything else falls back to MEDIUM.
+     */
+    override fun announceMeal(
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String,
+        commitmentPct: Int
+    ) {
+        val bucket = when (giBucketName.uppercase()) {
+            "FAST" -> app.aaps.plugins.aps.smartInsulin.ice.GiBucket.FAST
+            "SLOW" -> app.aaps.plugins.aps.smartInsulin.ice.GiBucket.SLOW
+            else   -> app.aaps.plugins.aps.smartInsulin.ice.GiBucket.MEDIUM
+        }
+        val meal = app.aaps.plugins.aps.smartInsulin.ice.AnnouncedMeal(
+            carbsG              = carbsG,
+            proteinG            = proteinG,
+            fatG                = fatG,
+            giBucket            = bucket,
+            commitmentPct       = commitmentPct.coerceIn(0, 100),
+            announceTimestampMs = dateUtil.now()
+        )
+        announcedMealManager.announceMeal(meal)
+    }
+
+    /** Clear any active announced meal. */
+    override fun clearAnnouncedMeal() {
+        announcedMealManager.clearMeal()
     }
 
 
@@ -658,6 +706,20 @@ open class SmartInsulinPlugin @Inject constructor(
         val pdpMealRampMins:       Int,     // minutes to reach max strength from base ISF
         val pdpMealModeLabel:      String,  // meal mode label when meal-PDP is active
         val pdpIsFasting:          Boolean, // true when loop is in fasting mode (for mode display)
+        // -- ICE (Insulin Counteraction Effect) ---------------------------------
+        val iceEnabled:            Boolean,     // user pref toggle on/off
+        val iceMmolPerHour:        Double?,     // current ICE in mmol/h; null if no signal
+        val iceConfidenceScore:    Double,      // composite 0.0–1.0
+        val iceMagnitude:          Double,      // sub-score: signal strength relative to floor/strong
+        val icePersistence:        Double,      // sub-score: how many consecutive cycles agree
+        val iceConsistency:        Double,      // sub-score: inverse of recent variance
+        val iceCgmQuality:         Double,      // sub-score: 1.0 normally, 0.0 during warmup/quality issues
+        val iceDisableReason:      String,      // empty when ICE is active; reason label when disabled
+        val iceIsDriving:          Boolean,     // confidence ≥ learning-block threshold AND not disabled
+        val iceAggrAdjust:         Double,      // current aggression multiplier from ICE (1.0 = neutral)
+        val iceLearningBlocked:    Boolean,     // ICE is causing ISF/basal learners to pause
+        val icePdpOverridden:      Boolean,     // PDP is forced off because ICE is driving
+        val iceRecentMmol:         List<Double?>,  // last ~3h of ICE values (mmol/h) for sparkline
     )
 
     fun fragmentData(): FragmentData {
@@ -848,6 +910,39 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpMealRampMins       = preferences.get(IntKey.ApsSmartInsulinPdpMealRampMins),
             pdpMealModeLabel      = cachedMealPdpModeLabel,
             pdpIsFasting          = currentMealMode == MealMode.FASTING,
+            // -- ICE (read from singleton tracker; populated by the loop cycle) ----
+            iceEnabled            = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled),
+            iceMmolPerHour        = iceTracker.snapshot.value?.currentIceMmolH,
+            iceConfidenceScore    = iceTracker.snapshot.value?.confidence?.score ?: 0.0,
+            iceMagnitude          = iceTracker.snapshot.value?.confidence?.magnitude ?: 0.0,
+            icePersistence        = iceTracker.snapshot.value?.confidence?.persistence ?: 0.0,
+            iceConsistency        = iceTracker.snapshot.value?.confidence?.consistency ?: 0.0,
+            iceCgmQuality         = iceTracker.snapshot.value?.confidence?.cgmQuality ?: 1.0,
+            iceDisableReason      = iceTracker.snapshot.value?.confidence?.disabled?.displayLabel ?: "",
+            iceIsDriving          = run {
+                val snap = iceTracker.snapshot.value
+                val threshold = preferences.get(DoubleKey.ApsSmartInsulinIceLearningBlockThreshold)
+                preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+                    && snap?.confidence?.disabled == null
+                    && (snap?.confidence?.score ?: 0.0) >= threshold
+            },
+            iceAggrAdjust         = lastIceAggrAdjust,
+            iceLearningBlocked    = run {
+                val snap = iceTracker.snapshot.value
+                val threshold = preferences.get(DoubleKey.ApsSmartInsulinIceLearningBlockThreshold)
+                preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+                    && snap?.confidence?.disabled == null
+                    && (snap?.confidence?.score ?: 0.0) >= threshold
+            },
+            icePdpOverridden      = run {
+                val snap = iceTracker.snapshot.value
+                val threshold = preferences.get(DoubleKey.ApsSmartInsulinIceLearningBlockThreshold)
+                val driving = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+                    && snap?.confidence?.disabled == null
+                    && (snap?.confidence?.score ?: 0.0) >= threshold
+                driving && preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
+            },
+            iceRecentMmol         = iceTracker.snapshot.value?.recentHistory?.map { it.iceMmolPerHour } ?: emptyList(),
         )
     }
 
@@ -891,7 +986,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeMode = mealOverrideManager.activeMealMode
         val now        = System.currentTimeMillis()
 
-        val liveModeLine = activeMode?.let { mode ->
+        val baseLiveModeLine = activeMode?.let { mode ->
             val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
             if (mode.isUam) {
                 val uamLabel = when (mode) {
@@ -908,6 +1003,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 "Meal: ${mode.label} ${mins}m left"
             }
         } ?: "Meal: Fasting"
+        // Live append — macros suffix recomputed each call against current time so
+        // the main screen shows fresh remaining-grams between loop cycles.
+        val liveModeLine = baseLiveModeLine + announcedMealManager.macrosOverviewSuffix(now)
 
         val isMealModeActive = activeMode != null
         val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
@@ -1244,6 +1342,96 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         val cgmInWarmup = cgmState.inWarmup
 
+        // ════════════════════════════════════════════════════════════════════
+        // ICE (Insulin Counteraction Effect) — Step 2: live dosing influence
+        // ════════════════════════════════════════════════════════════════════
+        //
+        // What ICE does:
+        //   ICE = (observed ΔBG) − (modeled insulin ΔBG)
+        //   ICE > 0 ⇒ unmodeled BG-raising force (food, stress, dawn, protein)
+        //   ICE < 0 ⇒ unmodeled BG-lowering force (exercise, late insulin)
+        //
+        // Live effects (when enabled and confidence > 0):
+        //   1. `aggressiveness` is multiplied by an ICE-derived factor — system
+        //      pushes harder on rising ICE, backs off (asymmetrically) on falling.
+        //   2. PDP is forced off when ICE is meaningfully driving — they solve
+        //      the same problem from opposite directions and stacking causes
+        //      over-correction (per design decision in earlier conversation).
+        //   3. ISF/basal learners are paused above the configured threshold so
+        //      they don't train on ICE-modified dosing outcomes.
+        //
+        // Disable conditions (force confidence=0, no influence on dosing):
+        //   - User preference toggle off (kill switch)
+        //   - CGM warmup (first 24h, sensor model untrustworthy)
+        //   - Exercise high temp target (sensitivity shifted from baseline)
+        //   - Activity monitor reports active (HR/steps elevated)
+        //
+        // Uses trueIsfMgdl (profile ISF) as the modeled-insulin reference. This
+        // gives ICE a stable baseline to measure against rather than chasing a
+        // moving target (dosingIsfMgdl shifts each cycle as learners adjust).
+        val iceTrackerEnabled = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+        val iceDisableReason: IceDisableReason? = when {
+            !iceTrackerEnabled                                                 -> IceDisableReason.PREFERENCE_DISABLED
+            cgmInWarmup                                                        -> IceDisableReason.CGM_WARMUP
+            highTempTarget                                                     -> IceDisableReason.EXERCISE_TEMP_TARGET
+            activityMonitor.level != ActivityMonitor.ActivityLevel.SEDENTARY   -> IceDisableReason.ACTIVITY_DETECTED
+            else                                                               -> null
+        }
+        val iceActivityUperMin = iobArray.firstOrNull()?.activity ?: 0.0
+        iceTracker.recordCycle(
+            timestampMs     = glucoseStatus.date,
+            bgMgdl          = glucoseStatus.glucose,
+            activityUperMin = iceActivityUperMin,
+            isfMgdlPerU     = trueIsfMgdl,
+            disableReason   = iceDisableReason,
+            params          = app.aaps.plugins.aps.smartInsulin.ice.IceConfidenceParams(
+                magnitudeFloorMgdlH      = preferences.get(DoubleKey.ApsSmartInsulinIceFloorMgdlH),
+                magnitudeStrongMgdlH     = preferences.get(DoubleKey.ApsSmartInsulinIceStrongMgdlH),
+                persistenceCyclesForFull = preferences.get(IntKey.ApsSmartInsulinIcePersistCycles),
+                consistencyWindowCycles  = preferences.get(IntKey.ApsSmartInsulinIceConsistWindow)
+            )
+        )
+
+        // Derived state for downstream use. Snapshot was just published by recordCycle.
+        val iceSnapshot          = iceTracker.snapshot.value
+        val observedIceMgdlPerH  = iceSnapshot?.currentIceMgdlH
+        val observedConfidence   = iceSnapshot?.confidence?.score ?: 0.0
+        val iceIsDisabled        = iceSnapshot?.confidence?.disabled != null
+        val iceLearningThreshold = preferences.get(DoubleKey.ApsSmartInsulinIceLearningBlockThreshold)
+
+        // ── Announced meal layer ──────────────────────────────────────────────
+        // If the user has announced a meal, blend its expected curve with observed ICE.
+        // Strategy: take whichever is stronger (max), since the expected curve provides
+        // pre-positioning before observed ICE catches up, but observed wins once a real
+        // meal materializes harder than predicted. Asymmetric — only kicks in when the
+        // meal would push more than reality currently shows, never reduces below observed.
+        val activeMeal          = announcedMealManager.activeMeal.value
+        val expectedIceMgdlPerH = announcedMealManager.expectedIceMgdlPerHour(glucoseStatus.date)
+        val mealOverridesObserved = activeMeal != null && expectedIceMgdlPerH > (observedIceMgdlPerH ?: 0.0)
+        val iceMgdlPerHEffective: Double? = if (mealOverridesObserved) expectedIceMgdlPerH else observedIceMgdlPerH
+        // When the announced meal is providing the signal, the user's commitment % serves
+        // as the confidence — they've committed to those numbers, so we trust the curve.
+        val iceConfidenceScore  = if (mealOverridesObserved) (activeMeal!!.commitmentFraction).coerceIn(0.0, 1.0) else observedConfidence
+        // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
+        // Threshold-gated rather than smooth — these are on/off decisions.
+        val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= iceLearningThreshold
+        // iceAggrAdjust: smooth multiplier on aggressiveness (used for dose scaling).
+        // Returns 1.0 when ICE is disabled / no signal / no confidence — safe identity.
+        val iceAggrAdjust        = app.aaps.plugins.aps.smartInsulin.ice.computeIceAggressionAdjust(
+            iceMgdlPerH     = iceMgdlPerHEffective,
+            confidence      = iceConfidenceScore,
+            disabled        = iceIsDisabled,
+            userWeight      = if (iceTrackerEnabled) preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight) else 0.0,
+            saturationMgdlH = preferences.get(DoubleKey.ApsSmartInsulinIceStrongMgdlH)
+        )
+        lastIceAggrAdjust = iceAggrAdjust  // cache for fragmentData() / UI status card
+        if (iceIsDriving || iceAggrAdjust != 1.0 || activeMeal != null) {
+            val mealNote = if (activeMeal != null) " meal=${activeMeal.giBucket.label}@${activeMeal.commitmentPct}% expected=${"%.1f".format(expectedIceMgdlPerH)}mg/dL/h" else ""
+            aapsLogger.debug(LTag.APS,
+                             "ICE: snapshot=${iceSnapshot?.summaryText} driving=$iceIsDriving aggrAdjust=${"%.2f".format(iceAggrAdjust)}$mealNote")
+        }
+
+
         // -- Circadian learner — fasting + no high TT only ---------------------
         // ISF/basal/aggr circadian learning is only valid during clean fasting windows.
         // The circadian learner itself also gates on mealMode==FASTING internally,
@@ -1275,7 +1463,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         if (!highTempTarget) {
-            val suppressAdaptiveLearningUpdate = activityMonitor.suppressLearning || cgmState.suppressLearning
+            val suppressAdaptiveLearningUpdate = activityMonitor.suppressLearning || cgmState.suppressLearning || iceIsDriving
             circadianLearner.update(
                 glucoseStatus            = glucoseStatus,
                 iobArray                 = iobArray,
@@ -1564,7 +1752,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
         // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
-        val suppressAdaptiveLearningGlobal = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout
+        val suppressAdaptiveLearningGlobal = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout || iceIsDriving
         val suppressRollercoasterGlobal    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
 
@@ -1599,8 +1787,11 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
-        val aggressiveness = if (mealMode != MealMode.FASTING) 1.0
+        val baseAggressiveness = if (mealMode != MealMode.FASTING) 1.0
         else aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
+        // ICE adjusts aggressiveness in real time based on observed BG vs insulin model.
+        // Clamp combined value to [0.3, 2.0] — a final safety bound on top of the per-component clamps.
+        val aggressiveness = (baseAggressiveness * iceAggrAdjust).coerceIn(0.3, 2.0)
         val tirSummary     = aggressionLearner.tirSummary
 
         // Feed basal learner — fasting only, no high temp target
@@ -1631,7 +1822,7 @@ open class SmartInsulinPlugin @Inject constructor(
             isMealMode || mealMode.isUam         -> "limited: meal mode"
             else                                 -> "Learning"
         }
-        val modeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
+        val baseModeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
             val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
             if (mode.isUam) {
                 // UAM modes: "Meal: UAM (Dinner) 25m", "Meal: UAM (Low Carb) 25m"
@@ -1650,6 +1841,10 @@ open class SmartInsulinPlugin @Inject constructor(
                 "Meal: ${mode.label} ${mins}m left"
             }
         } ?: "Meal: Fasting"
+        // Append remaining macros for the announced meal (if any). Visible on the
+        // main AAPS overview as part of the SI mode line — gives the user a quick
+        // glance at carbs/protein/fat still absorbing without opening the SI tab.
+        val modeLineStr = baseModeLineStr + announcedMealManager.macrosOverviewSuffix(now)
         val pb2LineStr = if (mealOverrideManager.preBolus2Pending) {
             val msRem = mealOverrideManager.preBolus2SecondsRemaining
             when {
@@ -1747,7 +1942,11 @@ open class SmartInsulinPlugin @Inject constructor(
         // -- PDP: accuracy scoring from previous cycle -------------------------
         // Compare last cycle's t+5min predictions against actual BG now.
         // Only score when: PDP was active last cycle, we're still fasting, CGM is fresh.
-        val pdpEnabled       = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
+        // ICE override: when ICE is actively driving dosing, force PDP off — they solve
+        // the same problem (unexplained BG elevation correction) from opposite directions
+        // and stacking them produces over-correction. ICE is the newer, observation-driven
+        // approach; PDP is the older, threshold-based one.
+        val pdpEnabled         = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled) && !iceIsDriving
         val pdpLearningEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
         // PDP accuracy scoring — only during clean fasting, no lows, no post-meal dirty window.
         // Rebound rises (counter-regulatory glucagon) and post-meal tails look like persistent
@@ -2361,7 +2560,15 @@ open class SmartInsulinPlugin @Inject constructor(
             pdpRisingStrength        = pdpEffectiveRisingStrength,
             pdpBlendWeight           = pdpBlendWeight,
             fastingMaxIobU           = fastingMaxIob,
-            pdpSyntheticCi           = pdpSyntheticCi
+            pdpSyntheticCi           = pdpSyntheticCi,
+            // ── ICE-driven prediction blending ────────────────────────────────────
+            // Pulls effective ICE (observed blended with announced-meal expected) — the
+            // expected curve provides pre-positioning before observed catches up.
+            // iceBlendWeight = confidence × user-weight, gated off when ICE is disabled.
+            iceMgdlPerH              = if (iceTrackerEnabled && !iceIsDisabled) iceMgdlPerHEffective else null,
+            iceBlendWeight           = if (iceTrackerEnabled && !iceIsDisabled)
+                (iceConfidenceScore * preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)).coerceIn(0.0, 1.0)
+            else 0.0
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle

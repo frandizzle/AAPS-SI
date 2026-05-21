@@ -122,7 +122,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         pdpBlendWeight:           Double  = 0.0,     // 0.0=primary only, 1.0=secondary only
         fastingMaxIobU:           Double  = 0.0,     // 0.0 = disabled (use global max IOB)
         pdpSyntheticCi:           Double  = 0.0,     // >0 = stuck-high pathway active
-        pdpRisingStrength:        Double  = 1.0      // rising pathway ci scale (0.5-1.5, separate from stuck-high)
+        pdpRisingStrength:        Double  = 1.0,     // rising pathway ci scale (0.5-1.5, separate from stuck-high)
+        // ── ICE (Insulin Counteraction Effect) — observation-driven ci blending ───────
+        // When iceMgdlPerH is provided and iceBlendWeight > 0, the per-cycle ci that
+        // feeds predictBgCurve is blended with the time-smoothed ICE measurement.
+        // This makes the prediction line lean on observed-vs-modeled momentum when
+        // the IceTracker reports high confidence. With defaults (null/0.0) behaviour
+        // is bit-for-bit identical to before ICE existed.
+        iceMgdlPerH:              Double? = null,    // current ICE in mg/dL/h from IceTracker, null = no signal
+        iceBlendWeight:           Double  = 0.0      // effective weight (confidence × userWeight), 0.0–1.0
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -247,6 +255,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val bgi = -(iobArray[0].activity * effectiveDosingIsfMgdl * 5.0)
         val ci  = min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
 
+        // ── ICE blending: shift ci toward time-smoothed observed counteraction ─────
+        // rawCi is a one-cycle measurement (noisy). When the IceTracker reports a
+        // confident, persistent ICE signal, blend its smoothed value in.
+        //
+        //   effectiveCi = rawCi × (1 − w) + iceCi × w     where w = iceBlendWeight
+        //
+        // iceCi is the per-tick equivalent of iceMgdlPerH (× 5 min / 60 min).
+        // Defaults give w=0 → effectiveCi = rawCi → identical to legacy behaviour.
+        val effectiveCi: Double = if (iceMgdlPerH != null && iceMgdlPerH.isFinite() && iceBlendWeight > 0.0) {
+            val iceCi = iceMgdlPerH * (TICK_MINUTES.toDouble() / 60.0)
+            val w     = iceBlendWeight.coerceIn(0.0, 1.0)
+            ci * (1.0 - w) + iceCi * w
+        } else ci
+
         // Prediction-curve length: clamp DIA between 6h and 8h, convert to 5-min ticks.
         // Used by primary curve, PDP secondary curve, and graph-population (predBGs).
         // Single source of truth — bounds changes only need to happen here.
@@ -254,7 +276,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         val predictedBg = predictBgCurve(
             startBg       = currentBg,
-            ci            = ci,
+            ci            = effectiveCi,
             iobArray      = iobArray,
             isfMgdl       = effectiveDosingIsfMgdl,
             learnedProfile = learnedProfile,
