@@ -2710,6 +2710,34 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmSuffix +
             ukfFirstDaySuffix
 
+        // ── ICE diagnostic suffix ────────────────────────────────────────────
+        // Emit ICE status into the user-visible reason string whenever the feature
+        // is enabled — even when ICE is currently disabled by warmup/exercise/etc,
+        // so the user can see WHY ICE isn't engaging.
+        if (iceTrackerEnabled) {
+            val obsMmolPerH = (observedIceMgdlPerH ?: 0.0) / 18.0
+            val expMmolPerH = expectedIceMgdlPerH / 18.0
+            val effMmolPerH = (iceMgdlPerHEffective ?: 0.0) / 18.0
+            val srcLabel    = if (mealOverridesObserved) "exp" else "obs"
+            val disableTag  = iceDisableReason?.let { " disabled=${it.name}" } ?: ""
+            apsResult.reason += " | ICE: $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
+                " (obs=${"%.2f".format(obsMmolPerH)} exp=${"%.2f".format(expMmolPerH)})" +
+                " conf=${"%.2f".format(iceConfidenceScore)}" +
+                " aggr×${"%.2f".format(iceAggrAdjust)}" +
+                (if (iceIsDriving) " DRIVING" else "") +
+                disableTag
+        }
+        // Announced-meal diagnostic — only when a meal is actually announced.
+        // Tells you at a glance whether the dialog's announceMeal() call succeeded.
+        activeMeal?.let { m ->
+            val ageMin = ((dateUtil.now() - m.announceTimestampMs) / 60_000L).toInt()
+            apsResult.reason += " | meal=${m.giBucket.label}@${m.commitmentPct}%" +
+                " age=${ageMin}m/${m.effectiveTotalDurationMin}m" +
+                " carbs=${"%.0f".format(m.carbsG)}g" +
+                " P=${"%.0f".format(m.proteinG)}g" +
+                " F=${"%.0f".format(m.fatG)}g"
+        }
+
         // Append mode time remaining if an override is active
         val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
         if (modeRemainingMs > 0L) {
