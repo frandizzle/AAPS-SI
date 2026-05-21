@@ -1590,11 +1590,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Always record BG zone for TIR display — skipping would give false metrics in the SI tab.
         // suppressScoring prevents activity-induced lows from penalising aggressiveness, since
         // those lows are caused by exercise sensitivity, not over-aggressive insulin delivery.
-        val learnerHighThresh = (cachedProfileTarget + 45.0).coerceIn(135.0, 180.0)
         aggressionLearner.recordBg(
             bgMgdl          = glucoseStatus.glucose,
-            lowThreshMgdl   = 70.0,   // 3.9 mmol — clinical TIR low threshold
-            highThreshMgdl  = learnerHighThresh,
+            lowThreshMgdl   = 70.0,    // 3.9 mmol — ADA TIR lower bound
+            highThreshMgdl  = 180.0,   // 10.0 mmol — ADA TIR upper bound (clinical standard)
             mealMode        = mealMode,
             suppressScoring = suppressAdaptiveLearningGlobal
         )
