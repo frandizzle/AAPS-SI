@@ -130,7 +130,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the IceTracker reports high confidence. With defaults (null/0.0) behaviour
         // is bit-for-bit identical to before ICE existed.
         iceMgdlPerH:              Double? = null,    // current ICE in mg/dL/h from IceTracker, null = no signal
-        iceBlendWeight:           Double  = 0.0      // effective weight (confidence × userWeight), 0.0–1.0
+        iceBlendWeight:           Double  = 0.0,     // effective weight (confidence × userWeight), 0.0–1.0
+        // ── ICE forward prediction line ───────────────────────────────────────────────
+        // Future expected ICE rates at 5-min ticks (index 0 = first tick after now).
+        // Used to populate predBGs.COB — a dedicated visualization line showing what
+        // the meal alone (announced + observed momentum) is expected to do to BG over
+        // the next ~2h. Insulin is NOT subtracted from this line so the user sees the
+        // raw meal effect against the cyan blended-IOB prediction line.
+        // Empty list = no ICE line rendered (legacy behaviour).
+        iceFutureMgdlPerH:        List<Double> = emptyList()
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -400,6 +408,25 @@ class DetermineBasalSmartInsulin @Inject constructor(
             // UAM = orange line (visually distinct from cyan IOB line)
             rT.predBGs?.UAM = rawPdpPrediction
             // ZT fallback removed — ZT is cyan like IOB, defeats the purpose of distinction
+        }
+
+        // ── ICE forward prediction line ───────────────────────────────────────────────
+        // Shows the raw meal effect (announced curve + observed momentum) added to current
+        // BG over the next ~2h, IGNORING insulin. This is what ICE "thinks" the food alone
+        // will do — distinct from the cyan IOB line (which subtracts insulin) so the user
+        // can visually compare and see exactly what contribution ICE is making.
+        //
+        // Curve: COB slot in predBGs — renders in a colour distinct from IOB (cyan) and
+        // UAM/PDP (orange). Falls back to empty list = no line rendered.
+        if (iceFutureMgdlPerH.isNotEmpty()) {
+            val icePrediction = mutableListOf<Int>()
+            var iceBg = currentBg
+            iceFutureMgdlPerH.take(predictionTicks).forEach { mgdlPerH ->
+                // Convert mg/dL/h to mg/dL added per 5-min tick
+                iceBg += mgdlPerH * (5.0 / 60.0)
+                icePrediction.add(iceBg.coerceIn(39.0, 401.0).toInt())
+            }
+            rT.predBGs?.COB = icePrediction
         }
 
         // ── IOB / headroom ────────────────────────────────────────────────────

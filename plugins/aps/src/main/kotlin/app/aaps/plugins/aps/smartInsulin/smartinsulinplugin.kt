@@ -2598,7 +2598,34 @@ open class SmartInsulinPlugin @Inject constructor(
             iceMgdlPerH              = if (iceTrackerEnabled && !iceIsDisabled) iceMgdlPerHEffective else null,
             iceBlendWeight           = if (iceTrackerEnabled && !iceIsDisabled)
                 (iceConfidenceScore * preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)).coerceIn(0.0, 1.0)
-            else 0.0
+            else 0.0,
+            // ── ICE forward prediction (drives the new dedicated chart line) ──────
+            // For announced meals: sample the expected curve forward at 5-min ticks.
+            // For unannounced (observed ICE only): persist current observed value with
+            // linear decay to zero over 60 min — represents "this momentum will fade
+            // unless something keeps driving it" rather than the unbounded-extrapolation
+            // alternative.
+            // Gated off when ICE is disabled or in warmup so the line disappears cleanly.
+            iceFutureMgdlPerH        = if (iceTrackerEnabled && !iceIsDisabled) {
+                val predictionTicks = 24  // 2h at 5-min ticks — matches the chart's typical horizon
+                if (activeMeal != null) {
+                    // Announced meal → use the expected curve
+                    (1..predictionTicks).map { tick ->
+                        val futureMs = now + tick * 5 * 60_000L
+                        announcedMealManager.expectedIceMgdlPerHour(futureMs)
+                    }
+                } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
+                    // No announcement, but observed ICE is positive → decay linearly over 60 min
+                    // (12 ticks). After that, return to zero.
+                    val startRate = observedIceMgdlPerH ?: 0.0
+                    (1..predictionTicks).map { tick ->
+                        val decayFraction = (1.0 - tick / 12.0).coerceAtLeast(0.0)
+                        startRate * decayFraction
+                    }
+                } else {
+                    emptyList()
+                }
+            } else emptyList()
         )
 
         // Increment UAM entry SMB counter if an SMB was delivered this cycle
