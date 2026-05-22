@@ -1561,17 +1561,20 @@ open class SmartInsulinPlugin @Inject constructor(
         //
         // Disable conditions (force confidence=0, no influence on dosing):
         //   - User preference toggle off (kill switch)
-        //   - CGM warmup (first 24h, sensor model untrustworthy)
+        //   - CGM warmup (first 24h, sensor model untrustworthy) — UNLESS
+        //     ApsSmartInsulinIceCgmWarmupBlock is disabled (user trusts the sensor
+        //     from the start, e.g. pre-soaked G7 / no-cal Libre 3). Default true.
         //   - Exercise high temp target (sensitivity shifted from baseline)
         //   - Activity monitor reports active (HR/steps elevated)
         //
         // Uses trueIsfMgdl (profile ISF) as the modeled-insulin reference. This
         // gives ICE a stable baseline to measure against rather than chasing a
         // moving target (dosingIsfMgdl shifts each cycle as learners adjust).
-        val iceTrackerEnabled = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+        val iceTrackerEnabled    = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
+        val iceCgmWarmupBlock    = preferences.get(BooleanKey.ApsSmartInsulinIceCgmWarmupBlock)
         val iceDisableReason: IceDisableReason? = when {
             !iceTrackerEnabled                                                 -> IceDisableReason.PREFERENCE_DISABLED
-            cgmInWarmup                                                        -> IceDisableReason.CGM_WARMUP
+            cgmInWarmup && iceCgmWarmupBlock                                   -> IceDisableReason.CGM_WARMUP
             highTempTarget                                                     -> IceDisableReason.EXERCISE_TEMP_TARGET
             activityMonitor.level != ActivityMonitor.ActivityLevel.SEDENTARY   -> IceDisableReason.ACTIVITY_DETECTED
             else                                                               -> null
@@ -3477,6 +3480,11 @@ open class SmartInsulinPlugin @Inject constructor(
                     // Master toggle — all other ICE prefs depend on this via the
                     // dependency declared on each key.
                     BooleanKey.ApsSmartInsulinIceEnabled,
+                    // ice-step35: bypass CGM warmup blocking for ICE. Default on
+                    // (CGM warmup blocks ICE — sensor untrustworthy). Disable
+                    // if you trust your sensor from sensor change (e.g. Libre 3,
+                    // pre-soaked G7) so ICE keeps working in the first 24h.
+                    BooleanKey.ApsSmartInsulinIceCgmWarmupBlock,
                     // Primary user knob — blends ICE influence into dosing
                     // (0.0 = off, 1.0 = full). Default 0.5 gives moderate influence.
                     DoubleKey.ApsSmartInsulinIceUserWeight,

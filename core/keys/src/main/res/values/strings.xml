@@ -613,6 +613,8 @@
     <!-- UAM (unannounced-meal) variant of ICE — ice-step28 -->
     <string name="pref_title_si_uam_ice_enabled">Enable UAM (unannounced-rise detection)</string>
     <string name="pref_summary_si_uam_ice_enabled">When enabled, the loop reacts to rises in BG that look meal-driven but were not announced via the meal dialog. Automatically suppressed when an announced meal is active, when a high temp target is set (exercise/relax), or when AAPS carbs-on-board &gt; 0. Disable to use ICE for announced meals only (COB mode).</string>
+    <string name="pref_title_si_ice_cgm_warmup_block">Block ICE during CGM warmup (first 24h)</string>
+    <string name="pref_summary_si_ice_cgm_warmup_block">When enabled (default), ICE is paused during the first 24h after a sensor change — the sensor model is untrustworthy then and noisy readings would corrupt ICE confidence. Disable to bypass: useful if you trust your sensor from the start (e.g. Libre 3, G7 with pre-soaking). Other CGM-warmup guards (UAM/STFT/learners) remain controlled by their own toggles.</string>
     <string name="pref_title_si_uam_ice_user_weight">UAM: Influence on dosing (0.0–1.0)</string>
     <string name="pref_summary_si_uam_ice_user_weight">Trust slider for unannounced rises (no meal announced). Lower than the COB equivalent because mis-detection of dawn / stress / rebound as a meal causes hypos. Default 0.3.</string>
     <string name="pref_title_si_uam_ice_learning_block_threshold">UAM: Confidence floor to drive dose</string>
