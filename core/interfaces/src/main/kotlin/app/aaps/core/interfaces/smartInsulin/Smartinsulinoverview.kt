@@ -57,22 +57,36 @@ interface SmartInsulinOverview {
      * @param commitmentPct user's confidence in these numbers, 0–100. Scales the expected
      *                      curve linearly. 100 = weighed meal / certain; lower values
      *                      reduce the loop's reliance on the prediction.
+     *
+     * Default behaviour is ADDITIVE — the new meal becomes a layer on top of any
+     * existing active meal, with its own independent absorption timeline. Pass
+     * `replaceExisting = true` to clear all existing layers first (for fixing
+     * mistakes — "I entered the wrong macros, start over").
      */
     fun announceMeal(
         carbsG: Double,
         proteinG: Double,
         fatG: Double,
         giBucketName: String,
-        commitmentPct: Int
+        commitmentPct: Int,
+        replaceExisting: Boolean = false
     )
 
-    /** Clear any active announced meal. The loop reverts to observed-only ICE behaviour. */
+    /** Clear ALL active meal layers. The loop reverts to observed-only ICE behaviour. */
     fun clearAnnouncedMeal()
+
+    /**
+     * Clear a single layer by its ID (the layer's announce timestamp in ms).
+     * No-op if no layer with that ID is active.
+     */
+    fun clearMealLayer(layerId: Long)
 
     /**
      * Edit the macros and/or GI bucket of the currently-active announced meal,
      * preserving its announce timestamp so absorption tracking continues from
-     * where it was. No-op if there is no active meal.
+     * where it was. Behaves as a no-op when zero or multiple layers are active
+     * — for the multi-layer case, the UI should target a specific layer ID via
+     * an editLayer API (TBD).
      *
      * Use this when the user discovers mid-meal that their initial macro
      * estimate was wrong. A cancel + fresh announce would reset the absorption

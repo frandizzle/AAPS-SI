@@ -82,8 +82,8 @@ class AnnouncedMealManagerTest {
         // Rate should be 0 (meal hasn't started yet in this query's frame)
         assertEquals(0.0, rate, 1e-9)
         // But the meal must still be present for the next loop cycle to use
-        assertNotNull(manager.activeMeal.value, "Negative-age query must not clear the meal")
-        assertEquals(m, manager.activeMeal.value)
+        assertNotNull(manager.activeMeals.value.firstOrNull(), "Negative-age query must not clear the meal")
+        assertEquals(m, manager.activeMeals.value.firstOrNull())
     }
 
     @Test
@@ -93,7 +93,7 @@ class AnnouncedMealManagerTest {
         manager.announceMeal(m)
         for (offsetMin in 1..5) {
             manager.expectedIceMgdlPerHour(baseTime - offsetMin * 60_000L)
-            assertNotNull(manager.activeMeal.value, "Cleared after $offsetMin min negative-age query")
+            assertNotNull(manager.activeMeals.value.firstOrNull(), "Cleared after $offsetMin min negative-age query")
         }
     }
 
@@ -110,7 +110,7 @@ class AnnouncedMealManagerTest {
         val queryPastExpiry = baseTime + (300 + 60) * 60_000L
         val rate = manager.expectedIceMgdlPerHour(queryPastExpiry)
         assertEquals(0.0, rate, 1e-9)
-        assertNull(manager.activeMeal.value, "Genuinely expired meal must auto-clear")
+        assertNull(manager.activeMeals.value.firstOrNull(), "Genuinely expired meal must auto-clear")
     }
 
     @Test
@@ -122,7 +122,7 @@ class AnnouncedMealManagerTest {
         val queryAtEnd = baseTime + 300 * 60_000L
         manager.expectedIceMgdlPerHour(queryAtEnd)
         // Should still be active at exactly the boundary
-        assertNotNull(manager.activeMeal.value, "Meal at exact window boundary must not be cleared")
+        assertNotNull(manager.activeMeals.value.firstOrNull(), "Meal at exact window boundary must not be cleared")
     }
 
     // ── In-range queries — return positive expected ICE ─────────────────────
@@ -136,7 +136,7 @@ class AnnouncedMealManagerTest {
         val queryMid = baseTime + 90 * 60_000L
         val rate = manager.expectedIceMgdlPerHour(queryMid)
         assertTrue(rate > 0.0, "Mid-window query should produce positive ICE, got $rate")
-        assertNotNull(manager.activeMeal.value, "Mid-window query must not clear")
+        assertNotNull(manager.activeMeals.value.firstOrNull(), "Mid-window query must not clear")
     }
 
     // ── Lifecycle: announce / edit / clear ──────────────────────────────────
@@ -147,9 +147,9 @@ class AnnouncedMealManagerTest {
         val first = meal(carbs = 30.0, announceAt = baseTime)
         manager.announceMeal(first)
         val second = meal(carbs = 60.0, announceAt = baseTime + 60_000L)
-        manager.announceMeal(second)
-        assertEquals(60.0, manager.activeMeal.value?.carbsG)
-        assertEquals(baseTime + 60_000L, manager.activeMeal.value?.announceTimestampMs)
+        manager.announceMeal(second, replace = true)
+        assertEquals(60.0, manager.activeMeals.value.firstOrNull()?.carbsG)
+        assertEquals(baseTime + 60_000L, manager.activeMeals.value.firstOrNull()?.announceTimestampMs)
     }
 
     @Test
@@ -158,17 +158,17 @@ class AnnouncedMealManagerTest {
         val m = meal(carbs = 30.0, announceAt = baseTime)
         manager.announceMeal(m)
         manager.editActiveMeal(carbsG = 70.0, proteinG = 30.0, fatG = 30.0, giBucketName = "MEDIUM")
-        assertEquals(70.0, manager.activeMeal.value?.carbsG)
-        assertEquals(baseTime, manager.activeMeal.value?.announceTimestampMs,
+        assertEquals(70.0, manager.activeMeals.value.firstOrNull()?.carbsG)
+        assertEquals(baseTime, manager.activeMeals.value.firstOrNull()?.announceTimestampMs,
                      "edit must preserve the original announce timestamp")
     }
 
     @Test
     @DisplayName("editActiveMeal with no active meal is a no-op")
     fun `edit with nothing announced is a no-op`() {
-        assertNull(manager.activeMeal.value)
+        assertNull(manager.activeMeals.value.firstOrNull())
         manager.editActiveMeal(carbsG = 30.0, proteinG = 0.0, fatG = 0.0, giBucketName = "MEDIUM")
-        assertNull(manager.activeMeal.value, "Edit with no active meal must not create one")
+        assertNull(manager.activeMeals.value.firstOrNull(), "Edit with no active meal must not create one")
     }
 
     @Test
@@ -176,7 +176,7 @@ class AnnouncedMealManagerTest {
     fun `clearMeal wipes the active meal`() {
         manager.announceMeal(meal(announceAt = baseTime))
         manager.clearMeal()
-        assertNull(manager.activeMeal.value)
+        assertNull(manager.activeMeals.value.firstOrNull())
     }
 
     // ── Remaining macros & overview suffix ─────────────────────────────────
@@ -272,7 +272,7 @@ class AnnouncedMealManagerTest {
         manager.editActiveMeal(carbsG = 80.0, proteinG = 40.0, fatG = 40.0, giBucketName = "SLOW")
         // Construct a fresh manager — it must restore the EDITED values
         val restored = AnnouncedMealManager(logger, sp, dateUtil)
-        val active = restored.activeMeal.value
+        val active = restored.activeMeals.value.firstOrNull()
         assertNotNull(active)
         assertEquals(80.0, active!!.carbsG)
         assertEquals(40.0, active.proteinG)
@@ -286,7 +286,7 @@ class AnnouncedMealManagerTest {
         manager.announceMeal(meal(carbs = 50.0, protein = 30.0, fat = 20.0, announceAt = baseTime))
         // Construct a fresh manager (simulating reboot — new process, same SP)
         val restored = AnnouncedMealManager(logger, sp, dateUtil)
-        val active = restored.activeMeal.value
+        val active = restored.activeMeals.value.firstOrNull()
         assertNotNull(active, "Meal should be restored from SP after a fresh manager is constructed")
         assertEquals(50.0, active!!.carbsG)
         assertEquals(30.0, active.proteinG)
@@ -303,7 +303,7 @@ class AnnouncedMealManagerTest {
         // Simulate a fresh manager 8 hours later — the meal's 5h window is long past
         whenever(dateUtil.now()).thenReturn(baseTime + 8 * 60 * 60 * 1000L)
         val restored = AnnouncedMealManager(logger, sp, dateUtil)
-        assertNull(restored.activeMeal.value, "Expired meal must not be restored")
+        assertNull(restored.activeMeals.value.firstOrNull(), "Expired meal must not be restored")
         assertTrue(spStore.isEmpty(), "SP entry must be cleared for expired meal")
     }
 
@@ -312,7 +312,7 @@ class AnnouncedMealManagerTest {
     fun `corrupt SP ignored`() {
         spStore["smartinsulin_active_announced_meal"] = "garbage|nonsense|format"
         val restored = AnnouncedMealManager(logger, sp, dateUtil)
-        assertNull(restored.activeMeal.value)
+        assertNull(restored.activeMeals.value.firstOrNull())
         assertTrue(spStore.isEmpty(), "Corrupt SP entry must be removed")
     }
 
@@ -322,7 +322,7 @@ class AnnouncedMealManagerTest {
         spStore["smartinsulin_active_announced_meal"] =
             "v99|30.0|30.0|30.0|MEDIUM|100|$baseTime"
         val restored = AnnouncedMealManager(logger, sp, dateUtil)
-        assertNull(restored.activeMeal.value, "Future-version SP entry must be discarded")
+        assertNull(restored.activeMeals.value.firstOrNull(), "Future-version SP entry must be discarded")
     }
 
     @Test
@@ -333,7 +333,7 @@ class AnnouncedMealManagerTest {
         // Query well past the window — should auto-clear and wipe SP
         val pastExpiry = baseTime + 6 * 60 * 60 * 1000L
         manager.expectedIceMgdlPerHour(pastExpiry)
-        assertNull(manager.activeMeal.value)
+        assertNull(manager.activeMeals.value.firstOrNull())
         assertTrue(spStore.isEmpty(), "SP entry must be wiped on auto-clear")
     }
 }
