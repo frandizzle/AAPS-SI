@@ -212,7 +212,17 @@ class IceTracker @Inject constructor(
 
         return IceDebugSnapshot(
             cycleTimeMs     = current.timestampMs,
-            currentIceMgdlH = current.iceMgdlPerHour,
+            // ice-step31: if the current sample has no computed ICE (gap-skip
+            // path at line 122), fall back to the last sample that does. Without
+            // this, a manual loop landing within MIN_GAP_MIN of a CGM-driven loop
+            // produces a sample with iceMgdlPerHour=null, which echoes through
+            // the snapshot and makes the plugin's iceMode evaluate to NONE — so
+            // the chart's UAM/COB line vanishes for one cycle even though the
+            // underlying observation is unchanged. Falling back to the last
+            // valid value keeps the snapshot stable across these "no new data"
+            // sample additions. Same semantics as currentIceMgdlPerH() above.
+            currentIceMgdlH = current.iceMgdlPerHour
+                ?: buffer.lastOrNull { it.iceMgdlPerHour != null }?.iceMgdlPerHour,
             confidence      = confidence,
             recentHistory   = recentHistory,
             summaryText     = summary
