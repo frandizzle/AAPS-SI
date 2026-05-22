@@ -307,6 +307,30 @@ class DetermineBasalSmartInsulin @Inject constructor(
             systemDiaMins  = systemDiaMins
         )
 
+        // ── Display-only "fasting" prediction (cyan line on chart) ────────────────
+        // The cyan IOB line on the chart should show pure insulin-effect — i.e.,
+        // "if the meal didn't happen, what would BG do?" This is what users
+        // historically read as the "fasting prediction." When ICE is engaged in
+        // effectiveCi above, the cyan line would bend up against the meal, which
+        // is mathematically correct for safety reasoning but visually confusing
+        // (cyan and orange end up looking similar — both meal-aware — defeating
+        // the purpose of having two lines).
+        //
+        // So compute a parallel prediction with ci=rawCi (no ICE blend) for the
+        // chart only. predictedBg above keeps ICE for safety/internal use.
+        val predictedBgDisplay: List<Double> =
+            if (iceBlendWeight > 0.0 && effectiveCi != ci) {
+                predictBgCurve(
+                    startBg       = currentBg,
+                    ci            = ci,                  // raw — no ICE
+                    iobArray      = iobArray,
+                    isfMgdl       = effectiveDosingIsfMgdl,
+                    learnedProfile = learnedProfile,
+                    ticks         = predictionTicks,
+                    systemDiaMins  = systemDiaMins
+                )
+            } else predictedBg  // no ICE blend — display and internal are the same
+
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
         // suspending on the early trough while insulin is still peaking. The +2 tick
         // buffer prevents a single noisy trough right at the peak boundary from driving
@@ -460,9 +484,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val pdpPredAt5  = pdpPredictedBg.firstOrNull() ?: currentBg
         val iobPredAt5  = predictedBg.firstOrNull() ?: currentBg
 
-        // Populate rT.predBGs.IOB for the overview prediction graph
+        // Populate rT.predBGs.IOB for the overview prediction graph.
+        // Uses predictedBgDisplay (no ICE blend) so the cyan line shows the pure
+        // "what insulin alone does" curve — the historical "fasting prediction"
+        // semantic. Internal safety calculations still read predictedBg (ICE-aware).
         val rawPrediction = mutableListOf<Int>()
-        predictedBg.take(predictionTicks)
+        predictedBgDisplay.take(predictionTicks)
             .forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
@@ -523,6 +550,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // waiting for the trough to fall before responding.
         val predMinGapMgdl = (dosingMetric - targetBg).coerceAtLeast(0.0)
         val insulinReq     = predMinGapMgdl / effectiveDosingIsfMgdl
+
+        // iceActive: true when ICE is materially shifting the dosing target above
+        // pure blendedPredMin. Used in two places:
+        //   1. Trigger label — shows "ice_max(...)" instead of "predMinGap(...)"
+        //   2. SMB/TBR sizing — when ICE is driving the dose, bypass the aggression
+        //      multiplier. Rationale: the dose came from macros → ice_max → gap →
+        //      insulinReq, which already encodes the right amount of insulin for
+        //      the announced food. Multiplying by aggression on top double-counts
+        //      and over-doses. Aggression was a hack for observation-only UAM
+        //      where dose intent wasn't otherwise quantifiable; with announced
+        //      meals we have the right number directly.
+        // The 0.5 mg/dL floor (~0.03 mmol) avoids triggering on rounding noise
+        // when dosingMetric and blendedPredMin happen to coincide.
+        val iceActive = iceBlendWeight > 0.0 && dosingMetric > blendedPredMin + 0.5
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -650,7 +691,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     // The plugin passes exactly the right fraction for this cycle —
                     // either the UAM entry fraction or SMB_DELIVERY_FRACTION (0.5).
                     // Use it directly. coerceIn(0.1, 0.9) is the OpenAPS safety cap.
-                    insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
+                    //
+                    // ICE-driven dosing bypasses aggression: insulinReq from the
+                    // macro → ice_max pipeline already reflects the announced food's
+                    // dose requirement. Multiplying by aggression would double-count.
+                    // For non-ICE paths (PDP, observation-only UAM, fasting) the
+                    // aggression boost stays — those don't have macro-grounded
+                    // dose intent and may need the extra responsiveness.
+                    val effectiveAggression = if (iceActive) 1.0 else aggressiveness
+                    insulinReq * (uamSmbFraction * effectiveAggression).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
@@ -663,7 +712,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // SMBs but still needs elevated TBR to bring predMin to the temp target.
                 // insulinReq is already computed against targetBg (which IS the temp target
                 // when active), so TBR naturally aims for 6.5 not 5.5.
-                val tbrCorrectionU  = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                // Same aggression-bypass for ICE-driven dosing as the SMB calc above.
+                val tbrAggression  = if (iceActive) 1.0 else aggressiveness
+                val tbrCorrectionU  = if (iobOk && insulinReq > 0.0) insulinReq * tbrAggression else 0.0
                 val remainingU      = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
                 val tbrRateRaw = when {
@@ -693,8 +744,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     !smbAllowed -> "blocked"
                     else        -> {
                         val pdpActive = pdpEnabled && effectivePdpBlend > 0.0
-                        val label = if (pdpActive) "pdpMinGap" else "predMinGap"
-                        "$label(${fmt(blendedPredMin, isMmol)}->${fmt(targetBg, isMmol)})"
+                        // iceActive defined earlier (just below dosingMetric); reused here.
+                        // When the meal expires, iobAwareIceProjection collapses to
+                        // ~currentBg, dosingMetric ≈ blendedPredMin, iceActive=false,
+                        // and the label naturally reverts to predMinGap.
+                        val label = when {
+                            iceActive   -> "ice_max"
+                            pdpActive   -> "pdpMinGap"
+                            else        -> "predMinGap"
+                        }
+                        val displayValue = if (iceActive) dosingMetric else blendedPredMin
+                        "$label(${fmt(displayValue, isMmol)}->${fmt(targetBg, isMmol)})"
                     }
                 }
 
