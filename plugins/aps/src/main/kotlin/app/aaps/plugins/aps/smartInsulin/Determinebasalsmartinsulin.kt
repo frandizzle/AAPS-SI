@@ -409,24 +409,49 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the actual MEAL PEAK that BG is heading toward.
         //
         // With this: when iceBlendWeight > 0, the dosing target is a weighted
-        // blend of the projection's peak (pred_max) and trough (blendedPredMin).
+        // blend of an IOB-AWARE meal projection peak (ice_max) and the conventional
+        // blendedPredMin.
+        //
+        // **Why IOB-aware** (not pure no-insulin projection):
+        // A no-insulin projection (orange line ignoring IOB entirely) would never
+        // converge — even with 5U IOB heading for hypo, it would still say
+        // "meal projects to 10 mmol, dose more!" The IOB-aware version subtracts
+        // the existing insulin's per-tick activity from the meal effect, so:
+        //   • Before dosing: meal pressure dominates → ice_max high → dose hard
+        //   • After dosing: IOB drops the projection → ice_max ≈ target → coast
+        //   • Over-dosed: IOB outweighs meal → ice_max dips → safety blocks SMBs
+        //
+        // The orange chart line and the dosing metric use the SAME projection, so
+        // what the user sees on the chart is what the loop is dosing toward.
+        // No further insulin is assumed in the projection — only existing IOB.
+        //
         // The blend weight is the same iceBlendWeight that controls effectiveCi
         // blending — one slider, consistent semantics:
         //   • 0.0: dose against trough only (current behavior, conservative)
-        //   • 0.5: dose against midpoint (semi-aggressive)
-        //   • 1.0: dose against peak only (most aggressive — pre-empts the meal)
-        //
-        // Convergence: as IOB grows, the blended prediction curve flattens. Peak
-        // comes down, trough may rise slightly. Dosing metric converges toward
-        // target → insulinReq → 0 → loop coasts on IOB.
+        //   • 0.5: dose against midpoint of (IOB-aware ice_max, trough)
+        //   • 1.0: dose against IOB-aware ice_max (most aggressive — pre-empts meal)
         //
         // Safety: predictedMinSafety < warnGuard / lowGuard gates still apply.
-        // So even if iceBlendWeight=1.0 says "dose aggressively against peak,"
-        // the loop refuses if doing so would push the actual trough below warn.
-        // This is bounded aggression — the dose can't run away.
-        val predictedMax = predictedBg.maxOrNull() ?: currentBg
+        // SMBs are blocked if actual trough heads below warn.
+        val iobAwareIceProjection: List<Double> = if (iceFutureMgdlPerH.isNotEmpty()) {
+            val out = ArrayList<Double>(iceFutureMgdlPerH.size)
+            var bg = currentBg
+            iceFutureMgdlPerH.take(predictionTicks).forEachIndexed { i, mgdlPerH ->
+                val iceAddMgdl = mgdlPerH * (5.0 / 60.0)
+                // Existing IOB activity at this tick — same formula as `bgi` at the
+                // top of this function (activity * ISF * 5_min). When the iobArray
+                // doesn't extend this far forward, treat insulin effect as exhausted.
+                val iobDropMgdl = if (i < iobArray.size)
+                    iobArray[i].activity * effectiveDosingIsfMgdl * 5.0
+                else 0.0
+                bg += iceAddMgdl - iobDropMgdl
+                out.add(bg.coerceIn(39.0, 401.0))
+            }
+            out
+        } else emptyList()
+        val iceOnlyMax: Double = iobAwareIceProjection.maxOrNull() ?: currentBg
         val dosingMetric: Double = if (iceBlendWeight > 0.0)
-            iceBlendWeight * predictedMax + (1.0 - iceBlendWeight) * blendedPredMin
+            iceBlendWeight * iceOnlyMax + (1.0 - iceBlendWeight) * blendedPredMin
         else
             blendedPredMin
 
@@ -455,23 +480,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
 
         // ── ICE forward prediction line ───────────────────────────────────────────────
-        // Shows the raw meal effect (announced curve + observed momentum) added to current
-        // BG over the next ~2h, IGNORING insulin. This is what ICE "thinks" the food alone
-        // will do — distinct from the cyan IOB line (which subtracts insulin) so the user
-        // can visually compare and see exactly what contribution ICE is making.
+        // Same projection used for the dosing metric (iobAwareIceProjection above).
+        // Shows the meal effect minus the existing IOB's contribution — i.e. "if the
+        // loop coasts on current IOB through the meal, here's where BG goes."
+        // This makes the chart line semantically aligned with what the loop is dosing
+        // toward (ice_max), so what the user sees is what the loop is acting on.
         //
         // **Slot selection**: AAPS chart renders UAM and IOB slots unconditionally. The COB
         // slot is gated on AAPS having tracked carbs > 0 (which isn't the case for announced
         // meals — they bypass the AAPS COB system). So we prefer UAM when PDP isn't using
         // it, and fall back to COB only as a secondary (where rendering may not happen).
-        if (iceFutureMgdlPerH.isNotEmpty()) {
-            val icePrediction = mutableListOf<Int>()
-            var iceBg = currentBg
-            iceFutureMgdlPerH.take(predictionTicks).forEach { mgdlPerH ->
-                // Convert mg/dL/h to mg/dL added per 5-min tick
-                iceBg += mgdlPerH * (5.0 / 60.0)
-                icePrediction.add(iceBg.coerceIn(39.0, 401.0).toInt())
-            }
+        if (iobAwareIceProjection.isNotEmpty()) {
+            val icePrediction = iobAwareIceProjection.map { it.toInt() }
             // If PDP didn't claim UAM this cycle, use it for ICE — guarantees rendering.
             // PDP only takes UAM when effectivePdpBlend > 0 AND pdpPredictedBg is non-empty.
             if (rT.predBGs?.UAM.isNullOrEmpty()) {
@@ -513,11 +533,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         // ICE peak-blended dosing diagnostic — only when ICE is actively shifting
-        // the dosing target away from pure pred_min. Shows the peak the loop is
-        // dosing against and the resulting metric, so the user can see why
-        // insulinReq is higher than pred_min alone would suggest.
+        // the dosing target away from pure pred_min. Shows the ICE-only peak
+        // (orange UAM line on the chart) and the resulting weighted metric, so
+        // the user can see why insulinReq is higher than pred_min alone would
+        // suggest. ice_max is invariant to insulin dosing — only meal absorption
+        // brings it down over time.
         if (iceBlendWeight > 0.0) {
-            sb.append(" | ICE-dose: pred_max=${fmt(predictedMax, isMmol)}" +
+            sb.append(" | ICE-dose: ice_max=${fmt(iceOnlyMax, isMmol)}" +
                           " → metric=${fmt(dosingMetric, isMmol)}" +
                           " (blend=${"%.2f".format(Locale.US, iceBlendWeight)})")
         }
