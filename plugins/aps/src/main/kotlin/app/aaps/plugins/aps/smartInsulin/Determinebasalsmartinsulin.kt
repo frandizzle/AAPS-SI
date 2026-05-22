@@ -345,8 +345,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             else
                 ticks.coerceIn(10, 24)  // hard rails: 50–120 min once learned
         }
-        // Full-curve min for SAFETY — suspends if BG predicted below lowGuard at any point
-        val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
+        // (predictedMinSafety is computed LATER, after iobAwareIceProjection is built,
+        //  so it can blend the ICE-aware curve in by iceBlendWeight. Old single-line
+        //  definition removed — see ice-step27 block below dosingMetric.)
         // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
@@ -478,6 +479,48 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iceBlendWeight * iceOnlyMax + (1.0 - iceBlendWeight) * blendedPredMin
         else
             blendedPredMin
+
+        // ── ICE-aware safety floor (ice-step27) ────────────────────────────────
+        // The dosing metric above respects iceBlendWeight. The safety floor (pred_min)
+        // must too — otherwise the blend setting is a lie. At blend=1.0 the user is
+        // telling the loop "trust ICE fully"; if the SUSPEND gate still reads off a
+        // curve that doesn't carry ICE, dosing decisions and safety decisions are
+        // looking at different worlds.
+        //
+        // The root cause of the −7 pred_min seen in the field:
+        //   predictBgCurve() fades its scalar `ci` term to zero over the first 60
+        //   minutes (a sensible safeguard against one-cycle noise, but it also
+        //   strips the announced-meal contribution). From minute 60 onward,
+        //   predictedBg is naked-IOB extrapolation into an empty meal future,
+        //   which trends sharply down whenever pre-bolus IOB is heavy.
+        //
+        // iobAwareIceProjection, by contrast, walks the full per-tick expected ICE
+        // curve from MealCurveBuilder against per-tick IOB activity and is physically
+        // floored at 39 mg/dL. That's the right curve for a high-blend safety read.
+        //
+        // The blend below preserves all existing behaviour at iceBlendWeight = 0
+        // (identical to the previous predictedBg.minOrNull()) while smoothly handing
+        // the safety floor over to the ICE-aware curve as the loop's trust in ICE
+        // rises. Because iceBlendWeight = iceConfidence × userWeight, the safety
+        // floor auto-reverts to conservative when observed ICE diverges from
+        // expected (confidence drops → blend drops → legacy curve weight rises).
+        //
+        // The SUSPEND/CAUTION gates below (≈ line 654, 666) read predictedMinSafety
+        // unchanged — only its construction is updated.
+        val predictedMinSafety: Double =
+            if (iceBlendWeight > 0.0 && iobAwareIceProjection.isNotEmpty()) {
+                val n = minOf(predictedBg.size, iobAwareIceProjection.size)
+                var minBg = Double.POSITIVE_INFINITY
+                for (i in 0 until n) {
+                    val blended = predictedBg[i] * (1.0 - iceBlendWeight) +
+                        iobAwareIceProjection[i] * iceBlendWeight
+                    if (blended < minBg) minBg = blended
+                }
+                if (minBg.isFinite()) minBg
+                else (predictedBg.minOrNull() ?: currentBg)
+            } else {
+                predictedBg.minOrNull() ?: currentBg
+            }
 
         // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
         // These are the t+5min values (first tick) — compared against actual BG next cycle.
