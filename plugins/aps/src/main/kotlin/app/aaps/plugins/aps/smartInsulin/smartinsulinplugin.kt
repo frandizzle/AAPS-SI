@@ -1652,12 +1652,32 @@ open class SmartInsulinPlugin @Inject constructor(
         // source, learning-confidence threshold, forward-projection decay timeline,
         // and the aggression-cap. COB still wins when both signals coexist — the
         // asymmetric max(observed, expected) happens in iceMgdlPerHEffective above.
+        //
+        // ice-step33: UAM has three additional gates beyond the basic positive-
+        // observation requirement. Any one of them blocks UAM from firing:
+        //   1. UamIceEnabled pref off — user explicitly turned UAM off
+        //   2. highTempTarget — user set a higher-than-profile target (exercise,
+        //      relaxing, eating-soon prep). Running BG deliberately higher means
+        //      the loop should NOT chase rises within the elevated target band.
+        //   3. AAPS mealCOB > 0 — there's untreated/in-progress AAPS-tracked
+        //      carbs on board. The rise is attributable to those carbs, not
+        //      an unannounced source. (Announced meals are already excluded
+        //      via the hasMeal → COB branch above, which also covers any
+        //      announced protein/fat since hasActiveMeals() extends through
+        //      the P/F plateau window.)
+        // When uamAllowed is false the UAM mode collapses to NONE, which in
+        // turn zeros configuredUserWeight and skips the forward-projection
+        // line draw, so the yellow line disappears cleanly.
+        val uamIceEnabled  = preferences.get(BooleanKey.ApsSmartInsulinUamIceEnabled)
+        val aapsCobActive  = mealData.mealCOB > 0.0
+        val uamAllowed     = uamIceEnabled && !highTempTarget && !aapsCobActive
+
         val iceMode: app.aaps.plugins.aps.smartInsulin.ice.IceMode = when {
-            !iceTrackerEnabled                  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
-            hasMeal                             -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB
-            iceObservationDisabled              -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
-            (observedIceMgdlPerH ?: 0.0) > 0.0  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM
-            else                                -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+            !iceTrackerEnabled                                  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+            hasMeal                                              -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB
+            iceObservationDisabled                               -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+            (observedIceMgdlPerH ?: 0.0) > 0.0 && uamAllowed     -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM
+            else                                                 -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
         }
 
         // ── Effective user weight (the actual blend strength) ───────────────────────
@@ -2922,8 +2942,11 @@ open class SmartInsulinPlugin @Inject constructor(
                                 .expectedIceMgdlPerHourAt(meal, futureMs, carbLoadPerG)
                         }
                     }
-                } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
-                    // No announcement, but observed ICE is positive → hold + decay.
+                } else if ((observedIceMgdlPerH ?: 0.0) > 0.0 && uamAllowed) {
+                    // No announcement, but observed ICE is positive AND UAM is
+                    // allowed → hold + decay. Gated by uamAllowed (ice-step33)
+                    // so the chart line disappears cleanly when the user turns
+                    // UAM off, sets a high temp target, or has AAPS-tracked COB.
                     // ice-step32: was pure linear decay from tick 1 over the
                     // (now-decay) window. The old model gave UAM less integrated
                     // rise mass than the fasting line's raw-ci momentum carried,
@@ -3464,6 +3487,9 @@ open class SmartInsulinPlugin @Inject constructor(
                     // where the loop detects a meal-like rise without an
                     // announcement. Lower defaults than COB because mis-detection
                     // costs hypos. All depend on the master ICE toggle above.
+                    // ice-step33: UamIceEnabled is the UAM-specific on/off
+                    // switch — disable to use ICE only for announced meals.
+                    BooleanKey.ApsSmartInsulinUamIceEnabled,
                     DoubleKey.ApsSmartInsulinUamIceUserWeight,
                     DoubleKey.ApsSmartInsulinUamIceLearningBlockThreshold,
                     DoubleKey.ApsSmartInsulinUamIceAggressionCap,
