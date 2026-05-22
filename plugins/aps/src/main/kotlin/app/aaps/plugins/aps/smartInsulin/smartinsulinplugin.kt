@@ -2923,37 +2923,18 @@ open class SmartInsulinPlugin @Inject constructor(
                         }
                     }
                 } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
-                    // No announcement, but observed ICE is positive → hold + decay.
-                    // ice-step32: was pure linear decay from tick 1 over the
-                    // (now-decay) window. The old model gave UAM less integrated
-                    // rise mass than the fasting line's raw-ci momentum carried,
-                    // so UAM looked weaker than fasting — backwards from intent.
-                    // New model holds the observed rate at full strength for
-                    // `sustainMinutes` (default 60), then fades linearly to zero
-                    // over `decayMinutes` (default 60), then sits at zero.
-                    //
-                    // Physiology: UAM-as-illness/stress/dawn/missed-meal is
-                    // endocrine-driven (cortisol, growth hormone, glucagon,
-                    // cytokines) and sustains BG rise for hours rather than
-                    // tapering in 60 min like fast-acting carb absorption.
-                    //
-                    // Setting sustainMinutes=0 cleanly reverts to the pre-step32
-                    // linear-decay-only behaviour: sustainTicks=0.0 means tick=1
-                    // already exceeds it, so the curve enters decay immediately.
-                    val startRate      = observedIceMgdlPerH ?: 0.0
-                    val sustainMinutes = preferences.get(IntKey.ApsSmartInsulinUamIceSustainMinutes)
-                    val decayMinutes   = preferences.get(IntKey.ApsSmartInsulinUamIceDecayMinutes)
-                    val sustainTicks   = sustainMinutes / 5.0
-                    val decayTicks     = decayMinutes   / 5.0
+                    // No announcement, but observed ICE is positive → decay linearly
+                    // to zero over ApsSmartInsulinUamIceDecayMinutes (default 60 min).
+                    // Represents "this momentum will fade unless something keeps
+                    // driving it". ice-step28: was hardcoded `tick / 12.0` (= 60 min
+                    // over 12 ticks); now tunable via the pref — default value
+                    // preserves pre-step28 behaviour identically.
+                    val startRate = observedIceMgdlPerH ?: 0.0
+                    val decayMinutes = preferences.get(IntKey.ApsSmartInsulinUamIceDecayMinutes)
+                    val decayTicks = decayMinutes / 5.0
                     (1..predictionTicks).map { tick ->
-                        when {
-                            tick <= sustainTicks              -> startRate                         // full hold
-                            tick <= sustainTicks + decayTicks -> {                                  // linear fade
-                                val fadeProgress = (tick - sustainTicks) / decayTicks
-                                startRate * (1.0 - fadeProgress).coerceIn(0.0, 1.0)
-                            }
-                            else                              -> 0.0                                // post-decay
-                        }
+                        val decayFraction = (1.0 - tick / decayTicks).coerceAtLeast(0.0)
+                        startRate * decayFraction
                     }
                 } else {
                     emptyList()
@@ -3467,7 +3448,6 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinUamIceUserWeight,
                     DoubleKey.ApsSmartInsulinUamIceLearningBlockThreshold,
                     DoubleKey.ApsSmartInsulinUamIceAggressionCap,
-                    IntKey.ApsSmartInsulinUamIceSustainMinutes,
                     IntKey.ApsSmartInsulinUamIceDecayMinutes
                 )
             )
