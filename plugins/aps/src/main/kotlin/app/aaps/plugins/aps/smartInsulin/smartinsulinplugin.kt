@@ -650,7 +650,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine()
 
             // -- PDP table ---------------------------------
-            val pdpEnabledStatus = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
+            val pdpEnabledStatus = false   // ice-step29a: PDP removed (ICE replaces it)
             if (pdpEnabledStatus) {
                 val pdpBase = preferences.get(DoubleKey.ApsSmartInsulinPdpCiStrength)
                 appendLine(pdpLearner.summaryTable(hour, pdpBase, preferences.get(IntKey.ApsSmartInsulinPdpFadeMinutes).toDouble()))
@@ -1030,7 +1030,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb3Status          = cachedOverviewState.pb3Line ?: "",
             fuelTrimStrength     = circadianLearner.trimStrength,
             // -- PDP -----------------------------------------------------------
-            pdpEnabled           = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled),
+            pdpEnabled           = false,   // ice-step29a: PDP removed → hides PdpCard in UI
             pdpBlendWeight       = cachedPdpBlendWeight,
             pdpCiMgdl            = lastCiMgdl,
             pdpConsecutiveReadings = consecutivePosCiReadings,
@@ -1090,7 +1090,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 val driving = preferences.get(BooleanKey.ApsSmartInsulinIceEnabled)
                     && snap?.confidence?.disabled == null
                     && (snap?.confidence?.score ?: 0.0) >= threshold
-                driving && preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled)
+                driving && false   // ice-step29a: PDP removed → ICE never blocks PDP learning anymore
             },
             iceRecentMmol         = iceTracker.snapshot.value?.recentHistory?.map { it.iceMmolPerHour } ?: emptyList(),
             // Meal data — aggregated across all active layers.
@@ -1992,7 +1992,11 @@ open class SmartInsulinPlugin @Inject constructor(
             remainingCarbsCap               = SMBDefaults.remainingCarbsCap,
             // Force enableUAM=true when PDP is active so the UAM prediction slot
             // renders as orange on the overview graph (distinct from cyan IOB line).
-            enableUAM                       = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled) || constraintsChecker.isUAMEnabled().also { inputConstraints.copyReasons(it) }.value(),
+            // ice-step29a: PDP removed — dropped the `pdpEnabled ||` force-on. The
+            // user's main-AAPS UAM toggle (via constraintsChecker) now solely decides
+            // whether the UAM chart slot renders. ICE-UAM mode writes to UAM slot
+            // (per step28a routing) but only renders if main UAM constraint is on.
+            enableUAM                       = constraintsChecker.isUAMEnabled().also { inputConstraints.copyReasons(it) }.value(),
             A52_risk_enable                 = SMBDefaults.A52_risk_enable,
             SMBInterval                     = preferences.get(IntKey.ApsMaxSmbFrequency),
             enableSMB_with_COB              = smbEnabled && preferences.get(BooleanKey.ApsUseSmbWithCob),
@@ -2257,8 +2261,17 @@ open class SmartInsulinPlugin @Inject constructor(
         // the same problem (unexplained BG elevation correction) from opposite directions
         // and stacking them produces over-correction. ICE is the newer, observation-driven
         // approach; PDP is the older, threshold-based one.
-        val pdpEnabled         = preferences.get(BooleanKey.ApsSmartInsulinPdpEnabled) && !iceIsDriving
-        val pdpLearningEnabled = pdpEnabled && preferences.get(BooleanKey.ApsSmartInsulinPdpLearningEnabled)
+        // ice-step29a: PDP removed. ICE replaces all PDP functionality (dose-blend
+        // adjustment, observation-driven prediction curve, the UI status card).
+        // Forced false here so every downstream PDP code path stays quiescent —
+        // synthetic ci injection, learner record/decay calls, pdpPredictedBg
+        // generation, the chart-line write block, all skip. The PDP pref is left
+        // intact so the preference value survives an upgrade-then-revert cycle if
+        // the user reinstates a prior build. Pdplearner.kt remains as a dormant
+        // injected singleton — not deleted in this step to keep the patch surface
+        // small. Schedule for full surgical removal once new behaviour is validated.
+        val pdpEnabled         = false
+        val pdpLearningEnabled = false
         // PDP accuracy scoring — only during clean fasting, no lows, no post-meal dirty window.
         // Rebound rises (counter-regulatory glucagon) and post-meal tails look like persistent
         // deviation but aren't — learning from them would corrupt per-hour ci strength.
@@ -3257,7 +3270,13 @@ open class SmartInsulinPlugin @Inject constructor(
                     UnitDoubleKey.ApsLgsThreshold,
                     UnitDoubleKey.ApsSmartInsulinLowGuard,
                     UnitDoubleKey.ApsSmartInsulinWarnGuard,
-                    IntKey.ApsSmartInsulinReboundWindowMins
+                    IntKey.ApsSmartInsulinReboundWindowMins,
+                    // ice-step29a: relocated from the now-removed PDP subscreen.
+                    // FastingMaxIob is a safety cap on IOB during FASTING mode,
+                    // used by ICE-driven dosing to prevent over-stacking. Lives
+                    // here with the other safety caps rather than in the ICE
+                    // subscreen because it's a hard limit independent of mode.
+                    DoubleKey.ApsSmartInsulinFastingMaxIob
                 )
             ),
             PreferenceSubScreenDef(
@@ -3388,24 +3407,16 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
                     IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour                )
             ),
-            PreferenceSubScreenDef(
-                key = "si_screen_pdp",
-                titleResId = R.string.si_screen_pdp_title,
-                items = listOf(
-                    BooleanKey.ApsSmartInsulinPdpEnabled,
-                    BooleanKey.ApsSmartInsulinPdpLearningEnabled,
-                    DoubleKey.ApsSmartInsulinPdpCiStrength,
-                    DoubleKey.ApsSmartInsulinPdpRisingStrength,
-                    IntKey.ApsSmartInsulinPdpFadeMinutes,
-                    IntKey.ApsSmartInsulinPdpMinReadings,
-                    DoubleKey.ApsSmartInsulinPdpMaxBlendWeight,
-                    DoubleKey.ApsSmartInsulinFastingMaxIob,
-                    BooleanKey.ApsSmartInsulinPdpMealStuckEnabled,
-                    IntKey.ApsSmartInsulinPdpMealStuckMinReadings,
-                    IntKey.ApsSmartInsulinPdpMealRampMins,
-                    DoubleKey.ApsSmartInsulinPdpMealMaxStrength
-                )
-            ),
+            // ice-step29a: si_screen_pdp removed. PDP is replaced by ICE which
+            // covers dose-blend adjustment, observation-driven prediction, and the
+            // related UI status surface. The PDP prefs (Pdp{Enabled,LearningEnabled,
+            // CiStrength,RisingStrength,FadeMinutes,MinReadings,MaxBlendWeight,
+            // MealStuck{Enabled,MinReadings},MealRampMins,MealMaxStrength}) are
+            // retained in the keys files so settings persisted on prior installs
+            // survive an upgrade, but they're no longer exposed in the settings UI
+            // and the plugin ignores their values (see the `val pdpEnabled = false`
+            // gate). Schedule for full key-file cleanup in a follow-up step once
+            // new behaviour is validated.
             PreferenceSubScreenDef(
                 key = "si_screen_ice",
                 titleResId = R.string.si_screen_ice_title,

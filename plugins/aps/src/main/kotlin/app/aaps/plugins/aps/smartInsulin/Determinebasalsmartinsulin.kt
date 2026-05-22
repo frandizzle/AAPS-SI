@@ -324,28 +324,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // (cyan and orange end up looking similar — both meal-aware — defeating
         // the purpose of having two lines).
         //
-        // So compute a parallel prediction for the chart only. predictedBg above
-        // keeps ICE for safety/internal use.
-        //
-        // ── ice-step27d: ci = 0.0 (was raw ci) ───────────────────────────────
-        // Previously the display curve was built with raw `ci`, on the theory
-        // that raw observation excludes the ICE blend and therefore represents
-        // "no meal" prediction. But `ci = min(shortAvgDelta, delta) - bgi`
-        // includes the *observed* meal effect on BG. When carbs are actually
-        // hitting, observed delta is positive and `ci` is positive, so the cyan
-        // line still rises along with the ICE line over the first 60 min (until
-        // ci fades to zero inside predictBgCurve). That defeats the intent of a
-        // "fasting prediction" line. Using ci=0 here gives true naked-IOB
-        // extrapolation: "if no carbs were happening right now, here's where
-        // insulin alone would drive BG." Also widened the gate from
-        // `iceBlendWeight > 0 && effectiveCi != ci` to just `iceBlendWeight > 0`
-        // — once ICE is in play at all, we want the contrast line to be the
-        // clean fasting line, not a near-clone of the ICE line.
+        // So compute a parallel prediction with ci=rawCi (no ICE blend) for the
+        // chart only. predictedBg above keeps ICE for safety/internal use.
         val predictedBgDisplay: List<Double> =
-            if (iceBlendWeight > 0.0) {
+            if (iceBlendWeight > 0.0 && effectiveCi != ci) {
                 predictBgCurve(
                     startBg       = currentBg,
-                    ci            = 0.0,                 // ← naked-IOB only, no meal momentum
+                    ci            = ci,                  // raw — no ICE
                     iobArray      = iobArray,
                     isfMgdl       = effectiveDosingIsfMgdl,
                     learnedProfile = learnedProfile,
