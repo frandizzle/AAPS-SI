@@ -625,6 +625,12 @@
     <string name="pref_summary_si_uam_ice_sustain_minutes">How long the observed momentum holds at full strength before decay begins. 0 = legacy linear-decay-only (default — no behaviour change). Raise gradually to strengthen the UAM line: 30 ≈ 2× the legacy rise, 60 ≈ 3×, 120 ≈ 5× (aggressive). Models illness/stress/dawn which sustain rises for hours.</string>
     <string name="pref_title_si_uam_ice_decay_minutes">UAM: Forward-projection decay (min)</string>
     <string name="pref_summary_si_uam_ice_decay_minutes">How long the observed momentum linearly fades to zero after the sustain phase ends. Longer = more persistent UAM extrapolation; shorter = faster taper. Default 60.</string>
+    <string name="pref_title_si_uam_ice_lockout_enabled">UAM: Overnight lockout window</string>
+    <string name="pref_summary_si_uam_ice_lockout_enabled">When enabled, suppresses UAM during a time-of-day window. Use this to prevent the loop from chasing dawn-phenomenon rises with insulin (which then crashes BG when the endocrine signal fades because there are no carbs behind it). Common: 11 PM – 10 AM.</string>
+    <string name="pref_title_si_uam_ice_lockout_start_hour">UAM lockout: Start hour (0–23)</string>
+    <string name="pref_summary_si_uam_ice_lockout_start_hour">Hour of day to begin the UAM lockout. 23 = 11 PM. The window wraps across midnight when start &gt; end (e.g. 23 → 10 means 11 PM through 10 AM the next morning).</string>
+    <string name="pref_title_si_uam_ice_lockout_end_hour">UAM lockout: End hour (0–23)</string>
+    <string name="pref_summary_si_uam_ice_lockout_end_hour">Hour of day to end the UAM lockout (exclusive — lockout ends at the start of this hour). 10 = 10 AM, so UAM resumes at 10:00 AM.</string>
     <!--    Appearance preferences-->
     <string name="prefs_range_title">Range for visualization</string>
 
