@@ -407,10 +407,37 @@ enum class IntKey(
         unitType = UnitType.NONE
     ),
 
+    // ── UAM (unannounced-meal) — forward-projection sustain duration — ice-step32 ─
+    // How long the observed-ICE forward projection holds at FULL strength
+    // before the decay phase begins. Models illness/stress/dawn/missed-meal
+    // physiology where endocrine drivers (cortisol, growth hormone, glucagon,
+    // cytokines) sustain BG rise for hours rather than tapering in 60 min like
+    // fast-acting carb absorption.
+    //
+    // Default 0 = legacy linear-decay-only behaviour (pre-step32). Raise to
+    // strengthen the UAM projection. Suggested settings:
+    //   0   → 1.0× fasting line's rise mass (baseline, legacy)
+    //   15  → 1.2× (subtle bump)
+    //   30  → 2.1× (moderate, clear visual separation)
+    //   60  → 3.2× (the strong setting that was originally too aggressive)
+    //   120 → 5.4× (very aggressive — illness/long-stress scenarios only)
+    ApsSmartInsulinUamIceSustainMinutes(
+        key = "si_uam_ice_sustain_minutes",
+        defaultValue = 0,
+        min = 0,
+        max = 180,
+        titleResId = R.string.pref_title_si_uam_ice_sustain_minutes,
+        summaryResId = R.string.pref_summary_si_uam_ice_sustain_minutes,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.NONE
+    ),
+
     // ── UAM (unannounced-meal) — forward-projection decay duration — ice-step28 ─
     // How long the observed-ICE forward projection takes to linearly fade to
-    // zero. Longer = more persistent UAM extrapolation; shorter = faster
-    // taper (more conservative). Pre-step28 this was hardcoded at 60 min.
+    // zero after the sustain phase ends. Longer = more persistent UAM
+    // extrapolation; shorter = faster taper (more conservative). Pre-step28
+    // this was hardcoded at 60 min as a pure linear decay starting at tick 1.
     ApsSmartInsulinUamIceDecayMinutes(
         key = "si_uam_ice_decay_minutes",
         defaultValue = 60,
