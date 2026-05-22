@@ -406,4 +406,20 @@ enum class IntKey(
         dependency = BooleanKey.ApsSmartInsulinIceEnabled,
         unitType = UnitType.NONE
     ),
+
+    // ── UAM (unannounced-meal) — forward-projection decay duration — ice-step28 ─
+    // How long the observed-ICE forward projection takes to linearly fade to
+    // zero. Longer = more persistent UAM extrapolation; shorter = faster
+    // taper (more conservative). Pre-step28 this was hardcoded at 60 min.
+    ApsSmartInsulinUamIceDecayMinutes(
+        key = "si_uam_ice_decay_minutes",
+        defaultValue = 60,
+        min = 30,
+        max = 120,
+        titleResId = R.string.pref_title_si_uam_ice_decay_minutes,
+        summaryResId = R.string.pref_summary_si_uam_ice_decay_minutes,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.NONE
+    ),
 }

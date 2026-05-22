@@ -369,4 +369,44 @@ enum class DoubleKey(
         unitType = UnitType.DOUBLE
     ),
 
+    // ── UAM (unannounced-meal) variant of ICE — ice-step28 ─────────────────────
+    // Distinct trust and aggression settings for the case where the loop detects
+    // a meal-like BG rise WITHOUT a user-announced meal. Lower default weight
+    // and higher confidence floor than COB because misclassifying dawn / stress /
+    // rebound as a meal would over-correct into a hypo. The aggression cap is
+    // unique to UAM — caps how strongly the loop chases an unconfirmed rise.
+    ApsSmartInsulinUamIceUserWeight(
+        key = "si_uam_ice_user_weight",
+        defaultValue = 0.3,
+        min = 0.0,
+        max = 1.0,
+        titleResId = R.string.pref_title_si_uam_ice_user_weight,
+        summaryResId = R.string.pref_summary_si_uam_ice_user_weight,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinUamIceLearningBlockThreshold(
+        key = "si_uam_ice_learning_block_threshold",
+        defaultValue = 0.6,
+        min = 0.0,
+        max = 1.0,
+        titleResId = R.string.pref_title_si_uam_ice_learning_block_threshold,
+        summaryResId = R.string.pref_summary_si_uam_ice_learning_block_threshold,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+    ApsSmartInsulinUamIceAggressionCap(
+        key = "si_uam_ice_aggression_cap",
+        defaultValue = 1.3,
+        min = 1.0,
+        max = 2.0,
+        titleResId = R.string.pref_title_si_uam_ice_aggression_cap,
+        summaryResId = R.string.pref_summary_si_uam_ice_aggression_cap,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinIceEnabled,
+        unitType = UnitType.DOUBLE
+    ),
+
 }

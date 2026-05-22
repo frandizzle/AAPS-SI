@@ -138,7 +138,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the next ~2h. Insulin is NOT subtracted from this line so the user sees the
         // raw meal effect against the cyan blended-IOB prediction line.
         // Empty list = no ICE line rendered (legacy behaviour).
-        iceFutureMgdlPerH:        List<Double> = emptyList()
+        iceFutureMgdlPerH:        List<Double> = emptyList(),
+        // ── ICE chart-slot routing (ice-step28) ───────────────────────────────────────
+        // Tells the predBGs population which chart slot the ICE projection goes to —
+        // COB-mode rises route to the COB slot (orange), UAM-mode to the UAM slot
+        // (yellow), NONE writes nothing. Visually distinguishes the source on the
+        // overview chart without changing the underlying projection math.
+        // Default NONE means no slot write — safe for callers that don't supply it.
+        iceMode: app.aaps.plugins.aps.smartInsulin.ice.IceMode =
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -552,39 +560,42 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
 
-        // PDP curve — UAM slot renders as orange/yellow in AAPS overview graph,
-        // clearly distinct from the primary IOB cyan line.
-        // Also populate ZT as fallback in case enableUAM is false in OapsProfile.
+        // ── ICE forward prediction line — slot routing (ice-step28) ─────────────
+        // The overview chart renders four prediction lines with distinct colours:
+        //   IOB (cyan), COB (orange), UAM (yellow), ZT (purple).
+        // Step28 routes the ICE projection to the slot that matches its origin:
+        //   COB mode (announced meal) → COB slot — orange line, "the meal you told us about"
+        //   UAM mode (observed rise)  → UAM slot — yellow line, "we detected something"
+        //   NONE (no ICE signal)      → no write — neither slot gets ICE content
+        // PDP (Post-Dose Prediction) prefers the UAM slot but cedes to ICE-UAM if
+        // ICE took it this cycle; PDP then falls back to ZT (purple) so both lines
+        // stay visible when both signals coexist.
+        if (iobAwareIceProjection.isNotEmpty()) {
+            val icePrediction = iobAwareIceProjection.map { it.toInt() }
+            when (iceMode) {
+                app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB ->
+                    rT.predBGs?.COB = icePrediction
+                app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM ->
+                    rT.predBGs?.UAM = icePrediction
+                app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE ->
+                    Unit   // no ICE signal this cycle, nothing to write
+            }
+        }
+
+        // PDP curve — routes to UAM if free, else ZT. The fall-back keeps PDP visible
+        // even when ICE-UAM has claimed the UAM slot, so users can see both signals
+        // when a meal-like rise is being detected AND post-dose tracking is active.
         if (effectivePdpBlend > 0.0 && pdpPredictedBg.isNotEmpty()) {
             val rawPdpPrediction = mutableListOf<Int>()
             pdpPredictedBg.take(predictionTicks)
                 .forEach { rawPdpPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
-            // UAM = orange line (visually distinct from cyan IOB line)
-            rT.predBGs?.UAM = rawPdpPrediction
-            // ZT fallback removed — ZT is cyan like IOB, defeats the purpose of distinction
-        }
-
-        // ── ICE forward prediction line ───────────────────────────────────────────────
-        // Same projection used for the dosing metric (iobAwareIceProjection above).
-        // Shows the meal effect minus the existing IOB's contribution — i.e. "if the
-        // loop coasts on current IOB through the meal, here's where BG goes."
-        // This makes the chart line semantically aligned with what the loop is dosing
-        // toward (ice_max), so what the user sees is what the loop is acting on.
-        //
-        // **Slot selection**: AAPS chart renders UAM and IOB slots unconditionally. The COB
-        // slot is gated on AAPS having tracked carbs > 0 (which isn't the case for announced
-        // meals — they bypass the AAPS COB system). So we prefer UAM when PDP isn't using
-        // it, and fall back to COB only as a secondary (where rendering may not happen).
-        if (iobAwareIceProjection.isNotEmpty()) {
-            val icePrediction = iobAwareIceProjection.map { it.toInt() }
-            // If PDP didn't claim UAM this cycle, use it for ICE — guarantees rendering.
-            // PDP only takes UAM when effectivePdpBlend > 0 AND pdpPredictedBg is non-empty.
             if (rT.predBGs?.UAM.isNullOrEmpty()) {
-                rT.predBGs?.UAM = icePrediction
+                rT.predBGs?.UAM = rawPdpPrediction
+            } else {
+                // UAM is busy with ICE → fall back to ZT (purple, distinct from
+                // both IOB cyan and UAM yellow).
+                rT.predBGs?.ZT = rawPdpPrediction
             }
-            // Always also write to COB as a secondary — works on builds that do render the
-            // slot, no harm on builds that don't.
-            rT.predBGs?.COB = icePrediction
         }
 
         // ── IOB / headroom ────────────────────────────────────────────────────

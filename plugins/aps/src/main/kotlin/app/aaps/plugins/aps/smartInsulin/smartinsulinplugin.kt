@@ -1642,6 +1642,24 @@ open class SmartInsulinPlugin @Inject constructor(
         else
             observedConfidence
 
+        // ── ICE mode (ice-step28) ──────────────────────────────────────────
+        // Distinguish announced meal (COB) from observed-but-unannounced rise
+        // (UAM) so each can have its own tuning. See [IceMode] for routing rules.
+        // UAM-mode tuning lives in the dedicated prefs:
+        // ApsSmartInsulinUamIceUserWeight / LearningBlockThreshold /
+        // AggressionCap (DoubleKey) and UamIceDecayMinutes (IntKey).
+        // Once computed, the mode drives four downstream selections: userWeight
+        // source, learning-confidence threshold, forward-projection decay timeline,
+        // and the aggression-cap. COB still wins when both signals coexist — the
+        // asymmetric max(observed, expected) happens in iceMgdlPerHEffective above.
+        val iceMode: app.aaps.plugins.aps.smartInsulin.ice.IceMode = when {
+            !iceTrackerEnabled                  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+            hasMeal                             -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB
+            iceObservationDisabled              -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+            (observedIceMgdlPerH ?: 0.0) > 0.0  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM
+            else                                -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+        }
+
         // ── Effective user weight (the actual blend strength) ───────────────────────
         // The userWeight slider in ICE prefs controls how much trust to put in ICE.
         // BUT — when the user has explicitly announced a meal, that announcement is
@@ -1654,8 +1672,22 @@ open class SmartInsulinPlugin @Inject constructor(
         //   slider=0.8, 50%  committed meal  → effective=0.8 (slider above floor wins)
         // This means a meal can never silently fail to be dosed because the slider
         // was left at zero — but the slider still controls strength when set higher.
-        val configuredUserWeight = if (iceTrackerEnabled) preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight) else 0.0
-        val announcedMealFloor   = if (hasMeal) 0.5 * maxCommitmentFrac else 0.0
+        //
+        // ice-step28: userWeight source now switches on mode. COB reads the
+        // existing pref; UAM reads ApsSmartInsulinUamIceUserWeight (default
+        // 0.3 — lower than typical COB because unannounced rises have higher
+        // false-positive risk). The announcedMealFloor only applies in COB —
+        // UAM has no announcement to floor against, so the configured weight
+        // goes through raw.
+        val configuredUserWeight: Double = when (iceMode) {
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB ->
+                preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM ->
+                preferences.get(DoubleKey.ApsSmartInsulinUamIceUserWeight)
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE ->
+                0.0
+        }
+        val announcedMealFloor   = if (iceMode == app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB) 0.5 * maxCommitmentFrac else 0.0
         val effectiveUserWeight  = maxOf(configuredUserWeight, announcedMealFloor).coerceIn(0.0, 1.0)
 
         // ── Effective disable flag ───────────────────────────────────────────────
@@ -1666,18 +1698,38 @@ open class SmartInsulinPlugin @Inject constructor(
         // This is what `iceIsDisabled` should have meant all along.
         val iceIsDisabled = iceDisableReason != null ||
             (!hasMeal && iceObservationDisabled)
+        // ── Effective learning threshold (ice-step28) ──────────────────────
+        // COB uses the existing pref; UAM uses a higher floor (0.6 default vs
+        // a typical COB threshold around 0.4–0.5). Higher because UAM hasn't
+        // been confirmed by the user, so we need stronger persistence /
+        // consistency before driving dose.
+        val effectiveLearningThreshold: Double = when (iceMode) {
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB ->
+                iceLearningThreshold
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM ->
+                preferences.get(DoubleKey.ApsSmartInsulinUamIceLearningBlockThreshold)
+            app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE ->
+                Double.MAX_VALUE   // never drives
+        }
         // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
         // Threshold-gated rather than smooth — these are on/off decisions.
-        val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= iceLearningThreshold
+        val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= effectiveLearningThreshold
         // iceAggrAdjust: smooth multiplier on aggressiveness (used for dose scaling).
         // Returns 1.0 when ICE is disabled / no signal / no confidence — safe identity.
-        val iceAggrAdjust        = app.aaps.plugins.aps.smartInsulin.ice.computeIceAggressionAdjust(
+        // ice-step28: in UAM mode, cap at ApsSmartInsulinUamIceAggressionCap pref
+        // (default 1.3) — limits dose escalation when chasing an unconfirmed rise.
+        // COB mode gets no extra cap (the global 0.3–2.0 coerce on `aggressiveness`
+        // downstream still applies).
+        val iceAggrAdjustRaw     = app.aaps.plugins.aps.smartInsulin.ice.computeIceAggressionAdjust(
             iceMgdlPerH     = iceMgdlPerHEffective,
             confidence      = iceConfidenceScore,
             disabled        = iceIsDisabled,
             userWeight      = effectiveUserWeight,
             saturationMgdlH = preferences.get(DoubleKey.ApsSmartInsulinIceStrongMgdlH)
         )
+        val iceAggrAdjust        = if (iceMode == app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM)
+            iceAggrAdjustRaw.coerceAtMost(preferences.get(DoubleKey.ApsSmartInsulinUamIceAggressionCap))
+        else iceAggrAdjustRaw
         lastIceAggrAdjust = iceAggrAdjust  // cache for fragmentData() / UI status card
         if (iceIsDriving || iceAggrAdjust != 1.0 || hasMeal) {
             val layerCount = announcedMealManager.activeMeals.value.count { it.isActive(glucoseStatus.date) }
@@ -1686,7 +1738,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     "maxCommit=${(maxCommitmentFrac * 100).toInt()}% expected=${"%.1f".format(expectedIceMgdlPerH)}mg/dL/h"
             else ""
             aapsLogger.debug(LTag.APS,
-                             "ICE: snapshot=${iceSnapshot?.summaryText} driving=$iceIsDriving aggrAdjust=${"%.2f".format(iceAggrAdjust)}$mealNote")
+                             "ICE: mode=$iceMode snapshot=${iceSnapshot?.summaryText} driving=$iceIsDriving aggrAdjust=${"%.2f".format(iceAggrAdjust)}$mealNote")
         }
 
 
@@ -2859,17 +2911,28 @@ open class SmartInsulinPlugin @Inject constructor(
                     }
                 } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
                     // No announcement, but observed ICE is positive → decay linearly
-                    // over 60 min (12 ticks). Represents "this momentum will fade
-                    // unless something keeps driving it".
+                    // to zero over ApsSmartInsulinUamIceDecayMinutes (default 60 min).
+                    // Represents "this momentum will fade unless something keeps
+                    // driving it". ice-step28: was hardcoded `tick / 12.0` (= 60 min
+                    // over 12 ticks); now tunable via the pref — default value
+                    // preserves pre-step28 behaviour identically.
                     val startRate = observedIceMgdlPerH ?: 0.0
+                    val decayMinutes = preferences.get(IntKey.ApsSmartInsulinUamIceDecayMinutes)
+                    val decayTicks = decayMinutes / 5.0
                     (1..predictionTicks).map { tick ->
-                        val decayFraction = (1.0 - tick / 12.0).coerceAtLeast(0.0)
+                        val decayFraction = (1.0 - tick / decayTicks).coerceAtLeast(0.0)
                         startRate * decayFraction
                     }
                 } else {
                     emptyList()
                 }
-            } else emptyList()
+            } else emptyList(),
+            // ── ICE mode for chart-slot routing (ice-step28) ────────────────────
+            // determine_basal uses this to route the prediction line to the COB
+            // slot (orange) for announced meals or the UAM slot (yellow) for
+            // unannounced rises, so the user sees a visually distinct line per
+            // mode. NONE = no ICE projection written to either slot.
+            iceMode                  = iceMode
         )
         // Diagnostic — verify iceFutureMgdlPerH was generated. Visible in AAPS log,
         // helps confirm whether the prediction line ought to be appearing.
@@ -3047,7 +3110,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     " prot=${"%.2f".format(protSum / 18.0)}" +
                     " fat=${"%.2f".format(fatSum / 18.0)}]mmol/h"
             } else ""
-            apsResult.reason += " | ICE: $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
+            apsResult.reason += " | ICE: $iceMode $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
                 componentNote +
                 " (obs=${"%.2f".format(obsMmolPerH)} exp=${"%.2f".format(expMmolPerH)})" +
                 " carbLoad=${"%.1f".format(carbLoadPerG)}mg/dL/g" +
@@ -3365,7 +3428,16 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinIcePersistCycles,
                     // How many recent samples to score for consistency. Higher =
                     // smoother but slower-reacting confidence signal.
-                    IntKey.ApsSmartInsulinIceConsistWindow
+                    IntKey.ApsSmartInsulinIceConsistWindow,
+                    // ── UAM-mode variant (ice-step28) ─────────────────────────
+                    // Separate trust + threshold + cap + decay for the case
+                    // where the loop detects a meal-like rise without an
+                    // announcement. Lower defaults than COB because mis-detection
+                    // costs hypos. All depend on the master ICE toggle above.
+                    DoubleKey.ApsSmartInsulinUamIceUserWeight,
+                    DoubleKey.ApsSmartInsulinUamIceLearningBlockThreshold,
+                    DoubleKey.ApsSmartInsulinUamIceAggressionCap,
+                    IntKey.ApsSmartInsulinUamIceDecayMinutes
                 )
             )
         ),
