@@ -32,7 +32,25 @@ import javax.inject.Inject
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 
+/**
+ * Which mode the dialog is operating in (ice-step27b).
+ *
+ *  - [ADD]:     announce as a new layer on top of any active meals. Default behaviour;
+ *               the existing announce dialog has always done this via
+ *               `announceMeal(replaceExisting = false)`.
+ *  - [EDIT]:    update the currently-active meal's macros in place, preserving its
+ *               absorption timer. Calls `editActiveMeal(...)` which silently no-ops
+ *               when zero or 2+ layers are active — the help text in the dialog
+ *               explains the constraint. Hides the meal-mode dropdown and pre-bolus
+ *               cards because edit is a pure model update.
+ *  - [REPLACE]: cancel all active meals and announce the new one from t=0. Calls
+ *               `announceMeal(replaceExisting = true)`. Re-activates the meal-mode
+ *               override and supports pre-boluses just like ADD.
+ */
+enum class DialogMode { ADD, EDIT, REPLACE }
+
 data class SmartMealUiState(
+    val dialogMode: DialogMode = DialogMode.ADD,
     val selectedModeIndex: Int = 1,
     // ── ICE-driven announcement (replaces ISF + duration) ────────────────────
     val carbsG: Double = 0.0,
@@ -116,6 +134,9 @@ class SmartMealDialogViewModel @Inject constructor(
         _uiState.update { it.copy(selectedModeIndex = index) }
     }
 
+    /** Switch the dialog between Add / Edit / Replace flows (ice-step27b). */
+    fun setDialogMode(mode: DialogMode) = _uiState.update { it.copy(dialogMode = mode) }
+
     fun setCarbsG(v: Double) = _uiState.update { it.copy(carbsG = v.coerceAtLeast(0.0)) }
     fun setProteinG(v: Double) = _uiState.update { it.copy(proteinG = v.coerceAtLeast(0.0)) }
     fun setFatG(v: Double) = _uiState.update { it.copy(fatG = v.coerceAtLeast(0.0)) }
@@ -135,20 +156,43 @@ class SmartMealDialogViewModel @Inject constructor(
 
     fun confirmAndActivate(onDeliveryError: (String) -> Unit, onDone: () -> Unit) {
         val s = _uiState.value
+
+        // ── EDIT mode: pure model update, no pre-bolus, no mode override ────────
+        // editActiveMeal preserves the active layer's announce timestamp so the
+        // absorption timer continues uninterrupted. Plugin-side it silently
+        // no-ops when zero or 2+ layers are active (a debug log is emitted) —
+        // the help text in the dialog tells the user about that constraint.
+        if (s.dialogMode == DialogMode.EDIT) {
+            if (s.carbsG > 0.0 || s.proteinG > 0.0 || s.fatG > 0.0) {
+                activePlugin.smartInsulin?.editActiveMeal(
+                    carbsG       = s.carbsG,
+                    proteinG     = s.proteinG,
+                    fatG         = s.fatG,
+                    giBucketName = giBucketNameFor(s.giBucketIndex)
+                )
+            }
+            onDone()
+            return
+        }
+
+        // ── ADD / REPLACE mode: announce + (optional) pre-bolus + mode override ─
         val maxPb = s.maxPreBolus
         val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
         val mode = modeList[s.selectedModeIndex]
 
-        // ── Announce the meal to ICE (drives the expected-curve pre-positioning) ──
+        // Announce the meal to ICE (drives the expected-curve pre-positioning).
         // Fires regardless of whether PB1 is requested — the loop benefits from
         // knowing a meal is coming even if the user is deferring the bolus.
+        // `replaceExisting` is true for REPLACE (wipes all layers first), false
+        // for ADD (appends as a new layer).
         if (s.carbsG > 0.0 || s.proteinG > 0.0) {
             activePlugin.smartInsulin?.announceMeal(
-                carbsG        = s.carbsG,
-                proteinG      = s.proteinG,
-                fatG          = s.fatG,
-                giBucketName  = giBucketNameFor(s.giBucketIndex),
-                commitmentPct = 100   // dialog inputs are an explicit commitment
+                carbsG          = s.carbsG,
+                proteinG        = s.proteinG,
+                fatG            = s.fatG,
+                giBucketName    = giBucketNameFor(s.giBucketIndex),
+                commitmentPct   = 100,   // dialog inputs are an explicit commitment
+                replaceExisting = (s.dialogMode == DialogMode.REPLACE)
             )
         }
 
@@ -210,12 +254,22 @@ class SmartMealDialogViewModel @Inject constructor(
         val s = _uiState.value
         val mode = modeList[s.selectedModeIndex]
         return buildString {
-            appendLine("Mode: ${mode.label}")
+            // ice-step27b: lead with what action is about to be taken so the
+            // confirmation dialog can't be misread as a generic announce.
+            when (s.dialogMode) {
+                DialogMode.ADD     -> appendLine("Action: Add new meal layer")
+                DialogMode.EDIT    -> appendLine("Action: Edit active meal (preserves timer)")
+                DialogMode.REPLACE -> appendLine("Action: REPLACE all active meals")
+            }
+            if (s.dialogMode != DialogMode.EDIT) appendLine("Mode: ${mode.label}")
             appendLine("Macros: ${"%.0f".format(s.carbsG)}g carbs · ${"%.0f".format(s.proteinG)}g protein · ${"%.0f".format(s.fatG)}g fat")
             appendLine("GI: ${giLabel(s.giBucketIndex)} (${effectiveDurationMinFor(s.giBucketIndex, s.carbsG, s.proteinG, s.fatG)} min window)")
-            if (s.preBolus1Enabled && s.preBolus1U > 0.0) appendLine("Pre-bolus 1: ${"%.2f".format(s.preBolus1U)}U (now)")
-            if (s.preBolus2Enabled && s.preBolus2U > 0.0) appendLine("Pre-bolus 2: ${"%.2f".format(s.preBolus2U)}U in ${s.preBolus2DelayMins}min")
-            if (s.preBolus3Enabled && s.preBolus3U > 0.0) appendLine("Pre-bolus 3: ${"%.2f".format(s.preBolus3U)}U ${s.preBolus3DelayMins}min after PB2")
+            // Pre-boluses only apply to ADD / REPLACE — EDIT hides those cards.
+            if (s.dialogMode != DialogMode.EDIT) {
+                if (s.preBolus1Enabled && s.preBolus1U > 0.0) appendLine("Pre-bolus 1: ${"%.2f".format(s.preBolus1U)}U (now)")
+                if (s.preBolus2Enabled && s.preBolus2U > 0.0) appendLine("Pre-bolus 2: ${"%.2f".format(s.preBolus2U)}U in ${s.preBolus2DelayMins}min")
+                if (s.preBolus3Enabled && s.preBolus3U > 0.0) appendLine("Pre-bolus 3: ${"%.2f".format(s.preBolus3U)}U ${s.preBolus3DelayMins}min after PB2")
+            }
         }.trim()
     }
 

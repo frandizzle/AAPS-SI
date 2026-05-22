@@ -644,6 +644,42 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMmol:            Boolean
     )
 
+    /**
+     * Per-layer snapshot of an announced meal. Used by the home-screen
+     * ActiveMealCard to render one row per active meal, with remaining macros
+     * computed from the absorption-fraction helpers on [MealCurveBuilder].
+     *
+     * @property layerId           announceTimestampMs — pass to [clearMealLayer] /
+     *                             [editMealLayer] to identify which layer to act on
+     * @property giBucketName      "FAST" / "MEDIUM" / "SLOW" — raw enum name
+     * @property giLabel           User-facing GI label, e.g. "Medium GI"
+     * @property ageMin            Minutes since this layer was announced
+     * @property remainingMin      Minutes left in the absorption window
+     * @property totalDurationMin  Full absorption window from announce to expiry
+     * @property totalCarbsG       Carbs originally entered (or after edit) for this layer
+     * @property totalProteinG     Protein originally entered (or after edit)
+     * @property totalFatG         Fat originally entered (or after edit)
+     * @property remainingCarbsG   Carbs not yet absorbed (Gaussian CDF over carb window)
+     * @property remainingProteinG Protein not yet "absorbed" (cosine-smoothed plateau)
+     * @property remainingFatG     Fat not yet "absorbed" (same plateau shape, separate grams)
+     * @property commitmentPct     0–100, user's stated confidence in the macros
+     */
+    data class ActiveMealLayer(
+        val layerId:           Long,
+        val giBucketName:      String,
+        val giLabel:           String,
+        val ageMin:            Int,
+        val remainingMin:      Int,
+        val totalDurationMin:  Int,
+        val totalCarbsG:       Double,
+        val totalProteinG:     Double,
+        val totalFatG:         Double,
+        val remainingCarbsG:   Double,
+        val remainingProteinG: Double,
+        val remainingFatG:     Double,
+        val commitmentPct:     Int
+    )
+
     data class FragmentData(
         val hour:               Int,
         val dayLabel:           String,
@@ -756,6 +792,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeMealGiBucketName: String,        // "FAST" / "MEDIUM" / "SLOW", empty when none
         val activeMealAgeMinutes:  Int,            // minutes since announcement
         val activeMealTotalDurationMin: Int,       // expected total absorption window
+        // Per-layer snapshot for the multi-meal home-screen list (ice-step27a).
+        // Empty when no meals are active.
+        val activeMealLayers:      List<ActiveMealLayer> = emptyList(),
     )
 
     fun fragmentData(): FragmentData {
@@ -991,6 +1030,43 @@ open class SmartInsulinPlugin @Inject constructor(
             activeMealAgeMinutes     = announcedMealManager.earliestAgeMinutes(dateUtil.now()),
             activeMealTotalDurationMin = announcedMealManager.longestRemainingMinutes(dateUtil.now()) +
                 announcedMealManager.earliestAgeMinutes(dateUtil.now()),
+            // Per-layer snapshot for the multi-meal home-screen list. Each entry is
+            // self-contained: layerId for delete/edit dispatch, plus remaining grams
+            // computed from MealCurveBuilder's absorption-fraction helpers (Gaussian
+            // CDF for carbs, cosine-smoothed plateau for protein/fat).
+            activeMealLayers = run {
+                val nowMs = dateUtil.now()
+                announcedMealManager.activeMeals.value
+                    .filter { it.isActive(nowMs) }
+                    .sortedBy { it.announceTimestampMs }
+                    .map { meal ->
+                        val ageMin = ((nowMs - meal.announceTimestampMs) / 60_000.0).coerceAtLeast(0.0)
+                        val totalDur = meal.effectiveTotalDurationMin
+                        val carbFracRem    = (1.0 - app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                            .carbAbsorbedFraction(meal, ageMin)).coerceIn(0.0, 1.0)
+                        val plateauFracRem = (1.0 - app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                            .plateauAbsorbedFraction(ageMin, meal.fatProteinDurationMin)).coerceIn(0.0, 1.0)
+                        ActiveMealLayer(
+                            layerId           = meal.announceTimestampMs,
+                            giBucketName      = meal.giBucket.name,
+                            giLabel           = when (meal.giBucket) {
+                                app.aaps.plugins.aps.smartInsulin.ice.GiBucket.FAST   -> "High GI"
+                                app.aaps.plugins.aps.smartInsulin.ice.GiBucket.MEDIUM -> "Medium GI"
+                                app.aaps.plugins.aps.smartInsulin.ice.GiBucket.SLOW   -> "Low GI"
+                            },
+                            ageMin            = ageMin.toInt(),
+                            remainingMin      = (totalDur - ageMin.toInt()).coerceAtLeast(0),
+                            totalDurationMin  = totalDur,
+                            totalCarbsG       = meal.carbsG,
+                            totalProteinG     = meal.proteinG,
+                            totalFatG         = meal.fatG,
+                            remainingCarbsG   = meal.carbsG   * carbFracRem,
+                            remainingProteinG = meal.proteinG * plateauFracRem,
+                            remainingFatG     = meal.fatG     * plateauFracRem,
+                            commitmentPct     = meal.commitmentPct
+                        )
+                    }
+            },
         )
     }
 

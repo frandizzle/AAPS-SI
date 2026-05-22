@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -1479,182 +1480,111 @@ private fun IceSparkline(values: List<Double?>) {
 
 // ── Active meal card ──────────────────────────────────────────────────────────
 //
-// Renders only when an announced meal is in progress. Provides:
-//   - Read-only header showing age + remaining macros + total window
-//   - Editable carbs / protein / fat inputs, pre-filled with current values
-//   - High / Medium / Low GI selector
-//   - "Save changes" → plugin.editActiveMeal() — replaces values, KEEPS the timer
-//   - "Cancel meal" → plugin.clearAnnouncedMeal() — wipes the announcement
+// Renders only when one or more announced meals are in progress. Read-only:
+//   - One row per active meal layer, with GI, age, remaining minutes, and
+//     remaining macros (computed from MealCurveBuilder absorption fractions)
+//   - Per-layer × button → plugin.clearMealLayer(layerId)
+//   - "Cancel all meals" footer button when 2+ layers are active
+//   - Footer hint points users to the dialog for add / edit / replace
 //
-// The fields use the LaunchedEffect-on-value-change pattern so the local
-// editable state stays in sync with FragmentData when the loop cycle updates,
-// but doesn't get stomped while the user is mid-typing.
+// All editing was deliberately moved to SmartMealDialog (ice-step27 design):
+// this card is for visibility and quick deletion only. No edit fields, no GI
+// selector, no Save button.
 
 @Composable
 private fun ActiveMealCard(d: SmartInsulinPlugin.FragmentData, plugin: SmartInsulinPlugin) {
-    SiCard(title = "Active Meal", titleColor = StatusWarn) {
+    val layers = d.activeMealLayers
+    val title = if (layers.size > 1) "Active Meals (${layers.size})" else "Active Meal"
 
-        // ── Header line: age + remaining + window ───────────────────────────
-        val ageMin = d.activeMealAgeMinutes
-        val totalMin = d.activeMealTotalDurationMin
-        val remainingMin = (totalMin - ageMin).coerceAtLeast(0)
-        Text(
-            "Announced ${ageMin}min ago · ${remainingMin}min remaining of ${totalMin}min window",
-            fontSize = 12.sp,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Originally entered: ${"%.0f".format(d.activeMealCarbsTotalG)}g carbs · " +
-                "${"%.0f".format(d.activeMealProteinTotalG)}g protein · " +
-                "${"%.0f".format(d.activeMealFatTotalG)}g fat",
-            fontSize = 11.sp,
-            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(12.dp))
+    SiCard(title = title, titleColor = StatusWarn) {
 
-        // ── Carbs editable field ────────────────────────────────────────────
-        var carbsText by rememberSaveable {
-            mutableStateOf("%.0f".format(d.activeMealCarbsTotalG))
-        }
-        LaunchedEffect(d.activeMealCarbsTotalG) {
-            carbsText = "%.0f".format(d.activeMealCarbsTotalG)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Carbs", fontSize = 14.sp, modifier = Modifier.weight(1f))
-            androidx.compose.material3.OutlinedTextField(
-                value = carbsText,
-                onValueChange = { carbsText = it },
-                suffix = { Text("g") },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                ),
-                singleLine = true,
-                modifier = Modifier.width(110.dp)
+        if (layers.isEmpty()) {
+            // Fallback: hasActiveMeals was true but the per-layer snapshot is empty
+            // (shouldn't happen — race between flow refresh and card render). Show
+            // a benign placeholder rather than nothing.
+            Text(
+                "Meal in progress (details refreshing…)",
+                fontSize = 12.sp,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
             )
-        }
-        Spacer(Modifier.height(4.dp))
-
-        // ── Protein editable field ──────────────────────────────────────────
-        var proteinText by rememberSaveable {
-            mutableStateOf("%.0f".format(d.activeMealProteinTotalG))
-        }
-        LaunchedEffect(d.activeMealProteinTotalG) {
-            proteinText = "%.0f".format(d.activeMealProteinTotalG)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Protein", fontSize = 14.sp, modifier = Modifier.weight(1f))
-            androidx.compose.material3.OutlinedTextField(
-                value = proteinText,
-                onValueChange = { proteinText = it },
-                suffix = { Text("g") },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                ),
-                singleLine = true,
-                modifier = Modifier.width(110.dp)
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-
-        // ── Fat editable field ──────────────────────────────────────────────
-        var fatText by rememberSaveable {
-            mutableStateOf("%.0f".format(d.activeMealFatTotalG))
-        }
-        LaunchedEffect(d.activeMealFatTotalG) {
-            fatText = "%.0f".format(d.activeMealFatTotalG)
-        }
-        Row(verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Fat", fontSize = 14.sp, modifier = Modifier.weight(1f))
-            androidx.compose.material3.OutlinedTextField(
-                value = fatText,
-                onValueChange = { fatText = it },
-                suffix = { Text("g") },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
-                ),
-                singleLine = true,
-                modifier = Modifier.width(110.dp)
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-
-        // ── GI bucket selector ──────────────────────────────────────────────
-        // Local state to allow editing the GI; initialized from current meal's bucket.
-        // Mapped High/Medium/Low ↔ FAST/MEDIUM/SLOW for display labels.
-        val initialGiIndex = when (d.activeMealGiBucketName) {
-            "FAST" -> 0
-            "SLOW" -> 2
-            else   -> 1
-        }
-        var giIndex by rememberSaveable(d.activeMealGiBucketName) {
-            mutableStateOf(initialGiIndex)
-        }
-        Text("Glycemic Index", fontSize = 13.sp,
-             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(4.dp))
-        Row(modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
-                if (giIndex == idx) {
-                    androidx.compose.material3.FilledTonalButton(
-                        onClick = { giIndex = idx },
-                        modifier = Modifier.weight(1f)
-                    ) { Text(label, fontSize = 12.sp) }
-                } else {
-                    OutlinedButton(
-                        onClick = { giIndex = idx },
-                        modifier = Modifier.weight(1f)
-                    ) { Text(label, fontSize = 12.sp) }
+        } else {
+            layers.forEachIndexed { idx, layer ->
+                ActiveMealLayerRow(layer = layer, onDelete = { plugin.clearMealLayer(layer.layerId) })
+                if (idx < layers.lastIndex) {
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
                 }
             }
-        }
-        Spacer(Modifier.height(12.dp))
 
-        // ── Action buttons ──────────────────────────────────────────────────
-        Row(modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-
-            // Save changes — edits in place, timer preserved
-            Button(
-                onClick = {
-                    val giName = when (giIndex) {
-                        0 -> "FAST"
-                        2 -> "SLOW"
-                        else -> "MEDIUM"
-                    }
-                    plugin.editActiveMeal(
-                        carbsG       = carbsText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealCarbsTotalG,
-                        proteinG     = proteinText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealProteinTotalG,
-                        fatG         = fatText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: d.activeMealFatTotalG,
-                        giBucketName = giName
+            // Cancel-all only useful when there are multiple layers — single-layer
+            // case is already covered by the per-row × button.
+            if (layers.size > 1) {
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { plugin.clearAnnouncedMeal() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer,
+                        contentColor   = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer
                     )
-                },
-                modifier = Modifier.weight(1f)
-            ) { Text("Save changes") }
-
-            // Cancel meal — clears the announcement, wipes the timer
-            Button(
-                onClick = { plugin.clearAnnouncedMeal() },
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer,
-                    contentColor   = androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer
-                )
-            ) { Text("Cancel meal") }
+                ) { Text("Cancel all meals") }
+            }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
-            "Save changes preserves the absorption timer. Cancel meal wipes the announcement " +
-                "entirely; the loop falls back to observed-only ICE.",
-            fontSize = 9.sp,
+            "Use the meal button to add, edit, or replace meals.",
+            fontSize = 10.sp,
             color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 13.sp
         )
+    }
+}
+
+/** One row in the active-meal card — header line, macros line, delete icon. */
+@Composable
+private fun ActiveMealLayerRow(
+    layer: SmartInsulinPlugin.ActiveMealLayer,
+    onDelete: () -> Unit
+) {
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.weight(1f)) {
+            // Header: "Medium GI · 29m in · 270m remaining"
+            Text(
+                "${layer.giLabel} · ${layer.ageMin}m in · ${layer.remainingMin}m remaining",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "(${layer.totalDurationMin}m total window)",
+                fontSize = 10.sp,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            // Macros line: "Carbs 27/30g · Protein 30/30g · Fat 30/30g"
+            // Skip a macro entirely when its total is 0 to keep the line short.
+            val parts = buildList {
+                if (layer.totalCarbsG   > 0.0) add("Carbs ${"%.0f".format(layer.remainingCarbsG)}/${"%.0f".format(layer.totalCarbsG)}g")
+                if (layer.totalProteinG > 0.0) add("Protein ${"%.0f".format(layer.remainingProteinG)}/${"%.0f".format(layer.totalProteinG)}g")
+                if (layer.totalFatG     > 0.0) add("Fat ${"%.0f".format(layer.remainingFatG)}/${"%.0f".format(layer.totalFatG)}g")
+            }
+            Text(
+                if (parts.isEmpty()) "(no macros)" else parts.joinToString(" · "),
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Delete this meal",
+                tint = androidx.compose.material3.MaterialTheme.colorScheme.error
+            )
+        }
     }
 }
 

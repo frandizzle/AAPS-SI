@@ -128,7 +128,12 @@ fun SmartMealDialogScreen(
             ) {
                 Icon(Icons.Filled.Check, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Activate ${viewModel.modeList[uiState.selectedModeIndex].label}")
+                // ice-step27b: button label reflects what's about to happen.
+                Text(when (uiState.dialogMode) {
+                         DialogMode.ADD     -> "Add meal"
+                         DialogMode.EDIT    -> "Save edits"
+                         DialogMode.REPLACE -> "Replace all meals"
+                     })
             }
         }
     ) { paddingValues ->
@@ -179,35 +184,94 @@ fun SmartMealDialogScreen(
                 }
             }
 
+            // ── Mode picker (ice-step27b) ──────────────────────────────────
+            // Switches the dialog between three flows:
+            //   ADD     → announce as a new layer on top of any active meals
+            //   EDIT    → update the active meal's macros in place (preserves timer)
+            //   REPLACE → cancel all active meals and start fresh
+            Card(modifier = Modifier.fillMaxWidth(),
+                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("What do you want to do?", style = MaterialTheme.typography.titleMedium)
+                    Row(modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        val modes = listOf(
+                            Triple("Add",     DialogMode.ADD,     "New meal layer"),
+                            Triple("Edit",    DialogMode.EDIT,    "Update active meal"),
+                            Triple("Replace", DialogMode.REPLACE, "Cancel & start over")
+                        )
+                        modes.forEach { (label, mode, _) ->
+                            val isSelected = uiState.dialogMode == mode
+                            if (isSelected) {
+                                FilledTonalButton(
+                                    onClick = { viewModel.setDialogMode(mode) },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(label) }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { viewModel.setDialogMode(mode) },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text(label) }
+                            }
+                        }
+                    }
+                    // Per-mode help text — colour-coded to match severity.
+                    when (uiState.dialogMode) {
+                        DialogMode.ADD -> Text(
+                            "Adds these macros as a new meal layer with its own absorption timer. " +
+                                "If a meal is already active, this one starts alongside it (separate t=0).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        DialogMode.EDIT -> Text(
+                            "Replaces the active meal's macros while keeping its absorption timer. " +
+                                "Works only when exactly one meal is active — if you have several, " +
+                                "delete the extras from the home screen first (or use Replace).",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFB8C00)   // amber — caveat
+                        )
+                        DialogMode.REPLACE -> Text(
+                            "⚠ Cancels ALL active meals and restarts from these macros at t=0. " +
+                                "Use when the original entry was wrong or you want a clean slate.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+
             // ── Mode card ──────────────────────────────────────────────────
             Card(modifier = Modifier.fillMaxWidth(),
                  colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Mode dropdown
-                    ExposedDropdownMenuBox(
-                        expanded = modeMenuExpanded,
-                        onExpandedChange = { modeMenuExpanded = it }
-                    ) {
-                        TextField(
-                            value = viewModel.modeList[uiState.selectedModeIndex].label,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Meal Mode") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
-                        )
-                        ExposedDropdownMenu(
+                    // Mode dropdown — hidden in EDIT mode (edit doesn't re-activate
+                    // the meal-mode override, so the dropdown is irrelevant there).
+                    if (uiState.dialogMode != DialogMode.EDIT) {
+                        ExposedDropdownMenuBox(
                             expanded = modeMenuExpanded,
-                            onDismissRequest = { modeMenuExpanded = false }
+                            onExpandedChange = { modeMenuExpanded = it }
                         ) {
-                            viewModel.modeList.forEachIndexed { i, mode ->
-                                DropdownMenuItem(
-                                    text = { Text(mode.label) },
-                                    onClick = { viewModel.setModeIndex(i); modeMenuExpanded = false }
-                                )
+                            TextField(
+                                value = viewModel.modeList[uiState.selectedModeIndex].label,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Meal Mode") },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
+                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = modeMenuExpanded,
+                                onDismissRequest = { modeMenuExpanded = false }
+                            ) {
+                                viewModel.modeList.forEachIndexed { i, mode ->
+                                    DropdownMenuItem(
+                                        text = { Text(mode.label) },
+                                        onClick = { viewModel.setModeIndex(i); modeMenuExpanded = false }
+                                    )
+                                }
                             }
                         }
-                    }
+                    } // /if (dialogMode != EDIT) — close mode-dropdown gate
 
                     // ── Macros: carbs / protein / fat ──────────────────────────
                     var carbsText by rememberSaveable {
@@ -316,251 +380,258 @@ fun SmartMealDialogScreen(
                 }
             }
 
-            // ── Pre-bolus 1 card ───────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth(),
-                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Pre-bolus 1", style = MaterialTheme.typography.titleMedium)
-                        Switch(checked = uiState.preBolus1Enabled,
-                               onCheckedChange = { viewModel.setPreBolus1Enabled(it) })
-                    }
-                    if (uiState.preBolus1Enabled) {
-                        var pb1Text by rememberSaveable { mutableStateOf(if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else "") }
-                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus1U) {
-                            pb1Text = if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else ""
+            // ── Pre-bolus cards (hidden in EDIT mode — ice-step27b) ─────────
+            // Edit is a pure model update — it doesn't deliver insulin and doesn't
+            // touch the meal-mode override or PB2/PB3 schedules. Hiding the cards
+            // here keeps the EDIT flow focused on macros + GI only.
+            if (uiState.dialogMode != DialogMode.EDIT) {
+
+                // ── Pre-bolus 1 card ───────────────────────────────────────────
+                Card(modifier = Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Pre-bolus 1", style = MaterialTheme.typography.titleMedium)
+                            Switch(checked = uiState.preBolus1Enabled,
+                                   onCheckedChange = { viewModel.setPreBolus1Enabled(it) })
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
-                                 modifier = Modifier.weight(1f))
-                            OutlinedTextField(
-                                value = pb1Text,
+                        if (uiState.preBolus1Enabled) {
+                            var pb1Text by rememberSaveable { mutableStateOf(if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else "") }
+                            androidx.compose.runtime.LaunchedEffect(uiState.preBolus1U) {
+                                pb1Text = if (uiState.preBolus1U > 0.0) "%.2f".format(uiState.preBolus1U) else ""
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                     modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = pb1Text,
+                                    onValueChange = { v ->
+                                        pb1Text = v
+                                        v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                            ?.let { viewModel.setPreBolus1U(it) }
+                                    },
+                                    suffix = { Text("U") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.width(100.dp)
+                                )
+                            }
+                            Slider(
+                                value = uiState.preBolus1U.toFloat(),
                                 onValueChange = { v ->
-                                    pb1Text = v
-                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
-                                        ?.let { viewModel.setPreBolus1U(it) }
+                                    val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                    viewModel.setPreBolus1U(snapped)
+                                    pb1Text = "%.2f".format(snapped)
                                 },
-                                suffix = { Text("U") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.width(100.dp)
+                                valueRange = 0f..uiState.maxPreBolus.toFloat(),
+                                modifier = Modifier.fillMaxWidth()
                             )
-                        }
-                        Slider(
-                            value = uiState.preBolus1U.toFloat(),
-                            onValueChange = { v ->
-                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
-                                viewModel.setPreBolus1U(snapped)
-                                pb1Text = "%.2f".format(snapped)
-                            },
-                            valueRange = 0f..uiState.maxPreBolus.toFloat(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(0.5, 1.0, 2.0).forEach { inc ->
-                                FilledTonalButton(
-                                    onClick = { viewModel.setPreBolus1U(
-                                        (uiState.preBolus1U + inc).coerceAtMost(uiState.maxPreBolus)) },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("+${inc}U", fontSize = 12.sp) }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(0.5, 1.0, 2.0).forEach { inc ->
+                                    FilledTonalButton(
+                                        onClick = { viewModel.setPreBolus1U(
+                                            (uiState.preBolus1U + inc).coerceAtMost(uiState.maxPreBolus)) },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("+${inc}U", fontSize = 12.sp) }
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            // ── Pre-bolus 2 card ───────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth(),
-                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Pre-bolus 2 (scheduled)", style = MaterialTheme.typography.titleMedium)
-                            Text("Auto-fires after delay if BG > target",
-                                 style = MaterialTheme.typography.bodySmall,
-                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // ── Pre-bolus 2 card ───────────────────────────────────────────
+                Card(modifier = Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Pre-bolus 2 (scheduled)", style = MaterialTheme.typography.titleMedium)
+                                Text("Auto-fires after delay if BG > target",
+                                     style = MaterialTheme.typography.bodySmall,
+                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = uiState.preBolus2Enabled,
+                                   onCheckedChange = { viewModel.setPreBolus2Enabled(it) })
                         }
-                        Switch(checked = uiState.preBolus2Enabled,
-                               onCheckedChange = { viewModel.setPreBolus2Enabled(it) })
-                    }
-                    if (uiState.preBolus2Enabled) {
-                        HorizontalDivider()
-                        var pb2Text by rememberSaveable { mutableStateOf(if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else "") }
-                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus2U) {
-                            pb2Text = if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else ""
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
-                                 modifier = Modifier.weight(1f))
-                            OutlinedTextField(
-                                value = pb2Text,
+                        if (uiState.preBolus2Enabled) {
+                            HorizontalDivider()
+                            var pb2Text by rememberSaveable { mutableStateOf(if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else "") }
+                            androidx.compose.runtime.LaunchedEffect(uiState.preBolus2U) {
+                                pb2Text = if (uiState.preBolus2U > 0.0) "%.2f".format(uiState.preBolus2U) else ""
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                     modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = pb2Text,
+                                    onValueChange = { v ->
+                                        pb2Text = v
+                                        v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                            ?.let { viewModel.setPreBolus2U(it) }
+                                    },
+                                    suffix = { Text("U") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.width(100.dp)
+                                )
+                            }
+                            Slider(
+                                value = uiState.preBolus2U.toFloat(),
                                 onValueChange = { v ->
-                                    pb2Text = v
-                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
-                                        ?.let { viewModel.setPreBolus2U(it) }
+                                    val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                    viewModel.setPreBolus2U(snapped)
+                                    pb2Text = "%.2f".format(snapped)
                                 },
-                                suffix = { Text("U") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.width(100.dp)
+                                valueRange = 0f..uiState.maxPreBolus.toFloat(),
+                                modifier = Modifier.fillMaxWidth()
                             )
-                        }
-                        Slider(
-                            value = uiState.preBolus2U.toFloat(),
-                            onValueChange = { v ->
-                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
-                                viewModel.setPreBolus2U(snapped)
-                                pb2Text = "%.2f".format(snapped)
-                            },
-                            valueRange = 0f..uiState.maxPreBolus.toFloat(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        var delayText by rememberSaveable { mutableStateOf(uiState.preBolus2DelayMins.toString()) }
-                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus2DelayMins) {
-                            delayText = uiState.preBolus2DelayMins.toString()
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Delay", style = MaterialTheme.typography.bodyLarge,
-                                 modifier = Modifier.weight(1f))
-                            OutlinedTextField(
-                                value = delayText,
+                            var delayText by rememberSaveable { mutableStateOf(uiState.preBolus2DelayMins.toString()) }
+                            androidx.compose.runtime.LaunchedEffect(uiState.preBolus2DelayMins) {
+                                delayText = uiState.preBolus2DelayMins.toString()
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Delay", style = MaterialTheme.typography.bodyLarge,
+                                     modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = delayText,
+                                    onValueChange = { v ->
+                                        delayText = v
+                                        v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus2DelayMins(it) }
+                                    },
+                                    suffix = { Text("min") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.width(100.dp)
+                                )
+                            }
+                            Slider(
+                                value = uiState.preBolus2DelayMins.toFloat(),
                                 onValueChange = { v ->
-                                    delayText = v
-                                    v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus2DelayMins(it) }
+                                    viewModel.setPreBolus2DelayMins(v.toInt())
+                                    delayText = v.toInt().toString()
                                 },
-                                suffix = { Text("min") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                singleLine = true,
-                                modifier = Modifier.width(100.dp)
+                                valueRange = 15f..120f,
+                                steps = ((120 - 15) / 15) - 1,
+                                modifier = Modifier.fillMaxWidth()
                             )
+                            Text(
+                                "Pre-bolus 2 fires automatically when all safety gates pass:\n" +
+                                    "• BG above profile target (not falling)\n" +
+                                    "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
+                                    "• 15min avg delta not in sustained fall\n" +
+                                    "• IOB below 75% of max IOB\n" +
+                                    "Gates are checked every 5min until all pass or mode expires.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Slider(
-                            value = uiState.preBolus2DelayMins.toFloat(),
-                            onValueChange = { v ->
-                                viewModel.setPreBolus2DelayMins(v.toInt())
-                                delayText = v.toInt().toString()
-                            },
-                            valueRange = 15f..120f,
-                            steps = ((120 - 15) / 15) - 1,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            "Pre-bolus 2 fires automatically when all safety gates pass:\n" +
-                                "• BG above profile target (not falling)\n" +
-                                "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
-                                "• 15min avg delta not in sustained fall\n" +
-                                "• IOB below 75% of max IOB\n" +
-                                "Gates are checked every 5min until all pass or mode expires.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            }
 
-            // ── Pre-bolus 3 card ───────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth(),
-                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Pre-bolus 3 (late-meal)", style = MaterialTheme.typography.titleMedium)
-                            Text("Auto-fires delay-minutes AFTER pre-bolus 2 fires. Cancels if PB2 cancels.",
-                                 style = MaterialTheme.typography.bodySmall,
-                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // ── Pre-bolus 3 card ───────────────────────────────────────────
+                Card(modifier = Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Pre-bolus 3 (late-meal)", style = MaterialTheme.typography.titleMedium)
+                                Text("Auto-fires delay-minutes AFTER pre-bolus 2 fires. Cancels if PB2 cancels.",
+                                     style = MaterialTheme.typography.bodySmall,
+                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = uiState.preBolus3Enabled,
+                                   onCheckedChange = { viewModel.setPreBolus3Enabled(it) },
+                                   enabled = uiState.preBolus2Enabled)  // PB3 requires PB2
                         }
-                        Switch(checked = uiState.preBolus3Enabled,
-                               onCheckedChange = { viewModel.setPreBolus3Enabled(it) },
-                               enabled = uiState.preBolus2Enabled)  // PB3 requires PB2
-                    }
-                    if (uiState.preBolus3Enabled && uiState.preBolus2Enabled) {
-                        HorizontalDivider()
-                        var pb3Text by rememberSaveable { mutableStateOf(if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else "") }
-                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus3U) {
-                            pb3Text = if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else ""
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Amount", style = MaterialTheme.typography.bodyLarge,
-                                 modifier = Modifier.weight(1f))
-                            OutlinedTextField(
-                                value = pb3Text,
+                        if (uiState.preBolus3Enabled && uiState.preBolus2Enabled) {
+                            HorizontalDivider()
+                            var pb3Text by rememberSaveable { mutableStateOf(if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else "") }
+                            androidx.compose.runtime.LaunchedEffect(uiState.preBolus3U) {
+                                pb3Text = if (uiState.preBolus3U > 0.0) "%.2f".format(uiState.preBolus3U) else ""
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Amount", style = MaterialTheme.typography.bodyLarge,
+                                     modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = pb3Text,
+                                    onValueChange = { v ->
+                                        pb3Text = v
+                                        v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
+                                            ?.let { viewModel.setPreBolus3U(it) }
+                                    },
+                                    suffix = { Text("U") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    modifier = Modifier.width(100.dp)
+                                )
+                            }
+                            Slider(
+                                value = uiState.preBolus3U.toFloat(),
                                 onValueChange = { v ->
-                                    pb3Text = v
-                                    v.toDoubleOrNull()?.coerceIn(0.0, uiState.maxPreBolus)
-                                        ?.let { viewModel.setPreBolus3U(it) }
+                                    val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
+                                    viewModel.setPreBolus3U(snapped)
+                                    pb3Text = "%.2f".format(snapped)
                                 },
-                                suffix = { Text("U") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                singleLine = true,
-                                modifier = Modifier.width(100.dp)
+                                valueRange = 0f..uiState.maxPreBolus.toFloat(),
+                                modifier = Modifier.fillMaxWidth()
                             )
-                        }
-                        Slider(
-                            value = uiState.preBolus3U.toFloat(),
-                            onValueChange = { v ->
-                                val snapped = (v / uiState.bolusStep).toLong() * uiState.bolusStep
-                                viewModel.setPreBolus3U(snapped)
-                                pb3Text = "%.2f".format(snapped)
-                            },
-                            valueRange = 0f..uiState.maxPreBolus.toFloat(),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        var pb3DelayText by rememberSaveable { mutableStateOf(uiState.preBolus3DelayMins.toString()) }
-                        androidx.compose.runtime.LaunchedEffect(uiState.preBolus3DelayMins) {
-                            pb3DelayText = uiState.preBolus3DelayMins.toString()
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Delay after PB2", style = MaterialTheme.typography.bodyLarge,
-                                 modifier = Modifier.weight(1f))
-                            OutlinedTextField(
-                                value = pb3DelayText,
+                            var pb3DelayText by rememberSaveable { mutableStateOf(uiState.preBolus3DelayMins.toString()) }
+                            androidx.compose.runtime.LaunchedEffect(uiState.preBolus3DelayMins) {
+                                pb3DelayText = uiState.preBolus3DelayMins.toString()
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Delay after PB2", style = MaterialTheme.typography.bodyLarge,
+                                     modifier = Modifier.weight(1f))
+                                OutlinedTextField(
+                                    value = pb3DelayText,
+                                    onValueChange = { v ->
+                                        pb3DelayText = v
+                                        v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus3DelayMins(it) }
+                                    },
+                                    suffix = { Text("min") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.width(100.dp)
+                                )
+                            }
+                            Slider(
+                                value = uiState.preBolus3DelayMins.toFloat(),
                                 onValueChange = { v ->
-                                    pb3DelayText = v
-                                    v.toIntOrNull()?.coerceIn(15, 120)?.let { viewModel.setPreBolus3DelayMins(it) }
+                                    viewModel.setPreBolus3DelayMins(v.toInt())
+                                    pb3DelayText = v.toInt().toString()
                                 },
-                                suffix = { Text("min") },
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                singleLine = true,
-                                modifier = Modifier.width(100.dp)
+                                valueRange = 15f..120f,
+                                steps = ((120 - 15) / 15) - 1,
+                                modifier = Modifier.fillMaxWidth()
                             )
+                            Text(
+                                "Pre-bolus 3 timer starts when PB2 delivers successfully. Same safety gates as PB2:\n" +
+                                    "• BG above profile target (not falling)\n" +
+                                    "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
+                                    "• 15min avg delta not in sustained fall\n" +
+                                    "• IOB below 75% of max IOB\n" +
+                                    "Cancels automatically if PB2 is cancelled, fails, or the meal ends.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else if (uiState.preBolus3Enabled && !uiState.preBolus2Enabled) {
+                            Text(
+                                "Pre-bolus 3 requires pre-bolus 2 to be enabled — its timer starts when PB2 fires.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error)
                         }
-                        Slider(
-                            value = uiState.preBolus3DelayMins.toFloat(),
-                            onValueChange = { v ->
-                                viewModel.setPreBolus3DelayMins(v.toInt())
-                                pb3DelayText = v.toInt().toString()
-                            },
-                            valueRange = 15f..120f,
-                            steps = ((120 - 15) / 15) - 1,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            "Pre-bolus 3 timer starts when PB2 delivers successfully. Same safety gates as PB2:\n" +
-                                "• BG above profile target (not falling)\n" +
-                                "• Delta ≥ -0.11 mmol/min (not dropping fast)\n" +
-                                "• 15min avg delta not in sustained fall\n" +
-                                "• IOB below 75% of max IOB\n" +
-                                "Cancels automatically if PB2 is cancelled, fails, or the meal ends.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else if (uiState.preBolus3Enabled && !uiState.preBolus2Enabled) {
-                        Text(
-                            "Pre-bolus 3 requires pre-bolus 2 to be enabled — its timer starts when PB2 fires.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error)
                     }
                 }
-            }
+            } // /if (dialogMode != EDIT) — close pre-bolus gate
         }
     }
 }
