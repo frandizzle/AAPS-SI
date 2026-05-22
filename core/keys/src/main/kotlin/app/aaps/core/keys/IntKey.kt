@@ -449,4 +449,36 @@ enum class IntKey(
         dependency = BooleanKey.ApsSmartInsulinIceEnabled,
         unitType = UnitType.NONE
     ),
+
+    // ── UAM lockout window — ice-step36 ────────────────────────────────────
+    // Time-of-day window during which UAM is automatically suppressed.
+    // Primary use case: dawn phenomenon. Dawn rises are endocrine-driven
+    // (cortisol, growth hormone) and lack carb backing — if the loop chases
+    // them with insulin, BG crashes when the endocrine signal fades because
+    // there's nothing left for the insulin to act on. Defaults 23 → 10
+    // (11 PM through 10 AM) match the common manual practice of disabling
+    // UAM overnight. Window wraps across midnight when start > end.
+    // Both depend on UamIceLockoutEnabled (the on/off toggle in BooleanKey).
+    ApsSmartInsulinUamIceLockoutStartHour(
+        key = "si_uam_ice_lockout_start_hour",
+        defaultValue = 23,
+        min = 0,
+        max = 23,
+        titleResId = R.string.pref_title_si_uam_ice_lockout_start_hour,
+        summaryResId = R.string.pref_summary_si_uam_ice_lockout_start_hour,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamIceLockoutEnabled,
+        unitType = UnitType.NONE
+    ),
+    ApsSmartInsulinUamIceLockoutEndHour(
+        key = "si_uam_ice_lockout_end_hour",
+        defaultValue = 10,
+        min = 0,
+        max = 23,
+        titleResId = R.string.pref_title_si_uam_ice_lockout_end_hour,
+        summaryResId = R.string.pref_summary_si_uam_ice_lockout_end_hour,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamIceLockoutEnabled,
+        unitType = UnitType.NONE
+    ),
 }

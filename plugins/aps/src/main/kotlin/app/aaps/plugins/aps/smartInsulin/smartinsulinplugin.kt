@@ -1671,9 +1671,25 @@ open class SmartInsulinPlugin @Inject constructor(
         // When uamAllowed is false the UAM mode collapses to NONE, which in
         // turn zeros configuredUserWeight and skips the forward-projection
         // line draw, so the yellow line disappears cleanly.
+        // ice-step36: overnight UAM lockout window. Dawn phenomenon and similar
+        // endocrine-driven rises (cortisol, growth hormone) are NOT carb-backed,
+        // so chasing them with insulin causes a BG crash later when the rise
+        // fades naturally. Common practice: disable UAM overnight (e.g. 23-10).
+        // The window wraps midnight cleanly when start > end.
+        val uamIceLockoutEnabled = preferences.get(BooleanKey.ApsSmartInsulinUamIceLockoutEnabled)
+        val inUamLockoutWindow = if (!uamIceLockoutEnabled) false else {
+            val startHour = preferences.get(IntKey.ApsSmartInsulinUamIceLockoutStartHour)
+            val endHour   = preferences.get(IntKey.ApsSmartInsulinUamIceLockoutEndHour)
+            when {
+                startHour == endHour -> false                                              // degenerate — treat as disabled
+                startHour <  endHour -> currentHour in startHour until endHour              // same-day window e.g. 22 → 23
+                else                 -> currentHour >= startHour || currentHour < endHour   // wraps midnight e.g. 23 → 10
+            }
+        }
+
         val uamIceEnabled  = preferences.get(BooleanKey.ApsSmartInsulinUamIceEnabled)
         val aapsCobActive  = mealData.mealCOB > 0.0
-        val uamAllowed     = uamIceEnabled && !highTempTarget && !aapsCobActive
+        val uamAllowed     = uamIceEnabled && !highTempTarget && !aapsCobActive && !inUamLockoutWindow
 
         val iceMode: app.aaps.plugins.aps.smartInsulin.ice.IceMode = when {
             !iceTrackerEnabled                                  -> app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
@@ -3513,7 +3529,12 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinUamIceLearningBlockThreshold,
                     DoubleKey.ApsSmartInsulinUamIceAggressionCap,
                     IntKey.ApsSmartInsulinUamIceSustainMinutes,
-                    IntKey.ApsSmartInsulinUamIceDecayMinutes
+                    IntKey.ApsSmartInsulinUamIceDecayMinutes,
+                    // ── UAM lockout window (ice-step36) ─────────────────────
+                    // Time-of-day suppression for UAM (dawn phenomenon defence).
+                    BooleanKey.ApsSmartInsulinUamIceLockoutEnabled,
+                    IntKey.ApsSmartInsulinUamIceLockoutStartHour,
+                    IntKey.ApsSmartInsulinUamIceLockoutEndHour
                 )
             )
         ),

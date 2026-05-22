@@ -75,6 +75,7 @@ enum class BooleanKey(
     ApsSmartInsulinIceEnabled("si_ice_enabled", false, R.string.pref_title_si_ice_enabled, R.string.pref_summary_si_ice_enabled, defaultedBySM = true),
     ApsSmartInsulinIceCgmWarmupBlock("si_ice_cgm_warmup_block", true, R.string.pref_title_si_ice_cgm_warmup_block, R.string.pref_summary_si_ice_cgm_warmup_block, defaultedBySM = true, dependency = ApsSmartInsulinIceEnabled),
     ApsSmartInsulinUamIceEnabled("si_uam_ice_enabled", true, R.string.pref_title_si_uam_ice_enabled, R.string.pref_summary_si_uam_ice_enabled, defaultedBySM = true, dependency = ApsSmartInsulinIceEnabled),
+    ApsSmartInsulinUamIceLockoutEnabled("si_uam_ice_lockout_enabled", false, R.string.pref_title_si_uam_ice_lockout_enabled, R.string.pref_summary_si_uam_ice_lockout_enabled, defaultedBySM = true, dependency = ApsSmartInsulinUamIceEnabled),
 
     AlertMissedBgReading("enable_missed_bg_readings", false, R.string.pref_title_alert_missed_bg_reading),
     AlertPumpUnreachable("enable_pump_unreachable_alert", true, R.string.pref_title_alert_pump_unreachable),
