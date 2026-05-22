@@ -66,11 +66,18 @@ import kotlin.math.max
 object MealCurveBuilder {
 
     /**
-     * Expected total glucose load delivered per gram of carbs, integrated across
-     * the carb absorption window. mg/dL · hours. Calibrated for adult ~70kg user
-     * with average carb ratio.
+     * Default expected glucose load per gram of carbs (mg/dL · hours), used when
+     * no per-user value is supplied. Equivalent to a 70kg adult with ISF=36 mg/dL/U
+     * (≈ 2.0 mmol/U) and CR=8 g/U → ISF/CR = 4.5 mg/dL per gram.
+     *
+     * **Per-user calibration**: the loop SHOULD derive this dynamically from the
+     * current profile as `ISF_mgdl / CR_grams_per_unit` and pass it into
+     * [expectedIceMgdlPerHourAt]. That makes ICE responsiveness automatically
+     * track the user's profile — tighten CR → ICE doses more aggressively, loosen
+     * CR → ICE backs off. The constant below is only a safe fallback for callers
+     * (like unit tests) that don't have a profile in scope.
      */
-    private const val CARB_GLYCEMIC_LOAD_MGDL_PER_G = 4.5
+    const val DEFAULT_CARB_LOAD_PER_G_MGDL = 4.5
 
     /** Fraction of dietary protein that converts to glucose via gluconeogenesis. */
     private const val PROTEIN_TO_GLUCOSE_FRACTION = 0.5
@@ -97,18 +104,70 @@ object MealCurveBuilder {
     private const val FAT_PROTEIN_FADE_DURATION_MIN = 30
 
     /**
+     * Per-component breakdown of the meal's instantaneous ICE rate (mg/dL/h).
+     * All three values already include the commitment fraction scaling, so
+     * `sum == expectedIceMgdlPerHourAt(...)` for any given inputs.
+     */
+    data class ComponentRates(
+        val carbMgdlH: Double,
+        val proteinMgdlH: Double,
+        val fatMgdlH: Double
+    ) {
+        val totalMgdlH: Double get() = carbMgdlH + proteinMgdlH + fatMgdlH
+    }
+
+    /**
+     * Returns the meal's current ICE rate broken into carb / protein / fat
+     * contributions. Useful for diagnostic display when the total rate alone
+     * doesn't make the source obvious — e.g. when carbs are nearly absorbed
+     * but the protein/fat plateau is still at full strength, the total can
+     * look surprisingly high relative to remaining COB. Use this to see
+     * which component is responsible.
+     *
+     * Returns all-zero outside the active window.
+     */
+    fun componentRatesAt(
+        meal: AnnouncedMeal,
+        nowMs: Long,
+        carbLoadPerG: Double = DEFAULT_CARB_LOAD_PER_G_MGDL
+    ): ComponentRates {
+        val ageMinutes = (nowMs - meal.announceTimestampMs) / 60_000.0
+        val totalDuration = meal.effectiveTotalDurationMin.toDouble()
+        if (ageMinutes < 0.0 || ageMinutes > totalDuration)
+            return ComponentRates(0.0, 0.0, 0.0)
+
+        val safeLoad = carbLoadPerG.coerceAtLeast(0.5)
+        val c = meal.commitmentFraction
+        return ComponentRates(
+            carbMgdlH    = carbRateAt(meal, ageMinutes, safeLoad) * c,
+            proteinMgdlH = proteinRateAt(meal, ageMinutes, safeLoad) * c,
+            fatMgdlH     = fatRateAt(meal, ageMinutes, safeLoad) * c
+        )
+    }
+
+    /**
      * Compute the expected ICE rate (mg/dL/h) for [meal] at the given absolute time.
+     *
+     * @param carbLoadPerG glucose impact per gram of carbs (mg/dL · h per g). Pass
+     *   the user's `ISF_mgdl / CR_grams_per_unit` from the current profile to make
+     *   ICE responsiveness track their profile. Defaults to a population-average
+     *   value when omitted (e.g. from unit tests).
      *
      * Returns 0.0 outside the active window. Always finite.
      */
-    fun expectedIceMgdlPerHourAt(meal: AnnouncedMeal, nowMs: Long): Double {
+    fun expectedIceMgdlPerHourAt(
+        meal: AnnouncedMeal,
+        nowMs: Long,
+        carbLoadPerG: Double = DEFAULT_CARB_LOAD_PER_G_MGDL
+    ): Double {
         val ageMinutes = (nowMs - meal.announceTimestampMs) / 60_000.0
         val totalDuration = meal.effectiveTotalDurationMin.toDouble()
         if (ageMinutes < 0.0 || ageMinutes > totalDuration) return 0.0
 
-        val carbRate    = carbRateAt(meal, ageMinutes)
-        val proteinRate = proteinRateAt(meal, ageMinutes)
-        val fatRate     = fatRateAt(meal, ageMinutes)
+        val safeLoad    = carbLoadPerG.coerceAtLeast(0.5)  // guard against zero/negative CR
+        val carbRate    = carbRateAt(meal, ageMinutes, safeLoad)
+        val proteinRate = proteinRateAt(meal, ageMinutes, safeLoad)
+        val fatRate     = fatRateAt(meal, ageMinutes, safeLoad)
 
         return (carbRate + proteinRate + fatRate) * meal.commitmentFraction
     }
@@ -120,14 +179,15 @@ object MealCurveBuilder {
     fun sampleCurve(
         meal: AnnouncedMeal,
         nowMs: Long,
-        sampleIntervalMin: Int = 5
+        sampleIntervalMin: Int = 5,
+        carbLoadPerG: Double = DEFAULT_CARB_LOAD_PER_G_MGDL
     ): List<Pair<Int, Double>> {
         val ageNow = ((nowMs - meal.announceTimestampMs) / 60_000.0).coerceAtLeast(0.0)
         val out = mutableListOf<Pair<Int, Double>>()
         var t = ageNow.toInt()
         while (t <= meal.effectiveTotalDurationMin) {
             val sampleAt = meal.announceTimestampMs + t * 60_000L
-            out.add(t to expectedIceMgdlPerHourAt(meal, sampleAt))
+            out.add(t to expectedIceMgdlPerHourAt(meal, sampleAt, carbLoadPerG))
             t += sampleIntervalMin
         }
         return out
@@ -231,25 +291,32 @@ object MealCurveBuilder {
     // ── Internals: per-component contribution functions ─────────────────────
 
     /** Carb absorption — Gaussian centred at the GI bucket's peak time. */
-    private fun carbRateAt(meal: AnnouncedMeal, ageMin: Double): Double {
+    private fun carbRateAt(meal: AnnouncedMeal, ageMin: Double, carbLoadPerG: Double): Double {
         if (meal.carbsG <= 0.0) return 0.0
-        val totalLoad = meal.carbsG * CARB_GLYCEMIC_LOAD_MGDL_PER_G
+        val totalLoad = meal.carbsG * carbLoadPerG
         val peak      = meal.giBucket.peakMinutes.toDouble()
         val width     = peak / 2.0
         return gaussianRate(ageMin, peak, width) * totalLoad
     }
 
     /** Protein → gluconeogenesis plateau. */
-    private fun proteinRateAt(meal: AnnouncedMeal, ageMin: Double): Double {
+    private fun proteinRateAt(meal: AnnouncedMeal, ageMin: Double, carbLoadPerG: Double): Double {
         if (meal.proteinG <= 0.0) return 0.0
-        val totalLoad = meal.proteinG * PROTEIN_TO_GLUCOSE_FRACTION * CARB_GLYCEMIC_LOAD_MGDL_PER_G
+        val totalLoad = meal.proteinG * PROTEIN_TO_GLUCOSE_FRACTION * carbLoadPerG
         return plateauRateAt(totalLoad, ageMin, meal.fatProteinDurationMin)
     }
 
-    /** Fat → insulin-resistance plateau (looks like positive ICE to the loop). */
-    private fun fatRateAt(meal: AnnouncedMeal, ageMin: Double): Double {
+    /** Fat → insulin-resistance plateau (looks like positive ICE to the loop).
+     *
+     * Fat load is scaled proportionally to carbLoadPerG, preserving the
+     * empirical carbs:fat ratio of 4.5:0.6 ≈ 7.5 mg/dL per gram. So a user
+     * with tighter CR (more insulin-sensitive) gets stronger carb response
+     * AND stronger fat response in proportion. */
+    private fun fatRateAt(meal: AnnouncedMeal, ageMin: Double, carbLoadPerG: Double): Double {
         if (meal.fatG <= 0.0) return 0.0
-        val totalLoad = meal.fatG * FAT_INSULIN_RESISTANCE_LOAD_PER_G
+        // Fat load tracks carb load via the calibrated ratio.
+        val fatLoadPerG = carbLoadPerG * (FAT_INSULIN_RESISTANCE_LOAD_PER_G / DEFAULT_CARB_LOAD_PER_G_MGDL)
+        val totalLoad = meal.fatG * fatLoadPerG
         return plateauRateAt(totalLoad, ageMin, meal.fatProteinDurationMin)
     }
 

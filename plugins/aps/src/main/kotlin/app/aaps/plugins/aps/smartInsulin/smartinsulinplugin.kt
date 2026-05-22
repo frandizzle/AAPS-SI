@@ -1426,7 +1426,16 @@ open class SmartInsulinPlugin @Inject constructor(
         val iceSnapshot          = iceTracker.snapshot.value
         val observedIceMgdlPerH  = iceSnapshot?.currentIceMgdlH
         val observedConfidence   = iceSnapshot?.confidence?.score ?: 0.0
-        val iceIsDisabled        = iceSnapshot?.confidence?.disabled != null
+        // ── Disable layering ──────────────────────────────────────────────────
+        // Two independent disable axes:
+        //   - HARD disable: CGM warmup, exercise temp target, activity detected.
+        //     These block ALL ICE engagement — even announced meals — because the
+        //     underlying physiology is wrong (BG move is not from insulin).
+        //   - OBSERVATION disable: IceTracker can't compute observed ICE — e.g.,
+        //     INSUFFICIENT_HISTORY, CGM_QUALITY. Blocks UNANNOUNCED ICE but does
+        //     NOT block announced meals, which have their own signal source
+        //     (the meal curve) independent of observation.
+        val iceObservationDisabled = iceSnapshot?.confidence?.disabled != null
         val iceLearningThreshold = preferences.get(DoubleKey.ApsSmartInsulinIceLearningBlockThreshold)
 
         // ── Announced meal layer ──────────────────────────────────────────────
@@ -1436,7 +1445,16 @@ open class SmartInsulinPlugin @Inject constructor(
         // meal materializes harder than predicted. Asymmetric — only kicks in when the
         // meal would push more than reality currently shows, never reduces below observed.
         val activeMeal          = announcedMealManager.activeMeal.value
-        val expectedIceMgdlPerH = announcedMealManager.expectedIceMgdlPerHour(glucoseStatus.date)
+        // Carb glycemic load per gram, derived from the user's current profile.
+        // CR = grams of carb covered by 1 U insulin; ISF = mg/dL drop per 1 U insulin.
+        // → 1 g carb produces (ISF / CR) mg/dL rise. Using current profile values means
+        // ICE responsiveness automatically tracks the user's tuning AND any circadian
+        // CR variation — tighten CR → ICE doses more aggressively, loosen → less.
+        // Guarded against zero/missing CR with the population-average default.
+        val profileCrG          = profile.getIc().coerceAtLeast(1.0)
+        val carbLoadPerG        = (trueIsfMgdl / profileCrG).takeIf { it.isFinite() && it > 0.0 }
+            ?: app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder.DEFAULT_CARB_LOAD_PER_G_MGDL
+        val expectedIceMgdlPerH = announcedMealManager.expectedIceMgdlPerHour(glucoseStatus.date, carbLoadPerG)
         val mealOverridesObserved = activeMeal != null && expectedIceMgdlPerH > (observedIceMgdlPerH ?: 0.0)
         val iceMgdlPerHEffective: Double? = if (mealOverridesObserved) expectedIceMgdlPerH else observedIceMgdlPerH
         // Confidence — when an announcement exists, the user's commitment is the FLOOR
@@ -1465,6 +1483,15 @@ open class SmartInsulinPlugin @Inject constructor(
         val configuredUserWeight = if (iceTrackerEnabled) preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight) else 0.0
         val announcedMealFloor   = if (activeMeal != null) 0.5 * activeMeal.commitmentFraction else 0.0
         val effectiveUserWeight  = maxOf(configuredUserWeight, announcedMealFloor).coerceIn(0.0, 1.0)
+
+        // ── Effective disable flag ───────────────────────────────────────────────
+        // Hard disable (warmup/exercise/activity) always blocks. Observation
+        // disable (INSUFFICIENT_HISTORY etc) blocks only when there's NO announced
+        // meal — an announced meal carries its own confidence floor and shouldn't
+        // be silenced just because the IceTracker can't compute observed ICE.
+        // This is what `iceIsDisabled` should have meant all along.
+        val iceIsDisabled = iceDisableReason != null ||
+            (activeMeal == null && iceObservationDisabled)
         // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
         // Threshold-gated rather than smooth — these are on/off decisions.
         val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= iceLearningThreshold
@@ -2642,10 +2669,12 @@ open class SmartInsulinPlugin @Inject constructor(
                     // _activeMeal in the middle of building the prediction list,
                     // truncating the curve. MealCurveBuilder is pure — returns 0.0
                     // past expiry without side effects.
+                    // Pass carbLoadPerG so the prediction line matches the dosing
+                    // decisions made above (both use the user's current CR).
                     (1..predictionTicks).map { tick ->
                         val futureMs = now + tick * 5 * 60_000L
                         app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
-                            .expectedIceMgdlPerHourAt(activeMeal, futureMs)
+                            .expectedIceMgdlPerHourAt(activeMeal, futureMs, carbLoadPerG)
                     }
                 } else if ((observedIceMgdlPerH ?: 0.0) > 0.0) {
                     // No announcement, but observed ICE is positive → decay linearly
@@ -2791,7 +2820,21 @@ open class SmartInsulinPlugin @Inject constructor(
             val expMmolPerH = expectedIceMgdlPerH / 18.0
             val effMmolPerH = (iceMgdlPerHEffective ?: 0.0) / 18.0
             val srcLabel    = if (mealOverridesObserved) "exp" else "obs"
-            val disableTag  = iceDisableReason?.let { " disabled=${it.name}" } ?: ""
+            // Disable tag now shows BOTH axes — hard disable wins, but observation
+            // disable is shown too when meal isn't overriding it. If the meal IS
+            // overriding observation disable, append "(meal_override)" so the user
+            // can see ICE is still engaging despite the underlying observation issue.
+            val displayDisableReason = iceDisableReason
+                ?: iceSnapshot?.confidence?.disabled
+            val disableTag = when {
+                iceDisableReason != null ->
+                    " disabled=${iceDisableReason.name}"
+                iceObservationDisabled && activeMeal != null ->
+                    " obs_disabled=${iceSnapshot!!.confidence.disabled!!.name}(meal_override)"
+                iceObservationDisabled ->
+                    " disabled=${iceSnapshot!!.confidence.disabled!!.name}"
+                else -> ""
+            }
             val blendWeight = if (!iceIsDisabled)
                 (iceConfidenceScore * effectiveUserWeight).coerceIn(0.0, 1.0)
             else 0.0
@@ -2801,8 +2844,23 @@ open class SmartInsulinPlugin @Inject constructor(
                 " uw=${"%.2f".format(configuredUserWeight)}→${"%.2f".format(effectiveUserWeight)}(meal_floor)"
             else
                 " uw=${"%.2f".format(effectiveUserWeight)}"
+            // Per-component breakdown — only shown when there's an announced meal,
+            // since the carb/protein/fat split only makes sense in that context.
+            // Reveals when "high ICE rate" is driven by carb peak vs PF plateau —
+            // useful because COB display shows only carb absorption, so the ICE
+            // rate can look surprisingly high when carbs are nearly absorbed but
+            // the multi-hour PF plateau is still at full strength.
+            val componentNote = activeMeal?.let { m ->
+                val breakdown = app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                    .componentRatesAt(m, dateUtil.now(), carbLoadPerG)
+                " [carb=${"%.2f".format(breakdown.carbMgdlH / 18.0)}" +
+                    " prot=${"%.2f".format(breakdown.proteinMgdlH / 18.0)}" +
+                    " fat=${"%.2f".format(breakdown.fatMgdlH / 18.0)}]mmol/h"
+            } ?: ""
             apsResult.reason += " | ICE: $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
+                componentNote +
                 " (obs=${"%.2f".format(obsMmolPerH)} exp=${"%.2f".format(expMmolPerH)})" +
+                " carbLoad=${"%.1f".format(carbLoadPerG)}mg/dL/g" +
                 " conf=${"%.2f".format(iceConfidenceScore)}" +
                 weightNote +
                 " blend=${"%.2f".format(blendWeight)}" +
@@ -2813,14 +2871,27 @@ open class SmartInsulinPlugin @Inject constructor(
         // Announced-meal diagnostic — only when a meal is actually announced.
         // Tells you at a glance whether the dialog's announceMeal() call succeeded.
         // Uses giBucket.name (FAST/MEDIUM/SLOW) for compactness; the verbose label
-        // with examples is for the dialog UI.
+        // with examples is for the dialog UI. Shows remaining/announced amounts
+        // (matching the home-screen "COB 4g · P 22g · F 22g" widget) so the user
+        // can see absorption progress without needing to switch screens.
         activeMeal?.let { m ->
             val ageMin = ((dateUtil.now() - m.announceTimestampMs) / 60_000L).toInt()
+            val remaining = announcedMealManager.remainingMacros(dateUtil.now())
+            val carbStr = if (remaining != null)
+                "carbs=${"%.0f".format(remaining.carbsG)}g/${"%.0f".format(m.carbsG)}g"
+            else
+                "carbs=${"%.0f".format(m.carbsG)}g"
+            val protStr = if (remaining != null)
+                "P=${"%.0f".format(remaining.proteinG)}g/${"%.0f".format(m.proteinG)}g"
+            else
+                "P=${"%.0f".format(m.proteinG)}g"
+            val fatStr = if (remaining != null)
+                "F=${"%.0f".format(remaining.fatG)}g/${"%.0f".format(m.fatG)}g"
+            else
+                "F=${"%.0f".format(m.fatG)}g"
             apsResult.reason += " | meal=${m.giBucket.name}@${m.commitmentPct}%" +
                 " age=${ageMin}m/${m.effectiveTotalDurationMin}m" +
-                " carbs=${"%.0f".format(m.carbsG)}g" +
-                " P=${"%.0f".format(m.proteinG)}g" +
-                " F=${"%.0f".format(m.fatG)}g"
+                " $carbStr $protStr $fatStr"
         }
 
         // Append mode time remaining if an override is active

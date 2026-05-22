@@ -150,9 +150,18 @@ class AnnouncedMealManager @Inject constructor(
      * Without this distinction, announcing a meal between CGM readings would
      * cause the next loop cycle to silently wipe the announcement.
      *
+     * @param nowMs current wall-clock for age computation and auto-expiry
+     * @param carbLoadPerG glucose impact per gram of carbs (mg/dL · h per g). Pass
+     *   `ISF_mgdl / CR_grams_per_unit` from the current profile to make ICE
+     *   responsiveness track the user's profile. Defaults to a population-average
+     *   when omitted (for callers without profile access, e.g. unit tests).
+     *
      * @return Expected ICE in mg/dL/h. Always finite, always ≥ 0.0 for sensible inputs.
      */
-    fun expectedIceMgdlPerHour(nowMs: Long): Double {
+    fun expectedIceMgdlPerHour(
+        nowMs: Long,
+        carbLoadPerG: Double = MealCurveBuilder.DEFAULT_CARB_LOAD_PER_G_MGDL
+    ): Double {
         val meal = _activeMeal.value ?: return 0.0
         val ageMin = (nowMs - meal.announceTimestampMs) / 60_000.0
 
@@ -169,7 +178,7 @@ class AnnouncedMealManager @Inject constructor(
         // Pre-announce relative to this query (negative age) → return 0 but keep the meal
         if (ageMin < 0.0) return 0.0
 
-        return MealCurveBuilder.expectedIceMgdlPerHourAt(meal, nowMs)
+        return MealCurveBuilder.expectedIceMgdlPerHourAt(meal, nowMs, carbLoadPerG)
     }
 
     /**
