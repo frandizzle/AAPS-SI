@@ -20,11 +20,18 @@ enum class GiBucket(
     val totalDurationMinutes: Int,
     val tailFraction: Double
 ) {
-    /** Fast carbs — juice, soft drinks, candy, dextrose. Peaks early, done quickly. */
+    /** Fast carbs — juice, soft drinks, candy, dextrose. Peaks early, done in 1h.
+     *
+     * peak=30, totalDuration=60 → Gaussian centred at 30 min with σ=15 (=peak/2)
+     * covers exactly ±2σ = [0, 60] within the window, so ~95% of the carb mass
+     * is delivered inside the 1h boundary. The hard cutoff at 60 min loses the
+     * outer-tail ~5% (small vs the empirical accuracy of the bucket itself) and
+     * gives a clean "FAST means done in an hour" model for fast-acting carbs.
+     */
     FAST(
         label = "Fast (juice, candy, soft drinks)",
         peakMinutes = 30,
-        totalDurationMinutes = 120,
+        totalDurationMinutes = 60,
         tailFraction = 0.0
     ),
 

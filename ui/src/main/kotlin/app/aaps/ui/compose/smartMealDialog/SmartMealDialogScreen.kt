@@ -427,7 +427,7 @@ fun SmartMealDialogScreen(
                         }
                         Text(
                             text = when (uiState.giBucketIndex) {
-                                0    -> "Fast-acting: juice, candy, soft drinks · 2h window"
+                                0    -> "Fast-acting: juice, candy, soft drinks · 1h window"
                                 2    -> "Slow / bimodal: pizza, fatty meals, large portions · 6h window"
                                 else -> "Standard: bread, rice, pasta, most cooked meals · 4h window"
                             },

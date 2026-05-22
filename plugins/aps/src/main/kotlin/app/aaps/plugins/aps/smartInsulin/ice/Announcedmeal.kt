@@ -64,9 +64,9 @@ data class AnnouncedMeal(
     /**
      * The effective end of the meal's active window, in minutes from announce.
      *
-     * For pure-carb meals this is just [GiBucket.totalDurationMinutes] (90/180/240
-     * depending on GI). For meals with fat/protein, the plateau extends well past
-     * the carb absorption — the active window is the max of both.
+     * For pure-carb meals this is just [GiBucket.totalDurationMinutes] (60/240/360
+     * for FAST/MEDIUM/SLOW respectively). For meals with fat/protein, the plateau
+     * extends well past the carb absorption — the active window is the max of both.
      */
     val effectiveTotalDurationMin: Int
         get() {
