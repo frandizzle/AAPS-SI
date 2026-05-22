@@ -11,6 +11,7 @@ import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
@@ -73,7 +74,11 @@ data class SmartMealUiState(
     val pb2Pending: Boolean = false,
     val pb2StatusText: String = "",
     val pb3Pending: Boolean = false,
-    val pb3StatusText: String = ""
+    val pb3StatusText: String = "",
+    // ── ICE-step27c: per-layer snapshot for EDIT mode ────────────────────────
+    // Collected from SmartInsulinOverview.overviewStateFlow. Drives the
+    // per-meal editable cards rendered when dialogMode == EDIT.
+    val activeMealLayers: List<SmartInsulinOverview.MealLayerInfo> = emptyList()
 )
 
 @HiltViewModel
@@ -108,6 +113,17 @@ class SmartMealDialogViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             refresh()
+        }
+        // ice-step27c: keep activeMealLayers mirrored from the plugin's
+        // overviewStateFlow. Updates fire each invoke() cycle (ages tick up) and
+        // also immediately after any meal mutation (announce / edit / cancel)
+        // because the plugin pushes the state inside those handlers.
+        viewModelScope.launch {
+            activePlugin.smartInsulin?.overviewStateFlow?.collect { state ->
+                _uiState.update {
+                    it.copy(activeMealLayers = state?.activeMealLayers ?: emptyList())
+                }
+            }
         }
     }
 
@@ -154,23 +170,43 @@ class SmartMealDialogViewModel @Inject constructor(
     fun cancelPb2() { mealOverrideManager.cancelPreBolus2(); refresh() }
     fun cancelPb3() { mealOverrideManager.cancelPreBolus3(); refresh() }
 
+    // ── ICE-step27c: per-layer actions for EDIT mode ─────────────────────────
+    // The Composable drives one row per layer. Each row holds its own draft
+    // state via rememberSaveable and calls saveLayerEdits / cancelLayer on
+    // its own layerId. Cancel-all is the multi-layer wipe button.
+
+    /** Save edits to a specific layer. Preserves its absorption timer. */
+    fun saveLayerEdits(layerId: Long, carbsG: Double, proteinG: Double, fatG: Double, giBucketName: String) {
+        activePlugin.smartInsulin?.editMealLayer(
+            layerId      = layerId,
+            carbsG       = carbsG,
+            proteinG     = proteinG,
+            fatG         = fatG,
+            giBucketName = giBucketName
+        )
+    }
+
+    /** Cancel a single layer by ID. The row will disappear from activeMealLayers. */
+    fun cancelLayer(layerId: Long) {
+        activePlugin.smartInsulin?.clearMealLayer(layerId)
+    }
+
+    /** Cancel all active meal layers at once. */
+    fun cancelAllMealLayers() {
+        activePlugin.smartInsulin?.clearAnnouncedMeal()
+    }
+
     fun confirmAndActivate(onDeliveryError: (String) -> Unit, onDone: () -> Unit) {
         val s = _uiState.value
 
-        // ── EDIT mode: pure model update, no pre-bolus, no mode override ────────
-        // editActiveMeal preserves the active layer's announce timestamp so the
-        // absorption timer continues uninterrupted. Plugin-side it silently
-        // no-ops when zero or 2+ layers are active (a debug log is emitted) —
-        // the help text in the dialog tells the user about that constraint.
+        // ── EDIT mode: no-op-and-dismiss ────────────────────────────────────
+        // In ice-step27c, EDIT mode no longer goes through confirmAndActivate —
+        // each per-layer row in the dialog has its own Save button that calls
+        // saveLayerEdits(layerId, ...) directly. The dialog's bottom button in
+        // EDIT mode is "Done" and dismisses without confirmation. Guarding here
+        // anyway so a stray call can never re-fire announceMeal or duplicate a
+        // layer if a button gets re-wired carelessly later.
         if (s.dialogMode == DialogMode.EDIT) {
-            if (s.carbsG > 0.0 || s.proteinG > 0.0 || s.fatG > 0.0) {
-                activePlugin.smartInsulin?.editActiveMeal(
-                    carbsG       = s.carbsG,
-                    proteinG     = s.proteinG,
-                    fatG         = s.fatG,
-                    giBucketName = giBucketNameFor(s.giBucketIndex)
-                )
-            }
             onDone()
             return
         }

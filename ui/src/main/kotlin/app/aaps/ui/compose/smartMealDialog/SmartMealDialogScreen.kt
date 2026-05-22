@@ -15,8 +15,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.compose.AapsTopAppBar
 import app.aaps.core.ui.compose.dialogs.OkCancelDialog
 
@@ -123,15 +126,25 @@ fun SmartMealDialogScreen(
         },
         bottomBar = {
             Button(
-                onClick = { showConfirmation = true },
+                onClick = {
+                    // ice-step27c: EDIT mode commits per-row via the Save buttons
+                    // inside each MealLayerEditCard, so the bottom button here is
+                    // a dismiss action — no confirmation modal, just close the
+                    // dialog. ADD / REPLACE keep the existing confirm-then-fire flow.
+                    if (uiState.dialogMode == DialogMode.EDIT) {
+                        onNavigateBack()
+                    } else {
+                        showConfirmation = true
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().imePadding().padding(16.dp)
             ) {
                 Icon(Icons.Filled.Check, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                // ice-step27b: button label reflects what's about to happen.
+                // ice-step27b/c: button label reflects what's about to happen.
                 Text(when (uiState.dialogMode) {
                          DialogMode.ADD     -> "Add meal"
-                         DialogMode.EDIT    -> "Save edits"
+                         DialogMode.EDIT    -> "Done"
                          DialogMode.REPLACE -> "Replace all meals"
                      })
             }
@@ -224,11 +237,10 @@ fun SmartMealDialogScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         DialogMode.EDIT -> Text(
-                            "Replaces the active meal's macros while keeping its absorption timer. " +
-                                "Works only when exactly one meal is active — if you have several, " +
-                                "delete the extras from the home screen first (or use Replace).",
+                            "Edit each active meal's macros below. Per-row Save preserves the meal's " +
+                                "absorption timer. Tap × on a row to cancel a single meal.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFFB8C00)   // amber — caveat
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         DialogMode.REPLACE -> Text(
                             "⚠ Cancels ALL active meals and restarts from these macros at t=0. " +
@@ -240,145 +252,191 @@ fun SmartMealDialogScreen(
                 }
             }
 
-            // ── Mode card ──────────────────────────────────────────────────
-            Card(modifier = Modifier.fillMaxWidth(),
-                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // Mode dropdown — hidden in EDIT mode (edit doesn't re-activate
-                    // the meal-mode override, so the dropdown is irrelevant there).
-                    if (uiState.dialogMode != DialogMode.EDIT) {
-                        ExposedDropdownMenuBox(
-                            expanded = modeMenuExpanded,
-                            onExpandedChange = { modeMenuExpanded = it }
-                        ) {
-                            TextField(
-                                value = viewModel.modeList[uiState.selectedModeIndex].label,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Meal Mode") },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
-                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+            // ── EDIT-mode per-layer editor (ice-step27c) ───────────────────
+            // When the user selects EDIT, replace the single macros/GI form with
+            // a card per active layer. Each card has editable inputs pre-filled
+            // from the layer's current values, a Save Changes button that calls
+            // editMealLayer(layerId, …) (preserves the layer's absorption
+            // timer), and a × delete button. Empty state when no meals exist.
+            if (uiState.dialogMode == DialogMode.EDIT) {
+                if (uiState.activeMealLayers.isEmpty()) {
+                    Card(modifier = Modifier.fillMaxWidth(),
+                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("No active meals to edit",
+                                 style = MaterialTheme.typography.titleMedium,
+                                 color = MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.height(4.dp))
+                            Text("Switch to Add to announce a new meal, or use the home screen to view past meals.",
+                                 style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                } else {
+                    uiState.activeMealLayers.forEach { layer ->
+                        MealLayerEditCard(
+                            layer    = layer,
+                            onSave   = { c, p, f, gi -> viewModel.saveLayerEdits(layer.layerId, c, p, f, gi) },
+                            onCancel = { viewModel.cancelLayer(layer.layerId) }
+                        )
+                    }
+                    // Cancel-all only useful when 2+ layers — single-layer case
+                    // is already covered by the per-row × button.
+                    if (uiState.activeMealLayers.size > 1) {
+                        Button(
+                            onClick = { viewModel.cancelAllMealLayers() },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor   = MaterialTheme.colorScheme.onErrorContainer
                             )
-                            ExposedDropdownMenu(
+                        ) { Text("Cancel all meals") }
+                    }
+                }
+            }
+
+            // ── Mode card ──────────────────────────────────────────────────
+            // Hidden in EDIT mode (replaced by the per-layer cards above).
+            if (uiState.dialogMode != DialogMode.EDIT) {
+                Card(modifier = Modifier.fillMaxWidth(),
+                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // Mode dropdown — hidden in EDIT mode (edit doesn't re-activate
+                        // the meal-mode override, so the dropdown is irrelevant there).
+                        if (uiState.dialogMode != DialogMode.EDIT) {
+                            ExposedDropdownMenuBox(
                                 expanded = modeMenuExpanded,
-                                onDismissRequest = { modeMenuExpanded = false }
+                                onExpandedChange = { modeMenuExpanded = it }
                             ) {
-                                viewModel.modeList.forEachIndexed { i, mode ->
-                                    DropdownMenuItem(
-                                        text = { Text(mode.label) },
-                                        onClick = { viewModel.setModeIndex(i); modeMenuExpanded = false }
-                                    )
+                                TextField(
+                                    value = viewModel.modeList[uiState.selectedModeIndex].label,
+                                    onValueChange = {},
+                                    readOnly = true,
+                                    label = { Text("Meal Mode") },
+                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
+                                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
+                                )
+                                ExposedDropdownMenu(
+                                    expanded = modeMenuExpanded,
+                                    onDismissRequest = { modeMenuExpanded = false }
+                                ) {
+                                    viewModel.modeList.forEachIndexed { i, mode ->
+                                        DropdownMenuItem(
+                                            text = { Text(mode.label) },
+                                            onClick = { viewModel.setModeIndex(i); modeMenuExpanded = false }
+                                        )
+                                    }
+                                }
+                            }
+                        } // /if (dialogMode != EDIT) — close mode-dropdown gate
+
+                        // ── Macros: carbs / protein / fat ──────────────────────────
+                        var carbsText by rememberSaveable {
+                            mutableStateOf(if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else "")
+                        }
+                        androidx.compose.runtime.LaunchedEffect(uiState.carbsG) {
+                            carbsText = if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Carbs", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = carbsText,
+                                onValueChange = { v ->
+                                    carbsText = v
+                                    viewModel.setCarbsG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
+                                },
+                                suffix = { Text("g") },
+                                placeholder = { Text("0") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(110.dp)
+                            )
+                        }
+
+                        var proteinText by rememberSaveable {
+                            mutableStateOf(if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else "")
+                        }
+                        androidx.compose.runtime.LaunchedEffect(uiState.proteinG) {
+                            proteinText = if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Protein", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = proteinText,
+                                onValueChange = { v ->
+                                    proteinText = v
+                                    viewModel.setProteinG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
+                                },
+                                suffix = { Text("g") },
+                                placeholder = { Text("0") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(110.dp)
+                            )
+                        }
+
+                        var fatText by rememberSaveable {
+                            mutableStateOf(if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else "")
+                        }
+                        androidx.compose.runtime.LaunchedEffect(uiState.fatG) {
+                            fatText = if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else ""
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Fat", style = MaterialTheme.typography.bodyLarge,
+                                 modifier = Modifier.weight(1f))
+                            OutlinedTextField(
+                                value = fatText,
+                                onValueChange = { v ->
+                                    fatText = v
+                                    viewModel.setFatG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
+                                },
+                                suffix = { Text("g") },
+                                placeholder = { Text("0") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                                modifier = Modifier.width(110.dp)
+                            )
+                        }
+
+                        // ── GI bucket: High / Medium / Low ─────────────────────────
+                        // Drives the expected ICE absorption window. High = juice/candy (fast peak),
+                        // Medium = bread/rice/pasta (default), Low = pizza/fatty/large meals (long tail).
+                        Spacer(Modifier.height(4.dp))
+                        Text("Glycemic Index", style = MaterialTheme.typography.bodyLarge)
+                        Row(modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
+                                val isSelected = uiState.giBucketIndex == idx
+                                if (isSelected) {
+                                    FilledTonalButton(
+                                        onClick = { viewModel.setGiBucketIndex(idx) },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text(label) }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.setGiBucketIndex(idx) },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text(label) }
                                 }
                             }
                         }
-                    } // /if (dialogMode != EDIT) — close mode-dropdown gate
-
-                    // ── Macros: carbs / protein / fat ──────────────────────────
-                    var carbsText by rememberSaveable {
-                        mutableStateOf(if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else "")
-                    }
-                    androidx.compose.runtime.LaunchedEffect(uiState.carbsG) {
-                        carbsText = if (uiState.carbsG > 0.0) "%.0f".format(uiState.carbsG) else ""
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Carbs", style = MaterialTheme.typography.bodyLarge,
-                             modifier = Modifier.weight(1f))
-                        OutlinedTextField(
-                            value = carbsText,
-                            onValueChange = { v ->
-                                carbsText = v
-                                viewModel.setCarbsG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
+                        Text(
+                            text = when (uiState.giBucketIndex) {
+                                0    -> "Fast-acting: juice, candy, soft drinks · 2h window"
+                                2    -> "Slow / bimodal: pizza, fatty meals, large portions · 6h window"
+                                else -> "Standard: bread, rice, pasta, most cooked meals · 4h window"
                             },
-                            suffix = { Text("g") },
-                            placeholder = { Text("0") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.width(110.dp)
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-
-                    var proteinText by rememberSaveable {
-                        mutableStateOf(if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else "")
-                    }
-                    androidx.compose.runtime.LaunchedEffect(uiState.proteinG) {
-                        proteinText = if (uiState.proteinG > 0.0) "%.0f".format(uiState.proteinG) else ""
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Protein", style = MaterialTheme.typography.bodyLarge,
-                             modifier = Modifier.weight(1f))
-                        OutlinedTextField(
-                            value = proteinText,
-                            onValueChange = { v ->
-                                proteinText = v
-                                viewModel.setProteinG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
-                            },
-                            suffix = { Text("g") },
-                            placeholder = { Text("0") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.width(110.dp)
-                        )
-                    }
-
-                    var fatText by rememberSaveable {
-                        mutableStateOf(if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else "")
-                    }
-                    androidx.compose.runtime.LaunchedEffect(uiState.fatG) {
-                        fatText = if (uiState.fatG > 0.0) "%.0f".format(uiState.fatG) else ""
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Fat", style = MaterialTheme.typography.bodyLarge,
-                             modifier = Modifier.weight(1f))
-                        OutlinedTextField(
-                            value = fatText,
-                            onValueChange = { v ->
-                                fatText = v
-                                viewModel.setFatG(v.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: 0.0)
-                            },
-                            suffix = { Text("g") },
-                            placeholder = { Text("0") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            singleLine = true,
-                            modifier = Modifier.width(110.dp)
-                        )
-                    }
-
-                    // ── GI bucket: High / Medium / Low ─────────────────────────
-                    // Drives the expected ICE absorption window. High = juice/candy (fast peak),
-                    // Medium = bread/rice/pasta (default), Low = pizza/fatty/large meals (long tail).
-                    Spacer(Modifier.height(4.dp))
-                    Text("Glycemic Index", style = MaterialTheme.typography.bodyLarge)
-                    Row(modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
-                            val isSelected = uiState.giBucketIndex == idx
-                            if (isSelected) {
-                                FilledTonalButton(
-                                    onClick = { viewModel.setGiBucketIndex(idx) },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text(label) }
-                            } else {
-                                OutlinedButton(
-                                    onClick = { viewModel.setGiBucketIndex(idx) },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text(label) }
-                            }
-                        }
-                    }
-                    Text(
-                        text = when (uiState.giBucketIndex) {
-                            0    -> "Fast-acting: juice, candy, soft drinks · 2h window"
-                            2    -> "Slow / bimodal: pizza, fatty meals, large portions · 6h window"
-                            else -> "Standard: bread, rice, pasta, most cooked meals · 4h window"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
-            }
+            } // /if (dialogMode != EDIT) — close Mode-card gate (ice-step27c)
 
             // ── Pre-bolus cards (hidden in EDIT mode — ice-step27b) ─────────
             // Edit is a pure model update — it doesn't deliver insulin and doesn't
@@ -632,6 +690,171 @@ fun SmartMealDialogScreen(
                     }
                 }
             } // /if (dialogMode != EDIT) — close pre-bolus gate
+        }
+    }
+}
+
+// ── Per-layer edit card (ice-step27c) ────────────────────────────────────────
+// Renders one card per active announced meal in EDIT mode. Mirrors the
+// home-screen ActiveMealCard row but with editable inputs:
+//
+//   - Header: "Medium GI · 4m in · 296m remaining" + × delete button
+//   - Carbs / Protein / Fat numeric inputs (pre-filled, in grams)
+//   - High / Medium / Low GI selector (pre-set from the layer's bucket)
+//   - "Save changes" button → calls editMealLayer(layerId, ...) on the plugin,
+//     which preserves the layer's announceTimestampMs (absorption timer
+//     continues uninterrupted).
+//
+// Local draft state for each input uses rememberSaveable keyed on the layer
+// ID. A LaunchedEffect resyncs the draft when the upstream value changes
+// (i.e. after the loop pushes a new snapshot reflecting our save) — this is
+// the same pattern the old single-layer ActiveMealCard used, and it does
+// NOT stomp on the user's typing as long as the upstream values are stable.
+// Within a single layer, ageMin changes each cycle (the new snapshots aren't
+// value-equal), but the macros / GI fields stay constant between mutations,
+// so the LaunchedEffect on each field's value won't fire just because age
+// ticked up by one minute.
+
+@Composable
+private fun MealLayerEditCard(
+    layer: SmartInsulinOverview.MealLayerInfo,
+    onSave: (carbsG: Double, proteinG: Double, fatG: Double, giBucketName: String) -> Unit,
+    onCancel: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+            // Header row: GI + age/remaining + × delete
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${layer.giLabel} · ${layer.ageMin}m in · ${layer.remainingMin}m remaining",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        "(${layer.totalDurationMin}m total window)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onCancel) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Cancel this meal",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            // ── Carbs field ────────────────────────────────────────────────
+            var carbsText by rememberSaveable(layer.layerId) {
+                mutableStateOf("%.0f".format(layer.totalCarbsG))
+            }
+            LaunchedEffect(layer.totalCarbsG) {
+                carbsText = "%.0f".format(layer.totalCarbsG)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Carbs", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                OutlinedTextField(
+                    value = carbsText,
+                    onValueChange = { carbsText = it },
+                    suffix = { Text("g") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.width(110.dp)
+                )
+            }
+
+            // ── Protein field ──────────────────────────────────────────────
+            var proteinText by rememberSaveable(layer.layerId) {
+                mutableStateOf("%.0f".format(layer.totalProteinG))
+            }
+            LaunchedEffect(layer.totalProteinG) {
+                proteinText = "%.0f".format(layer.totalProteinG)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Protein", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                OutlinedTextField(
+                    value = proteinText,
+                    onValueChange = { proteinText = it },
+                    suffix = { Text("g") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.width(110.dp)
+                )
+            }
+
+            // ── Fat field ──────────────────────────────────────────────────
+            var fatText by rememberSaveable(layer.layerId) {
+                mutableStateOf("%.0f".format(layer.totalFatG))
+            }
+            LaunchedEffect(layer.totalFatG) {
+                fatText = "%.0f".format(layer.totalFatG)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Fat", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                OutlinedTextField(
+                    value = fatText,
+                    onValueChange = { fatText = it },
+                    suffix = { Text("g") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.width(110.dp)
+                )
+            }
+
+            // ── GI selector ───────────────────────────────────────────────
+            val initialGiIndex = when (layer.giBucketName) {
+                "FAST" -> 0
+                "SLOW" -> 2
+                else   -> 1
+            }
+            var giIndex by rememberSaveable(layer.layerId) { mutableStateOf(initialGiIndex) }
+            LaunchedEffect(layer.giBucketName) {
+                giIndex = when (layer.giBucketName) {
+                    "FAST" -> 0
+                    "SLOW" -> 2
+                    else   -> 1
+                }
+            }
+            Text("Glycemic Index", style = MaterialTheme.typography.bodyMedium)
+            Row(modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("High", "Medium", "Low").forEachIndexed { idx, label ->
+                    if (giIndex == idx) {
+                        FilledTonalButton(
+                            onClick = { giIndex = idx },
+                            modifier = Modifier.weight(1f)
+                        ) { Text(label) }
+                    } else {
+                        OutlinedButton(
+                            onClick = { giIndex = idx },
+                            modifier = Modifier.weight(1f)
+                        ) { Text(label) }
+                    }
+                }
+            }
+
+            // ── Save button ───────────────────────────────────────────────
+            Button(
+                onClick = {
+                    val giName = when (giIndex) { 0 -> "FAST"; 2 -> "SLOW"; else -> "MEDIUM" }
+                    onSave(
+                        carbsText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: layer.totalCarbsG,
+                        proteinText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: layer.totalProteinG,
+                        fatText.toDoubleOrNull()?.coerceIn(0.0, 300.0) ?: layer.totalFatG,
+                        giName
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Save changes") }
         }
     }
 }

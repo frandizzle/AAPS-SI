@@ -445,16 +445,19 @@ open class SmartInsulinPlugin @Inject constructor(
             announceTimestampMs = ts
         )
         announcedMealManager.announceMeal(meal, replace = replaceExisting)
+        pushOverviewMealLayerUpdate()
     }
 
     /** Clear all active announced meal layers. */
     override fun clearAnnouncedMeal() {
         announcedMealManager.clearAllMeals()
+        pushOverviewMealLayerUpdate()
     }
 
     /** Clear a single layer by its layer ID (announce timestamp ms). */
     override fun clearMealLayer(layerId: Long) {
         announcedMealManager.clearLayer(layerId)
+        pushOverviewMealLayerUpdate()
     }
 
     /**
@@ -469,6 +472,78 @@ open class SmartInsulinPlugin @Inject constructor(
         giBucketName: String
     ) {
         announcedMealManager.editActiveMeal(carbsG, proteinG, fatG, giBucketName)
+        pushOverviewMealLayerUpdate()
+    }
+
+    /**
+     * Edit a specific layer by its announce-timestamp ID. Preserves the
+     * announce timestamp so absorption progress continues uninterrupted.
+     * Used by SmartMealDialog's EDIT mode where the user picks a specific
+     * layer to edit even when multiple are active.
+     */
+    override fun editMealLayer(
+        layerId: Long,
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String
+    ) {
+        announcedMealManager.editLayer(layerId, carbsG, proteinG, fatG, giBucketName)
+        pushOverviewMealLayerUpdate()
+    }
+
+    // ── Active meal snapshot for OverviewState (ice-step27c) ─────────────────
+    // Same per-layer info the home-screen card consumes via FragmentData,
+    // returned in the interface-module type so SmartMealDialog (which can't
+    // import the plugin type) can render and edit the list of active meals
+    // via overviewStateFlow.
+    //
+    // Recomputed each invoke() cycle (so ages tick up) and also immediately
+    // after every meal mutation (so the dialog sees changes without waiting
+    // for the next 5-min loop cycle).
+
+    private fun buildMealLayerInfoList(): List<app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.MealLayerInfo> {
+        val nowMs = dateUtil.now()
+        return announcedMealManager.activeMeals.value
+            .filter { it.isActive(nowMs) }
+            .sortedBy { it.announceTimestampMs }
+            .map { meal ->
+                val ageMin = ((nowMs - meal.announceTimestampMs) / 60_000.0).coerceAtLeast(0.0)
+                val totalDur = meal.effectiveTotalDurationMin
+                val carbFracRem    = (1.0 - app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                    .carbAbsorbedFraction(meal, ageMin)).coerceIn(0.0, 1.0)
+                val plateauFracRem = (1.0 - app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
+                    .plateauAbsorbedFraction(ageMin, meal.fatProteinDurationMin)).coerceIn(0.0, 1.0)
+                app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.MealLayerInfo(
+                    layerId           = meal.announceTimestampMs,
+                    giBucketName      = meal.giBucket.name,
+                    giLabel           = when (meal.giBucket) {
+                        app.aaps.plugins.aps.smartInsulin.ice.GiBucket.FAST   -> "High GI"
+                        app.aaps.plugins.aps.smartInsulin.ice.GiBucket.MEDIUM -> "Medium GI"
+                        app.aaps.plugins.aps.smartInsulin.ice.GiBucket.SLOW   -> "Low GI"
+                    },
+                    ageMin            = ageMin.toInt(),
+                    remainingMin      = (totalDur - ageMin.toInt()).coerceAtLeast(0),
+                    totalDurationMin  = totalDur,
+                    totalCarbsG       = meal.carbsG,
+                    totalProteinG     = meal.proteinG,
+                    totalFatG         = meal.fatG,
+                    remainingCarbsG   = meal.carbsG   * carbFracRem,
+                    remainingProteinG = meal.proteinG * plateauFracRem,
+                    remainingFatG     = meal.fatG     * plateauFracRem,
+                    commitmentPct     = meal.commitmentPct
+                )
+            }
+    }
+
+    /**
+     * Push the current active-meal snapshot into the cached OverviewState so
+     * overviewStateFlow subscribers (the dialog) see meal mutations immediately
+     * without waiting for the next invoke() cycle. The setter on
+     * cachedOverviewState also pushes to the StateFlow.
+     */
+    private fun pushOverviewMealLayerUpdate() {
+        cachedOverviewState = cachedOverviewState.copy(activeMealLayers = buildMealLayerInfoList())
     }
 
 
@@ -2071,12 +2146,13 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         } else null
         cachedOverviewState = app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.OverviewState(
-            modeLine      = modeLineStr,
-            pb2Line       = pb2LineStr,
-            pb3Line       = pb3LineStr,
-            learningState = learningStateStr,
-            isFasting     = mealMode == MealMode.FASTING,
-            isLearning    = learningStateStr == "Learning"
+            modeLine         = modeLineStr,
+            pb2Line          = pb2LineStr,
+            pb3Line          = pb3LineStr,
+            learningState    = learningStateStr,
+            isFasting        = mealMode == MealMode.FASTING,
+            isLearning       = learningStateStr == "Learning",
+            activeMealLayers = buildMealLayerInfoList()   // ice-step27c: per-cycle refresh of layer ages
         )
 
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime

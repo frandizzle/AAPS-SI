@@ -10,6 +10,45 @@ package app.aaps.core.interfaces.smartInsulin
 interface SmartInsulinOverview {
 
     /**
+     * Per-layer snapshot of an announced meal — exposed on [OverviewState] so UI
+     * surfaces outside the plugin module (e.g. SmartMealDialog) can render and
+     * edit the list of active meals without compile-time dependency on
+     * plugins/aps. Mirrors [SmartInsulinPlugin.ActiveMealLayer] in shape but
+     * lives in core/interfaces because the dialog can't import the plugin type.
+     *
+     * @property layerId           Layer identifier — equals the meal's announce
+     *                             timestamp in ms. Pass to [clearMealLayer] /
+     *                             [editMealLayer] to identify which layer to act on.
+     * @property giBucketName      "FAST" / "MEDIUM" / "SLOW" — raw enum name
+     * @property giLabel           User-facing GI label, e.g. "Medium GI"
+     * @property ageMin            Minutes since this layer was announced
+     * @property remainingMin      Minutes left in the absorption window
+     * @property totalDurationMin  Full absorption window from announce to expiry
+     * @property totalCarbsG       Carbs originally entered (or after edit) for this layer
+     * @property totalProteinG     Protein originally entered (or after edit)
+     * @property totalFatG         Fat originally entered (or after edit)
+     * @property remainingCarbsG   Carbs not yet absorbed (per MealCurveBuilder Gaussian CDF)
+     * @property remainingProteinG Protein not yet "absorbed" (per cosine-smoothed plateau)
+     * @property remainingFatG     Fat not yet "absorbed" (same plateau shape, separate grams)
+     * @property commitmentPct     0–100, user's stated confidence in the macros
+     */
+    data class MealLayerInfo(
+        val layerId:           Long,
+        val giBucketName:      String,
+        val giLabel:           String,
+        val ageMin:            Int,
+        val remainingMin:      Int,
+        val totalDurationMin:  Int,
+        val totalCarbsG:       Double,
+        val totalProteinG:     Double,
+        val totalFatG:         Double,
+        val remainingCarbsG:   Double,
+        val remainingProteinG: Double,
+        val remainingFatG:     Double,
+        val commitmentPct:     Int
+    )
+
+    /**
      * Snapshot of all state needed to render the Overview info cell.
      * Computed once per invoke() cycle and cached — safe to read from UI thread.
      */
@@ -28,7 +67,17 @@ interface SmartInsulinOverview {
         /** True when in FASTING mode (no meal overrides active) */
         val isFasting: Boolean = true,
         /** True when the algorithm is actively learning (Fasting + no other blocks) */
-        val isLearning: Boolean = true
+        val isLearning: Boolean = true,
+        /**
+         * Per-layer snapshot of all currently-active announced meals. Empty when
+         * no meals are active. Pushed each invoke() cycle (for fresh age values)
+         * and also pushed immediately after any meal mutation ([announceMeal],
+         * [clearAnnouncedMeal], [clearMealLayer], [editActiveMeal],
+         * [editMealLayer]) so the dialog sees changes without waiting for the
+         * next loop cycle. Defaulted to emptyList() for source compatibility
+         * with any existing OverviewState construction call sites.
+         */
+        val activeMealLayers: List<MealLayerInfo> = emptyList()
     )
 
     fun overviewState(): OverviewState
@@ -104,4 +153,33 @@ interface SmartInsulinOverview {
         fatG: Double,
         giBucketName: String
     )
+
+    /**
+     * Edit a specific announced meal layer by ID, preserving its absorption
+     * timer (announceTimestampMs is NOT reset). The layer ID is the value
+     * returned in [MealLayerInfo.layerId] (which equals the meal's announce
+     * timestamp in ms). No-op if no layer with that ID is active.
+     *
+     * Unlike [editActiveMeal] this works even when multiple layers are active,
+     * because the caller picks which one to edit via the explicit ID. UI
+     * surfaces that show a per-layer editable list (e.g. the dialog's EDIT
+     * mode) should use this method rather than [editActiveMeal].
+     *
+     * Default no-op so any existing implementations stay source-compatible
+     * without changes.
+     *
+     * @param layerId      the layer's [MealLayerInfo.layerId]
+     * @param carbsG       new total carbohydrates in grams (≥ 0)
+     * @param proteinG     new total protein in grams (≥ 0)
+     * @param fatG         new total fat in grams (≥ 0)
+     * @param giBucketName "FAST" / "MEDIUM" / "SLOW" (case-insensitive); unrecognised
+     *                     values keep the layer's current bucket
+     */
+    fun editMealLayer(
+        layerId: Long,
+        carbsG: Double,
+        proteinG: Double,
+        fatG: Double,
+        giBucketName: String
+    ) {}
 }
