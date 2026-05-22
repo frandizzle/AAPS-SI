@@ -1734,6 +1734,16 @@ open class SmartInsulinPlugin @Inject constructor(
         // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
         // Threshold-gated rather than smooth — these are on/off decisions.
         val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= effectiveLearningThreshold
+        // ice-step34: separate gate for "ICE has classified the cycle as UAM"
+        // (regardless of confidence reaching the dose-driving threshold). When
+        // the iceMode evaluation has concluded the rise is unannounced-meal-like,
+        // the BG data is not clean fasting data and must NOT feed ISF/basal/
+        // circadian/aggression learners — even when confidence is still below
+        // `iceIsDriving`. Without this gate, the loop dosed conservatively
+        // (correct) but kept training baseline parameters on rising-on-food BG
+        // (wrong) during the confidence-building window of every UAM event.
+        // OR'd into both suppressAdaptiveLearningUpdate and ...Global below.
+        val uamModeActive        = iceMode == app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM
         // iceAggrAdjust: smooth multiplier on aggressiveness (used for dose scaling).
         // Returns 1.0 when ICE is disabled / no signal / no confidence — safe identity.
         // ice-step28: in UAM mode, cap at ApsSmartInsulinUamIceAggressionCap pref
@@ -1793,7 +1803,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         if (!highTempTarget) {
-            val suppressAdaptiveLearningUpdate = activityMonitor.suppressLearning || cgmState.suppressLearning || iceIsDriving
+            val suppressAdaptiveLearningUpdate = activityMonitor.suppressLearning || cgmState.suppressLearning || iceIsDriving || uamModeActive
             circadianLearner.update(
                 glucoseStatus            = glucoseStatus,
                 iobArray                 = iobArray,
@@ -2086,7 +2096,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Suppress learning during CGM warmup — noisy readings corrupt all learned models
         // CGM warmup: suppress ISF/basal/TIR adaptive learning but keep rollercoaster protection
         // Activity: suppress all learning (BG changes are exercise-driven, not insulin-driven)
-        val suppressAdaptiveLearningGlobal = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout || iceIsDriving
+        val suppressAdaptiveLearningGlobal = activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout || iceIsDriving || uamModeActive
         val suppressRollercoasterGlobal    = activityMonitor.suppressLearning  // activity only — not CGM warmup
 
 
@@ -2106,7 +2116,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         if (suppressAdaptiveLearningGlobal) {
             aapsLogger.debug(LTag.APS, "SmartInsulin: learning suppressed " +
-                "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup})")
+                "(activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup} " +
+                "postMealLockout=$inPostMealLockout iceDriving=$iceIsDriving uamModeActive=$uamModeActive)")
         }
 
         // Always record BG zone for TIR display — skipping would give false metrics in the SI tab.
