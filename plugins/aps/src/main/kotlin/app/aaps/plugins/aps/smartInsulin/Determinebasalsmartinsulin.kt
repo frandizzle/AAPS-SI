@@ -387,7 +387,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             pdpPredMin       = predictedMin
         }
 
-        // Blended post-peak predMin — used ONLY for insulinReq calculation.
+        // Blended post-peak predMin — used for insulinReq calculation.
         // Safety gates (SUSPEND, CAUTION) always use the primary predictedMinSafety
         // directly. Reason: PDP secondary curve predicts BG stays high due to resistance,
         // but at 90% blend the secondary full-curve minimum can dip below lowGuard
@@ -400,6 +400,35 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // predictedMinSafety directly; all blending is in blendedPredMin, which is
         // dosing-only.)
         val blendedPredMin = predictedMin * (1.0 - effectivePdpBlend) + pdpPredMin * effectivePdpBlend
+
+        // ── ICE peak weighting in the dosing decision ─────────────────────────────
+        // Without this: insulinReq is driven by blendedPredMin alone, which means
+        // the loop only doses against where BG eventually SETTLES. During an
+        // announced meal, IOB suppresses pred_min early (often above warn even
+        // mid-meal), so insulinReq stays small and the loop under-doses against
+        // the actual MEAL PEAK that BG is heading toward.
+        //
+        // With this: when iceBlendWeight > 0, the dosing target is a weighted
+        // blend of the projection's peak (pred_max) and trough (blendedPredMin).
+        // The blend weight is the same iceBlendWeight that controls effectiveCi
+        // blending — one slider, consistent semantics:
+        //   • 0.0: dose against trough only (current behavior, conservative)
+        //   • 0.5: dose against midpoint (semi-aggressive)
+        //   • 1.0: dose against peak only (most aggressive — pre-empts the meal)
+        //
+        // Convergence: as IOB grows, the blended prediction curve flattens. Peak
+        // comes down, trough may rise slightly. Dosing metric converges toward
+        // target → insulinReq → 0 → loop coasts on IOB.
+        //
+        // Safety: predictedMinSafety < warnGuard / lowGuard gates still apply.
+        // So even if iceBlendWeight=1.0 says "dose aggressively against peak,"
+        // the loop refuses if doing so would push the actual trough below warn.
+        // This is bounded aggression — the dose can't run away.
+        val predictedMax = predictedBg.maxOrNull() ?: currentBg
+        val dosingMetric: Double = if (iceBlendWeight > 0.0)
+            iceBlendWeight * predictedMax + (1.0 - iceBlendWeight) * blendedPredMin
+        else
+            blendedPredMin
 
         // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
         // These are the t+5min values (first tick) — compared against actual BG next cycle.
@@ -467,15 +496,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val bgAboveGuard = currentBg - lowGuardMgdl
 
         // ── insulinReq ────────────────────────────────────────────────────────
-        // Uses the PDP-blended post-peak predMin for the gap. The secondary curve
-        // was already built with ISF/ciStrength when stuck-high mode is active, so
-        // blendedPredMin already encodes the resistance — no separate ISF blend.
-        //
-        // The previous design had a separate "effective ISF" intermediate (a blend
-        // of primary and secondary ISFs) here, but the cleaner curve-based blending
-        // made it redundant. Vestigial `effectiveGapMgdl = predMinGapMgdl` and
-        // `effectiveIsfMgdl = dosingIsfMgdl` identity aliases removed.
-        val predMinGapMgdl = (blendedPredMin - targetBg).coerceAtLeast(0.0)
+        // Uses the dosing metric (blendedPredMin when ICE inactive, or the
+        // ICE-weighted peak/trough blend when ICE is engaged — see dosingMetric
+        // computation above). When ICE is driving, this lets the loop dose
+        // against the projected peak so it pre-empts the meal rise instead of
+        // waiting for the trough to fall before responding.
+        val predMinGapMgdl = (dosingMetric - targetBg).coerceAtLeast(0.0)
         val insulinReq     = predMinGapMgdl / effectiveDosingIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
@@ -486,6 +512,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | d=${fmt(delta, isMmol)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        // ICE peak-blended dosing diagnostic — only when ICE is actively shifting
+        // the dosing target away from pure pred_min. Shows the peak the loop is
+        // dosing against and the resulting metric, so the user can see why
+        // insulinReq is higher than pred_min alone would suggest.
+        if (iceBlendWeight > 0.0) {
+            sb.append(" | ICE-dose: pred_max=${fmt(predictedMax, isMmol)}" +
+                          " → metric=${fmt(dosingMetric, isMmol)}" +
+                          " (blend=${"%.2f".format(Locale.US, iceBlendWeight)})")
+        }
         if (effectivePdpBlend > 0.0) {
             // For stuck-high: secondary curve used pdpIsfMgdl = effectiveDosingIsfMgdl/ciStrength
             // Show primary→secondary ISF so the log reflects what the curve actually used
