@@ -1449,6 +1449,22 @@ open class SmartInsulinPlugin @Inject constructor(
             maxOf(activeMeal.commitmentFraction, observedConfidence).coerceIn(0.0, 1.0)
         else
             observedConfidence
+
+        // ── Effective user weight (the actual blend strength) ───────────────────────
+        // The userWeight slider in ICE prefs controls how much trust to put in ICE.
+        // BUT — when the user has explicitly announced a meal, that announcement is
+        // consent to act on the meal regardless of the slider. So we floor the
+        // effective weight at 0.5 × commitment fraction when an announced meal exists.
+        // Effect:
+        //   slider=0.0, no meal              → effective=0.0 (slider honoured)
+        //   slider=0.0, 100% committed meal  → effective=0.5 (announcement floors)
+        //   slider=0.8, 100% committed meal  → effective=0.8 (slider above floor wins)
+        //   slider=0.8, 50%  committed meal  → effective=0.8 (slider above floor wins)
+        // This means a meal can never silently fail to be dosed because the slider
+        // was left at zero — but the slider still controls strength when set higher.
+        val configuredUserWeight = if (iceTrackerEnabled) preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight) else 0.0
+        val announcedMealFloor   = if (activeMeal != null) 0.5 * activeMeal.commitmentFraction else 0.0
+        val effectiveUserWeight  = maxOf(configuredUserWeight, announcedMealFloor).coerceIn(0.0, 1.0)
         // iceIsDriving: ICE is meaningfully influencing dosing (used for PDP / learner gating).
         // Threshold-gated rather than smooth — these are on/off decisions.
         val iceIsDriving         = iceTrackerEnabled && !iceIsDisabled && iceConfidenceScore >= iceLearningThreshold
@@ -1458,7 +1474,7 @@ open class SmartInsulinPlugin @Inject constructor(
             iceMgdlPerH     = iceMgdlPerHEffective,
             confidence      = iceConfidenceScore,
             disabled        = iceIsDisabled,
-            userWeight      = if (iceTrackerEnabled) preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight) else 0.0,
+            userWeight      = effectiveUserWeight,
             saturationMgdlH = preferences.get(DoubleKey.ApsSmartInsulinIceStrongMgdlH)
         )
         lastIceAggrAdjust = iceAggrAdjust  // cache for fragmentData() / UI status card
@@ -2604,7 +2620,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // iceBlendWeight = confidence × user-weight, gated off when ICE is disabled.
             iceMgdlPerH              = if (iceTrackerEnabled && !iceIsDisabled) iceMgdlPerHEffective else null,
             iceBlendWeight           = if (iceTrackerEnabled && !iceIsDisabled)
-                (iceConfidenceScore * preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)).coerceIn(0.0, 1.0)
+                (iceConfidenceScore * effectiveUserWeight).coerceIn(0.0, 1.0)
             else 0.0,
             // ── ICE forward prediction (drives the new dedicated chart line) ──────
             // For announced meals: sample the expected curve forward at 5-min ticks.
@@ -2777,11 +2793,18 @@ open class SmartInsulinPlugin @Inject constructor(
             val srcLabel    = if (mealOverridesObserved) "exp" else "obs"
             val disableTag  = iceDisableReason?.let { " disabled=${it.name}" } ?: ""
             val blendWeight = if (!iceIsDisabled)
-                (iceConfidenceScore * preferences.get(DoubleKey.ApsSmartInsulinIceUserWeight)).coerceIn(0.0, 1.0)
+                (iceConfidenceScore * effectiveUserWeight).coerceIn(0.0, 1.0)
             else 0.0
+            // Show effective weight separately when it differs from configured —
+            // makes the announcement-floor override visible.
+            val weightNote = if (effectiveUserWeight > configuredUserWeight)
+                " uw=${"%.2f".format(configuredUserWeight)}→${"%.2f".format(effectiveUserWeight)}(meal_floor)"
+            else
+                " uw=${"%.2f".format(effectiveUserWeight)}"
             apsResult.reason += " | ICE: $srcLabel=${"%.2f".format(effMmolPerH)}mmol/h" +
                 " (obs=${"%.2f".format(obsMmolPerH)} exp=${"%.2f".format(expMmolPerH)})" +
                 " conf=${"%.2f".format(iceConfidenceScore)}" +
+                weightNote +
                 " blend=${"%.2f".format(blendWeight)}" +
                 " aggr×${"%.2f".format(iceAggrAdjust)}" +
                 (if (iceIsDriving) " DRIVING" else "") +
