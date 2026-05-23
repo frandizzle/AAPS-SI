@@ -1189,23 +1189,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val activeMode = mealOverrideManager.activeMealMode
         val now        = System.currentTimeMillis()
 
-        val baseLiveModeLine = activeMode?.let { mode ->
-            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            if (mode.isUam) {
-                val uamLabel = when (mode) {
-                    MealMode.UAM_BREAKFAST    -> "Breakfast"
-                    MealMode.UAM_LUNCH        -> "Lunch"
-                    MealMode.UAM_DINNER       -> "Dinner"
-                    MealMode.UAM_SNACK        -> "Snack"
-                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
-                    MealMode.UAM_AFTERNOON    -> "Afternoon"
-                    else                      -> mode.label
-                }
-                "Meal: UAM ($uamLabel) ${mins}m left"
-            } else {
-                "Meal: ${mode.label} ${mins}m left"
-            }
-        } ?: "Meal: Fasting"
+        // ice-step37: dropped the "Mode-label / Xm left" timer. The display
+        // now shows just "Meal" + macros suffix (COB/P/F), or "Fasting".
+        // Meal is "active" as long as macros are present; the timer no longer
+        // drives anything user-facing.
+        val baseLiveModeLine = if (activeMode != null) "Meal" else "Fasting"
         // Live append — macros suffix recomputed each call against current time so
         // the main screen shows fresh remaining-grams between loop cycles.
         val liveModeLine = baseLiveModeLine + announcedMealManager.macrosOverviewSuffix(now)
@@ -2209,25 +2197,9 @@ open class SmartInsulinPlugin @Inject constructor(
             isMealMode || mealMode.isUam         -> "limited: meal mode"
             else                                 -> "Learning"
         }
-        val baseModeLineStr = mealOverrideManager.activeMealMode?.let { mode ->
-            val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            if (mode.isUam) {
-                // UAM modes: "Meal: UAM (Dinner) 25m", "Meal: UAM (Low Carb) 25m"
-                val uamLabel = when (mode) {
-                    MealMode.UAM_BREAKFAST -> "Breakfast"
-                    MealMode.UAM_LUNCH     -> "Lunch"
-                    MealMode.UAM_DINNER    -> "Dinner"
-                    MealMode.UAM_SNACK     -> "Snack"
-                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
-                    MealMode.UAM_AFTERNOON    -> "Afternoon"
-                    else                   -> mode.label
-                }
-                "Meal: UAM ($uamLabel) ${mins}m left"
-            } else {
-                // Manual modes: "Meal: Dinner 25m left"
-                "Meal: ${mode.label} ${mins}m left"
-            }
-        } ?: "Meal: Fasting"
+        // ice-step37: dropped the "Mode-label / Xm left" timer. The display
+        // now shows just "Meal" + macros suffix (COB/P/F), or "Fasting".
+        val baseModeLineStr = if (mealOverrideManager.activeMealMode != null) "Meal" else "Fasting"
         // Append remaining macros for the announced meal (if any). Visible on the
         // main AAPS overview as part of the SI mode line — gives the user a quick
         // glance at carbs/protein/fat still absorbing without opening the SI tab.
@@ -3266,12 +3238,9 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
-        // Append mode time remaining if an override is active
-        val modeRemainingMs = mealOverrideManager.modeTimeRemainingMs
-        if (modeRemainingMs > 0L) {
-            val modeRemainingMins = modeRemainingMs / 60_000
-            apsResult.reason += " | ${modeRemainingMins}min left"
-        }
+        // ice-step37: removed "${modeRemainingMins}min left" reason-append.
+        // Mode time-remaining is no longer user-facing — food presence drives
+        // the gates now, not a fixed mode timer.
 
         aapsLogger.debug(LTag.APS, "SmartInsulin result: $apsResult")
 
