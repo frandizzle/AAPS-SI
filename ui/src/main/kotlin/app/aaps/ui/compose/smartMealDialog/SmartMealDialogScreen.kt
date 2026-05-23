@@ -67,7 +67,7 @@ fun SmartMealDialogScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showConfirmation by rememberSaveable { mutableStateOf(false) }
-    var modeMenuExpanded by rememberSaveable { mutableStateOf(false) }
+    // ice-step37: modeMenuExpanded removed — meal-mode dropdown deleted.
 
     LaunchedEffect(Unit) {
         viewModel.sideEffect.collect { effect ->
@@ -297,38 +297,13 @@ fun SmartMealDialogScreen(
 
             // ── Mode card ──────────────────────────────────────────────────
             // Hidden in EDIT mode (replaced by the per-layer cards above).
+            // ice-step37: meal-mode dropdown removed. All announced meals route
+            // through MealMode.LUNCH internally — learner gating now depends on
+            // COB/P/F presence rather than meal-mode flavour.
             if (uiState.dialogMode != DialogMode.EDIT) {
                 Card(modifier = Modifier.fillMaxWidth(),
                      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        // Mode dropdown — hidden in EDIT mode (edit doesn't re-activate
-                        // the meal-mode override, so the dropdown is irrelevant there).
-                        if (uiState.dialogMode != DialogMode.EDIT) {
-                            ExposedDropdownMenuBox(
-                                expanded = modeMenuExpanded,
-                                onExpandedChange = { modeMenuExpanded = it }
-                            ) {
-                                TextField(
-                                    value = viewModel.modeList[uiState.selectedModeIndex].label,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Meal Mode") },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modeMenuExpanded) },
-                                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
-                                )
-                                ExposedDropdownMenu(
-                                    expanded = modeMenuExpanded,
-                                    onDismissRequest = { modeMenuExpanded = false }
-                                ) {
-                                    viewModel.modeList.forEachIndexed { i, mode ->
-                                        DropdownMenuItem(
-                                            text = { Text(mode.label) },
-                                            onClick = { viewModel.setModeIndex(i); modeMenuExpanded = false }
-                                        )
-                                    }
-                                }
-                            }
-                        } // /if (dialogMode != EDIT) — close mode-dropdown gate
 
                         // ── Macros: carbs / protein / fat ──────────────────────────
                         var carbsText by rememberSaveable {

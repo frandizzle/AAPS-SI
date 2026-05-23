@@ -1550,33 +1550,35 @@ private fun ActiveMealLayerRow(
 ) {
     Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.weight(1f)) {
-            // Header: "Medium GI · 29m in · 270m remaining"
-            Text(
-                "${layer.giLabel} · ${layer.ageMin}m in · ${layer.remainingMin}m remaining",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "(${layer.totalDurationMin}m total window)",
-                fontSize = 10.sp,
-                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(4.dp))
-            // Macros line: "Carbs 27/30g · Protein 30/30g · Fat 30/30g"
-            // Skip a macro entirely when its total is 0 to keep the line short.
+            // ice-step37: removed timer / age / window line — meal is now
+            // active as long as COB/protein/fat > 0, not tied to a fixed
+            // duration display. Lead straight with the remaining macros line
+            // so the user sees what's still on board.
+            // Macros line: "COB 27g · P 30g · F 30g"
+            // Skip a macro entirely when its remaining value is 0.
             val parts = buildList {
-                if (layer.totalCarbsG   > 0.0) add("Carbs ${"%.0f".format(layer.remainingCarbsG)}/${"%.0f".format(layer.totalCarbsG)}g")
-                if (layer.totalProteinG > 0.0) add("Protein ${"%.0f".format(layer.remainingProteinG)}/${"%.0f".format(layer.totalProteinG)}g")
-                if (layer.totalFatG     > 0.0) add("Fat ${"%.0f".format(layer.remainingFatG)}/${"%.0f".format(layer.totalFatG)}g")
+                if (layer.remainingCarbsG   > 0.05) add("COB ${"%.1f".format(layer.remainingCarbsG)}g")
+                if (layer.remainingProteinG > 0.05) add("P ${"%.1f".format(layer.remainingProteinG)}g")
+                if (layer.remainingFatG     > 0.05) add("F ${"%.1f".format(layer.remainingFatG)}g")
             }
             Text(
-                if (parts.isEmpty()) "(no macros)" else parts.joinToString(" · "),
-                fontSize = 12.sp,
+                if (parts.isEmpty()) "(absorbed)" else parts.joinToString(" · "),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
                 fontFamily = FontFamily.Monospace,
                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurface
             )
+            // ice-step37: GI bucket on a subtle subline — it's an absorption-
+            // shape hint, not a timer. Skipped if no carbs were originally
+            // entered (no GI relevance for P/F-only meals).
+            if (layer.totalCarbsG > 0.0) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    layer.giLabel,
+                    fontSize = 11.sp,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         IconButton(onClick = onDelete) {
             Icon(

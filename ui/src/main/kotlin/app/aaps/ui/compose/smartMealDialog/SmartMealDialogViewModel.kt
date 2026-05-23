@@ -52,7 +52,6 @@ enum class DialogMode { ADD, EDIT, REPLACE }
 
 data class SmartMealUiState(
     val dialogMode: DialogMode = DialogMode.ADD,
-    val selectedModeIndex: Int = 1,
     // ── ICE-driven announcement (replaces ISF + duration) ────────────────────
     val carbsG: Double = 0.0,
     val proteinG: Double = 0.0,
@@ -96,10 +95,12 @@ class SmartMealDialogViewModel @Inject constructor(
     private val rh: ResourceHelper
 ) : ViewModel() {
 
-    val modeList = listOf(
-        MealMode.BREAKFAST, MealMode.LUNCH, MealMode.DINNER,
-        MealMode.LOW_CARB, MealMode.EXTENDED
-    )
+    // ice-step37: meal-mode dropdown removed from the dialog UI. All announced
+    // meals route through MealMode.LUNCH internally — a single canonical "active
+    // meal" identifier. Learners now gate on COB/P/F presence rather than
+    // mealMode flavour, so the per-meal-type distinction (BREAKFAST/DINNER etc.)
+    // no longer drives learner behaviour and isn't user-facing anywhere.
+    private val internalMealMode = MealMode.LUNCH
 
     private val _uiState = MutableStateFlow(SmartMealUiState())
     val uiState: StateFlow<SmartMealUiState> = _uiState.asStateFlow()
@@ -144,10 +145,6 @@ class SmartMealDialogViewModel @Inject constructor(
                 pb3StatusText = mealOverrideManager.preBolus3StatusText
             )
         }
-    }
-
-    fun setModeIndex(index: Int) {
-        _uiState.update { it.copy(selectedModeIndex = index) }
     }
 
     /** Switch the dialog between Add / Edit / Replace flows (ice-step27b). */
@@ -214,7 +211,7 @@ class SmartMealDialogViewModel @Inject constructor(
         // ── ADD / REPLACE mode: announce + (optional) pre-bolus + mode override ─
         val maxPb = s.maxPreBolus
         val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
-        val mode = modeList[s.selectedModeIndex]
+        val mode = internalMealMode
 
         // Announce the meal to ICE (drives the expected-curve pre-positioning).
         // Fires regardless of whether PB1 is requested — the loop benefits from
@@ -258,7 +255,7 @@ class SmartMealDialogViewModel @Inject constructor(
     }
 
     private fun startMealMode(s: SmartMealUiState) {
-        val mode = modeList[s.selectedModeIndex]
+        val mode = internalMealMode
         val maxPb = s.maxPreBolus
         val pb1 = if (s.preBolus1Enabled) s.preBolus1U.coerceAtMost(maxPb) else 0.0
         val pb2 = if (s.preBolus2Enabled) s.preBolus2U.coerceAtMost(maxPb) else 0.0
@@ -288,7 +285,6 @@ class SmartMealDialogViewModel @Inject constructor(
 
     fun buildSummary(): String {
         val s = _uiState.value
-        val mode = modeList[s.selectedModeIndex]
         return buildString {
             // ice-step27b: lead with what action is about to be taken so the
             // confirmation dialog can't be misread as a generic announce.
@@ -297,7 +293,8 @@ class SmartMealDialogViewModel @Inject constructor(
                 DialogMode.EDIT    -> appendLine("Action: Edit active meal (preserves timer)")
                 DialogMode.REPLACE -> appendLine("Action: REPLACE all active meals")
             }
-            if (s.dialogMode != DialogMode.EDIT) appendLine("Mode: ${mode.label}")
+            // ice-step37: removed "Mode: Lunch" line — internal mealMode is no
+            // longer user-facing. The summary now leads straight to macros.
             appendLine("Macros: ${"%.0f".format(s.carbsG)}g carbs · ${"%.0f".format(s.proteinG)}g protein · ${"%.0f".format(s.fatG)}g fat")
             appendLine("GI: ${giLabel(s.giBucketIndex)} (${effectiveDurationMinFor(s.giBucketIndex, s.carbsG, s.proteinG, s.fatG)} min window)")
             // Pre-boluses only apply to ADD / REPLACE — EDIT hides those cards.

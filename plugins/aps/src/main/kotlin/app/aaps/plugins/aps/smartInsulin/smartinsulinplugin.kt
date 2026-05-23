@@ -185,8 +185,12 @@ open class SmartInsulinPlugin @Inject constructor(
     // Cached ICE aggression adjust — set during invoke(), read during fragmentData().
     // Defaults to 1.0 (no influence) until the first cycle has run.
     @Volatile private var lastIceAggrAdjust: Double = 1.0
-    var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions
+    var previousMealModeForLockout: MealMode = MealMode.FASTING  // tracks transitions (legacy, retained but unused after ice-step37)
     private var lockoutTrackerInitialized: Boolean = false        // prevents fake transition on first loop
+    // ice-step37: track food-on-board state for COB/P/F-driven lockout trigger.
+    // Replaces previousMealModeForLockout as the active lockout-trigger source.
+    private var previousFoodOnBoardForLockout: Boolean = false
+    private var previousHadCarbsForLockout: Boolean = false       // distinguishes carb vs P/F-only lockout duration
     var reboundWindowStartMs: Long = 0L          // set ONLY when BG crosses back above lowGuard — NOT during suspend
     @Volatile var reboundGuardMs: Long = REBOUND_GUARD_MS  // updated each invoke() from preferences
     val msSinceLastSuspend: Long get() = if (reboundWindowStartMs > 0L) System.currentTimeMillis() - reboundWindowStartMs else Long.MAX_VALUE
@@ -1437,42 +1441,59 @@ open class SmartInsulinPlugin @Inject constructor(
         // as "dirty for learning" for a configurable window. Fat/protein tails and carb
         // residuals won't corrupt basal/ISF/aggressiveness learning.
         // UAM detection is completely unaffected — it runs independently of this flag.
-        // Initialize tracker to current mode on first loop — prevents fake transition at startup
+        // ice-step37: lockout now triggers on COB/P/F transition (food→no-food),
+        // not on mealMode transition. The mealMode mechanism still exists but
+        // is no longer the signal — announced meals + AAPS-tracked COB are the
+        // source of truth for "food on board". The legacy previousMealModeFor-
+        // Lockout field is kept harmlessly to avoid migration churn elsewhere.
+        val anyCarbsActive = mealData.mealCOB > 0.0 ||
+            announcedMealManager.activeMeals.value.any {
+                it.isActive(now) && it.carbsG > 0.0
+            }
+        val anyPfActive = announcedMealManager.activeMeals.value.any {
+            it.isActive(now) && (it.proteinG > 0.0 || it.fatG > 0.0)
+        }
+        val foodOnBoardNow = anyCarbsActive || anyPfActive
+        val noFoodOnBoard  = !foodOnBoardNow
+
+        // Initialize tracker on first loop — prevents fake transition at startup
         if (!lockoutTrackerInitialized) {
-            previousMealModeForLockout = mealMode
-            lockoutTrackerInitialized = true
+            previousMealModeForLockout       = mealMode               // legacy, retained
+            previousFoodOnBoardForLockout    = foodOnBoardNow
+            previousHadCarbsForLockout       = anyCarbsActive
+            lockoutTrackerInitialized        = true
         }
 
-        // P/F is a tail correction, not a real meal — don't trigger post-meal dirty window.
-        // UAM meal modes should still fire normally after P/F expires.
-        val previousWasRealMeal = previousMealModeForLockout != MealMode.FASTING &&
-            previousMealModeForLockout != MealMode.UAM_PROTEIN_FAT
-        val previousWasPf = previousMealModeForLockout == MealMode.UAM_PROTEIN_FAT
-        if (previousWasRealMeal && mealMode == MealMode.FASTING) {
+        // Transition food → no-food → start post-meal lockout.
+        // Choose duration based on what was just active:
+        //   • Had carbs (announced or AAPS) → full lockout (carbs absorb slowly,
+        //     IOB chase may persist after COB hits zero)
+        //   • P/F only → half lockout (shorter tail, no carb chase)
+        if (previousFoodOnBoardForLockout && !foodOnBoardNow) {
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
-                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
-                preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
-                aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin: ${previousMealModeForLockout.label} ended — " +
-                                     "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
-            }
-        } else if (previousWasPf && mealMode == MealMode.FASTING) {
-            // P/F gets half the normal lockout (minimum 30 min) — enough to avoid learning
-            // from IOB-driven crashes after P/F stacking, but short enough that UAM can
-            // still fire normally if a real meal rise follows.
-            // Guard: if user disabled post-meal lockout (lockoutMins=0), respect that for P/F too.
-            val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
-            if (lockoutMins > 0) {
-                val pfLockoutMins = (lockoutMins / 2).coerceAtLeast(30)
-                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + pfLockoutMins * 60_000L)
-                preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
-                aapsLogger.debug(LTag.APS,
-                                 "SmartInsulin: P/F ended — learning dirty for ${pfLockoutMins}min " +
-                                     "(half of ${lockoutMins}min meal lockout)")
+                if (previousHadCarbsForLockout) {
+                    // Full carb-style lockout
+                    learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
+                    preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
+                    aapsLogger.debug(LTag.APS,
+                                     "SmartInsulin: COB/P/F cleared (carb-style) — " +
+                                         "learning dirty for ${lockoutMins}min (until ${learningDirtyUntilMs})")
+                } else {
+                    // P/F-only: half duration, minimum 30 min
+                    val pfLockoutMins = (lockoutMins / 2).coerceAtLeast(30)
+                    learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + pfLockoutMins * 60_000L)
+                    preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, learningDirtyUntilMs.toString())
+                    aapsLogger.debug(LTag.APS,
+                                     "SmartInsulin: P/F cleared (no carbs) — learning dirty for ${pfLockoutMins}min " +
+                                         "(half of ${lockoutMins}min lockout)")
+                }
             }
         }
-        previousMealModeForLockout = mealMode
+        previousMealModeForLockout    = mealMode               // legacy bookkeeping
+        previousFoodOnBoardForLockout = foodOnBoardNow
+        previousHadCarbsForLockout    = anyCarbsActive
+
         val lockoutRemainingMs = if (learningDirtyUntilMs > 0L) learningDirtyUntilMs - now else 0L
         // Clear persisted dirty flag once window has passed
         if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) {
@@ -1486,7 +1507,9 @@ open class SmartInsulinPlugin @Inject constructor(
             learningDirtyUntilMs = 0L
             preferences.put(StringKey.ApsSmartInsulinLearningDirtyUntil, "0")
         }
-        val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
+        // ice-step37: lockout active when there's no food on board AND the
+        // dirty window is still running. Previously gated on mealMode==FASTING.
+        val inPostMealLockout = noFoodOnBoard && now < learningDirtyUntilMs
 
         // ISF overrides: resolved by modeIsfMgdl() — stored as mg/dL, do NOT use spMgdl().
         val modeIsfMgdl = modeIsfMgdl(mealMode, currentHour)
@@ -2151,7 +2174,7 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         // During meal modes: aggressiveness = 1.0, loop uses profile ISF/basal + learned peak/DIA only
         // Fasting: apply circadian ceiling (which can only reduce aggressiveness, never inflate)
-        val baseAggressiveness = if (mealMode != MealMode.FASTING) 1.0
+        val baseAggressiveness = if (!noFoodOnBoard) 1.0    // ice-step37: food-on-board → meal-style aggressiveness
         else aggressionLearner.aggressiveness.coerceAtMost(circAggrCeil)
         // ICE adjusts aggressiveness in real time based on observed BG vs insulin model.
         // Clamp combined value to [0.3, 2.0] — a final safety bound on top of the per-component clamps.
@@ -2169,10 +2192,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val learningEnabledCache = preferences.get(BooleanKey.ApsSmartInsulinEnableLearning)
         cachedLearningEnabled = learningEnabledCache
         cachedCgmSuppressLearning = cgmState.suppressLearning
-        val isMealMode = mealMode != MealMode.FASTING
+        val isMealMode = !noFoodOnBoard    // ice-step37: any COB/P/F counts as meal mode
         // Re-evaluate inPostMealLockout — mealMode may have changed this cycle
         // (e.g. P/F just fired). If mealMode is no longer FASTING, lockout is irrelevant.
-        val effectivePostMealLockout = inPostMealLockout && mealMode == MealMode.FASTING
+        val effectivePostMealLockout = inPostMealLockout    // ice-step37: inPostMealLockout already implies noFoodOnBoard
         val learningStateStr = when {
             !learningEnabledCache                -> "off: Learning disabled"
             activityMonitor.suppressLearning     -> "off: Activity ${activityMonitor.level.label}"
@@ -2256,7 +2279,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Line          = pb2LineStr,
             pb3Line          = pb3LineStr,
             learningState    = learningStateStr,
-            isFasting        = mealMode == MealMode.FASTING,
+            isFasting        = noFoodOnBoard,    // ice-step37: COB/P/F-driven, not mealMode-driven
             isLearning       = learningStateStr == "Learning",
             activeMealLayers = buildMealLayerInfoList()   // ice-step27c: per-cycle refresh of layer ages
         )
@@ -2264,7 +2287,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime
             ?.let { if (it > 0) (System.currentTimeMillis() - it) / 60_000.0 else Double.MAX_VALUE }
             ?: Double.MAX_VALUE
-        if (basalLearningEnabled && mealMode == MealMode.FASTING && !highTempTarget && !suppressAdaptiveLearningGlobal) {
+        if (basalLearningEnabled && noFoodOnBoard && !highTempTarget && !suppressAdaptiveLearningGlobal) {    // ice-step37: COB/P/F gate
             basalLearner.onLoopCycle(
                 bgMgdl        = glucoseStatus.glucose,
                 deltaMgdl     = glucoseStatus.delta,
@@ -2274,7 +2297,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 profileBasalU = profile.getBasal()
             )
         } else {
-            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
+            aapsLogger.debug(LTag.APS, "BasalLearner suppressed: noFoodOnBoard=$noFoodOnBoard mode=$mealMode highTT=$highTempTarget activity=${activityMonitor.level} cgmWarmup=${cgmState.inWarmup}")
         }
         // Blend flat BasalLearner with circadian per-hour learning, weighted by
         // CircadianLearner's confidence at this hour:
@@ -2325,7 +2348,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // PDP accuracy scoring — only during clean fasting, no lows, no post-meal dirty window.
         // Rebound rises (counter-regulatory glucagon) and post-meal tails look like persistent
         // deviation but aren't — learning from them would corrupt per-hour ci strength.
-        val pdpCleanForLearning = mealMode == MealMode.FASTING
+        val pdpCleanForLearning = noFoodOnBoard    // ice-step37: COB/P/F-driven
             && !bgWentLow
             && !inReboundWindow
             && !inPostMealLockout
@@ -2369,7 +2392,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // All PDP tracking gated on clean fasting — no lows, rebound, or post-meal dirty window.
         // Hard reset on dirty conditions so PDP can't carry momentum across low/recovery events.
-        val pdpCleanForBlending = mealMode == MealMode.FASTING
+        val pdpCleanForBlending = noFoodOnBoard    // ice-step37: COB/P/F-driven (PDP is dormant but kept consistent)
             && !bgWentLow
             && !inReboundWindow
             && !inPostMealLockout
