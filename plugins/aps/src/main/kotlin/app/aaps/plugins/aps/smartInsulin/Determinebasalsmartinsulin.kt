@@ -579,7 +579,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | BG=${fmt(currentBg, isMmol)}")
         sb.append(" | d=${fmt(delta, isMmol)}")
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
-        sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        sb.append(" | pred_min=${fmt(dosingMetric, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         // ICE peak-blended dosing diagnostic — only when ICE is actively shifting
         // the dosing target away from pure pred_min. Shows the ICE-only peak
         // (orange UAM line on the chart) and the resulting weighted metric, so
@@ -658,20 +658,23 @@ class DetermineBasalSmartInsulin @Inject constructor(
             }
 
             // ── Predictive suspend ───────────────────────────────────────────
-            predictedMinSafety < effectiveSuspendMgdl || fallingIntoLow -> {
-                val worstBg = if (fallingIntoLow) predictedAt30 else predictedMinSafety
+            // Uses dosingMetric (= what's shown as "metric=" in the reason string)
+            // so pred_min in the SUSPEND output equals metric. This is the ICE-aware
+            // blended value — the same one driving dose decisions. Symmetric safety.
+            dosingMetric < effectiveSuspendMgdl || fallingIntoLow -> {
+                val worstBg = if (fallingIntoLow) predictedAt30 else dosingMetric
                 val suspendMins = suspendDurationMins(worstBg)
                 val reason = when {
                     fallingIntoLow -> "SUSPEND fallingIntoLow pred30=${fmt(predictedAt30, isMmol)} delta=${String.format(Locale.US, "%.1f", delta)} dur=${suspendMins}m"
-                    else           -> "SUSPEND pred_min=${fmt(predictedMinSafety, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
+                    else           -> "SUSPEND pred_min=${fmt(dosingMetric, isMmol)} < ${if (highTempTargetActive) "tempTarget" else "lowGuard"}=${fmt(effectiveSuspendMgdl, isMmol)} dur=${suspendMins}m"
                 }
                 sb.append(" | $reason")
                 setTempBasal(0.0, suspendMins, oapsProfile, rT, currentTemp)
             }
 
             // ── Caution zone ─────────────────────────────────────────────────
-            predictedMinSafety < effectiveCautionMgdl -> {
-                val guardGap   = effectiveCautionMgdl - predictedMinSafety
+            dosingMetric < effectiveCautionMgdl -> {
+                val guardGap   = effectiveCautionMgdl - dosingMetric
                 val warnFrac   = 1.0 - (guardGap / (effectiveCautionMgdl - effectiveSuspendMgdl).coerceAtLeast(1.0)).coerceIn(0.0, 1.0)
                 val cautionTbr = (profileBasal * warnFrac).coerceAtMost(profileBasal)
                 // Apply rebound taper with a floor — the taper starts at 0.3 which would reduce
@@ -679,7 +682,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
+                sb.append(" | CAUTION | pred_min=${fmt(dosingMetric, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
             }
 
