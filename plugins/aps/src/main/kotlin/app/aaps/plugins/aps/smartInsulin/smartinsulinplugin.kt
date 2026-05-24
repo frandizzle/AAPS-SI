@@ -1457,7 +1457,18 @@ open class SmartInsulinPlugin @Inject constructor(
         //   • Had carbs (announced or AAPS) → full lockout (carbs absorb slowly,
         //     IOB chase may persist after COB hits zero)
         //   • P/F only → half lockout (shorter tail, no carb chase)
+        // Transition food → no-food → cancel the meal override AND start lockout.
+        // ice-step39: mealOverrideManager has its own internal duration timer
+        // (mode duration). Without an explicit cancel here, activeMealMode
+        // stays set after COB/P/F drain to zero — the overview still shows
+        // "Meal", mealMode stays LUNCH, and mealMode-gated code keeps treating
+        // the cycle as in-meal. cancelOverride() ends the override immediately
+        // so the next cycle reads mealMode = FASTING.
         if (previousFoodOnBoardForLockout && !foodOnBoardNow) {
+            mealOverrideManager.cancelOverride()
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: COB/P/F drained to 0 — meal override cancelled, " +
+                                 "transitioning to fasting state")
             val lockoutMins = preferences.get(IntKey.ApsSmartInsulinPostModeLockoutMins)
             if (lockoutMins > 0) {
                 if (previousHadCarbsForLockout) {
@@ -1641,7 +1652,15 @@ open class SmartInsulinPlugin @Inject constructor(
         val carbLoadPerG        = (trueIsfMgdl / profileCrG).takeIf { it.isFinite() && it > 0.0 }
             ?: app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder.DEFAULT_CARB_LOAD_PER_G_MGDL
         val expectedIceMgdlPerH = announcedMealManager.expectedIceMgdlPerHour(glucoseStatus.date, carbLoadPerG)
-        val mealOverridesObserved = hasMeal && expectedIceMgdlPerH > (observedIceMgdlPerH ?: 0.0)
+        // ice-step38: never let an expected-rise mask an observed-fall. If BG is
+        // actually dropping (observed < 0), the meal projection cannot override —
+        // we trust the observation. Otherwise (BG rising or flat) take the max
+        // because the meal absorption may not have manifested in BG yet.
+        // Bug fix: previously this was unconditional max, so a falling BG of
+        // -5 mmol/h could be overridden by a +0.5 mmol/h meal projection,
+        // making predictedBg curve upward and hiding an impending hypo.
+        val observedIce = observedIceMgdlPerH ?: 0.0
+        val mealOverridesObserved = hasMeal && expectedIceMgdlPerH > observedIce && observedIce >= 0.0
         val iceMgdlPerHEffective: Double? = if (mealOverridesObserved) expectedIceMgdlPerH else observedIceMgdlPerH
         // Confidence — when an announcement exists, the user's commitment is the FLOOR
         // (not a fallback only when expected > observed). The announcement justifies

@@ -293,10 +293,18 @@ object MealCurveBuilder {
     /** Carb absorption — Gaussian centred at the GI bucket's peak time. */
     private fun carbRateAt(meal: AnnouncedMeal, ageMin: Double, carbLoadPerG: Double): Double {
         if (meal.carbsG <= 0.0) return 0.0
+        // ice-step38: respect the GI bucket's onset delay. Gastric emptying
+        // takes a few minutes — before the onset, no carbs are absorbing
+        // (rate = 0). After the onset, the Gaussian starts ramping up from
+        // its left tail relative to the post-onset clock. This stops the
+        // loop from dosing on phantom absorption in the first few minutes
+        // after meal announce.
+        val effectiveAge = ageMin - meal.giBucket.onsetMinutes
+        if (effectiveAge < 0.0) return 0.0
         val totalLoad = meal.carbsG * carbLoadPerG
         val peak      = meal.giBucket.peakMinutes.toDouble()
         val width     = peak / 2.0
-        return gaussianRate(ageMin, peak, width) * totalLoad
+        return gaussianRate(effectiveAge, peak, width) * totalLoad
     }
 
     /** Protein → gluconeogenesis plateau. */

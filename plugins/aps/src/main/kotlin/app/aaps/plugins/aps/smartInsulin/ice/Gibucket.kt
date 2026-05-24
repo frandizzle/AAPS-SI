@@ -18,21 +18,20 @@ enum class GiBucket(
     val label: String,
     val peakMinutes: Int,
     val totalDurationMinutes: Int,
-    val tailFraction: Double
+    val tailFraction: Double,
+    // ice-step38: onset delay before carb absorption begins. Gastric emptying
+    // takes a few minutes — without this, the Gaussian rate function returns
+    // non-zero values immediately at meal announce (e.g. 9.7 mg/dL/h at t=0
+    // for FAST GI), causing the loop to dose against phantom absorption.
+    val onsetMinutes: Int
 ) {
-    /** Fast carbs — juice, soft drinks, candy, dextrose. Peaks early, done in 1h.
-     *
-     * peak=30, totalDuration=60 → Gaussian centred at 30 min with σ=15 (=peak/2)
-     * covers exactly ±2σ = [0, 60] within the window, so ~95% of the carb mass
-     * is delivered inside the 1h boundary. The hard cutoff at 60 min loses the
-     * outer-tail ~5% (small vs the empirical accuracy of the bucket itself) and
-     * gives a clean "FAST means done in an hour" model for fast-acting carbs.
-     */
+    /** Fast carbs — juice, soft drinks, candy, dextrose. Peaks early, done quickly. */
     FAST(
         label = "Fast (juice, candy, soft drinks)",
         peakMinutes = 30,
-        totalDurationMinutes = 60,
-        tailFraction = 0.0
+        totalDurationMinutes = 120,
+        tailFraction = 0.0,
+        onsetMinutes = 5
     ),
 
     /** Medium GI — most cooked meals, bread, rice, pasta with sauce. */
@@ -40,7 +39,8 @@ enum class GiBucket(
         label = "Medium (bread, rice, pasta, most cooked meals)",
         peakMinutes = 75,
         totalDurationMinutes = 240,
-        tailFraction = 0.15
+        tailFraction = 0.15,
+        onsetMinutes = 10
     ),
 
     /** Slow GI — heavy fat/protein content, pizza, fried foods, restaurant meals. Bimodal absorption. */
@@ -48,6 +48,7 @@ enum class GiBucket(
         label = "Slow (pizza, fried food, fatty meals, large portions)",
         peakMinutes = 120,
         totalDurationMinutes = 360,
-        tailFraction = 0.35
+        tailFraction = 0.35,
+        onsetMinutes = 15
     )
 }
