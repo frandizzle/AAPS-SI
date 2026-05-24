@@ -140,7 +140,7 @@ open class TestBaseWithProfile : TestBase() {
 
         dateUtil = spy(DateUtilImpl(context))
         decimalFormatter = DecimalFormatterImpl(rh)
-        profileUtil = ProfileUtilImpl(preferences, decimalFormatter)
+        profileUtil = ProfileUtilImpl(preferences, decimalFormatter, rh)
         testPumpPlugin = TestPumpPlugin(rh)
         hardLimits = HardLimitsMock(preferences, rh)
         whenever(context.applicationContext).thenReturn(context)
@@ -195,6 +195,8 @@ open class TestBaseWithProfile : TestBase() {
 
         whenever(rh.gs(R.string.ok)).thenReturn("OK")
         whenever(rh.gs(R.string.error)).thenReturn("Error")
+        whenever(rh.gs(R.string.mgdl)).thenReturn("mg/dl")
+        whenever(rh.gs(R.string.mmol)).thenReturn("mmol/l")
 
         // Default ConcentrationHelper stubs so BolusProgressData.updateProgress() doesn't NPE
         // when pump tests trigger progress updates with a mocked ch.
