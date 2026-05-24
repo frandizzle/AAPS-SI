@@ -6,7 +6,6 @@ import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
-import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.smartInsulin.MealMode
@@ -236,17 +235,20 @@ class SmartMealDialogViewModel @Inject constructor(
                 notes = "SmartMeal ${mode.label} pre-bolus 1"
                 timestamp = dateUtil.now()
             }
-            commandQueue.bolus(info, object : Callback() {
-                override fun run() {
-                    // Callback runs on worker thread — post to main thread for nav safety
-                    if (result.success) {
-                        startMealMode(s)
-                        onDone()
-                    } else {
-                        Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
-                    }
+            viewModelScope.launch {
+                // ice-step41: AAPS dev branch made commandQueue.bolus() a suspend
+                // function returning PumpEnactResult. Wrapping in viewModelScope.launch
+                // so the dialog doesn't block while the pump delivers.
+                val result = commandQueue.bolus(info)
+                // Suspend call resumes on the same dispatcher as the launch (Main).
+                // startMealMode + onDone do not need explicit thread posting.
+                if (result.success) {
+                    startMealMode(s)
+                    onDone()
+                } else {
+                    Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
                 }
-            })
+            }
         } else {
             // No PB1 — activate mode immediately, no pump interaction needed
             startMealMode(s)
