@@ -138,15 +138,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the next ~2h. Insulin is NOT subtracted from this line so the user sees the
         // raw meal effect against the cyan blended-IOB prediction line.
         // Empty list = no ICE line rendered (legacy behaviour).
-        iceFutureMgdlPerH:        List<Double> = emptyList(),
-        // ── ICE chart-slot routing (ice-step28) ───────────────────────────────────────
-        // Tells the predBGs population which chart slot the ICE projection goes to —
-        // COB-mode rises route to the COB slot (orange), UAM-mode to the UAM slot
-        // (yellow), NONE writes nothing. Visually distinguishes the source on the
-        // overview chart without changing the underlying projection math.
-        // Default NONE means no slot write — safe for callers that don't supply it.
-        iceMode: app.aaps.plugins.aps.smartInsulin.ice.IceMode =
-            app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
+        iceFutureMgdlPerH:        List<Double> = emptyList()
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -353,9 +345,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             else
                 ticks.coerceIn(10, 24)  // hard rails: 50–120 min once learned
         }
-        // (predictedMinSafety is computed LATER, after iobAwareIceProjection is built,
-        //  so it can blend the ICE-aware curve in by iceBlendWeight. Old single-line
-        //  definition removed — see ice-step27 block below dosingMetric.)
+        // Full-curve min for SAFETY — suspends if BG predicted below lowGuard at any point
+        val predictedMinSafety = predictedBg.minOrNull() ?: currentBg
         // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
         val predictedMin = if (predictedBg.size > insulinPeakTicks)
             predictedBg.drop(insulinPeakTicks).minOrNull() ?: currentBg
@@ -488,48 +479,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         else
             blendedPredMin
 
-        // ── ICE-aware safety floor (ice-step27) ────────────────────────────────
-        // The dosing metric above respects iceBlendWeight. The safety floor (pred_min)
-        // must too — otherwise the blend setting is a lie. At blend=1.0 the user is
-        // telling the loop "trust ICE fully"; if the SUSPEND gate still reads off a
-        // curve that doesn't carry ICE, dosing decisions and safety decisions are
-        // looking at different worlds.
-        //
-        // The root cause of the −7 pred_min seen in the field:
-        //   predictBgCurve() fades its scalar `ci` term to zero over the first 60
-        //   minutes (a sensible safeguard against one-cycle noise, but it also
-        //   strips the announced-meal contribution). From minute 60 onward,
-        //   predictedBg is naked-IOB extrapolation into an empty meal future,
-        //   which trends sharply down whenever pre-bolus IOB is heavy.
-        //
-        // iobAwareIceProjection, by contrast, walks the full per-tick expected ICE
-        // curve from MealCurveBuilder against per-tick IOB activity and is physically
-        // floored at 39 mg/dL. That's the right curve for a high-blend safety read.
-        //
-        // The blend below preserves all existing behaviour at iceBlendWeight = 0
-        // (identical to the previous predictedBg.minOrNull()) while smoothly handing
-        // the safety floor over to the ICE-aware curve as the loop's trust in ICE
-        // rises. Because iceBlendWeight = iceConfidence × userWeight, the safety
-        // floor auto-reverts to conservative when observed ICE diverges from
-        // expected (confidence drops → blend drops → legacy curve weight rises).
-        //
-        // The SUSPEND/CAUTION gates below (≈ line 654, 666) read predictedMinSafety
-        // unchanged — only its construction is updated.
-        val predictedMinSafety: Double =
-            if (iceBlendWeight > 0.0 && iobAwareIceProjection.isNotEmpty()) {
-                val n = minOf(predictedBg.size, iobAwareIceProjection.size)
-                var minBg = Double.POSITIVE_INFINITY
-                for (i in 0 until n) {
-                    val blended = predictedBg[i] * (1.0 - iceBlendWeight) +
-                        iobAwareIceProjection[i] * iceBlendWeight
-                    if (blended < minBg) minBg = blended
-                }
-                if (minBg.isFinite()) minBg
-                else (predictedBg.minOrNull() ?: currentBg)
-            } else {
-                predictedBg.minOrNull() ?: currentBg
-            }
-
         // Expose PDP prediction to next-cycle accuracy scoring in SmartInsulinPlugin.
         // These are the t+5min values (first tick) — compared against actual BG next cycle.
         val pdpPredAt5  = pdpPredictedBg.firstOrNull() ?: currentBg
@@ -545,42 +494,39 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
 
-        // ── ICE forward prediction line — slot routing (ice-step28) ─────────────
-        // The overview chart renders four prediction lines with distinct colours:
-        //   IOB (cyan), COB (orange), UAM (yellow), ZT (purple).
-        // Step28 routes the ICE projection to the slot that matches its origin:
-        //   COB mode (announced meal) → COB slot — orange line, "the meal you told us about"
-        //   UAM mode (observed rise)  → UAM slot — yellow line, "we detected something"
-        //   NONE (no ICE signal)      → no write — neither slot gets ICE content
-        // PDP (Post-Dose Prediction) prefers the UAM slot but cedes to ICE-UAM if
-        // ICE took it this cycle; PDP then falls back to ZT (purple) so both lines
-        // stay visible when both signals coexist.
-        if (iobAwareIceProjection.isNotEmpty()) {
-            val icePrediction = iobAwareIceProjection.map { it.toInt() }
-            when (iceMode) {
-                app.aaps.plugins.aps.smartInsulin.ice.IceMode.COB ->
-                    rT.predBGs?.COB = icePrediction
-                app.aaps.plugins.aps.smartInsulin.ice.IceMode.UAM ->
-                    rT.predBGs?.UAM = icePrediction
-                app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE ->
-                    Unit   // no ICE signal this cycle, nothing to write
-            }
-        }
-
-        // PDP curve — routes to UAM if free, else ZT. The fall-back keeps PDP visible
-        // even when ICE-UAM has claimed the UAM slot, so users can see both signals
-        // when a meal-like rise is being detected AND post-dose tracking is active.
+        // PDP curve — UAM slot renders as orange/yellow in AAPS overview graph,
+        // clearly distinct from the primary IOB cyan line.
+        // Also populate ZT as fallback in case enableUAM is false in OapsProfile.
         if (effectivePdpBlend > 0.0 && pdpPredictedBg.isNotEmpty()) {
             val rawPdpPrediction = mutableListOf<Int>()
             pdpPredictedBg.take(predictionTicks)
                 .forEach { rawPdpPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
+            // UAM = orange line (visually distinct from cyan IOB line)
+            rT.predBGs?.UAM = rawPdpPrediction
+            // ZT fallback removed — ZT is cyan like IOB, defeats the purpose of distinction
+        }
+
+        // ── ICE forward prediction line ───────────────────────────────────────────────
+        // Same projection used for the dosing metric (iobAwareIceProjection above).
+        // Shows the meal effect minus the existing IOB's contribution — i.e. "if the
+        // loop coasts on current IOB through the meal, here's where BG goes."
+        // This makes the chart line semantically aligned with what the loop is dosing
+        // toward (ice_max), so what the user sees is what the loop is acting on.
+        //
+        // **Slot selection**: AAPS chart renders UAM and IOB slots unconditionally. The COB
+        // slot is gated on AAPS having tracked carbs > 0 (which isn't the case for announced
+        // meals — they bypass the AAPS COB system). So we prefer UAM when PDP isn't using
+        // it, and fall back to COB only as a secondary (where rendering may not happen).
+        if (iobAwareIceProjection.isNotEmpty()) {
+            val icePrediction = iobAwareIceProjection.map { it.toInt() }
+            // If PDP didn't claim UAM this cycle, use it for ICE — guarantees rendering.
+            // PDP only takes UAM when effectivePdpBlend > 0 AND pdpPredictedBg is non-empty.
             if (rT.predBGs?.UAM.isNullOrEmpty()) {
-                rT.predBGs?.UAM = rawPdpPrediction
-            } else {
-                // UAM is busy with ICE → fall back to ZT (purple, distinct from
-                // both IOB cyan and UAM yellow).
-                rT.predBGs?.ZT = rawPdpPrediction
+                rT.predBGs?.UAM = icePrediction
             }
+            // Always also write to COB as a secondary — works on builds that do render the
+            // slot, no harm on builds that don't.
+            rT.predBGs?.COB = icePrediction
         }
 
         // ── IOB / headroom ────────────────────────────────────────────────────
@@ -749,10 +695,15 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     // ICE-driven dosing bypasses aggression: insulinReq from the
                     // macro → ice_max pipeline already reflects the announced food's
                     // dose requirement. Multiplying by aggression would double-count.
-                    // For non-ICE paths (PDP, observation-only UAM, fasting) the
-                    // aggression boost stays — those don't have macro-grounded
-                    // dose intent and may need the extra responsiveness.
-                    val effectiveAggression = if (iceActive) 1.0 else aggressiveness
+                    // ice-step42: ALSO bypass aggression when any food is on board
+                    // (announced meal OR AAPS-system COB). The macro pipeline is the
+                    // source of truth for meal-driven dosing; layering aggression on
+                    // top is a second variable that doesn't need to be there. Only
+                    // non-meal paths (pure fasting / dawn / observation-only UAM)
+                    // keep aggression — those don't have macro-grounded dose intent
+                    // and may need the extra responsiveness.
+                    val hasFoodOnBoard = mealMode != MealMode.FASTING || mealData.mealCOB > 0.0
+                    val effectiveAggression = if (iceActive || hasFoodOnBoard) 1.0 else aggressiveness
                     insulinReq * (uamSmbFraction * effectiveAggression).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
                 } else 0.0
 
@@ -766,8 +717,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // SMBs but still needs elevated TBR to bring predMin to the temp target.
                 // insulinReq is already computed against targetBg (which IS the temp target
                 // when active), so TBR naturally aims for 6.5 not 5.5.
-                // Same aggression-bypass for ICE-driven dosing as the SMB calc above.
-                val tbrAggression  = if (iceActive) 1.0 else aggressiveness
+                // Same aggression-bypass as SMB above: ICE-driven OR food-on-board.
+                val tbrHasFoodOnBoard = mealMode != MealMode.FASTING || mealData.mealCOB > 0.0
+                val tbrAggression  = if (iceActive || tbrHasFoodOnBoard) 1.0 else aggressiveness
                 val tbrCorrectionU  = if (iobOk && insulinReq > 0.0) insulinReq * tbrAggression else 0.0
                 val remainingU      = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 

@@ -8,23 +8,16 @@ import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
-import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
-import app.aaps.core.keys.BooleanKey
-import app.aaps.core.keys.DoubleKey
-import app.aaps.core.keys.IntKey
-import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.interfaces.Preferences
 import io.mockk.MockKAnnotations
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.impl.annotations.MockK
-import io.mockk.just
 import io.mockk.mockk
-import io.mockk.runs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -72,17 +65,22 @@ class SmartMealBolusDeliveryTest {
     private val testDispatcher = StandardTestDispatcher()
 
     // ── Dependency mocks (match the viewmodel's @Inject constructor) ──────────
-    @MockK lateinit var mealOverrideManager: MealOverrideManager
-    @MockK lateinit var profileFunction:     ProfileFunction
-    @MockK lateinit var profileUtil:         ProfileUtil
-    @MockK lateinit var activePlugin:        ActivePlugin
-    @MockK lateinit var commandQueue:        CommandQueue
-    @MockK lateinit var preferences:         Preferences
-    @MockK lateinit var sp:                  SP
-    @MockK lateinit var dateUtil:            DateUtil
-    @MockK lateinit var decimalFormatter:    DecimalFormatter
-    @MockK lateinit var uiInteraction:       UiInteraction
-    @MockK lateinit var rh:                  ResourceHelper
+    // Using relaxed = true so mockk auto-returns safe defaults for everything
+    // we don't explicitly stub. The viewmodel touches many methods on these
+    // collaborators during init / state setup; we don't want to stub each one
+    // by hand. Only the methods we actually assert on (commandQueue.bolus,
+    // mealOverrideManager.activateOverride) get explicit setup below.
+    @MockK(relaxed = true) lateinit var mealOverrideManager: MealOverrideManager
+    @MockK(relaxed = true) lateinit var profileFunction:     ProfileFunction
+    @MockK(relaxed = true) lateinit var profileUtil:         ProfileUtil
+    @MockK(relaxed = true) lateinit var activePlugin:        ActivePlugin
+    @MockK(relaxed = true) lateinit var commandQueue:        CommandQueue
+    @MockK(relaxed = true) lateinit var preferences:         Preferences
+    @MockK(relaxed = true) lateinit var sp:                  SP
+    @MockK(relaxed = true) lateinit var dateUtil:            DateUtil
+    @MockK(relaxed = true) lateinit var decimalFormatter:    DecimalFormatter
+    @MockK(relaxed = true) lateinit var uiInteraction:       UiInteraction
+    @MockK(relaxed = true) lateinit var rh:                  ResourceHelper
 
     private lateinit var viewModel: SmartMealDialogViewModel
 
@@ -108,21 +106,24 @@ class SmartMealBolusDeliveryTest {
         MockKAnnotations.init(this, relaxUnitFun = true)
         Dispatchers.setMain(testDispatcher)
 
-        // Bare minimum mocks to allow viewmodel construction + a meal announce.
-        // Preferences lookups during state setup hit a variety of keys — use
-        // type-based fallback returns to avoid mocking each individually.
+        // Required stubs:
+        //   1. dateUtil.now()         — drives bolusInfo.timestamp
+        //   2. preferences.get(...)   — relaxed default of 0.0 would coerce
+        //                               preBolus1U down to 0 and take the
+        //                               no-PB1 branch in confirmAndActivate.
+        //                               Stub the specific key with a sensible
+        //                               value (5.0U covers any preBolus1U
+        //                               we set in tests).
+        //   3. activePlugin.smartInsulin → null to skip the init block's
+        //                               overviewStateFlow.collect chain,
+        //                               which throws on a relaxed mock.
+        //   4. activePlugin.activePump.pumpDescription.bolusStep — chain
+        //                               touched by refresh(). Stub the
+        //                               nested return values.
         every { dateUtil.now() } returns 1_000_000_000L
-        every { activePlugin.getPlugin(SmartInsulinOverview::class.java) } returns null
-        every { preferences.get(any<DoubleKey>()) }  returns 1.0
-        every { preferences.get(any<IntKey>()) }     returns 60
-        every { preferences.get(any<BooleanKey>()) } returns true
-        every { preferences.get(any<StringKey>()) }  returns ""
-        every { mealOverrideManager.activeMealMode } returns null
-        every {
-            mealOverrideManager.activateOverride(
-                any(), any(), any(), any(), any(), any(), any(), any()
-            )
-        } just runs
+        every { preferences.get(app.aaps.core.keys.DoubleKey.ApsSmartInsulinMaxPreBolus) } returns 5.0
+        every { activePlugin.smartInsulin } returns null
+        every { activePlugin.activePump.pumpDescription.bolusStep } returns 0.05
 
         viewModel = SmartMealDialogViewModel(
             mealOverrideManager = mealOverrideManager,
@@ -138,10 +139,14 @@ class SmartMealBolusDeliveryTest {
             rh                  = rh
         )
 
-        // Configure dialog state: ADD mode, PB1 enabled at 1.0U, carbs entered
+        // Configure dialog state: ADD mode (default), PB1 enabled at 1.0U, carbs entered
         viewModel.setCarbsG(10.0)
         viewModel.setPreBolus1Enabled(true)
         viewModel.setPreBolus1U(1.0)
+
+        // Drive the init's launch { refresh() } so maxPreBolus is loaded into state
+        // before the test calls confirmAndActivate
+        testDispatcher.scheduler.advanceUntilIdle()
     }
 
     @AfterEach
@@ -170,7 +175,7 @@ class SmartMealBolusDeliveryTest {
 
         // Verify bolus was sent with the correct amount and pre-bolus notes
         coVerify(exactly = 1) {
-            commandQueue.bolus(match { it.insulin == 1.0 && it.notes.contains("pre-bolus 1") })
+            commandQueue.bolus(match { it.insulin == 1.0 && it.notes?.contains("pre-bolus 1") == true })
         }
         // Verify meal override was activated (i.e., startMealMode ran)
         coVerify(exactly = 1) {
