@@ -1218,7 +1218,7 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     // -- RxBus subscriptions for HR and steps from wear -----------------------
-    override fun onStart() {
+    override suspend fun onStart() {
         super.onStart()
         // ActivityMonitor now queries persistenceLayer directly each loop cycle.
         // No RxBus subscription needed — HR and steps are read from DB on demand.
@@ -1229,7 +1229,7 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
-    override fun onStop() {
+    override suspend fun onStop() {
         super.onStop()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop")
     }
