@@ -24,6 +24,7 @@ dependencies {
     implementation(project(":core:ui"))
 
     testImplementation(project(":shared:tests"))
+    testImplementation("io.mockk:mockk:1.13.13")
 
     api(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

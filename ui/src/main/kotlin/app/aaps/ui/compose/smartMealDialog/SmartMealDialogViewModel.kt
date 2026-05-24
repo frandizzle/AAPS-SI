@@ -18,8 +18,6 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.interfaces.Preferences
-import android.os.Handler
-import android.os.Looper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -239,14 +237,28 @@ class SmartMealDialogViewModel @Inject constructor(
                 // ice-step41: AAPS dev branch made commandQueue.bolus() a suspend
                 // function returning PumpEnactResult. Wrapping in viewModelScope.launch
                 // so the dialog doesn't block while the pump delivers.
-                val result = commandQueue.bolus(info)
-                // Suspend call resumes on the same dispatcher as the launch (Main).
-                // startMealMode + onDone do not need explicit thread posting.
-                if (result.success) {
-                    startMealMode(s)
-                    onDone()
-                } else {
-                    Handler(Looper.getMainLooper()).post { onDeliveryError(result.comment) }
+                // ice-step41c: hardened with try/catch — if the pump driver throws,
+                // route the error to onDeliveryError (same UI as a failure), and
+                // CRITICALLY do NOT call startMealMode(s) — the override must not
+                // activate when we don't know whether the pre-bolus delivered.
+                //
+                // viewModelScope defaults to Dispatchers.Main.immediate, so the
+                // launch body — including these callbacks — runs on the main
+                // thread already. Old code used Handler(MainLooper).post to
+                // jump back from a worker thread; not needed in the coroutine
+                // pattern.
+                try {
+                    val result = commandQueue.bolus(info)
+                    if (result.success) {
+                        startMealMode(s)
+                        onDone()
+                    } else {
+                        onDeliveryError(result.comment)
+                    }
+                } catch (e: Exception) {
+                    // No injected logger in this ViewModel — error surfaces via
+                    // onDeliveryError, which the dialog handles with UI feedback.
+                    onDeliveryError("Communication error — please check pump and manually verify whether bolus was delivered. Reason: ${e.message ?: "unknown error"}")
                 }
             }
         } else {
