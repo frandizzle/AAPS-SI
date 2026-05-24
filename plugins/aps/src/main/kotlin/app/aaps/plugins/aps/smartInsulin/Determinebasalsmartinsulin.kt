@@ -138,7 +138,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the next ~2h. Insulin is NOT subtracted from this line so the user sees the
         // raw meal effect against the cyan blended-IOB prediction line.
         // Empty list = no ICE line rendered (legacy behaviour).
-        iceFutureMgdlPerH:        List<Double> = emptyList()
+        iceFutureMgdlPerH:        List<Double> = emptyList(),
+        // ── ICE mode (ice-step28) ────────────────────────────────────────────────────
+        // Routes the prediction line to the COB slot (orange) for announced meals or
+        // the UAM slot (yellow) for unannounced rises. NONE = no ICE projection slot.
+        // Currently consumed only by the plugin's chart-slot router; determine_basal
+        // accepts it for compatibility with the plugin's call signature. Default NONE
+        // keeps any legacy callers working.
+        iceMode:                  app.aaps.plugins.aps.smartInsulin.ice.IceMode = app.aaps.plugins.aps.smartInsulin.ice.IceMode.NONE
     ): APSResult {
 
         val result = apsResultProvider.get()
