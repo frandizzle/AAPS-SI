@@ -6,7 +6,6 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.pump.DetailedBolusInfo
-import app.aaps.core.interfaces.queue.Callback
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
@@ -15,7 +14,10 @@ import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.keys.StringKey
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -31,6 +33,12 @@ class MealOverrideManagerImpl @Inject constructor(
 ) : MealOverrideManager {
 
     @Volatile private var _state: MealOverrideState? = null
+
+    // ice-step41: AAPS dev branch changed commandQueue.bolus() from
+    // callback-style to a suspend function. Scope lives for the app's
+    // lifetime (this class is @Singleton). SupervisorJob so a failure
+    // on one bolus doesn't cancel the scope and break subsequent ones.
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     init {
         restoreState()
@@ -441,36 +449,35 @@ class MealOverrideManagerImpl @Inject constructor(
         _state = firedState
         persistState()
 
-        commandQueue.bolus(bolusInfo, object : Callback() {
-            override fun run() {
-                if (!result.success) {
-                    aapsLogger.error(LTag.APS, "SmartInsulin PB2 delivery FAILED: ${result.comment}")
-                    // Mark as discarded — do NOT retry automatically.
-                    // A failed delivery may have partially or fully delivered on some pumps.
-                    // Automatic retry risks double-dosing. User must manually deliver if still needed.
-                    // Cascade: PB3 can never fire now (no valid timing reference) — cancel it too.
-                    // Only update state if it hasn't been changed by a cancel or new activation.
-                    if (_state == firedState) {
-                        val pb3Cascade = firedState.preBolus3Pending
-                        _state = firedState.copy(
-                            preBolus2FiredMs = -1L,
-                            preBolus3FiredMs = if (pb3Cascade) -1L else firedState.preBolus3FiredMs
-                        )
-                        persistState()
-                        if (pb3Cascade) {
-                            aapsLogger.debug(LTag.APS, "SmartInsulin PB3 cascade-cancelled due to PB2 delivery failure")
-                        }
-                    }
-                    uiInteraction.runAlarm(
-                        "Pre-bolus 2 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
-                        "SmartMeal pre-bolus 2 failed",
-                        app.aaps.core.ui.R.raw.boluserror
+        scope.launch {
+            val result = commandQueue.bolus(bolusInfo)
+            if (!result.success) {
+                aapsLogger.error(LTag.APS, "SmartInsulin PB2 delivery FAILED: ${result.comment}")
+                // Mark as discarded — do NOT retry automatically.
+                // A failed delivery may have partially or fully delivered on some pumps.
+                // Automatic retry risks double-dosing. User must manually deliver if still needed.
+                // Cascade: PB3 can never fire now (no valid timing reference) — cancel it too.
+                // Only update state if it hasn't been changed by a cancel or new activation.
+                if (_state == firedState) {
+                    val pb3Cascade = firedState.preBolus3Pending
+                    _state = firedState.copy(
+                        preBolus2FiredMs = -1L,
+                        preBolus3FiredMs = if (pb3Cascade) -1L else firedState.preBolus3FiredMs
                     )
-                } else {
-                    aapsLogger.debug(LTag.APS, "SmartInsulin PB2 delivered OK: ${s.preBolus2U}U")
+                    persistState()
+                    if (pb3Cascade) {
+                        aapsLogger.debug(LTag.APS, "SmartInsulin PB3 cascade-cancelled due to PB2 delivery failure")
+                    }
                 }
+                uiInteraction.runAlarm(
+                    "Pre-bolus 2 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
+                    "SmartMeal pre-bolus 2 failed",
+                    app.aaps.core.ui.R.raw.boluserror
+                )
+            } else {
+                aapsLogger.debug(LTag.APS, "SmartInsulin PB2 delivered OK: ${s.preBolus2U}U")
             }
-        })
+        }
     }
 
     // ── Pre-bolus 3 delivery ──────────────────────────────────────────────────
@@ -567,25 +574,24 @@ class MealOverrideManagerImpl @Inject constructor(
         _state = firedState
         persistState()
 
-        commandQueue.bolus(bolusInfo, object : Callback() {
-            override fun run() {
-                if (!result.success) {
-                    aapsLogger.error(LTag.APS, "SmartInsulin PB3 delivery FAILED: ${result.comment}")
-                    // Mark as discarded — same policy as PB2 failure: no automatic retry,
-                    // user must manually deliver if needed.
-                    if (_state == firedState) {
-                        _state = firedState.copy(preBolus3FiredMs = -1L)
-                        persistState()
-                    }
-                    uiInteraction.runAlarm(
-                        "Pre-bolus 3 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
-                        "SmartMeal pre-bolus 3 failed",
-                        app.aaps.core.ui.R.raw.boluserror
-                    )
-                } else {
-                    aapsLogger.debug(LTag.APS, "SmartInsulin PB3 delivered OK: ${s.preBolus3U}U")
+        scope.launch {
+            val result = commandQueue.bolus(bolusInfo)
+            if (!result.success) {
+                aapsLogger.error(LTag.APS, "SmartInsulin PB3 delivery FAILED: ${result.comment}")
+                // Mark as discarded — same policy as PB2 failure: no automatic retry,
+                // user must manually deliver if needed.
+                if (_state == firedState) {
+                    _state = firedState.copy(preBolus3FiredMs = -1L)
+                    persistState()
                 }
+                uiInteraction.runAlarm(
+                    "Pre-bolus 3 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
+                    "SmartMeal pre-bolus 3 failed",
+                    app.aaps.core.ui.R.raw.boluserror
+                )
+            } else {
+                aapsLogger.debug(LTag.APS, "SmartInsulin PB3 delivered OK: ${s.preBolus3U}U")
             }
-        })
+        }
     }
 }

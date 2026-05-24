@@ -1218,7 +1218,7 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     // -- RxBus subscriptions for HR and steps from wear -----------------------
-    override suspend fun onStart() {
+    override fun onStart() {
         super.onStart()
         // ActivityMonitor now queries persistenceLayer directly each loop cycle.
         // No RxBus subscription needed — HR and steps are read from DB on demand.
@@ -1229,7 +1229,7 @@ open class SmartInsulinPlugin @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStart")
     }
 
-    override suspend fun onStop() {
+    override fun onStop() {
         super.onStop()
         aapsLogger.debug(LTag.APS, "SmartInsulinPlugin: onStop")
     }
@@ -1434,13 +1434,21 @@ open class SmartInsulinPlugin @Inject constructor(
         // is no longer the signal — announced meals + AAPS-tracked COB are the
         // source of truth for "food on board". The legacy previousMealModeFor-
         // Lockout field is kept harmlessly to avoid migration churn elsewhere.
+        // ice-step40: food-on-board check uses ACTUAL remaining macros, not
+        // the duration timer. Previously the check used isActive(now) which
+        // stays true for the full meal duration (120 min for FAST GI), so
+        // food was reported "on" for an hour after the Gaussian absorption
+        // had completed (and the screen card was already showing COB=0).
+        // remainingMacros() returns null when no meals are active OR when
+        // all their absorption windows have closed; otherwise it returns
+        // the sum of (carbsG × (1 - absorbedFraction)) etc. across active
+        // meals. Threshold of 0.05g matches the screen card's display
+        // threshold so the two stay in sync.
+        val remaining = announcedMealManager.remainingMacros(now)
         val anyCarbsActive = mealData.mealCOB > 0.0 ||
-            announcedMealManager.activeMeals.value.any {
-                it.isActive(now) && it.carbsG > 0.0
-            }
-        val anyPfActive = announcedMealManager.activeMeals.value.any {
-            it.isActive(now) && (it.proteinG > 0.0 || it.fatG > 0.0)
-        }
+            (remaining?.carbsG ?: 0.0) > 0.05
+        val anyPfActive    = (remaining?.proteinG ?: 0.0) > 0.05 ||
+            (remaining?.fatG     ?: 0.0) > 0.05
         val foodOnBoardNow = anyCarbsActive || anyPfActive
         val noFoodOnBoard  = !foodOnBoardNow
 
