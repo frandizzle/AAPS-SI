@@ -184,24 +184,6 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedBgMgdl:               Double = 0.0
     @Volatile private var cachedShortAvgDeltaMgdl:    Double = 0.0
     @Volatile private var cachedEffectiveTargetMgdl: Double = 0.0
-    // ice-step44: IOB-aware projection trough for PB1 safety refusal.
-    // cachedProjectedLowMgdl  — minimum of a 6h forward projection walking
-    //                           per-tick: + announced-meal expected ICE rate,
-    //                           − iobArray[i].activity × ISF × 5, floored at
-    //                           39 mg/dL. Mirrors determine_basal's
-    //                           iobAwareIceProjection.minOrNull() but
-    //                           recomputed plugin-side so the dialog's calc
-    //                           doesn't depend on the loop having run first.
-    //                           Conservative vs. determine_basal: skips the
-    //                           UAM observed-ICE sustain branch (we don't
-    //                           want unannounced rises propping up the
-    //                           safety floor at PB1 calc time).
-    // cachedSafetyFloorMgdl   — lowGuard + 0.5 mmol buffer, in mg/dL. PB1
-    //                           refuses if cachedProjectedLowMgdl <
-    //                           cachedSafetyFloorMgdl. Buffer is hardcoded —
-    //                           lowGuard itself is the user-tunable layer.
-    @Volatile private var cachedProjectedLowMgdl: Double = Double.MAX_VALUE
-    @Volatile private var cachedSafetyFloorMgdl: Double = 0.0
     @Volatile private var cachedInvokeAtMs:           Long   = 0L
     // Cached sensor insert time — queried from DB at most once per SENSOR_CACHE_REFRESH_MS.
     // Sensor changes are infrequent (every 10–14 days); a 30-min cache eliminates a 30-day
@@ -569,25 +551,13 @@ open class SmartInsulinPlugin @Inject constructor(
         val intent     = (carbBolus * carbFrac) + correction + trendNudge - iob
         val result     = intent.coerceAtLeast(0.0)     // floor at 0; VM clamps to maxPreBolus
 
-        // ice-step44: safety refusal — if the IOB-aware projection trough
-        // dips below the safety floor (lowGuard + 0.5 mmol), the user is
-        // crashing or projected to crash. Return the breakdown with the
-        // refusal flag set so the tooltip can explain *why* we refused;
-        // the VM gates the auto-fill on safetyRefused == false.
-        val projectedLow  = cachedProjectedLowMgdl
-        val safetyFloor   = cachedSafetyFloorMgdl
-        val safetyRefused = projectedLow < safetyFloor
-
         return app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolus1Breakdown(
-            resultU          = result,
-            carbBolusU       = carbBolus,
-            correctionU      = correction,
-            trendNudgeU      = trendNudge,
-            iobU             = iob,
-            carbFraction     = carbFrac,
-            projectedLowMgdl = projectedLow,
-            safetyFloorMgdl  = safetyFloor,
-            safetyRefused    = safetyRefused
+            resultU      = result,
+            carbBolusU   = carbBolus,
+            correctionU  = correction,
+            trendNudgeU  = trendNudge,
+            iobU         = iob,
+            carbFraction = carbFrac
         )
     }
 
@@ -1547,37 +1517,6 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedBgMgdl              = glucoseStatus.glucose
         cachedShortAvgDeltaMgdl   = glucoseStatus.shortAvgDelta
         cachedEffectiveTargetMgdl = targetBg
-        // ice-step44: project the IOB-aware trough 6h forward. Used by the
-        // SmartMeal dialog's PB1 safety refusal. Conservative version of
-        // determine_basal's iobAwareIceProjection — counts announced meals
-        // and IOB activity only, no UAM observed-ICE prop-up.
-        run {
-            val horizonTicks = 72
-            val activeMealsNow = announcedMealManager.activeMeals.value.filter { it.isActive(now) }
-            // carbLoadPerG mirrors line 1777 — ISF/CR with population fallback.
-            val crG = cachedIcGperU.takeIf { it > 0.0 } ?: 10.0
-            val carbLoadPerG = (cachedProfileIsf / crG)
-                .takeIf { it.isFinite() && it > 0.0 }
-                ?: app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder.DEFAULT_CARB_LOAD_PER_G_MGDL
-            var bg = glucoseStatus.glucose
-            var trough = bg
-            for (tick in 1..horizonTicks) {
-                val futureMs = now + tick.toLong() * 5L * 60_000L
-                val iceMgdlPerH = activeMealsNow.sumOf { meal ->
-                    app.aaps.plugins.aps.smartInsulin.ice.MealCurveBuilder
-                        .expectedIceMgdlPerHourAt(meal, futureMs, carbLoadPerG)
-                }
-                val iceMgdlPer5 = iceMgdlPerH / 12.0
-                val iobActivity = iobArray.getOrNull(tick - 1)?.activity ?: 0.0
-                val bgi = -iobActivity * cachedProfileIsf * 5.0
-                bg = (bg + iceMgdlPer5 + bgi).coerceAtLeast(39.0)
-                if (bg < trough) trough = bg
-            }
-            cachedProjectedLowMgdl = trough
-            // Safety floor = lowGuard + 0.5 mmol (9.0 mg/dL) hardcoded buffer.
-            val lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
-            cachedSafetyFloorMgdl  = lowGuardMgdl + 9.0
-        }
         cachedInvokeAtMs          = now
 
         // -- Meal mode — check override first, fall back to auto-detect --------

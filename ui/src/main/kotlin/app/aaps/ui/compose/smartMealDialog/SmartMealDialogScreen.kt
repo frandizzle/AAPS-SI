@@ -909,25 +909,11 @@ private fun PreBolusCalcButton(
  * Format a PB1 breakdown for the tooltip. Numbers in U, two decimal places.
  * Trend nudge sign is rendered explicitly so the user can see at a glance
  * whether the trend pulled the dose up or down.
- *
- * ice-step44: when [SmartInsulinOverview.PreBolus1Breakdown.safetyRefused]
- * is true, leads with the safety reason rather than the math. The math
- * still follows so the user can see what would have been recommended
- * absent the safety floor.
  */
 private fun formatPb1Breakdown(
     b: SmartInsulinOverview.PreBolus1Breakdown,
     maxPreBolus: Double
 ): String = buildString {
-    if (b.safetyRefused) {
-        append("PB1 DECLINED — safety floor\n")
-        append("Projected low: %.1f mmol\n".format(b.projectedLowMgdl / 18.0))
-        append("Safety floor: %.1f mmol (lowGuard + 0.5)\n".format(b.safetyFloorMgdl / 18.0))
-        append("Reason: IOB + trend would push BG below safe range over the next 6h.\n")
-        append("Manual entry still works if you have meal-timing context the\n")
-        append("algorithm doesn't (e.g. fast carbs starting absorption now).\n")
-        append("\nWhat the math would have said:\n")
-    }
     val upfrontU = b.carbBolusU * b.carbFraction
     append("Meal cover: %.2fU\n".format(b.carbBolusU))
     append("× %.2f upfront: %.2fU\n".format(b.carbFraction, upfrontU))
@@ -938,15 +924,8 @@ private fun formatPb1Breakdown(
     append("$trendSign trend (15min): %.2fU\n".format(kotlin.math.abs(b.trendNudgeU)))
     append("− IOB: %.2fU\n".format(b.iobU))
     append("= %.2fU".format(b.resultU))
-    if (!b.safetyRefused && b.resultU > maxPreBolus) {
+    if (b.resultU > maxPreBolus) {
         append("  (capped at %.2fU max)".format(maxPreBolus))
-    }
-    if (!b.safetyRefused) {
-        // Safety floor still shown on success so the user knows the check
-        // happened and what value the projection landed on.
-        append("\n\nSafety floor: %.1f mmol  •  projected low %.1f mmol  ✓".format(
-            b.safetyFloorMgdl / 18.0, b.projectedLowMgdl / 18.0
-        ))
     }
 }
 

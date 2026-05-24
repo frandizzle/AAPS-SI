@@ -200,42 +200,23 @@ interface SmartInsulinOverview {
      * snaps to bolus step before writing to the entry field; the tooltip
      * shows the pre-clamp value so the user can see when a cap was hit.
      *
-     * @property resultU          Final pre-clamp dose in U (≥ 0).
-     * @property carbBolusU       Full meal cover (carbsG / IC) in U.
-     * @property correctionU      max(0, BG − target) / ISF in U.
-     * @property trendNudgeU      (3 × shortAvgDelta) / ISF in U. Can be negative
-     *                            when BG is falling — pulls the total down.
-     * @property iobU             Current IOB in U, subtracted from the total so
-     *                            existing insulin isn't double-counted.
-     * @property carbFraction     Fraction of `carbBolusU` delivered up front
-     *                            (currently 0.8 — flat across GI buckets).
-     * @property projectedLowMgdl ice-step44: minimum of a 6h IOB-aware ICE
-     *                            projection in mg/dL. Mirrors the
-     *                            iobAwareIceProjection.minOrNull() that
-     *                            determine_basal uses for safety. Conservative
-     *                            — does NOT include UAM observed-ICE prop-up.
-     * @property safetyFloorMgdl  ice-step44: lowGuard + 0.5 mmol buffer, in
-     *                            mg/dL. The threshold against which
-     *                            `projectedLowMgdl` is compared.
-     * @property safetyRefused    ice-step44: true when `projectedLowMgdl <
-     *                            safetyFloorMgdl`. The VM treats this as a
-     *                            hard refusal — entry box is NOT auto-filled;
-     *                            user can still type a value manually if they
-     *                            have meal-timing context the algorithm
-     *                            doesn't (e.g. fast carbs starting absorption
-     *                            now). The tooltip stays available for
-     *                            transparency about why the calc refused.
+     * @property resultU       Final pre-clamp dose in U (≥ 0).
+     * @property carbBolusU    Full meal cover (carbsG / IC) in U.
+     * @property correctionU   max(0, BG − target) / ISF in U.
+     * @property trendNudgeU   (3 × shortAvgDelta) / ISF in U. Can be negative
+     *                         when BG is falling — pulls the total down.
+     * @property iobU          Current IOB in U, subtracted from the total so
+     *                         existing insulin isn't double-counted.
+     * @property carbFraction  Fraction of `carbBolusU` delivered up front
+     *                         (currently 0.8 — flat across GI buckets).
      */
     data class PreBolus1Breakdown(
-        val resultU:          Double,
-        val carbBolusU:       Double,
-        val correctionU:      Double,
-        val trendNudgeU:      Double,
-        val iobU:             Double,
-        val carbFraction:     Double,
-        val projectedLowMgdl: Double,
-        val safetyFloorMgdl:  Double,
-        val safetyRefused:    Boolean
+        val resultU:      Double,
+        val carbBolusU:   Double,
+        val correctionU:  Double,
+        val trendNudgeU:  Double,
+        val iobU:         Double,
+        val carbFraction: Double
     )
 
     /**

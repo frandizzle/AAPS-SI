@@ -212,21 +212,6 @@ class SmartMealDialogViewModel @Inject constructor(
             }
             return
         }
-        // ice-step44: hard refuse when the IOB-aware projection trough is
-        // below the safety floor. Still update the breakdown so the long-press
-        // tooltip can explain why; don't touch preBolus1U so manual entry
-        // is undisturbed. User can type a value if they have meal-timing
-        // context the algorithm doesn't.
-        if (breakdown.safetyRefused) {
-            _uiState.update { it.copy(pb1Breakdown = breakdown) }
-            viewModelScope.launch {
-                _sideEffect.send(SideEffect.InfoMessage(
-                    "PB1 declined — projected low below safety floor. " +
-                        "Long-press Calc for details. Manual entry still works."
-                ))
-            }
-            return
-        }
         val snapped = snapAndClamp(breakdown.resultU, s)
         _uiState.update { it.copy(preBolus1U = snapped, pb1Breakdown = breakdown) }
     }
