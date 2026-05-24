@@ -170,6 +170,21 @@ open class SmartInsulinPlugin @Inject constructor(
     @Volatile private var cachedCgmSuppressLearning: Boolean = false
     @Volatile private var cachedProfileBasal: Double = 0.0
     @Volatile private var cachedProfileTarget: Double = 99.0  // 5.5 mmol default
+    // ── ice-step43: bolus calculator inputs ──────────────────────────────────
+    // Cached each invoke() so the dialog's [Calc] buttons can return without
+    // re-running IOB / profile calculations. The dialog calls
+    // calculatePreBolusN(...) on any thread (button-press → ViewModel sync
+    // call) so these must be Volatile and the calc methods must read them
+    // without touching the iobCobCalculator or profileFunction.
+    //
+    // Staleness is detected via cachedInvokeAtMs — if > 6 min old we refuse
+    // to dose against stale data and return null from the calc methods.
+    @Volatile private var cachedIcGperU:              Double = 0.0
+    @Volatile private var cachedIobU:                 Double = 0.0
+    @Volatile private var cachedBgMgdl:               Double = 0.0
+    @Volatile private var cachedShortAvgDeltaMgdl:    Double = 0.0
+    @Volatile private var cachedEffectiveTargetMgdl: Double = 0.0
+    @Volatile private var cachedInvokeAtMs:           Long   = 0L
     // Cached sensor insert time — queried from DB at most once per SENSOR_CACHE_REFRESH_MS.
     // Sensor changes are infrequent (every 10–14 days); a 30-min cache eliminates a 30-day
     // DB scan on every 5-min loop cycle while still detecting a fresh sensor within 30 min.
@@ -494,6 +509,90 @@ open class SmartInsulinPlugin @Inject constructor(
     ) {
         announcedMealManager.editLayer(layerId, carbsG, proteinG, fatG, giBucketName)
         pushOverviewMealLayerUpdate()
+    }
+
+    // ── ice-step43: bolus calculator (Calc buttons in SmartMealDialog) ───────
+    // Reads cached per-cycle inputs populated at the end of each invoke()
+    // (cachedIobU / cachedBgMgdl / cachedShortAvgDeltaMgdl /
+    // cachedEffectiveTargetMgdl / cachedIcGperU / cachedProfileIsf). If the
+    // last cycle is > 6 min old we return null — better to refuse than to
+    // dose against stale data. The VM converts null into a user-facing
+    // "data not available" message.
+    //
+    // Formula rationale lives on SmartInsulinOverview's data classes;
+    // shape here is just a thin formatter that builds the breakdown struct.
+    private val STALE_INPUT_THRESHOLD_MS: Long = 6L * 60 * 1000
+
+    /** True when the last invoke() that populated the cached inputs is too old to trust. */
+    private fun bolusCalcInputsStale(): Boolean =
+        cachedInvokeAtMs == 0L || (dateUtil.now() - cachedInvokeAtMs) > STALE_INPUT_THRESHOLD_MS
+
+    override fun calculatePreBolus1(
+        carbsG: Double,
+        giBucketName: String
+    ): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolus1Breakdown? {
+        if (carbsG <= 0.0) return null
+        if (bolusCalcInputsStale()) return null
+        val isf    = cachedProfileIsf
+        val ic     = cachedIcGperU
+        val bg     = cachedBgMgdl
+        val target = cachedEffectiveTargetMgdl
+        val delta  = cachedShortAvgDeltaMgdl
+        val iob    = cachedIobU
+        // Profile sanity — any zero here means we haven't run a real cycle yet
+        // (defaults are 0.0 until invoke() populates them). Refuse rather
+        // than divide-by-zero.
+        if (isf <= 0.0 || ic <= 0.0 || bg <= 0.0 || target <= 0.0) return null
+
+        val carbBolus  = carbsG / ic
+        val correction = maxOf(0.0, bg - target) / isf
+        val trendNudge = (3.0 * delta) / isf            // 15-min projected drift
+        val carbFrac   = 0.8                            // flat across GI buckets (ice-step43)
+        val intent     = (carbBolus * carbFrac) + correction + trendNudge - iob
+        val result     = intent.coerceAtLeast(0.0)     // floor at 0; VM clamps to maxPreBolus
+
+        return app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolus1Breakdown(
+            resultU      = result,
+            carbBolusU   = carbBolus,
+            correctionU  = correction,
+            trendNudgeU  = trendNudge,
+            iobU         = iob,
+            carbFraction = carbFrac
+        )
+    }
+
+    override fun calculatePreBolus2(
+        proteinG: Double,
+        fatG: Double
+    ): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolusPfBreakdown? =
+        buildPfBreakdown(proteinG, fatG, splitFraction = 0.6)
+
+    override fun calculatePreBolus3(
+        proteinG: Double,
+        fatG: Double
+    ): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolusPfBreakdown? =
+        buildPfBreakdown(proteinG, fatG, splitFraction = 0.4)
+
+    private fun buildPfBreakdown(
+        proteinG: Double,
+        fatG: Double,
+        splitFraction: Double
+    ): app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolusPfBreakdown? {
+        if (proteinG + fatG <= 0.0) return null
+        if (bolusCalcInputsStale()) return null
+        val ic = cachedIcGperU
+        if (ic <= 0.0) return null
+        val proteinGE     = proteinG * 0.5    // Loop CarbMath protein→glucose factor
+        val fatGE         = fatG     * 0.1    // fat→glucose factor over 4–6 h
+        val totalPfBolus  = (proteinGE + fatGE) / ic
+        val result        = (totalPfBolus * splitFraction).coerceAtLeast(0.0)
+        return app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview.PreBolusPfBreakdown(
+            resultU         = result,
+            proteinGEg      = proteinGE,
+            fatGEg          = fatGE,
+            totalPfBolusU   = totalPfBolus,
+            pfSplitFraction = splitFraction
+        )
     }
 
     // ── Active meal snapshot for OverviewState (ice-step27c) ─────────────────
@@ -1329,6 +1428,10 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedProfileIsf   = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
         cachedProfileTarget = profile.getTargetMgdl()
+        // ice-step43: cache IC ratio (g carb per U) for the bolus calculator.
+        // profile.getIc...() is the canonical accessor used elsewhere in invoke()
+        // for the hard-limit check, so the call is cheap (already-resolved profile).
+        cachedIcGperU = profile.getIcTimeFromMidnight(MidnightUtils.secondsFromMidnight())
         // Cache HbA1c estimate — suspend DB call must stay on background thread.
         // Gated to once per HBA1C_CACHE_REFRESH_MS — today's readings grow by one row every
         // 5 min, so querying up to 288 rows every cycle is wasteful for a display-only metric.
@@ -1404,6 +1507,17 @@ open class SmartInsulinPlugin @Inject constructor(
             isTempTarget
         )
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
+
+        // ice-step43: cache the remaining bolus-calculator inputs now that
+        // iobArray + glucoseStatus + the temp-target-resolved targetBg are
+        // available. cachedInvokeAtMs is the staleness signal — set last so
+        // a partial cache (mid-write crash) reads as "not yet computed" and
+        // the calc methods return null rather than dosing against zeros.
+        cachedIobU                = iobArray.firstOrNull()?.iob ?: 0.0
+        cachedBgMgdl              = glucoseStatus.glucose
+        cachedShortAvgDeltaMgdl   = glucoseStatus.shortAvgDelta
+        cachedEffectiveTargetMgdl = targetBg
+        cachedInvokeAtMs          = now
 
         // -- Meal mode — check override first, fall back to auto-detect --------
         var mealMode = MealModeDetector.detect(overrideManager = mealOverrideManager)

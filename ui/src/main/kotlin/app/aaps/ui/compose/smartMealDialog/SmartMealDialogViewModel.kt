@@ -74,7 +74,15 @@ data class SmartMealUiState(
     // ── ICE-step27c: per-layer snapshot for EDIT mode ────────────────────────
     // Collected from SmartInsulinOverview.overviewStateFlow. Drives the
     // per-meal editable cards rendered when dialogMode == EDIT.
-    val activeMealLayers: List<SmartInsulinOverview.MealLayerInfo> = emptyList()
+    val activeMealLayers: List<SmartInsulinOverview.MealLayerInfo> = emptyList(),
+    // ── ICE-step43: bolus calculator breakdowns (Calc buttons) ───────────────
+    // Populated when the user taps a [Calc] button next to a pre-bolus entry.
+    // Drives the long-press tooltip on the button so the user can see the
+    // math behind the calculated number. Null when the calc hasn't been run
+    // for that PB or when loop data was stale at calc time.
+    val pb1Breakdown: SmartInsulinOverview.PreBolus1Breakdown?  = null,
+    val pb2Breakdown: SmartInsulinOverview.PreBolusPfBreakdown? = null,
+    val pb3Breakdown: SmartInsulinOverview.PreBolusPfBreakdown? = null
 )
 
 @HiltViewModel
@@ -104,6 +112,11 @@ class SmartMealDialogViewModel @Inject constructor(
 
     sealed class SideEffect {
         data class DeliveryError(val message: String) : SideEffect()
+        // ice-step43: lightweight info nudge for non-error conditions like
+        // "loop data stale" when the bolus calculator can't produce a result.
+        // Rendered as a Toast by the screen — doesn't block, doesn't require
+        // an external callback like DeliveryError does.
+        data class InfoMessage(val message: String) : SideEffect()
     }
     private val _sideEffect = Channel<SideEffect>()
     val sideEffect = _sideEffect.receiveAsFlow()
@@ -159,6 +172,91 @@ class SmartMealDialogViewModel @Inject constructor(
     fun setPreBolus3Enabled(v: Boolean) = _uiState.update { it.copy(preBolus3Enabled = v) }
     fun setPreBolus3U(v: Double) = _uiState.update { it.copy(preBolus3U = v) }
     fun setPreBolus3DelayMins(v: Int) = _uiState.update { it.copy(preBolus3DelayMins = v) }
+
+    // ── ice-step43: bolus calculator handlers ────────────────────────────────
+    // Wired to the [Calc] buttons in each pre-bolus card. Each handler:
+    //   1. Asks the plugin for a breakdown (synchronous read of cached cycle data).
+    //   2. If null — surfaces a SideEffect.InfoMessage and leaves the entry box
+    //      untouched. The user can still type a value manually.
+    //   3. If non-null — clamps the result to maxPreBolus, snaps to bolusStep,
+    //      writes both the new amount AND the breakdown into UiState. The
+    //      screen reads the breakdown to render a long-press tooltip on the
+    //      button so the user can see the math.
+    //
+    // The breakdown is intentionally NOT auto-invalidated when the user edits
+    // carbs / protein / fat afterwards. Re-tapping Calc gives a fresh number;
+    // a stale tooltip is less surprising than a tooltip that silently
+    // disappears every time you adjust a macro.
+
+    private fun snapAndClamp(raw: Double, s: SmartMealUiState): Double {
+        val clamped = raw.coerceIn(0.0, s.maxPreBolus)
+        val step    = if (s.bolusStep > 0.0) s.bolusStep else 0.05
+        return (clamped / step).toLong() * step
+    }
+
+    fun calculatePreBolus1() {
+        val s = _uiState.value
+        if (s.carbsG <= 0.0) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage("Enter carbs first to calculate PB1"))
+            }
+            return
+        }
+        val plugin = activePlugin.smartInsulin
+        val breakdown = plugin?.calculatePreBolus1(s.carbsG, giBucketNameFor(s.giBucketIndex))
+        if (breakdown == null) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage(
+                    "Loop data not available — using manual entry. Try again after the next cycle."
+                ))
+            }
+            return
+        }
+        val snapped = snapAndClamp(breakdown.resultU, s)
+        _uiState.update { it.copy(preBolus1U = snapped, pb1Breakdown = breakdown) }
+    }
+
+    fun calculatePreBolus2() {
+        val s = _uiState.value
+        if (s.proteinG + s.fatG <= 0.0) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage("Enter protein or fat first to calculate PB2"))
+            }
+            return
+        }
+        val breakdown = activePlugin.smartInsulin?.calculatePreBolus2(s.proteinG, s.fatG)
+        if (breakdown == null) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage(
+                    "Loop data not available — using manual entry. Try again after the next cycle."
+                ))
+            }
+            return
+        }
+        val snapped = snapAndClamp(breakdown.resultU, s)
+        _uiState.update { it.copy(preBolus2U = snapped, pb2Breakdown = breakdown) }
+    }
+
+    fun calculatePreBolus3() {
+        val s = _uiState.value
+        if (s.proteinG + s.fatG <= 0.0) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage("Enter protein or fat first to calculate PB3"))
+            }
+            return
+        }
+        val breakdown = activePlugin.smartInsulin?.calculatePreBolus3(s.proteinG, s.fatG)
+        if (breakdown == null) {
+            viewModelScope.launch {
+                _sideEffect.send(SideEffect.InfoMessage(
+                    "Loop data not available — using manual entry. Try again after the next cycle."
+                ))
+            }
+            return
+        }
+        val snapped = snapAndClamp(breakdown.resultU, s)
+        _uiState.update { it.copy(preBolus3U = snapped, pb3Breakdown = breakdown) }
+    }
 
     fun cancelMode() { mealOverrideManager.cancelOverride(); refresh() }
     fun cancelPb2() { mealOverrideManager.cancelPreBolus2(); refresh() }

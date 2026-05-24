@@ -32,12 +32,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.BackHandler
@@ -50,8 +54,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
@@ -68,13 +74,17 @@ fun SmartMealDialogScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var showConfirmation by rememberSaveable { mutableStateOf(false) }
     // ice-step37: modeMenuExpanded removed — meal-mode dropdown deleted.
+    // ice-step43: context for Toast'ing InfoMessage side-effects (e.g. when
+    // the bolus calculator can't run because loop data is stale).
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
         viewModel.sideEffect.collect { effect ->
             when (effect) {
                 is SmartMealDialogViewModel.SideEffect.DeliveryError ->
                     onShowDeliveryError(effect.message)
-
+                is SmartMealDialogViewModel.SideEffect.InfoMessage    ->
+                    Toast.makeText(context, effect.message, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -451,6 +461,15 @@ fun SmartMealDialogScreen(
                                     singleLine = true,
                                     modifier = Modifier.width(100.dp)
                                 )
+                                // ice-step43: Calc button — computes a recommended PB1
+                                // from current IOB, BG, trend, target and the entered carbs.
+                                // Long-press shows the math breakdown.
+                                PreBolusCalcButton(
+                                    tooltipText = uiState.pb1Breakdown?.let {
+                                        formatPb1Breakdown(it, uiState.maxPreBolus)
+                                    },
+                                    onClick = { viewModel.calculatePreBolus1() }
+                                )
                             }
                             Slider(
                                 value = uiState.preBolus1U.toFloat(),
@@ -512,6 +531,14 @@ fun SmartMealDialogScreen(
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     singleLine = true,
                                     modifier = Modifier.width(100.dp)
+                                )
+                                // ice-step43: Calc button — computes PB2 from
+                                // protein/fat glucose-equivalent × 0.6 split.
+                                PreBolusCalcButton(
+                                    tooltipText = uiState.pb2Breakdown?.let {
+                                        formatPbPfBreakdown(it, uiState.maxPreBolus, "PB2")
+                                    },
+                                    onClick = { viewModel.calculatePreBolus2() }
                                 )
                             }
                             Slider(
@@ -605,6 +632,14 @@ fun SmartMealDialogScreen(
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     singleLine = true,
                                     modifier = Modifier.width(100.dp)
+                                )
+                                // ice-step43: Calc button — computes PB3 from
+                                // protein/fat glucose-equivalent × 0.4 split.
+                                PreBolusCalcButton(
+                                    tooltipText = uiState.pb3Breakdown?.let {
+                                        formatPbPfBreakdown(it, uiState.maxPreBolus, "PB3")
+                                    },
+                                    onClick = { viewModel.calculatePreBolus3() }
                                 )
                             }
                             Slider(
@@ -831,5 +866,83 @@ private fun MealLayerEditCard(
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Save changes") }
         }
+    }
+}
+
+// ── ice-step43: bolus calculator helpers ─────────────────────────────────────
+// The [Calc] button next to each pre-bolus amount field calls into the VM,
+// which asks the plugin for a breakdown of the calculation. The breakdown is
+// rendered as a long-press tooltip via Material 3's TooltipBox so the user
+// can see the math behind the number that just landed in the entry box.
+
+/**
+ * Compact button + long-press tooltip pair for the three Calc actions.
+ *
+ * Before the user has tapped Calc, [tooltipText] is null and the tooltip
+ * just nudges them with instructions. After a successful calc the text is a
+ * multi-line breakdown of the math.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PreBolusCalcButton(
+    tooltipText: String?,
+    onClick: () -> Unit
+) {
+    val tooltipState = rememberTooltipState(isPersistent = true)
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = {
+            PlainTooltip {
+                Text(tooltipText ?: "Tap Calc to compute from IOB / BG / trend / macros.\nLong-press here after to see the math.")
+            }
+        },
+        state = tooltipState
+    ) {
+        FilledTonalButton(
+            onClick = onClick,
+            modifier = Modifier.width(76.dp)
+        ) { Text("Calc", fontSize = 12.sp) }
+    }
+}
+
+/**
+ * Format a PB1 breakdown for the tooltip. Numbers in U, two decimal places.
+ * Trend nudge sign is rendered explicitly so the user can see at a glance
+ * whether the trend pulled the dose up or down.
+ */
+private fun formatPb1Breakdown(
+    b: SmartInsulinOverview.PreBolus1Breakdown,
+    maxPreBolus: Double
+): String = buildString {
+    val upfrontU = b.carbBolusU * b.carbFraction
+    append("Meal cover: %.2fU\n".format(b.carbBolusU))
+    append("× %.2f upfront: %.2fU\n".format(b.carbFraction, upfrontU))
+    if (b.correctionU > 0.0) {
+        append("+ correction: %.2fU\n".format(b.correctionU))
+    }
+    val trendSign = if (b.trendNudgeU >= 0.0) "+" else "−"
+    append("$trendSign trend (15min): %.2fU\n".format(kotlin.math.abs(b.trendNudgeU)))
+    append("− IOB: %.2fU\n".format(b.iobU))
+    append("= %.2fU".format(b.resultU))
+    if (b.resultU > maxPreBolus) {
+        append("  (capped at %.2fU max)".format(maxPreBolus))
+    }
+}
+
+/**
+ * Format a PB2/PB3 breakdown. Shows the glucose-equivalent conversion for
+ * protein and fat, the combined P/F bolus, and the split fraction applied.
+ */
+private fun formatPbPfBreakdown(
+    b: SmartInsulinOverview.PreBolusPfBreakdown,
+    maxPreBolus: Double,
+    label: String
+): String = buildString {
+    append("Protein → %.1fgE\n".format(b.proteinGEg))
+    append("Fat → %.1fgE\n".format(b.fatGEg))
+    append("Total P/F bolus: %.2fU\n".format(b.totalPfBolusU))
+    append("× %.1f split: %.2fU $label".format(b.pfSplitFraction, b.resultU))
+    if (b.resultU > maxPreBolus) {
+        append("\n(capped at %.2fU max)".format(maxPreBolus))
     }
 }

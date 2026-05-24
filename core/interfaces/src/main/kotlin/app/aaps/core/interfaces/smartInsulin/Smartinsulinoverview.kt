@@ -182,4 +182,93 @@ interface SmartInsulinOverview {
         fatG: Double,
         giBucketName: String
     ) {}
+
+    // ── ice-step43: bolus calculator breakdowns ─────────────────────────────
+    // Surfaces for the SmartMeal dialog's [Calc] buttons. Methods return a
+    // structured breakdown so the UI can render both the final number AND a
+    // long-press tooltip explaining the math (carb cover, correction, trend,
+    // IOB, etc). Returns null when the plugin can't produce a meaningful
+    // answer — loop data stale, profile incomplete, or zero macros. The VM is
+    // expected to surface "data not available" to the user and leave the
+    // manual entry box untouched.
+
+    /**
+     * Breakdown of a PB1 (carb-driven) pre-bolus calculation.
+     *
+     * The final `resultU` is the raw intent — it has been floored at 0.0 but
+     * is NOT clamped to the user's max-pre-bolus preference. The VM clamps and
+     * snaps to bolus step before writing to the entry field; the tooltip
+     * shows the pre-clamp value so the user can see when a cap was hit.
+     *
+     * @property resultU       Final pre-clamp dose in U (≥ 0).
+     * @property carbBolusU    Full meal cover (carbsG / IC) in U.
+     * @property correctionU   max(0, BG − target) / ISF in U.
+     * @property trendNudgeU   (3 × shortAvgDelta) / ISF in U. Can be negative
+     *                         when BG is falling — pulls the total down.
+     * @property iobU          Current IOB in U, subtracted from the total so
+     *                         existing insulin isn't double-counted.
+     * @property carbFraction  Fraction of `carbBolusU` delivered up front
+     *                         (currently 0.8 — flat across GI buckets).
+     */
+    data class PreBolus1Breakdown(
+        val resultU:      Double,
+        val carbBolusU:   Double,
+        val correctionU:  Double,
+        val trendNudgeU:  Double,
+        val iobU:         Double,
+        val carbFraction: Double
+    )
+
+    /**
+     * Breakdown of a PB2 or PB3 (protein/fat-driven) pre-bolus calculation.
+     *
+     * Deliberately does NOT subtract IOB — PB2 fires 60–120 min after the
+     * meal and PB3 1.5–4 h after, so present-moment IOB isn't predictive of
+     * IOB at fire-time. The normal SMB cycle handles correction-of-the-moment
+     * when these actually deliver; this calc just sizes the
+     * glucose-equivalent load.
+     *
+     * @property resultU          Final pre-clamp dose in U (≥ 0).
+     * @property proteinGEg       Glucose-equivalent grams from protein (proteinG × 0.5).
+     * @property fatGEg           Glucose-equivalent grams from fat (fatG × 0.1).
+     * @property totalPfBolusU    (proteinGEg + fatGEg) / IC in U — the total
+     *                            P/F load split across PB2 + PB3.
+     * @property pfSplitFraction  0.6 for PB2, 0.4 for PB3.
+     */
+    data class PreBolusPfBreakdown(
+        val resultU:         Double,
+        val proteinGEg:      Double,
+        val fatGEg:          Double,
+        val totalPfBolusU:   Double,
+        val pfSplitFraction: Double
+    )
+
+    /**
+     * Calculate a PB1 (carb-driven) pre-bolus from current loop state +
+     * the user's announced carb load. Returns null when:
+     *   - loop data is stale (no invoke() in the last ~6 min)
+     *   - profile values (ISF, IC, target) are missing or zero
+     *   - `carbsG` is 0 — there's no meal to pre-bolus for
+     *
+     * `giBucketName` is currently unused in the formula (carbFraction is a
+     * flat 0.8) but the parameter stays in the contract for future use —
+     * e.g. per-bucket fractions exposed as a preference.
+     *
+     * Default no-op (returns null) so existing implementations stay
+     * source-compatible.
+     */
+    fun calculatePreBolus1(carbsG: Double, giBucketName: String): PreBolus1Breakdown? = null
+
+    /**
+     * Calculate a PB2 (protein/fat) pre-bolus. Returns null when loop data
+     * is stale, IC is missing, or protein+fat is 0.
+     */
+    fun calculatePreBolus2(proteinG: Double, fatG: Double): PreBolusPfBreakdown? = null
+
+    /**
+     * Calculate a PB3 (late-meal protein/fat) pre-bolus. Returns null on the
+     * same conditions as [calculatePreBolus2]. Split is 0.4 of total P/F
+     * load (vs. 0.6 for PB2) so the pair sums to one full P/F cover.
+     */
+    fun calculatePreBolus3(proteinG: Double, fatG: Double): PreBolusPfBreakdown? = null
 }
