@@ -650,7 +650,11 @@ open class SmartInsulinPlugin @Inject constructor(
             if (!bgWentLow) { iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
             else if (softLandingBypass && reboundWindowStartMs > 0L) { secondLowOccurred = true; softLandingBypass = false }
             if (glucoseStatus.glucose < minBgDuringLow) minBgDuringLow = glucoseStatus.glucose
-            bgWentLow = true; if (reboundWindowStartMs > 0L) reboundWindowStartMs = 0L
+            // Preserve reboundWindowStartMs across re-lows so the elapsed counter keeps ticking.
+            // Re-lows during an active window are handled by secondLowOccurred (line above) and
+            // the rollercoaster mechanism, which extends reboundGuardMs via consecutiveRollercoasters.
+            // Genuine window expiry is cleaned up by the line below (when msSinceLastSuspend >= reboundGuardMs).
+            bgWentLow = true
         }
         if (bgWentLow && reboundWindowStartMs == 0L && glucoseStatus.glucose >= REBOUND_LOW_THRESHOLD_MGDL) reboundWindowStartMs = now
         if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) { reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false }
