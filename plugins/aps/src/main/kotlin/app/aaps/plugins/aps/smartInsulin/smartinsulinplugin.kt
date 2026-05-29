@@ -123,7 +123,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private var nudgeDisplaySessionBasalU: Double = 0.0
     // Tracks the last nudge direction so we only capture session-start baseline once
     // per nudge episode (not on every cycle). Without this, "was ISF" keeps updating
-    // mid-nudge and the "was → now" comparison loses meaning.
+    // mid-nudge and the "was ? now" comparison loses meaning.
     private var lastSeenNudgeState: String = "INACTIVE"
     @Volatile private var cachedProfileIsf: Double = 0.0
     @Volatile private var cachedProfileBasal: Double = 0.0
@@ -154,6 +154,10 @@ open class SmartInsulinPlugin @Inject constructor(
         const val SMB_DELIVERY_FRACTION = 0.5
         private const val SENSOR_CACHE_REFRESH_MS = 6 * 60 * 60 * 1000L
         private const val HBA1C_CACHE_REFRESH_MS  = 2 * 60 * 60 * 1000L
+        // Bounds for the COMBINED basal multiplier (flat BasalLearner + CircadianLearner).
+        // Pump safety multipliers in setTempBasal remain the hard backstop; tune if needed.
+        private const val MIN_TOTAL_BASAL_MULT = 0.5
+        private const val MAX_TOTAL_BASAL_MULT = 1.5
     }
 
     val isMmol: Boolean get() = profileUtil.units == GlucoseUnit.MMOL
@@ -163,6 +167,24 @@ open class SmartInsulinPlugin @Inject constructor(
     private fun fmtBg(mgdl: Double): String = if (isMmol) String.format("%.1f", mgdl / 18.0) else String.format("%.0f", mgdl)
     private fun fmtDelta(mmol: Double): String = if (isMmol) String.format("%+.2f", mmol) else String.format("%+.1f", mmol * 18.0)
     private fun fmtIsf(mgdl: Double): String = if (isMmol) String.format("%.1f", mgdl / 18.0) else String.format("%.0f", mgdl)
+
+    /**
+     * Combined basal multiplier from the flat BasalLearner and the per-hour CircadianLearner.
+     * Both estimate the SAME fasting-drift signal, so their deviations from 1.0 are SUMMED
+     * (not multiplied) and the total is clamped once -- preventing the 1.5x1.5=2.25x compounding
+     * of a single physiological correction. Respects the BasalLearning enable flag everywhere
+     * (so the SI-tab display now matches what is actually dosed).
+     */
+    private fun combinedBasalMultiplier(
+        hour: Int = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
+        dow: Int  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+    ): Double {
+        val flatEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue)
+        val flatMult = if (flatEnabled) basalLearner.multiplierClamped else 1.0
+        val circMult = circadianLearner.basalMultiplier(hour, dow)
+        return (1.0 + (flatMult - 1.0) + (circMult - 1.0))
+            .coerceIn(MIN_TOTAL_BASAL_MULT, MAX_TOTAL_BASAL_MULT)
+    }
 
     fun resetAllLearners() {
         aggressionLearner.reset(); basalLearner.reset(); circadianLearner.reset(); profileLearner.resetProfiles()
@@ -209,7 +231,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val profileIsf = cachedProfileIsf
         val profileBasal = cachedProfileBasal
         val isfMult = circadianLearner.isfMultiplier(hour)
-        val basalMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(hour)
+        val basalMult = combinedBasalMultiplier(hour)
         val activeMode = mealOverrideManager.activeMealMode
         val currentMealMode = activeMode ?: MealMode.FASTING
         val isLearningEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue)
@@ -222,9 +244,9 @@ open class SmartInsulinPlugin @Inject constructor(
             val isfUnit = if (isMmol) "mmol/U" else "mg/dL/U"
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
-                val marker = if (h == hour) "▶" else " "
+                val marker = if (h == hour) "?" else " "
                 val hIsfMult = circadianLearner.isfMultiplier(h)
-                val hBasMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h)
+                val hBasMult = combinedBasalMultiplier(h)
                 val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
                 val hBas = if (profileBasal > 0) "%.3f".format(profileBasal * hBasMult) else "—"
                 appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h))}  ${"%.0f".format(circadianLearner.confidencePct(h))}%")
@@ -393,7 +415,7 @@ open class SmartInsulinPlugin @Inject constructor(
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
                 val hIsfMult = circadianLearner.isfMultiplier(h, dow)
-                val hBasMult = basalLearner.multiplierClamped * circadianLearner.basalMultiplier(h, dow)
+                val hBasMult = combinedBasalMultiplier(h, dow)
                 val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
                 val hBas = if (profileBasal > 0) "%.3f".format(profileBasal * hBasMult) else "—"
                 appendLine(" ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h, dow))}  ${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
@@ -495,7 +517,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // P/F (UAM_PROTEIN_FAT) previously excluded from post-meal lockout — meaning learning
         // resumed immediately after P/F expired. P/F typically runs 2-4h after a meal during
         // fat/protein digestion; the BG signal during this period is not clean fasting data.
-        // Including P/F here ensures the lockout fires when P/F → FASTING, just like any other mode.
+        // Including P/F here ensures the lockout fires when P/F ? FASTING, just like any other mode.
         if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
             val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
             if (lockoutMins > 0) { learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60000L); sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) } }
@@ -521,7 +543,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // Capture multipliers BEFORE update() so "was" reflects the baseline the
             // loop was delivering before this cycle's nudge fires.
             val isfMultBefore        = circadianLearner.isfMultiplier()
-            val totalBasalMultBefore = basalLearner.multiplierClamped * circadianLearner.basalMultiplier()
+            val totalBasalMultBefore = combinedBasalMultiplier()
             val lastDirection = run {
                 val parts = lastSeenNudgeState.split("|")
                 val p = parts.getOrNull(0) ?: "INACTIVE"
@@ -567,7 +589,7 @@ open class SmartInsulinPlugin @Inject constructor(
             if (lModeIsf > 0.0) dosingIsfMgdl = lModeIsf
         }
 
-        // ── UAM entry SMB fraction ────────────────────────────────────────────
+        // -- UAM entry SMB fraction --------------------------------------------
         // For the first N SMBs after a UAM mode fires, use a reduced fraction
         // to soften the front-end response and avoid stacking before IOB propagates.
         // P/F excluded — it's a tail correction, not a meal entry event.
@@ -609,7 +631,7 @@ open class SmartInsulinPlugin @Inject constructor(
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue) && mealMode == MealMode.FASTING && !highTempTarget && !(activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout)) {
             basalLearner.onLoopCycle(glucoseStatus.glucose, glucoseStatus.delta, mealData.mealCOB, minsLastBolus, trueIsfMgdl, profile.getBasal())
         }
-        val basalMultiplier = (if (sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue)) basalLearner.multiplierClamped else 1.0) * circadianLearner.basalMultiplier()
+        val basalMultiplier = combinedBasalMultiplier()
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (glucoseStatus.glucose < REBOUND_LOW_THRESHOLD_MGDL) {
@@ -766,21 +788,21 @@ open class SmartInsulinPlugin @Inject constructor(
             key = "smart_insulin_settings"
             title = rh.gs(R.string.smart_insulin)
 
-            // ── Learning ─────────────────────────────────────────────────────────
+            // -- Learning ---------------------------------------------------------
             addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinEnableLearning, R.string.smart_insulin_enable_learning_summary, R.string.smart_insulin_enable_learning))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinLearningRate, R.string.smart_insulin_learning_rate_summary, R.string.smart_insulin_learning_rate))
 
-            // ── SMB / TBR / Aggression caps ──────────────────────────────────────
+            // -- SMB / TBR / Aggression caps --------------------------------------
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxSmb, null, R.string.si_max_smb_title))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxTbr, null, R.string.si_max_tbr_title))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinAggressionMax, null, R.string.si_aggression_max_title))
 
-            // ── Pre-bolus ────────────────────────────────────────────────────────
+            // -- Pre-bolus --------------------------------------------------------
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxPreBolus, R.string.si_max_prebolus_summary, R.string.si_max_prebolus_title))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinPreBolus2DefaultU, null, R.string.si_prebolus2_default_u_title))
             addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins, null, null, R.string.si_prebolus2_default_delay_title))
 
-            // ── Prediction & guards ───────────────────────────────────────────────
+            // -- Prediction & guards -----------------------------------------------
             addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPredictionHorizonMins, R.string.smart_insulin_prediction_horizon_summary, null, R.string.smart_insulin_prediction_horizon))
             addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinLowGuard, profileUtil, sp, R.string.smart_insulin_low_guard_summary, R.string.smart_insulin_low_guard))
             addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinWarnGuard, profileUtil, sp, R.string.smart_insulin_warn_guard_summary, R.string.smart_insulin_warn_guard))
@@ -788,19 +810,19 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveUnitPreference(ctx = context, unitKey = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
 
 
-            // ── Post-meal lockout & rebound window ───────────────────────────────
+            // -- Post-meal lockout & rebound window -------------------------------
             addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPostModeLockoutMins, null, null, R.string.si_post_mode_lockout_mins_title))
             addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinReboundWindowMins, R.string.si_rebound_window_mins_summary, null, R.string.si_rebound_window_mins_title))
 
-            // ── CGM warmup & smoothing ────────────────────────────────────────────
+            // -- CGM warmup & smoothing --------------------------------------------
             addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinCgmWarmupEnabled, null, R.string.si_cgm_warmup_enabled_title))
             addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, null, R.string.si_stft_cgm_warmup_block_title))
             addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing, R.string.si_first_day_cgm_smoothing_summary, R.string.si_first_day_cgm_smoothing_title))
 
-            // ── Target assist ─────────────────────────────────────────────────────
+            // -- Target assist -----------------------------------------------------
             addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinTargetRespectEnabled, null, R.string.si_target_respect_enabled_title))
 
-            // ── Meal Modes sub-screen ─────────────────────────────────────────────
+            // -- Meal Modes sub-screen ---------------------------------------------
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "si_meal_modes_screen"
                 title = rh.gs(R.string.si_meal_modes_title)
@@ -819,7 +841,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinExtendedIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_extended_isf_title))
             })
 
-            // ── Activity & Dawn sub-screen ────────────────────────────────────────
+            // -- Activity & Dawn sub-screen ----------------------------------------
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "si_activity_dawn_screen"
                 title = rh.gs(R.string.si_activity_dawn_title)
@@ -834,7 +856,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinDawnSmbReduction, R.string.si_dawn_smb_reduction_summary, R.string.si_dawn_smb_reduction_title))
             })
 
-            // ── UAM Auto-Detection sub-screen ─────────────────────────────────────
+            // -- UAM Auto-Detection sub-screen -------------------------------------
             addPreference(preferenceManager.createPreferenceScreen(context).apply {
                 key = "si_uam_screen"
                 title = rh.gs(R.string.si_uam_settings_title)

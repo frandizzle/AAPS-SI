@@ -28,7 +28,7 @@ data class LearnedInsulinProfile(
     val safePeakMinutes: Double get() = peakMinutes.coerceIn(PEAK_MIN_MINUTES, PEAK_MAX_MINUTES)
     val safeDiaMinutes:  Double get() = diaMinutes.coerceIn(DIA_MIN_MINUTES, DIA_MAX_MINUTES)
 
-    // ── Serialisation ────────────────────────────────────────────────────────
+    // -- Serialisation --------------------------------------------------------
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("mode",          mode.name)
@@ -38,7 +38,7 @@ data class LearnedInsulinProfile(
         put("lastUpdatedMs", lastUpdatedMs)
     }
 
-    // ── Derived helpers ──────────────────────────────────────────────────────
+    // -- Derived helpers ------------------------------------------------------
 
     /**
      * True once enough samples have accumulated that we trust this profile
@@ -63,10 +63,12 @@ data class LearnedInsulinProfile(
         private const val MIN_SAMPLES_FOR_MATURITY  = 5
         private const val FULL_CONFIDENCE_SAMPLES   = 30
 
-        // ── Hard bounds — physiologically reasonable limits ──────────────────
+        // -- Hard bounds — physiologically reasonable limits ------------------
         const val PEAK_MIN_MINUTES = 35.0
         const val PEAK_MAX_MINUTES = 120.0
-        const val DIA_MIN_MINUTES  = 120.0
+        const val DIA_MIN_MINUTES  = 300.0   // 5h floor: observed "DIA" is time-to-nadir and undershoots
+        // true DIA. Matches AAPS minimum DIA and caps the
+        // getActivityAtMinute timeScale compression at ~1.2x.
         const val DIA_MAX_MINUTES  = 480.0
 
         // Fallback constants used only when profileFunction/activeInsulin are unavailable at seed time
