@@ -137,7 +137,19 @@ open class SmartInsulinPlugin @Inject constructor(
     var previousMealModeForLockout: MealMode = MealMode.FASTING
     private var lockoutTrackerInitialized: Boolean = false
     var reboundWindowStartMs: Long = 0L
-    @Volatile var reboundGuardMs: Long = REBOUND_GUARD_MS
+    // Recovery (rebound) window length. Base comes from the user preference
+    // (ApsSmartInsulinReboundWindowMins); each consecutive rollercoaster extends it by
+    // ROLLER_REBOUND_EXTENSION_MS, capped at ROLLER_REBOUND_EXTENSION_MAX_MS. Computed live so
+    // preference changes AND rollercoaster detection take effect immediately, and so the gate
+    // (inReboundWindow) always matches totalReboundWindowMins shown in the UI.
+    val reboundGuardMs: Long
+        get() {
+            val baseMs = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue)
+                .coerceAtLeast(0) * 60_000L
+            val extMs  = (circadianLearner.consecutiveRollercoasters.coerceAtLeast(0) * ROLLER_REBOUND_EXTENSION_MS)
+                .coerceAtMost(ROLLER_REBOUND_EXTENSION_MAX_MS)
+            return baseMs + extMs
+        }
 
     @Volatile private var cachedLearningEnabled: Boolean = false
     @Volatile private var cachedCgmSuppressLearning: Boolean = false
