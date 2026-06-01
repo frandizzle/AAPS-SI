@@ -147,16 +147,16 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // Status headline
             val headline = if (smbUnlockIn > 0)
-                "? Recovery in progress — ${elapsedInt}min of ${windowInt}min"
+                "⚠ Recovery in progress — ${elapsedInt}min of ${windowInt}min"
             else
-                "? Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
+                "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
             addRow(c, headline, primaryColor = Color.parseColor("#FFFB8C00"))
 
             // BG currently below low guard during an active window — show a clear note so the
             // "X of Y" counter is not misread as everything-is-fine. The counter keeps ticking;
             // rollercoaster detection will extend the total via consecutiveRollercoasters.
             if (d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl) {
-                addRow(c, "? BG currently below low guard — recovery counter still running",
+                addRow(c, "⚠ BG currently below low guard — recovery counter still running",
                        "The elapsed timer keeps ticking through brief re-dips. If this becomes a\n" +
                            "rollercoaster, the total window will be extended automatically.",
                        Color.parseColor("#FFE53935"))
@@ -173,7 +173,7 @@ class SmartInsulinFragment : DaggerFragment() {
                        "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
                        Color.parseColor("#FFE53935"))
             } else {
-                addRow(c, "SMBs restored ?",
+                addRow(c, "SMBs restored ✓",
                        "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
                        Color.parseColor("#FF43A047"))
             }
@@ -215,7 +215,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
                 addRow(c, "Lowest BG: $lowBgStr",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U\n" +
-                           if (d.secondLowOccurred) "? Second low occurred — full lockout, UAM blocked." else "")
+                           if (d.secondLowOccurred) "⚠ Second low occurred — full lockout, UAM blocked." else "")
             }
 
         } else if (d.bgWentLow) {
@@ -224,7 +224,7 @@ class SmartInsulinFragment : DaggerFragment() {
             // Check actual current BG to show correct message.
             val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
             if (actuallyBelowGuard) {
-                addRow(c, "? BG is below low guard — waiting for recovery",
+                addRow(c, "⚠ BG is below low guard — waiting for recovery",
                        "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
                            if (d.consecutiveRollercoasters >= 1) {
                                val extMins = d.totalReboundWindowMins - d.reboundWindowMins
@@ -232,7 +232,7 @@ class SmartInsulinFragment : DaggerFragment() {
                            } else "",
                        Color.parseColor("#FFE53935"))
             } else {
-                addRow(c, "? BG recovering — rebound window starting",
+                addRow(c, "⚡ BG recovering — rebound window starting",
                        "BG has crossed back above the low guard. The ${d.totalReboundWindowMins}-minute recovery window is activating." +
                            if (d.consecutiveRollercoasters >= 1) {
                                val extMins = d.totalReboundWindowMins - d.reboundWindowMins
@@ -241,7 +241,7 @@ class SmartInsulinFragment : DaggerFragment() {
                        Color.parseColor("#FFFB8C00"))
             }
             if (d.mealMode != "Fasting") {
-                addRow(c, "? Low recovery bypassed — meal mode active (${d.mealMode})",
+                addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
                        "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
                        Color.parseColor("#FF43A047"))
             }
@@ -303,9 +303,9 @@ class SmartInsulinFragment : DaggerFragment() {
             else
                 "\nLong term: learning paused during recovery — resumes in ${minsLeft}min"
             "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                "? Low recovery active — ${elapsedMins}min of ${windowMins}min elapsed ($minsLeft min left)\n" +
+                "⚠ Low recovery active — ${elapsedMins}min of ${windowMins}min elapsed ($minsLeft min left)\n" +
                 "Short term: TBR capped at ${tbrPct}% — holding back insulin during recovery\n" +
-                "SMBs: ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ?"}" +
+                "SMBs: ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ✓"}" +
                 hardLowNote + longTermLine + rollerNote
         } else if (d.bgWentLow) {
             val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
@@ -318,12 +318,12 @@ class SmartInsulinFragment : DaggerFragment() {
                 "\nLong term: learning paused — resumes once recovery window completes"
             if (actuallyBelowGuard) {
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                    "? BG is below low guard — insulin delivery limited\n" +
+                    "⚠ BG is below low guard — insulin delivery limited\n" +
                     "Short term: holding insulin until BG recovers above low guard" +
                     hardLowNote + longTermLine
             } else {
                 "Aggressiveness: ${"%.3f".format(d.aggressiveness)}  Circ ceiling: ${"%.3f".format(d.circCeil)}\n" +
-                    "? BG recovering — waiting for rebound window to activate\n" +
+                    "⚡ BG recovering — waiting for rebound window to activate\n" +
                     "Short term: insulin delivery resuming as BG stabilises above low guard" +
                     hardLowNote + longTermLine
             }
@@ -356,9 +356,9 @@ class SmartInsulinFragment : DaggerFragment() {
         }
         val aggrPrimary = when {
             !isFasting          -> "Aggressiveness locked — meal mode active"
-            d.inReboundWindow   -> "? Recovering from low — insulin held back"
-            d.bgWentLow && d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl -> "? Below low guard — waiting for recovery"
-            d.bgWentLow         -> "? BG recovered — rebound window activating"
+            d.inReboundWindow   -> "⚠ Recovering from low — insulin held back"
+            d.bgWentLow && d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl -> "⚠ Below low guard — waiting for recovery"
+            d.bgWentLow         -> "⚡ BG recovered — rebound window activating"
             else                -> aggrDesc(d.aggressiveness)
         }
         addRow(c, aggrPrimary, aggrDetail, when {
@@ -649,7 +649,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 val nowIsf     = if (d.finalIsfMgdl > 0) if (d.isMmol) "${"%.2f".format(d.finalIsfMgdl / 18.0)} mmol/U" else "${"%.1f".format(d.finalIsfMgdl)} mg/dL/U" else "?"
                 val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
                 val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
-                nudgeHeadline  = "? Fuel trim: $shortTerm (BG off target for full peak window)"
+                nudgeHeadline  = "⚡ Fuel trim: $shortTerm (BG off target for full peak window)"
                 nudgeDetail    = "ISF was $wasIsf ? now $nowIsf\nBasal was $wasBas ? now $nowBas\n$shortTerm short-term (ceiling moved)\n$longTerm into ISF & basal at this hour\nDecays automatically once BG returns to target."
             }
             nudgeActive -> {
@@ -723,9 +723,9 @@ class SmartInsulinFragment : DaggerFragment() {
                     "Updating every 5 min while fasting continues. If BG settles near target, this hour is dialling in."
 
                 if (nudgeActiveLow) {
-                    nudgeHeadline = "? Too much insulin — adjusting$cooldownNote"
+                    nudgeHeadline = "⚠ Too much insulin — adjusting$cooldownNote"
                 } else {
-                    nudgeHeadline = "? Not enough insulin — adjusting$cooldownNote"
+                    nudgeHeadline = "📈 Not enough insulin — adjusting$cooldownNote"
                 }
                 nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
                     "ISF was $wasIsf ? now $nowIsf$physicsNote\n" +
@@ -736,7 +736,7 @@ class SmartInsulinFragment : DaggerFragment() {
             }
             nudgePaused -> {
                 val reason = nudgeParts.getOrNull(1) ?: "Learning suppressed"
-                nudgeHeadline = "? Paused — $reason"
+                nudgeHeadline = "⏸ Paused — $reason"
                 nudgeDetail   = "Adjustments paused while not in clean fasting state.\n" +
                     "Will resume nudging ISF and basal once fasting resumes."
             }
@@ -758,10 +758,10 @@ class SmartInsulinFragment : DaggerFragment() {
                         val extMins = d.totalReboundWindowMins - d.reboundWindowMins
                         "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                     } else ""
-                    nudgeHeadline = "? Recovering from low — insulin held back"
+                    nudgeHeadline = "⚠ Recovering from low — insulin held back"
                     nudgeDetail   = "BG crossed below low guard — holding back to avoid stacking.\n" +
                         "Short term: TBR at ${taperPct}% of normal — ramps up over ${windowMins}min window\n" +
-                        "Short term: SMBs ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ?"}" +
+                        "Short term: SMBs ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ✓"}" +
                         hardLowNote +
                         longTermNote +
                         rollerNote
@@ -774,13 +774,13 @@ class SmartInsulinFragment : DaggerFragment() {
                         "\nLong term: basal & ISF reduced by ~10% at this hour — will dial back in as BG stabilises."
                     else "\nLong term: learning paused — will resume once ${d.totalReboundWindowMins}min recovery window completes."
                     if (actuallyBelowGuard) {
-                        nudgeHeadline = "? BG is below low guard — waiting for recovery"
+                        nudgeHeadline = "⚠ BG is below low guard — waiting for recovery"
                         nudgeDetail   = "BG is below the low guard threshold. Insulin delivery limited.\n" +
                             "Short term: insulin being held back until BG recovers above low guard" +
                             hardLowNote +
                             longTermNote
                     } else {
-                        nudgeHeadline = "? BG recovering — rebound window activating"
+                        nudgeHeadline = "⚡ BG recovering — rebound window activating"
                         nudgeDetail   = "BG has crossed back above the low guard. Recovery window is activating.\n" +
                             "Short term: insulin delivery resuming as BG stabilises" +
                             hardLowNote +
@@ -804,11 +804,11 @@ class SmartInsulinFragment : DaggerFragment() {
                     }
                     when {
                         predTrimActive && bgBelowTarget -> {
-                            nudgeHeadline = "? Cutting basal — BG below target"
+                            nudgeHeadline = "↓ Cutting basal — BG below target"
                             nudgeDetail   = "Immediate defensive action (PredTrim) is running:\n• $basalLine\n• $isfLine\n• Signal: ${d.lastBasalSignal}\n\nLong-term aggression learner is neutral for this hour (${"%.3f".format(d.aggressiveness)}) — it tracks 24h patterns, not single readings. Short-term trim is handling the current dip."
                         }
                         predTrimActive -> {
-                            nudgeHeadline = "? Pre-emptive basal cut — projected drop detected"
+                            nudgeHeadline = "↓ Pre-emptive basal cut — projected drop detected"
                             nudgeDetail   = "PredTrim is cutting basal based on projected BG trend:\n• $basalLine\n• $isfLine\n• Signal: ${d.lastBasalSignal}"
                         }
                         allMoreInsulin -> {
@@ -843,7 +843,7 @@ class SmartInsulinFragment : DaggerFragment() {
         // -- Feed-forward debug toggle -----------------------------------------
         val ffCtx = context ?: return
         c.addView(android.widget.TextView(ffCtx).apply {
-            text = if (showFfDebug) "? Hide feed-forward debug" else "? Feed-forward debug (Accel + PredTrim)"
+            text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)"
             textSize = 12f
             setTextColor(Color.parseColor("#FF888888"))
             setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
@@ -933,7 +933,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     private fun addGateRow(container: LinearLayout, primary: String, detail: String, passed: Boolean) {
         val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
-        val prefix = if (passed) "? " else "? "
+        val prefix = if (passed) "✓ " else "✗ "
         addRow(container, "$prefix$primary", detail, color)
     }
 
@@ -979,7 +979,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
     private data class CircRow(val hour: Int, val isfVal: Float, val basVal: Float, val ceil: Float, val confPct: Int)
 
-    private fun parseCircRows(raw: String) = Regex("""[??\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
+    private fun parseCircRows(raw: String) = Regex("""[→►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
         .findAll(raw).mapNotNull { m -> CircRow(
             m.groupValues[1].toIntOrNull()   ?: return@mapNotNull null,
             m.groupValues[2].toFloatOrNull() ?: return@mapNotNull null,
@@ -1091,7 +1091,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 if (bold || isCur) setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
             }
-            rowL.addView(cell(if (isCur) "?${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
+            rowL.addView(cell(if (isCur) "→${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
             rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal)))
             rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor(row.basVal)))
             rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
@@ -1146,7 +1146,7 @@ class SmartInsulinFragment : DaggerFragment() {
             // Colour from learning status regardless of active state
             val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
             val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
-            val prefix = if (isActive) "? " else "  "
+            val prefix = if (isActive) "→ " else "  "
             c.addView(TextView(ctx).apply {
                 text = "$prefix$name"; textSize = 13f; setTextColor(col)
                 setTypeface(null, Typeface.BOLD)
