@@ -595,7 +595,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Must be checked here (not in UamController) because UamController.onLoopCycle()
         // exits early when currentMealMode != FASTING and never runs during an active UAM mode.
         val activeUamMode = mealOverrideManager.activeMealMode
-        if (activeUamMode != null && activeUamMode.isUam) {
+        if (activeUamMode != null && activeUamMode.isUam && activeUamMode != MealMode.UAM_PROTEIN_FAT) {
             val bgMmol = glucoseStatus.glucose / 18.0
             val targetMmol = profile.getTargetMgdl() / 18.0
             if (bgMmol <= targetMmol + 0.01) {
