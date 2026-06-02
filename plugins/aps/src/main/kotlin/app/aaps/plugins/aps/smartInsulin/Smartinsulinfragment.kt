@@ -650,7 +650,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 val wasBas     = if (d.nudgeSessionBasalU > 0) "${"%.3f".format(d.nudgeSessionBasalU)} U/h" else "?"
                 val nowBas     = if (d.finalBasalU > 0) "${"%.3f".format(d.finalBasalU)} U/h" else "?"
                 nudgeHeadline  = "⚡ Fuel trim: $shortTerm (BG off target for full peak window)"
-                nudgeDetail    = "ISF was $wasIsf ? now $nowIsf\nBasal was $wasBas ? now $nowBas\n$shortTerm short-term (ceiling moved)\n$longTerm into ISF & basal at this hour\nDecays automatically once BG returns to target."
+                nudgeDetail    = "ISF was $wasIsf → now $nowIsf\nBasal was $wasBas → now $nowBas\n$shortTerm short-term (ceiling moved)\n$longTerm into ISF & basal at this hour\nDecays automatically once BG returns to target."
             }
             nudgeActive -> {
                 val deviation    = nudgeParts.getOrNull(1) ?: "?"
@@ -728,8 +728,8 @@ class SmartInsulinFragment : DaggerFragment() {
                     nudgeHeadline = "📈 Not enough insulin — adjusting$cooldownNote"
                 }
                 nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
-                    "ISF was $wasIsf ? now $nowIsf$physicsNote\n" +
-                    "Basal was $wasBas ? now $nowBas\n" +
+                    "ISF was $wasIsf → now $nowIsf$physicsNote\n" +
+                    "Basal was $wasBas → now $nowBas\n" +
                     "$shortLine\n" +
                     "$longLine\n" +
                     statusLine

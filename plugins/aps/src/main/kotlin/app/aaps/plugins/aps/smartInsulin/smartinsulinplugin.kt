@@ -256,7 +256,7 @@ open class SmartInsulinPlugin @Inject constructor(
             val isfUnit = if (isMmol) "mmol/U" else "mg/dL/U"
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
-                val marker = if (h == hour) "?" else " "
+                val marker = if (h == hour) "→" else " "
                 val hIsfMult = circadianLearner.isfMultiplier(h)
                 val hBasMult = combinedBasalMultiplier(h)
                 val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
@@ -590,6 +590,19 @@ open class SmartInsulinPlugin @Inject constructor(
         var dosingIsfMgdl = if (mIsfMgdl > 0.0) mIsfMgdl else trueIsfMgdl / circIsfMult
 
         mealOverrideManager.onLoopCycle(glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile)
+
+        // Auto-cancel UAM mode if BG has returned to profile target or below.
+        // Must be checked here (not in UamController) because UamController.onLoopCycle()
+        // exits early when currentMealMode != FASTING and never runs during an active UAM mode.
+        val activeUamMode = mealOverrideManager.activeMealMode
+        if (activeUamMode != null && activeUamMode.isUam) {
+            val bgMmol = glucoseStatus.glucose / 18.0
+            val targetMmol = profile.getTargetMgdl() / 18.0
+            if (bgMmol <= targetMmol + 0.01) {
+                aapsLogger.debug(LTag.APS, "SmartInsulin: UAM auto-cancel — BG ${String.format("%.1f", bgMmol)} ≤ target ${String.format("%.1f", targetMmol)} mmol")
+                mealOverrideManager.cancelOverride()
+            }
+        }
 
         uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date)
 
