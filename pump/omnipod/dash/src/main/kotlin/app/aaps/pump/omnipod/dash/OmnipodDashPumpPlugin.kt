@@ -237,7 +237,8 @@ class OmnipodDashPumpPlugin @Inject constructor(
 
     override fun isBusy(): Boolean {
         // prevents the queue from executing commands
-        return podStateManager.activationProgress.isBefore(ActivationProgress.COMPLETED)
+        return podStateManager.activationProgress != ActivationProgress.NOT_STARTED &&
+            podStateManager.activationProgress.isBefore(ActivationProgress.COMPLETED)
     }
 
     override fun isConnected(): Boolean {
