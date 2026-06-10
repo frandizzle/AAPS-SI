@@ -66,13 +66,11 @@ class SmartInsulinUnitPreference(
         if (text == null) return
         val numericValue = SafeParse.stringToDouble(text, unitKey.defaultValue)
         val storeMgdl = profileUtil.convertToMgdl(numericValue, profileUtil.units)
-        try {
-            preferenceDataStore?.putFloat(key, storeMgdl.toFloat())
-                ?: sharedPreferences?.edit()?.putFloat(key, storeMgdl.toFloat())?.apply()
-        } catch (_: Exception) {
-            preferenceDataStore?.putString(key, storeMgdl.toString())
-                ?: sharedPreferences?.edit()?.putString(key, storeMgdl.toString())?.apply()
-        }
+        // Always store as String — SP.getDouble() parses strings correctly.
+        // putFloat was causing SP.getDouble() to return the key's defaultValue on type mismatch,
+        // which then fed the wrong value through spMgdl() and produced wildly wrong offsets.
+        preferenceDataStore?.putString(key, storeMgdl.toString())
+            ?: sharedPreferences?.edit()?.putString(key, storeMgdl.toString())?.apply()
         val precision = if (profileUtil.units == GlucoseUnit.MGDL) 1 else 2
         summary = BigDecimal(numericValue).setScale(precision, RoundingMode.HALF_UP).toPlainString()
         notifyChanged()
