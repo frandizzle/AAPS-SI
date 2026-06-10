@@ -706,15 +706,24 @@ class SmartInsulinFragment : DaggerFragment() {
                 val shortAbs  = Math.abs(shortPct)
                 val longAbs   = Math.abs(longPct)
 
-                val shortLine = if (nudgeActiveLow)
-                    "Short term: pulling out ~${shortAbs}% insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
-                else
-                    "Short term: adding ~${shortAbs}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                // When ACTIVE_HIGH nudge is running but BG is currently below target,
+                // clarify that the nudge reflects a *historical* pattern for this hour —
+                // not a real-time reaction to the current low reading.
+                val bgBelowTargetNow = nudgeActiveHigh && bgBelowTarget
+
+                val shortLine = when {
+                    nudgeActiveLow ->
+                        "Short term: reducing insulin by ~${shortAbs}% right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                    bgBelowTargetNow ->
+                        "Short term: ceiling raised to ${(d.circCeil * 100).roundToInt()}% — but BG is below target now, so delivery is naturally limited"
+                    else ->
+                        "Short term: adding ~${shortAbs}% extra insulin right now (ceiling ${(d.circCeil * 100).roundToInt()}%)"
+                }
 
                 val longLine = when {
                     longAbs < 2     -> "Long term: still building — less than 2% change so far"
-                    nudgeActiveLow  -> "Long term: permanently reduced by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
-                    else            -> "Long term: permanently increased by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
+                    nudgeActiveLow  -> "Long term: ISF and basal permanently reduced by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
+                    else            -> "Long term: ISF and basal permanently increased by ~${longAbs}% at this hour${if (longAbs < shortAbs) " (still learning)" else " (dialling in)"}"
                 }
 
                 val statusLine = if (cooldown)
@@ -724,10 +733,20 @@ class SmartInsulinFragment : DaggerFragment() {
 
                 if (nudgeActiveLow) {
                     nudgeHeadline = "⚠ Too much insulin — adjusting$cooldownNote"
+                } else if (bgBelowTargetNow) {
+                    nudgeHeadline = "📈 Pattern: not enough insulin at this hour — BG below target now, reducing"
                 } else {
                     nudgeHeadline = "📈 Not enough insulin — adjusting$cooldownNote"
                 }
-                nudgeDetail = "$deviation detected at $hourStr on ${day}s\n" +
+
+                // For the bgBelowTargetNow case, lead with what the user is actually seeing
+                val contextPrefix = if (bgBelowTargetNow)
+                    "BG below target — reducing insulin now.\n" +
+                        "This nudge was triggered by a historical pattern of BG running high at $hourStr on ${day}s:\n"
+                else
+                    "$deviation detected at $hourStr on ${day}s\n"
+
+                nudgeDetail = "${contextPrefix}" +
                     "ISF was $wasIsf → now $nowIsf$physicsNote\n" +
                     "Basal was $wasBas → now $nowBas\n" +
                     "$shortLine\n" +
