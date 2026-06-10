@@ -3,28 +3,26 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.SC
 import app.aaps.core.interfaces.db.PersistenceLayer
-import app.aaps.core.interfaces.logging.AAPSLogger
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
+import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class ActivityMonitorTest {
 
-    // ── Mocks ────────────────────────────────────────────────────────────────
-
-    private val logger:           AAPSLogger      = mock()
+    private val logger           = FakeAAPSLogger()
     private val persistenceLayer: PersistenceLayer = mock()
 
     private lateinit var sut: ActivityMonitor
 
-    private val NOW = 1_000_000L   // arbitrary epoch anchor
+    private val NOW = 1_000_000L
 
-    @Before fun setUp() {
+    @BeforeEach fun setUp() {
         sut = ActivityMonitor(logger, persistenceLayer)
         whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
         whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
@@ -32,7 +30,6 @@ class ActivityMonitorTest {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    /** Single HR record covering the full window so weighted average == bpm. */
     private fun hrRecord(bpm: Double) = HR(
         timestamp      = NOW,
         duration       = ActivityMonitor.HR_WINDOW_MS,
@@ -40,14 +37,11 @@ class ActivityMonitorTest {
         device         = "test"
     )
 
-    /** HR records that, when duration-weighted, average to the given bpm.
-     *  Two equal-duration segments centred on the target value. */
     private fun twoHrRecords(bpm1: Double, dur1Ms: Long, bpm2: Double, dur2Ms: Long) = listOf(
         HR(timestamp = NOW,          duration = dur1Ms, beatsPerMinute = bpm1, device = "test"),
         HR(timestamp = NOW + dur1Ms, duration = dur2Ms, beatsPerMinute = bpm2, device = "test")
     )
 
-    /** Steps record with exact 5-min bucket duration. */
     private fun stepsRecord(steps: Int) = SC(
         timestamp  = NOW,
         duration   = ActivityMonitor.STEPS_DURATION_MS,
@@ -56,7 +50,6 @@ class ActivityMonitorTest {
         device     = "test"
     )
 
-    /** Steps record with slight duration jitter (OS scheduling). */
     private fun stepsRecordJitter(steps: Int, jitterMs: Long = 3000L) = SC(
         timestamp  = NOW,
         duration   = ActivityMonitor.STEPS_DURATION_MS + jitterMs,
@@ -182,7 +175,6 @@ class ActivityMonitorTest {
     // ── HR weighted average ──────────────────────────────────────────────────
 
     @Test fun `avgHrBpm is duration-weighted across multiple HR records`() {
-        // 80 bpm for 200s, 120 bpm for 130s → weighted avg = (80*200 + 120*130) / 330
         val expected = (80.0 * 200_000 + 120.0 * 130_000) / 330_000.0
         whenever(persistenceLayer.getHeartRatesFromTime(any()))
             .thenReturn(twoHrRecords(80.0, 200_000L, 120.0, 130_000L))
@@ -329,7 +321,7 @@ class ActivityMonitorTest {
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
         recompute()
         val offset = sut.targetOffsetMmol(lightMmol = 0.5, moderateMmol = 1.0, heavyMmol = 2.0)
-        assertTrue("Offset should be ≤ 3.0 mmol, got $offset — possible unit conversion bug", offset <= 3.0)
+        assertTrue(offset <= 3.0) { "Offset should be ≤ 3.0 mmol, got $offset — possible unit conversion bug" }
     }
 
     // ── DB exception resilience ──────────────────────────────────────────────
