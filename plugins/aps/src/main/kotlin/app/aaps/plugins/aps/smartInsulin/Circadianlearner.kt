@@ -243,7 +243,11 @@ class CircadianLearner @Inject constructor(
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
         // -- 2. Basal learning — skip during CGM warmup -----------------------
-        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness)
+        // Pre-compute notEnough here so updateBasalLearner can suppress PredTrim when
+        // the aggrNudge is actively calling for more insulin — they measure different
+        // horizons and cancel each other when both fire simultaneously.
+        val aggrNotEnough = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
+        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness, aggrNotEnough)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
 
         // -- 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) -
@@ -630,7 +634,8 @@ class CircadianLearner @Inject constructor(
         basalIob:          Double,
         targetMgdl:        Double,
         inPostMealLockout: Boolean,
-        aggressiveness:    Double
+        aggressiveness:    Double,
+        aggrNotEnough:     Boolean = false
     ): Boolean {
         var driftFired   = false
         var negIobFired  = false
@@ -707,7 +712,17 @@ class CircadianLearner @Inject constructor(
         // target by more than dead band, adjust basal NOW rather than waiting for
         // the full drift window to fire. Mutually exclusive with drift signal.
         // Uses softer alpha and smaller cap to avoid over-correcting early.
-        if (!driftFired && !inPostMealLockout) {
+        //
+        // Suppressed when aggrNudge notEnough is active: aggrNudge operates on a
+        // multi-hour sustained pattern horizon while PredTrim operates on a 60-min
+        // forward projection. When BG has been high for hours and is now falling,
+        // PredTrim projects low and pushes basal DOWN at exactly the same time
+        // aggrNudge is pushing it UP — they deadlock and basal never moves.
+        // The aggrNudge signal is the higher-confidence signal in this scenario.
+        if (aggrNotEnough) {
+            lastPredTrimDebug = "suppressed — aggrNudge notEnough active (aggressiveness=${"%.3f".format(aggressiveness)})"
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] suppressed: aggrNudge notEnough active, aggressiveness=${"%.3f".format(aggressiveness)}")
+        } else if (!driftFired && !inPostMealLockout) {
             val projectedBg = projectBg60min(targetMgdl)
             if (projectedBg == null) {
                 lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
