@@ -101,7 +101,7 @@ class SmartInsulinFragment : DaggerFragment() {
         })
         if (detail != null) {
             container.addView(TextView(ctx).apply {
-                text = detail; textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
+                text = detail; textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
                 typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.bottomMargin = (10 * dp).toInt() }
@@ -558,7 +558,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val c = _binding?.learningRows ?: return; c.removeAllViews()
         val ctx = context ?: return
 
-        addRow(c, "SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FF888888"))
+        addRow(c, "SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FFCCCCCC"))
 
         val (statePrimary, stateColor) = when {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
@@ -680,7 +680,7 @@ class SmartInsulinFragment : DaggerFragment() {
             else -> {
                 stHeadline = "⏺ Stable — No short-term adjustments"
                 stDetail   = "BG is responding normally. Loop is running at profile aggressiveness."
-                stColor    = Color.parseColor("#FF888888")
+                stColor    = Color.parseColor("#FFCCCCCC")
             }
         }
         addRow(c, stHeadline, stDetail, stColor)
@@ -706,21 +706,31 @@ class SmartInsulinFragment : DaggerFragment() {
         val isfComp = if (ltIsfMult > 1.001) "Increased needs" else if (ltIsfMult < 0.999) "Decreased needs" else "At profile"
         val basComp = if (ltBasMult > 1.001) "Increased needs" else if (ltBasMult < 0.999) "Decreased needs" else "At profile"
 
-        val ltDetail = "Historical pattern at $hourStr on ${day}s.\n" +
-                       "ISF: ${fmtIsf(ltIsfMult)} ($isfComp)\n" +
-                       "Basal: ${fmtBas(ltBasMult)} ($basComp)"
-
         val longTermPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
         val ltAction = if (longTermPct > 0) "Reduced insulin needs" else if (longTermPct < 0) "Increased insulin needs" else "Neutral"
 
-        addRow(c, "Profile updated: $ltAction", ltDetail, Color.WHITE)
+        addRow(c, "Profile updated: $ltAction", "Historical pattern at $hourStr on ${day}s.", Color.WHITE)
+
+        val isfColor = when {
+            ltIsfMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger/aggressive)
+            ltIsfMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker/conservative)
+            else -> Color.parseColor("#FFCCCCCC")
+        }
+        addRow(c, "ISF: ${fmtIsf(ltIsfMult)} ($isfComp)", null, isfColor)
+
+        val basColor = when {
+            ltBasMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger)
+            ltBasMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker)
+            else -> Color.parseColor("#FFCCCCCC")
+        }
+        addRow(c, "Basal: ${fmtBas(ltBasMult)} ($basComp)", null, basColor)
 
         // -- Feed-forward debug toggle -----------------------------------------
         val ffCtx = context ?: return
         c.addView(android.widget.TextView(ffCtx).apply {
             text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)"
             textSize = 12f
-            setTextColor(Color.parseColor("#FF888888"))
+            setTextColor(Color.parseColor("#FFCCCCCC"))
             setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
             setOnClickListener { showFfDebug = !showFfDebug; refreshStatus() }
         })
@@ -780,8 +790,8 @@ class SmartInsulinFragment : DaggerFragment() {
         addSectionHeader(c, "Protein / Fat Detection (P/F)")
 
         val (pfPrimary, pfColor) = when {
-            pfPart == null                       -> Pair("P/F detection disabled", Color.parseColor("#FF888888"))
-            pfPart.contains("off")               -> Pair("P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}", Color.parseColor("#FF888888"))
+            pfPart == null                       -> Pair("P/F detection disabled", Color.parseColor("#FFCCCCCC"))
+            pfPart.contains("off")               -> Pair("P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}", Color.parseColor("#FFCCCCCC"))
             pfPart.contains("armed")             -> Pair("Armed — will activate after meal expires", Color.parseColor("#FF43A047"))
             pfPart.contains("/") && pfPart.contains("stuck") -> {
                 val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
@@ -816,7 +826,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val ctx = context ?: return
         container.addView(TextView(ctx).apply {
             text = title; textSize = 13f
-            setTextColor(Color.parseColor("#FFAAAAAA"))
+            setTextColor(Color.parseColor("#FFCCCCCC"))
             setTypeface(null, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .also { it.bottomMargin = (8 * dp).toInt() }
@@ -846,7 +856,7 @@ class SmartInsulinFragment : DaggerFragment() {
             }
             addRow(c, inactiveReason,
                    "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.",
-                   Color.parseColor("#FF888888"))
+                   Color.parseColor("#FFCCCCCC"))
         }
     }
 
@@ -932,7 +942,7 @@ class SmartInsulinFragment : DaggerFragment() {
         }
         cont.addView(TextView(ctx).apply {
             text = "Hourly multipliers learned from your BG patterns.\nISF and Bas = values the loop actually delivers for that hour.\nCeil = aggressiveness cap — lower = more conservative.\nConf = confidence — how much real data collected. Green =60%, amber =30%, red <30%."
-            textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
+            textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .also { it.bottomMargin = (8 * dp).toInt() }
         })
@@ -943,7 +953,7 @@ class SmartInsulinFragment : DaggerFragment() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (4*dp).toInt() }
         }
         fun hcell(t: String, w: Float) = TextView(ctx).apply {
-            text = t; textSize = 10f; setTextColor(Color.parseColor("#FF888888"))
+            text = t; textSize = 10f; setTextColor(Color.parseColor("#FFCCCCCC"))
             setTypeface(null, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
         }
@@ -966,7 +976,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 if (bold || isCur) setTypeface(null, Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
             }
-            rowL.addView(cell(if (isCur) "→${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFAAAAAA"), isCur))
+            rowL.addView(cell(if (isCur) "→${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFCCCCCC"), isCur))
             rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal)))
             rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor(row.basVal)))
             rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
@@ -987,7 +997,7 @@ class SmartInsulinFragment : DaggerFragment() {
     private fun updateProfilesCard(d: SmartInsulinPlugin.FragmentData) {
         val b = _binding ?: return; val c = b.profileRows; c.removeAllViews(); val ctx = context ?: return
 
-        addRow(c, "Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FF888888"))
+        addRow(c, "Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FFCCCCCC"))
         // -- Tracker status row (#27) ------------------------------------------
         val (profStatusPrimary, profStatusColor) = when {
             d.profileLearningStatus.startsWith("off") ->
@@ -1019,7 +1029,7 @@ class SmartInsulinFragment : DaggerFragment() {
                     activeMealMode.contains(name, ignoreCase = true)
             }
             // Colour from learning status regardless of active state
-            val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FF888888") }
+            val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFCCCCCC") }
             val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
             val prefix = if (isActive) "→ " else "  "
             c.addView(TextView(ctx).apply {
@@ -1029,7 +1039,7 @@ class SmartInsulinFragment : DaggerFragment() {
                     .also { it.topMargin = (4*dp).toInt() }
             })
             c.addView(TextView(ctx).apply {
-                text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FF888888"))
+                text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
                 typeface = android.graphics.Typeface.MONOSPACE
                 layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                     .also { it.bottomMargin = (2*dp).toInt() }
