@@ -105,10 +105,12 @@ class CircadianLearner @Inject constructor(
     // -- Short-term fuel trim state -------------------------------------------
     private val trimBgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(36)
     private var trimWindowMs: Long = 90 * 60_000L
-    private var trimActive   = false
+    var trimActive: Boolean = false
+        private set
     var trimStrength = 0.0
     private var trimDirection = 0
     private var trimStartMs  = 0L
+    val trimMins: Long get() = if (trimActive && trimStartMs > 0L) (System.currentTimeMillis() - trimStartMs) / 60_000L else 0L
     private var lastTrimActionMs = 0L // NEW: Tracks the "Wait and Re-assess" window
 
     // Last aggression nudge status for SI tab display
