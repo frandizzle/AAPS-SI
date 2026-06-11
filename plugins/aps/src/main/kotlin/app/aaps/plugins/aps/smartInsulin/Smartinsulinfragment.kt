@@ -593,6 +593,25 @@ class SmartInsulinFragment : DaggerFragment() {
         val nudgeTrim       = nudgeState == "TRIM"
         val nudgePaused     = nudgeState == "PAUSED"
 
+        // Positions in status string:
+        // TRIM|dir|mag% -> position 1=dir, 2=mag
+        // ACTIVE_LOW|dev|day|hour|sessionIsfMult|currentIsfMult|sessionBasMult|currentBasMult|COOLDOWN|reason|ISF_APPLIED|BAS_APPLIED
+        // nudgeParts indices:
+        // 0: State (ACTIVE_HIGH/LOW, TRIM, PAUSED, INACTIVE)
+        // 1: Deviation (e.g. "+15%") or Trim Direction
+        // 2: Day or Trim Pct
+        // 3: Hour
+        // 4: sessionIsfMult
+        // 5: currentIsfMult
+        // 6: sessionBasMult
+        // 7: currentBasMult
+
+        val profIsf = d.profileIsfMgdl
+        val profBas = d.profileBasalU
+
+        fun fmtIsf(mult: Double) = if (mult <= 0.0) "?" else if (d.isMmol) "${"%.2f".format(profIsf / mult / 18.0)} mmol" else "${"%.0f".format(profIsf / mult)} mg/dL"
+        fun fmtBas(mult: Double) = if (mult <= 0.0) "?" else "${"%.3f".format(profBas * mult)} U/h"
+
         // --- SHORT-TERM LEARNING ---
         addSectionHeader(c, "Short-term learning")
 
@@ -601,8 +620,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val stColor: Int
 
         val shortPct  = ((1.0 - d.circCeil) * 100).roundToInt()
-        val adding    = shortPct < 0
-        val stAction  = if (shortPct > 0) "Removing insulin" else if (shortPct < 0) "Adding insulin" else "Neutral"
+        val stAction  = if (shortPct > 0) "Reducing insulin" else if (shortPct < 0) "Adding insulin" else "Neutral"
         val stIcon    = if (shortPct > 0) "⬇️" else if (shortPct < 0) "⬆️" else "⏺"
 
         when {
@@ -618,11 +636,17 @@ class SmartInsulinFragment : DaggerFragment() {
             }
             nudgeTrim -> {
                 val trimDir = nudgeParts.getOrNull(1) ?: ""
-                val trimPct = nudgeParts.getOrNull(2) ?: "0%"
                 val isHigh = trimDir == "ACTIVE_HIGH"
+                val wasIsfMult = d.nudgeSessionIsfMgdl.takeIf { it > 0 }?.let { profIsf / it } ?: 1.0
+                val wasBasMult = d.nudgeSessionBasalU.takeIf { it > 0 }?.let { it / profBas } ?: 1.0
+                val nowIsfMult = d.isfMultiplier
+                val nowBasMult = d.basalMultiplier
+
                 stHeadline = if (isHigh) "⬆️ Sustained high for ${d.trimMins}m — Adding insulin"
                              else "⬇️ Sustained low for ${d.trimMins}m — Removing insulin"
-                stDetail   = "BG has been off target for ${d.trimMins}m. $stAction by ~$trimPct to correct the trend."
+                stDetail   = "BG has been off target for ${d.trimMins}m. $stAction to correct the trend.\n" +
+                             "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
+                             "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}"
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("rollercoaster") == true -> {
@@ -637,8 +661,15 @@ class SmartInsulinFragment : DaggerFragment() {
             }
             nudgeActive -> {
                 val isHigh = nudgeState == "ACTIVE_HIGH"
+                val sIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull() ?: 1.0
+                val cIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: 1.0
+                val sBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 1.0
+                val cBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: 1.0
+
                 stHeadline = if (isHigh) "⬆️ Pattern detected — $stAction" else "⬇️ Pattern detected — $stAction"
-                stDetail   = "Historical pattern shows you need ${if (isHigh) "more" else "less"} insulin at this hour. Ceiling adjusted to ${(d.circCeil * 100).roundToInt()}%."
+                stDetail   = "Historical pattern shows you need ${if (isHigh) "more" else "less"} insulin at this hour.\n" +
+                             "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}\n" +
+                             "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}"
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgePaused -> {
@@ -658,42 +689,29 @@ class SmartInsulinFragment : DaggerFragment() {
         addDivider(c)
         addSectionHeader(c, "Long-term learning")
 
-        // Parse profile values from status string
-        val sessionIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull() ?: 1.0
-        val currentIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: 1.0
-        val sessionBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 1.0
-        val currentBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: 1.0
+        // Use multipliers from status if active, otherwise use current plugin state
+        val ltIsfMult = if (nudgeActive) nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: d.isfMultiplier else d.isfMultiplier
+        val ltBasMult = if (nudgeActive) nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: d.basalMultiplier else d.basalMultiplier
 
-        val profIsf = d.profileIsfMgdl
-        val profBas = d.profileBasalU
+        val day = if (nudgeActive) nudgeParts.getOrNull(2) ?: d.dayLabel else d.dayLabel
+        val hour = if (nudgeActive) nudgeParts.getOrNull(3)?.toIntOrNull() ?: d.hour else d.hour
+        val hourStr = if (hour != null) {
+            if (d.isMmol) {
+                val ampm = if (hour < 12) "AM" else "PM"
+                val h12  = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
+                "$h12:00 $ampm"
+            } else "%02d:00".format(hour)
+        } else "?"
 
-        fun fmtIsf(mult: Double) = if (d.isMmol) "${"%.2f".format(profIsf / mult / 18.0)} mmol" else "${"%.0f".format(profIsf / mult)} mg/dL"
-        fun fmtBas(mult: Double) = "${"%.3f".format(profBas * mult)} U/h"
+        val isfComp = if (ltIsfMult > 1.001) "Increased needs" else if (ltIsfMult < 0.999) "Decreased needs" else "At profile"
+        val basComp = if (ltBasMult > 1.001) "Increased needs" else if (ltBasMult < 0.999) "Decreased needs" else "At profile"
 
-        val isfLine = if (Math.abs(sessionIsfMult - currentIsfMult) > 0.001) {
-            "ISF was ${fmtIsf(sessionIsfMult)} → now ${fmtIsf(currentIsfMult)}"
-        } else {
-            "ISF currently at ${fmtIsf(currentIsfMult)}"
-        }
-
-        val basLine = if (Math.abs(sessionBasMult - currentBasMult) > 0.001) {
-            "Basal was ${fmtBas(sessionBasMult)} → now ${fmtBas(currentBasMult)}"
-        } else {
-            "Basal currently at ${fmtBas(currentBasMult)}"
-        }
-
-        val day = nudgeParts.getOrNull(2) ?: d.dayLabel
-        val hour = nudgeParts.getOrNull(3)?.toIntOrNull() ?: d.hour
-        val hourStr = if (d.isMmol) {
-            val ampm = if (hour < 12) "AM" else "PM"
-            val h12  = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-            "$h12:00 $ampm"
-        } else "%02d:00".format(hour)
-
-        val ltDetail = "Historical pattern at $hourStr on ${day}s.\n$isfLine\n$basLine"
+        val ltDetail = "Historical pattern at $hourStr on ${day}s.\n" +
+                       "ISF: ${fmtIsf(ltIsfMult)} ($isfComp)\n" +
+                       "Basal: ${fmtBas(ltBasMult)} ($basComp)"
 
         val longTermPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
-        val ltAction = if (longTermPct > 0) "Reduced insulin" else if (longTermPct < 0) "Increased insulin" else "Neutral"
+        val ltAction = if (longTermPct > 0) "Reduced insulin needs" else if (longTermPct < 0) "Increased insulin needs" else "Neutral"
 
         addRow(c, "Profile updated: $ltAction", ltDetail, Color.WHITE)
 
