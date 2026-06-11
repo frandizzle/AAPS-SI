@@ -317,8 +317,7 @@ class CircadianLearner @Inject constructor(
         // Safety-biased clamp: negative deviation (BG fell MORE than expected -> LESS insulin)
         // may move up to 2.0 (fast retreat); positive deviation (insulin looked weak -> MORE
         // insulin) is capped at 1.0 so a single noisy reading can't push dosing ISF down hard.
-        val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-2.0, 1.0)
-        // dosingISF = profileISF / isfMult
+        val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 0.5)   // was (-2.0, 1.0)        // dosingISF = profileISF / isfMult
         // expectedDelta is negative (BG should fall from insulin)
         // actualDelta - expectedDelta:
         //   BG drops MORE than expected ? deviation negative ? mult DOWN ? dosingISF UP ? less aggressive ?
@@ -1061,7 +1060,7 @@ class CircadianLearner @Inject constructor(
 
     companion object {
         // ISF learner
-        private const val ISF_ALPHA              = 0.08   // slow EWMA — each sample moves ~8%
+        private const val ISF_ALPHA              = 0.04   // slow EWMA — each sample moves ~8%
         private const val ISF_MULT_MIN           = 0.7
         private const val ISF_MULT_MAX           = 1.5
         private const val MIN_ACTIVITY           = 0.005  // min IOB activity to learn from
