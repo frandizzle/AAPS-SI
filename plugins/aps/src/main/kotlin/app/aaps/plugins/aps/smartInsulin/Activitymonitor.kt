@@ -41,9 +41,9 @@ class ActivityMonitor @Inject constructor(
         const val HR_REL_HEAVY_MIN    = 60.0
 
         // Steps thresholds — 5-min window
-        const val STEPS_LIGHT_MIN     = 200
-        const val STEPS_MODERATE_MIN  = 500
-        const val STEPS_HEAVY_MIN     = 900
+        const val STEPS_LIGHT_MIN     = 150
+        const val STEPS_MODERATE_MIN  = 300
+        const val STEPS_HEAVY_MIN     = 600
     }
 
     var avgHrBpm:      Double = 0.0; private set

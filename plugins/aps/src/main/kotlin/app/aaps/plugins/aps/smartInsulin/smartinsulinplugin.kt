@@ -710,7 +710,7 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
             targetRespectEnabled     = true,
-            reboundWindowMins        = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue).toDouble(),
+            reboundWindowMins        = reboundGuardMs / 60_000.0,  // total window incl. rollercoaster extension
             circCeil                 = circadianLearner.aggrCeiling(),
             fuelTrimStrength         = circadianLearner.trimStrength,
             isMmol                   = isMmol
