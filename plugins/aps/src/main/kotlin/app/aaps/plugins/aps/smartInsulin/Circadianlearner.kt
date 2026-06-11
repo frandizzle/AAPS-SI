@@ -604,7 +604,7 @@ class CircadianLearner @Inject constructor(
         // Only overwrite lastBasalSignal if the nudge actually applied — otherwise
         // preserve the drift/negIOB/predTrim signal message set by updateBasalLearner.
         if (!basalPhysicsFired) {
-            lastBasalSignal = "AggrNudge[${if (tooMuch) "?" else "?"}]${if (cooldownActive) "[attenuated]" else ""}: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} ? bas×${"%.3f".format(basalState.get(dow, hour))} isf×${"%.3f".format(isfState.days[d].get(hour))} (h=$hour)"
+            lastBasalSignal = "AggrNudge[${if (tooMuch) "⬇️" else "⬆️"}]${if (cooldownActive) "[attenuated]" else ""}: ceil=${"%.3f".format(aggressiveness)} deviation=${"%.2f".format(deviation)} ? bas×${"%.3f".format(basalState.get(dow, hour))} isf×${"%.3f".format(isfState.days[d].get(hour))} (h=$hour)"
         }
     }
 

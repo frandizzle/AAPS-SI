@@ -630,7 +630,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 stColor    = Color.parseColor("#FFFB8C00")
             }
             d.bgWentLow -> {
-                stHeadline = "⚠️ BG below low guard — Removing insulin"
+                stHeadline = "⚠️ BG below low guard — Reducing insulin"
                 stDetail   = "Waiting for BG to recover above low guard before resuming normal corrections."
                 stColor    = Color.parseColor("#FFE53935")
             }
@@ -642,20 +642,21 @@ class SmartInsulinFragment : DaggerFragment() {
                 val nowIsfMult = d.isfMultiplier
                 val nowBasMult = d.basalMultiplier
 
+                val trimAction = if (isHigh) "Adding insulin" else "Reducing insulin"
                 stHeadline = if (isHigh) "⬆️ Sustained high for ${d.trimMins}m — Adding insulin"
-                             else "⬇️ Sustained low for ${d.trimMins}m — Removing insulin"
-                stDetail   = "BG has been off target for ${d.trimMins}m. $stAction to correct the trend.\n" +
-                             "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
-                             "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}"
+                else "⬇️ Sustained low for ${d.trimMins}m — Reducing insulin"
+                stDetail   = "BG has been off target for ${d.trimMins}m. $trimAction to correct the trend.\n" +
+                    "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
+                    "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}"
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("rollercoaster") == true -> {
-                stHeadline = "⬇️ Rollercoaster detected — Removing insulin"
+                stHeadline = "⬇️ Rollercoaster detected — Reducing insulin"
                 stDetail   = "Detected unstable swings (Rollercoaster #${d.consecutiveRollercoasters}). Capping insulin at ${(d.circCeil * 100).roundToInt()}% to stop the rollercoaster."
                 stColor    = Color.parseColor("#FFFB8C00")
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("soft low") == true -> {
-                stHeadline = "⬇️ Soft low approach — Removing insulin"
+                stHeadline = "⬇️ Soft low approach — Reducing insulin"
                 stDetail   = "BG is falling fast with IOB on board. Reducing insulin to prevent a crash."
                 stColor    = Color.parseColor("#FFFB8C00")
             }
@@ -666,10 +667,11 @@ class SmartInsulinFragment : DaggerFragment() {
                 val sBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 1.0
                 val cBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: 1.0
 
-                stHeadline = if (isHigh) "⬆️ Pattern detected — $stAction" else "⬇️ Pattern detected — $stAction"
+                val nudgeAction = if (isHigh) "Adding insulin" else "Removing insulin"
+                stHeadline = if (isHigh) "⬆️ Pattern detected — $nudgeAction" else "⬇️ Pattern detected — $nudgeAction"
                 stDetail   = "Historical pattern shows you need ${if (isHigh) "more" else "less"} insulin at this hour.\n" +
-                             "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}\n" +
-                             "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}"
+                    "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}\n" +
+                    "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}"
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgePaused -> {
