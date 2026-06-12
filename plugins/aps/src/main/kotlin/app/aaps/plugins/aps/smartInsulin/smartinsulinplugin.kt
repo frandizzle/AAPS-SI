@@ -704,7 +704,14 @@ open class SmartInsulinPlugin @Inject constructor(
             dawnSmbReduction         = sp.getDouble(DoubleKey.ApsSmartInsulinDawnSmbReduction.key, DoubleKey.ApsSmartInsulinDawnSmbReduction.defaultValue),
             bgWentLow                = bgWentLow,
             activityLevel            = activityMonitor.level,
-            activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(spMgdl(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)/18.0),
+            // Activity target keys store mg/dL via SmartInsulinUnitPreference — do NOT use spMgdl()
+            // as its <20.0 heuristic multiplies the mmol defaults (0.5/1.0/1.5) by 18, producing
+            // a ~9-27 mmol offset (the 14.5 mmol target bug). Read raw mg/dL, default also in mg/dL.
+            activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(
+                lightMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue    * 18.0) / 18.0,
+                moderateMmol = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue * 18.0) / 18.0,
+                heavyMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue    * 18.0) / 18.0
+            ),
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
