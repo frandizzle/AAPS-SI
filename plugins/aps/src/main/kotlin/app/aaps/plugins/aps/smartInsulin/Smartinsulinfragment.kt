@@ -580,7 +580,13 @@ class SmartInsulinFragment : DaggerFragment() {
             "Heavy"     -> Color.parseColor("#FFEF6C00")
             else        -> Color.parseColor("#FF888888")
         }
-        addRow(c, "Activity: ${d.activityLevel}", "High activity raises target and pauses learning.", actColor)
+        val activityDetail = buildString {
+            append("Activity: ${d.activityLevel}")
+            if (d.avgHrBpm > 0)  append("  \u2665 ${d.avgHrBpm}bpm")
+            if (d.steps5min > 0) append("  \ud83d\udc63 ${d.steps5min}/5m")
+            if (d.avgHrBpm == 0 && d.steps5min == 0) append("  (no HR/steps data)")
+        }
+        addRow(c, activityDetail, "High activity raises target and pauses learning.", actColor)
 
         if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h", null, Color.parseColor("#FFFB8C00"))
 
