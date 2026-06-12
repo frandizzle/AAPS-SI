@@ -320,7 +320,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     // The plugin passes exactly the right fraction for this cycle —
                     // either the UAM entry fraction or SMB_DELIVERY_FRACTION (0.5).
                     // Use it directly. coerceIn(0.1, 0.9) is the OpenAPS safety cap.
-                    insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 0.9) * dawnFraction * cgmFraction
+                    insulinReq * (uamSmbFraction * aggressiveness).coerceIn(0.1, 1.0) * dawnFraction * cgmFraction
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
