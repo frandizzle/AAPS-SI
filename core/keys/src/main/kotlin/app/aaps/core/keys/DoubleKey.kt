@@ -62,6 +62,11 @@ enum class DoubleKey(
     // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm("si_resting_hr_bpm", 70.0, 50.0, 110.0, defaultedBySM = true),
-    ApsSmartInsulinUamEntrySmbFraction("si_uam_entry_smb_fraction", 0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamEntrySmbFraction           ("si_uam_entry_smb_fraction",            0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinUamEntrySmbFractionBreakfast  ("si_uam_entry_smb_fraction_breakfast",   0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
+    ApsSmartInsulinUamEntrySmbFractionLunch      ("si_uam_entry_smb_fraction_lunch",       0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
+    ApsSmartInsulinUamEntrySmbFractionDinner     ("si_uam_entry_smb_fraction_dinner",      0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamEntrySmbFractionSnack      ("si_uam_entry_smb_fraction_snack",       0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
+    ApsSmartInsulinUamEntrySmbFractionAfternoon  ("si_uam_entry_smb_fraction_afternoon",   0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     // UAM thresholds, ISF overrides, activity targets all in UnitDoubleKey
 }

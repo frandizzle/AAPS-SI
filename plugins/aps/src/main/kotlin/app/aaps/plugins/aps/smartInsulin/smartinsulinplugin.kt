@@ -492,6 +492,15 @@ open class SmartInsulinPlugin @Inject constructor(
         else -> 0.0
     }
 
+    internal fun entrySmbFractionForMode(mode: MealMode): Double = when (mode) {
+        MealMode.UAM_BREAKFAST -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast.key,  DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast.defaultValue)
+        MealMode.UAM_LUNCH     -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch.key,      DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch.defaultValue)
+        MealMode.UAM_DINNER    -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner.key,     DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner.defaultValue)
+        MealMode.UAM_SNACK     -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack.key,      DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack.defaultValue)
+        MealMode.UAM_AFTERNOON -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon.key,  DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon.defaultValue)
+        else                   -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFraction.key,           DoubleKey.ApsSmartInsulinUamEntrySmbFraction.defaultValue)
+    }
+
     override fun invoke(initiator: String, tempBasalFallback: Boolean) {
         val previousAPSResult = lastAPSResult; lastAPSResult = null
         val profile = profileFunction.getProfile() ?: return
@@ -631,7 +640,7 @@ open class SmartInsulinPlugin @Inject constructor(
             uamEntrySmbsDelivered = 0
         }
         val entrySmbCount    = sp.getInt(IntKey.ApsSmartInsulinUamEntrySmbCount.key, IntKey.ApsSmartInsulinUamEntrySmbCount.defaultValue)
-        val entrySmbFraction = sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFraction.key, DoubleKey.ApsSmartInsulinUamEntrySmbFraction.defaultValue)
+        val entrySmbFraction = entrySmbFractionForMode(mealMode)
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else SMB_DELIVERY_FRACTION
 
@@ -704,14 +713,7 @@ open class SmartInsulinPlugin @Inject constructor(
             dawnSmbReduction         = sp.getDouble(DoubleKey.ApsSmartInsulinDawnSmbReduction.key, DoubleKey.ApsSmartInsulinDawnSmbReduction.defaultValue),
             bgWentLow                = bgWentLow,
             activityLevel            = activityMonitor.level,
-            // Activity target keys store mg/dL via SmartInsulinUnitPreference — do NOT use spMgdl()
-            // as its <20.0 heuristic multiplies the mmol defaults (0.5/1.0/1.5) by 18, producing
-            // a ~9-27 mmol offset (the 14.5 mmol target bug). Read raw mg/dL, default also in mg/dL.
-            activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(
-                lightMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue    * 18.0) / 18.0,
-                moderateMmol = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue * 18.0) / 18.0,
-                heavyMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue    * 18.0) / 18.0
-            ),
+            activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(spMgdl(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)/18.0),
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
@@ -916,30 +918,35 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamBreakfastEndHour, null, null, R.string.si_uam_breakfast_end_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamBreakfastDurationMins, null, null, R.string.si_uam_breakfast_duration_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf, profileUtil, sp, null, R.string.si_uam_breakfast_isf_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast, null, R.string.si_uam_entry_smb_fraction_breakfast_title))
                 // Lunch
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamLunchEnabled, null, R.string.si_uam_lunch_enabled_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchStartHour, null, null, R.string.si_uam_lunch_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchEndHour, null, null, R.string.si_uam_lunch_end_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchDurationMins, null, null, R.string.si_uam_lunch_duration_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamLunchIsf, profileUtil, sp, null, R.string.si_uam_lunch_isf_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch, null, R.string.si_uam_entry_smb_fraction_lunch_title))
                 // Dinner
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamDinnerEnabled, null, R.string.si_uam_dinner_enabled_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerStartHour, null, null, R.string.si_uam_dinner_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerEndHour, null, null, R.string.si_uam_dinner_end_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerDurationMins, null, null, R.string.si_uam_dinner_duration_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamDinnerIsf, profileUtil, sp, null, R.string.si_uam_dinner_isf_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner, null, R.string.si_uam_entry_smb_fraction_dinner_title))
                 // Snack
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamSnackEnabled, null, R.string.si_uam_snack_enabled_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackStartHour, null, null, R.string.si_uam_snack_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackEndHour, null, null, R.string.si_uam_snack_end_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackDurationMins, null, null, R.string.si_uam_snack_duration_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamSnackIsf, profileUtil, sp, null, R.string.si_uam_snack_isf_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack, null, R.string.si_uam_entry_smb_fraction_snack_title))
                 // Afternoon
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamAfternoonEnabled, null, R.string.si_uam_afternoon_enabled_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonStartHour, null, null, R.string.si_uam_afternoon_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonEndHour, null, null, R.string.si_uam_afternoon_end_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonDurationMins, null, null, R.string.si_uam_afternoon_duration_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf, profileUtil, sp, null, R.string.si_uam_afternoon_isf_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon, null, R.string.si_uam_entry_smb_fraction_afternoon_title))
                 // Protein/Fat
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamProteinFatEnabled, null, R.string.si_uam_proteinfat_enabled_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDurationMins, null, null, R.string.si_uam_proteinfat_duration_title))
