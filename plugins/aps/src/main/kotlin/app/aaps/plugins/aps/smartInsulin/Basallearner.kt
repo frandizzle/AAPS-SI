@@ -43,11 +43,11 @@ class BasalLearner @Inject constructor(
     init { restoreState() }
     companion object {
         // Gate conditions
-        private const val MIN_MINUTES_NO_BOLUS   = 240.0  // 4h — longer than overnight to catch daytime
+        private const val MIN_MINUTES_NO_BOLUS   = 180.0  // 3h — still safe, more daytime windows
         private const val LOW_BG_GATE_MGDL        = 72.0   // 4.0 mmol
         private const val HIGH_BG_GATE_MGDL       = 162.0  // 9.0 mmol — tighter than overnight gate
         private const val MAX_COB_G               = 5.0
-        private const val MAX_DELTA_MGDL_PER_5MIN = 2.0    // BG must be quiet — <2 mg/dL movement
+        private const val MAX_DELTA_MGDL_PER_5MIN = 3.0    // BG must be reasonably quiet — <3 mg/dL movement
         // Drift calculation
         private const val SAMPLE_WINDOW_MS        = 90 * 60 * 1000L  // 90min rolling window
         private const val MIN_DRIFT_SAMPLES        = 9                // ≥9 readings (~45min)
@@ -56,9 +56,9 @@ class BasalLearner @Inject constructor(
         private const val LEARN_INTERVAL_MS        = 60 * 60 * 1000L // at most once per hour
         // Confidence weights
         private const val WEIGHT_OVERNIGHT         = 1.0   // midnight–6am
-        private const val WEIGHT_DAYTIME           = 0.5   // all other hours
+        private const val WEIGHT_DAYTIME           = 0.7   // all other hours — clean fasting signals deserve more weight
         // EWMA base alpha — multiplied by confidence weight per observation
-        private const val BASE_ALPHA               = 0.1
+        private const val BASE_ALPHA               = 0.15  // was 0.1 — slightly faster convergence
         // Hard limits
         private const val MIN_MULTIPLIER             = 0.7
         private const val MAX_MULTIPLIER             = 1.5

@@ -629,15 +629,31 @@ class SmartInsulinFragment : DaggerFragment() {
         val stAction  = if (shortPct > 0) "Reducing insulin" else if (shortPct < 0) "Adding insulin" else "Neutral"
         val stIcon    = if (shortPct > 0) "⬇️" else if (shortPct < 0) "⬆️" else "⏺"
 
+        // Determine learning pause context so every short-term branch can append it
+        val isMealOrUamActive = d.mealMode != "Fasting" && d.postMealLockoutMins <= 0L
+        val isPostMealLockout = d.mealMode == "Fasting" && d.postMealLockoutMins > 0L
+        val isUamModeActive   = d.mealMode.contains("UAM", ignoreCase = true)
+        val learningPauseNote: String = when {
+            isPostMealLockout ->
+                "\n⏸ ISF/basal learning paused — recent meal (${d.postMealLockoutMins}min left). Only learning DIA/peak."
+            isUamModeActive ->
+                "\n⏸ ISF/basal learning paused — UAM meal mode active (${d.mealMode}). Only learning DIA/peak."
+            isMealOrUamActive ->
+                "\n⏸ ISF/basal learning paused — meal mode active (${d.mealMode}). Only learning DIA/peak."
+            else -> ""
+        }
+
         when {
             d.inReboundWindow -> {
                 stHeadline = "$stIcon Recovering from low — $stAction"
-                stDetail   = "TBR capped at ${(d.aggressiveness * 100).roundToInt()}% of normal to prevent stacking after a low."
+                stDetail   = "TBR capped at ${(d.aggressiveness * 100).roundToInt()}% of normal to prevent stacking after a low." +
+                    learningPauseNote
                 stColor    = Color.parseColor("#FFFB8C00")
             }
             d.bgWentLow -> {
                 stHeadline = "⚠️ BG below low guard — Reducing insulin"
-                stDetail   = "Waiting for BG to recover above low guard before resuming normal corrections."
+                stDetail   = "Waiting for BG to recover above low guard before resuming normal corrections." +
+                    learningPauseNote
                 stColor    = Color.parseColor("#FFE53935")
             }
             nudgeTrim -> {
@@ -653,17 +669,20 @@ class SmartInsulinFragment : DaggerFragment() {
                 else "⬇️ Sustained low for ${d.trimMins}m — Reducing insulin"
                 stDetail   = "BG has been off target for ${d.trimMins}m. $trimAction to correct the trend.\n" +
                     "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
-                    "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}"
+                    "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}" +
+                    learningPauseNote
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("rollercoaster") == true -> {
                 stHeadline = "⬇️ Rollercoaster detected — Reducing insulin"
-                stDetail   = "Detected unstable swings (Rollercoaster #${d.consecutiveRollercoasters}). Capping insulin at ${(d.circCeil * 100).roundToInt()}% to stop the rollercoaster."
+                stDetail   = "Detected unstable swings (Rollercoaster #${d.consecutiveRollercoasters}). Capping insulin at ${(d.circCeil * 100).roundToInt()}% to stop the rollercoaster." +
+                    learningPauseNote
                 stColor    = Color.parseColor("#FFFB8C00")
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("soft low") == true -> {
                 stHeadline = "⬇️ Soft low approach — Reducing insulin"
-                stDetail   = "BG is falling fast with IOB on board. Reducing insulin to prevent a crash."
+                stDetail   = "BG is falling fast with IOB on board. Reducing insulin to prevent a crash." +
+                    learningPauseNote
                 stColor    = Color.parseColor("#FFFB8C00")
             }
             nudgeActive -> {
@@ -677,12 +696,31 @@ class SmartInsulinFragment : DaggerFragment() {
                 stHeadline = if (isHigh) "⬆️ Pattern detected — $nudgeAction" else "⬇️ Pattern detected — $nudgeAction"
                 stDetail   = "Historical pattern shows you need ${if (isHigh) "more" else "less"} insulin at this hour.\n" +
                     "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}\n" +
-                    "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}"
+                    "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}" +
+                    learningPauseNote
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
             nudgePaused -> {
                 stHeadline = "⏸ Paused — ${nudgeParts.getOrNull(1) ?: "Learning suppressed"}"
-                stDetail   = "Short-term adjustments paused while not in a clean fasting state."
+                stDetail   = "Short-term adjustments paused while not in a clean fasting state." +
+                    learningPauseNote
+                stColor    = Color.parseColor("#FF64B5F6")
+            }
+            isMealOrUamActive || isPostMealLockout -> {
+                // No active nudge/trim but learning is paused — show a dedicated paused state
+                stHeadline = when {
+                    isPostMealLockout -> "⏸ Post-meal pause — ${d.postMealLockoutMins}min remaining"
+                    isUamModeActive   -> "⏸ UAM meal mode active — ISF/basal learning paused"
+                    else              -> "⏸ Meal mode active — ISF/basal learning paused"
+                }
+                stDetail   = when {
+                    isPostMealLockout ->
+                        "ISF/basal learning excluded during post-meal window. Only DIA/peak learning active.\nResumes when window clears."
+                    isUamModeActive   ->
+                        "ISF and basal learning paused while ${d.mealMode} is active.\nOnly DIA/peak learning active. Corrections still running normally."
+                    else              ->
+                        "ISF and basal learning paused while ${d.mealMode} is active.\nOnly DIA/peak learning active. Corrections still running normally."
+                }
                 stColor    = Color.parseColor("#FF64B5F6")
             }
             else -> {
