@@ -6,6 +6,7 @@ import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.PreferenceScreen
 import app.aaps.core.data.aps.SMBDefaults
+import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.TE
 import app.aaps.core.data.plugin.PluginType
@@ -664,9 +665,12 @@ open class SmartInsulinPlugin @Inject constructor(
         aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout, now)
         val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling())
 
-        val minsLastBolus = iobArray.firstOrNull()?.lastBolusTime?.let { if (it > 0) (now - it) / 60000.0 else Double.MAX_VALUE } ?: Double.MAX_VALUE
+        // Use last MANUAL bolus only — SMBs fire every 5min during fasting and would permanently
+        // block the basal learner if included. BS.Type.NORMAL = manual/wizard bolus only.
+        val minsLastManualBolus = persistenceLayer.getNewestBolusOfType(BS.Type.NORMAL)
+            ?.let { (now - it.timestamp) / 60000.0 } ?: Double.MAX_VALUE
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue) && mealMode == MealMode.FASTING && !highTempTarget && !(activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout)) {
-            basalLearner.onLoopCycle(glucoseStatus.glucose, glucoseStatus.delta, mealData.mealCOB, minsLastBolus, trueIsfMgdl, profile.getBasal())
+            basalLearner.onLoopCycle(glucoseStatus.glucose, glucoseStatus.delta, mealData.mealCOB, minsLastManualBolus, trueIsfMgdl, profile.getBasal())
         }
         val basalMultiplier = combinedBasalMultiplier()
 

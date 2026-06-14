@@ -85,27 +85,28 @@ class BasalLearner @Inject constructor(
     val reasonSummary: String
         get() = "basal_x%.2f(g=%.2f)".format(Locale.US, multiplierClamped, globalMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER))
     /**
-     * @param bgMgdl         Current BG mg/dL
-     * @param deltaMgdl      5-min BG delta mg/dL
-     * @param cobG           Current COB grams
-     * @param minsLastBolus  Minutes since last bolus
-     * @param isfMgdl        Current ISF mg/dL/U
-     * @param profileBasalU  Profile basal U/hr (before multiplier)
+     * @param bgMgdl              Current BG mg/dL
+     * @param deltaMgdl           5-min BG delta mg/dL
+     * @param cobG                Current COB grams
+     * @param minsLastManualBolus Minutes since last MANUAL bolus (SMBs excluded — they fire
+     *                            constantly during fasting and would permanently block learning)
+     * @param isfMgdl             Current ISF mg/dL/U
+     * @param profileBasalU       Profile basal U/hr (before multiplier)
      */
     fun onLoopCycle(
-        bgMgdl:        Double,
-        deltaMgdl:     Double,
-        cobG:          Double,
-        minsLastBolus: Double,
-        isfMgdl:       Double,
-        profileBasalU: Double
+        bgMgdl:              Double,
+        deltaMgdl:           Double,
+        cobG:                Double,
+        minsLastManualBolus: Double,
+        isfMgdl:             Double,
+        profileBasalU:       Double
     ) {
         val nowMs     = System.currentTimeMillis()
         val hourOfDay = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         pruneWindow(nowMs)
         // ── Gate checks — all must pass to collect a sample ──────────────────
         if (cobG > MAX_COB_G) return
-        if (minsLastBolus < MIN_MINUTES_NO_BOLUS) return
+        if (minsLastManualBolus < MIN_MINUTES_NO_BOLUS) return
         if (bgMgdl < LOW_BG_GATE_MGDL || bgMgdl > HIGH_BG_GATE_MGDL) return
         if (abs(deltaMgdl) > MAX_DELTA_MGDL_PER_5MIN) return
         // Sample passes all gates — collect it
