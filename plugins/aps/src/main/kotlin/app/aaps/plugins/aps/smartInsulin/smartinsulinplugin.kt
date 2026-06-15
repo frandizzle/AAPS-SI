@@ -444,10 +444,10 @@ open class SmartInsulinPlugin @Inject constructor(
         learningDirtyUntilMs = sp.getString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
     }
 
-    private fun spMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
-        val raw = sp.getDouble(key.key, key.defaultValue)
-        return if (raw < mmolThreshold) raw * 18.0 else raw
-    }
+    // All UnitDoubleKey values are stored in mg/dL by SmartInsulinUnitPreference.
+    // defaultValues are already in mg/dL (LowGuard=72, ActivityLightTarget=9 etc)
+    // so no heuristic conversion is needed or correct.
+    private fun spMgdl(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue)
 
     private fun pfIsfMgdl(hour: Int): Double {
         val dayStart      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)

@@ -100,12 +100,12 @@ class UamController @Inject constructor(
     }
 
     // ── Unit conversion helpers ───────────────────────────────────────────────
+    // All UnitDoubleKey values are stored in mg/dL by SmartInsulinUnitPreference.
+    // defaultValues are already in mg/dL, so no heuristic conversion is needed.
+    // mgdlPrefMmol: reads mg/dL pref, returns mmol
+    // unitPrefMmol: alias for clarity at call sites that think in mmol
     private fun mgdlPrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
-    private fun rawMgdl(key: UnitDoubleKey, mmolThreshold: Double = 20.0): Double {
-        val raw = sp.getDouble(key.key, key.defaultValue)
-        return if (raw < mmolThreshold) raw * 18.0 else raw
-    }
-    private fun unitPrefMmol(key: UnitDoubleKey): Double = rawMgdl(key) / 18.0
+    private fun unitPrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
