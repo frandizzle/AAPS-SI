@@ -841,6 +841,7 @@ open class SmartInsulinPlugin @Inject constructor(
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxSmb, null, R.string.si_max_smb_title))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxTbr, null, R.string.si_max_tbr_title))
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinAggressionMax, null, R.string.si_aggression_max_title))
+            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmbMaxIob, dialogMessage = R.string.openapssmb_max_iob_summary, title = R.string.openapssmb_max_iob_title))
 
             // -- Pre-bolus --------------------------------------------------------
             addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxPreBolus, R.string.si_max_prebolus_summary, R.string.si_max_prebolus_title))
