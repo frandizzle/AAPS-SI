@@ -392,9 +392,9 @@ class ActivityTargetOffsetIntegrationTest {
         moderateMgdl: Double = UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.defaultValue,
         heavyMgdl:    Double = UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.defaultValue
     ): Double {
-        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key),    any())).thenReturn(lightMgdl)
-        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key), any())).thenReturn(moderateMgdl)
-        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key),    any())).thenReturn(heavyMgdl)
+        whenever(sp.getDouble(eq<String>(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key),    any())).thenReturn(lightMgdl)
+        whenever(sp.getDouble(eq<String>(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key), any())).thenReturn(moderateMgdl)
+        whenever(sp.getDouble(eq<String>(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key),    any())).thenReturn(heavyMgdl)
         val lightMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityLightTarget.key,    lightMgdl)    / 18.0
         val moderateMmol = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget.key, moderateMgdl) / 18.0
         val heavyMmol    = sp.getDouble(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget.key,    heavyMgdl)    / 18.0
