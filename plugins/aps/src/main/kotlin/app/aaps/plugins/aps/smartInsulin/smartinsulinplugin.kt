@@ -444,10 +444,9 @@ open class SmartInsulinPlugin @Inject constructor(
         learningDirtyUntilMs = sp.getString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
     }
 
-    // All UnitDoubleKey values are stored in mg/dL by SmartInsulinUnitPreference.
-    // defaultValues are already in mg/dL (LowGuard=72, ActivityLightTarget=9 etc)
-    // so no heuristic conversion is needed or correct.
-    private fun spMgdl(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue)
+    // spMgdl and activityOffsetMmol live in SmartInsulinSpReader.kt (same package)
+    // so they can be unit-tested without constructing the full plugin.
+    private fun spMgdl(key: UnitDoubleKey): Double = spMgdl(sp, key)
 
     private fun pfIsfMgdl(hour: Int): Double {
         val dayStart      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)
@@ -717,7 +716,7 @@ open class SmartInsulinPlugin @Inject constructor(
             dawnSmbReduction         = sp.getDouble(DoubleKey.ApsSmartInsulinDawnSmbReduction.key, DoubleKey.ApsSmartInsulinDawnSmbReduction.defaultValue),
             bgWentLow                = bgWentLow,
             activityLevel            = activityMonitor.level,
-            activityTargetOffsetMmol = activityMonitor.targetOffsetMmol(spMgdl(UnitDoubleKey.ApsSmartInsulinActivityLightTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget)/18.0, spMgdl(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget)/18.0),
+            activityTargetOffsetMmol = activityOffsetMmol(sp, activityMonitor),
             cgmSmbFraction           = cgmState.smbFraction,
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
