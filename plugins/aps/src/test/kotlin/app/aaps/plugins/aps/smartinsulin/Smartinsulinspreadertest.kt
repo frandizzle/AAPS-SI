@@ -176,13 +176,15 @@ class SmartInsulinSpReaderTest {
 
     @Test fun `WarnGuard converts correctly to mmol for display (86 mgdl = 4_8 mmol)`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinWarnGuard, 86.0)
-        assertEquals(4.8, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0, 0.01)
+        // 86 / 18 = 4.777... — use tolerance to account for non-terminating decimal
+        assertEquals(4.778, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0, 0.001)
     }
 
     @Test fun `LowGuard user-set 3_9 mmol stored as 70 mgdl passes through correctly`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 70.0)
         assertEquals(70.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard), 0.001)
-        assertEquals(3.9, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0, 0.01)
+        // 70 / 18 = 3.888... — use tolerance to account for non-terminating decimal
+        assertEquals(3.889, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0, 0.001)
     }
 
     @Test fun `LowGuard does NOT get multiplied by 18 (would produce 1296 mgdl — dangerously wrong)`() {
