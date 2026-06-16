@@ -151,4 +151,52 @@ class SmartInsulinSpReaderTest {
         setActivityLevel(ActivityMonitor.ActivityLevel.HEAVY)
         assertEquals(2.0, activityOffsetMmol(sp, monitor), 0.001)
     }
+
+    // ── Guard keys: LowGuard and WarnGuard ───────────────────────────────────
+    // These are critical safety thresholds. They are stored as mg/dL by
+    // SmartInsulinUnitPreference and read via spMgdl() — same path as activity
+    // targets. Confirm they pass through as mg/dL without any conversion.
+
+    @Test fun `LowGuard default 72 mgdl passes through spMgdl unchanged`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 72.0)
+        // Used directly as mg/dL in the plugin — must NOT be multiplied by 18
+        assertEquals(72.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard), 0.001)
+    }
+
+    @Test fun `WarnGuard default 86 mgdl passes through spMgdl unchanged`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinWarnGuard, 86.0)
+        assertEquals(86.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinWarnGuard), 0.001)
+    }
+
+    @Test fun `LowGuard converts correctly to mmol for display (72 mgdl = 4_0 mmol)`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 72.0)
+        // Plugin uses spMgdl(LowGuard) / 18.0 for mmol display
+        assertEquals(4.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0, 0.001)
+    }
+
+    @Test fun `WarnGuard converts correctly to mmol for display (86 mgdl = 4_8 mmol)`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinWarnGuard, 86.0)
+        assertEquals(4.8, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinWarnGuard) / 18.0, 0.01)
+    }
+
+    @Test fun `LowGuard user-set 3_9 mmol stored as 70 mgdl passes through correctly`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 70.0)
+        assertEquals(70.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard), 0.001)
+        assertEquals(3.9, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard) / 18.0, 0.01)
+    }
+
+    @Test fun `LowGuard does NOT get multiplied by 18 (would produce 1296 mgdl — dangerously wrong)`() {
+        setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 72.0)
+        val result = spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard)
+        // If heuristic ran: 72 > 20 so it would pass through anyway — but confirm
+        // a low user value like 54 (3.0 mmol) also isn't corrupted
+        assertTrue(result < 400.0) { "Got $result — heuristic corruption would produce values like 972 mg/dL" }
+    }
+
+    @Test fun `LowGuard small value 54 mgdl (3_0 mmol) is NOT multiplied by 18`() {
+        // 54 mg/dL = 3.0 mmol — a valid low guard value
+        // Old heuristic: 54 > 20 so passes through anyway, but belt-and-braces check
+        setSpValue(UnitDoubleKey.ApsSmartInsulinLowGuard, 54.0)
+        assertEquals(54.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinLowGuard), 0.001)
+    }
 }
