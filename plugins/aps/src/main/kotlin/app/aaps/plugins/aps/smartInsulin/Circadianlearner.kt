@@ -238,7 +238,7 @@ class CircadianLearner @Inject constructor(
 
         // -- 1. ISF learning — skip during CGM warmup (unreliable data) -----
         val isFasting = mealMode == MealMode.FASTING
-        val isfPhysicsFired = if (!suppressAdaptiveLearning)
+        val isfPhysicsFromIsf = if (!suppressAdaptiveLearning)
             updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
@@ -247,8 +247,11 @@ class CircadianLearner @Inject constructor(
         // the aggrNudge is actively calling for more insulin — they measure different
         // horizons and cancel each other when both fire simultaneously.
         val aggrNotEnough = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
-        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness, aggrNotEnough)
+        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness, aggrNotEnough, lowGuardMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
+        // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
+        // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
+        val isfPhysicsFired = isfPhysicsFromIsf || basalPhysicsFired
 
         // -- 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) -
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
@@ -264,7 +267,8 @@ class CircadianLearner @Inject constructor(
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
                                                       bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = nowMs,
                                                       isfPhysicsFired = isfPhysicsFired,
-                                                      basalPhysicsFired = basalPhysicsFired)
+                                                      basalPhysicsFired = basalPhysicsFired,
+                                                      iob = iob)
 
         // Only persist if any EWMA state was actually updated this cycle
         if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr) {
@@ -377,7 +381,8 @@ class CircadianLearner @Inject constructor(
         lowGuardMgdl:      Double  = 90.0,
         now:               Long    = System.currentTimeMillis(),
         isfPhysicsFired:   Boolean = false,
-        basalPhysicsFired: Boolean = false
+        basalPhysicsFired: Boolean = false,
+        iob:               Double  = 0.0
     ) {
         // --- CALCULATE COOLDOWN ONCE AT THE TOP ---
         // This allows both the STFT and the Nudge Learner to share the same blindfold logic
@@ -509,6 +514,21 @@ class CircadianLearner @Inject constructor(
             lastAggrNudgeStatus = "PAUSED|Low Recovery Spike"
         }
 
+        // --- NEGATIVE IOB + AT/BELOW TARGET GUARD ---
+        // When IOB is meaningfully negative AND BG is at or below target, the loop is already
+        // withholding insulin — that IS the correct response. The aggrCeiling history may say
+        // "not enough insulin at this hour" but the live state contradicts it: negative IOB with
+        // BG at/below target means any extra learned insulin would push BG lower, not higher.
+        // Block the notEnough nudge; let the loop handle it and wait for BG to actually rise
+        // before we conclude the profile needs more insulin.
+        if (notEnough && iob < AGGR_NUDGE_NEG_IOB_GATE && bg <= targetMgdl + TRIM_DEAD_BAND_MGDL) {
+            notEnough = false
+            lastAggrNudgeStatus = "PAUSED|NegIOB@target (iob=${"%.2f".format(iob)}U bg=${"%.1f".format(bg)})"
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner aggrNudge[notEnough] blocked — negative IOB with BG at/below target " +
+                                 "(iob=${"%.2f".format(iob)}U bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)})")
+        }
+
         if (!tooMuch && !notEnough) {
             if (!trimActive) lastAggrNudgeStatus = "INACTIVE"
             else lastAggrNudgeStatus = "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
@@ -626,6 +646,11 @@ class CircadianLearner @Inject constructor(
 
     private val basalDriftWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque(BASAL_WINDOW_MAX)
 
+    // Signal 4: sustained below-target + negative IOB window.
+    // Stores (timestampMs, bg) pairs collected only when both conditions are met each cycle.
+    // Window resets on any reading that breaks either condition, preventing stale signal mixing.
+    private val subTargetNegIobWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque(SUB_TARGET_WINDOW_MAX)
+
     private fun updateBasalLearner(
         hour:              Int,
         dow:               Int,
@@ -635,7 +660,8 @@ class CircadianLearner @Inject constructor(
         targetMgdl:        Double,
         inPostMealLockout: Boolean,
         aggressiveness:    Double,
-        aggrNotEnough:     Boolean = false
+        aggrNotEnough:     Boolean = false,
+        lowGuardMgdl:      Double  = 90.0
     ): Boolean {
         var driftFired   = false
         var negIobFired  = false
@@ -746,7 +772,76 @@ class CircadianLearner @Inject constructor(
             }
         }
 
-        return driftFired || negIobFired || predTrimFired
+        // -- Signal 4: Sustained sub-target + negative IOB — ISF and basal too strong -----------
+        // The existing signals have a blind spot: drift shows near-zero (loop zero-temping keeps
+        // BG flat), negIOB fires point-in-time on basal only, and predTrim is a forward projection.
+        // None of them cleanly capture the pattern "I've been sitting below target for 45+ min with
+        // the loop backed off — therefore my ISF and basal are too aggressive."
+        //
+        // This signal requires a sustained window of consistent evidence before moving anything,
+        // so a single dip or brief excursion below target doesn't corrupt the learner.
+        // Both ISF and basal mult are reduced — less aggressive ISF and lower background insulin.
+        //
+        // Mutually exclusive with drift, negIOB, and predTrim (all three are higher-confidence
+        // signals when they fire; this is the fallback for when the loop compensation masks them).
+        var subTargetFired = false
+        val qualifyingCycle = !driftFired && !negIobFired && !predTrimFired &&
+            !inPostMealLockout &&
+            bg >= lowGuardMgdl &&                           // not a hard low — that's handled elsewhere
+            bg < targetMgdl - SUB_TARGET_DEAD_BAND_MGDL && // meaningfully below target, not just touching it
+            basalIob < SUB_TARGET_NEG_IOB_GATE              // loop is actively withholding insulin
+
+        if (qualifyingCycle) {
+            subTargetNegIobWindow.addLast(now to bg)
+        } else {
+            // Any cycle that breaks either condition resets the window — stale signal cleared
+            if (subTargetNegIobWindow.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[subTarget] window reset — condition broke " +
+                                     "(bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} basalIob=${"%.2f".format(basalIob)} " +
+                                     "drift=$driftFired negIob=$negIobFired postMeal=$inPostMealLockout)")
+                subTargetNegIobWindow.clear()
+            }
+        }
+
+        // Prune stale entries regardless
+        while (subTargetNegIobWindow.isNotEmpty() &&
+            now - subTargetNegIobWindow.first().first > SUB_TARGET_WINDOW_MS)
+            subTargetNegIobWindow.removeFirst()
+
+        if (subTargetNegIobWindow.size >= SUB_TARGET_MIN_SAMPLES) {
+            val oldest     = subTargetNegIobWindow.first()
+            val newest     = subTargetNegIobWindow.last()
+            val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
+            if (elapsedHrs >= SUB_TARGET_MIN_ELAPSED_HRS) {
+                val avgBg        = subTargetNegIobWindow.map { it.second }.average()
+                val belowTarget  = targetMgdl - avgBg   // positive: how far below target on average
+                // Scale reduction to how far below target — deeper = stronger signal.
+                // Cap at SUB_TARGET_MAX_ADJUST to stay conservative per firing.
+                val rawAdjust    = (belowTarget / SUB_TARGET_SENSITIVITY).coerceIn(0.0, SUB_TARGET_MAX_ADJUST)
+                val adjustment   = 1.0 - rawAdjust      // <1.0 = reduce multiplier
+
+                val newBasMult   = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                basalState = basalState.updated(dow, hour, newBasMult, BASAL_ALPHA * 0.5)
+
+                // ISF mult DOWN → dosingISF = profileISF / lowerMult → dosingISF UP → less aggressive
+                val newIsfMult   = (isfState.get(dow, hour) * adjustment).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                isfState = isfState.updated(dow, hour, newIsfMult, ISF_ALPHA * 0.5)
+
+                subTargetNegIobWindow.clear()
+                subTargetFired = true
+                lastBasalSignal = "SubTarget: avg ${"%.1f".format(avgBg / 18.0)}mmol < target ${"%.1f".format(targetMgdl / 18.0)}mmol " +
+                    "for ${"%.0f".format(elapsedHrs * 60)}min basalIob<${SUB_TARGET_NEG_IOB_GATE}U " +
+                    "→ bas×${"%.3f".format(basalState.get(dow, hour))} isf×${"%.3f".format(isfState.get(dow, hour))} (h=$hour)"
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[subTarget] h=$hour avgBg=${"%.1f".format(avgBg)} " +
+                                     "target=${"%.1f".format(targetMgdl)} elapsed=${"%.1f".format(elapsedHrs * 60)}min " +
+                                     "rawAdj=${"%.3f".format(rawAdjust)} → bas×${"%.3f".format(basalState.get(dow, hour))} " +
+                                     "isf×${"%.3f".format(isfState.get(dow, hour))}")
+            }
+        }
+
+        return driftFired || negIobFired || predTrimFired || subTargetFired
     }
 
     // -- Predictive basal trim helper -----------------------------------------
@@ -1108,6 +1203,16 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_NEG_IOB_SENSITIVITY = 36.0           // 2 mmol below target ? max adjustment
         private const val BASAL_NEG_IOB_MAX_ADJUST  = 0.10           // cap at 10% reduction per firing
 
+        // Signal 4: sustained sub-target + negative IOB — ISF and basal too strong
+        private const val SUB_TARGET_WINDOW_MS        = 60 * 60_000L  // 60 min collection window
+        private const val SUB_TARGET_WINDOW_MAX        = 20            // ring buffer max (~100 min at 5-min intervals)
+        private const val SUB_TARGET_MIN_SAMPLES       = 9             // ~45 min of consistent signal required
+        private const val SUB_TARGET_MIN_ELAPSED_HRS   = 0.6           // at least 36 min of spread in the window
+        private const val SUB_TARGET_DEAD_BAND_MGDL    = 5.4           // ~0.3 mmol — must be this far below target to qualify
+        private const val SUB_TARGET_NEG_IOB_GATE      = -0.15         // basalIob must be at least this negative (U)
+        private const val SUB_TARGET_SENSITIVITY        = 18.0          // 1 mmol below target → ~5.5% reduction per firing
+        private const val SUB_TARGET_MAX_ADJUST         = 0.08          // cap at 8% reduction per firing
+
         // Acceleration (2nd derivative) control — catches rising/falling curves early
         // before velocity (delta) builds up. Nips the rise before it becomes a correction problem.
         private const val ACCEL_DEAD_BAND_MGDL  = 0.15  // mg/dL change in delta — below this is noise
@@ -1123,6 +1228,7 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
         private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
         private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
+        private const val AGGR_NUDGE_NEG_IOB_GATE = -0.20          // IOB must be less negative than this to block notEnough nudge when at/below target
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
