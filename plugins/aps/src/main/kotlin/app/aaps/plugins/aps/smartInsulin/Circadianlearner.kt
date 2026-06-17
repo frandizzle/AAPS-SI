@@ -247,7 +247,11 @@ class CircadianLearner @Inject constructor(
         // the aggrNudge is actively calling for more insulin — they measure different
         // horizons and cancel each other when both fire simultaneously.
         val aggrNotEnough = !inPostMealLockout && aggressiveness > AGGR_NUDGE_SURPLUS
-        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness, aggrNotEnough, lowGuardMgdl)
+        val basalPhysicsFired = if (!suppressAdaptiveLearning) updateBasalLearner(hour, dow, bg, now, basalIob, targetMgdl, inPostMealLockout, aggressiveness, aggrNotEnough, lowGuardMgdl,
+                                                                                  activity = activity,
+                                                                                  shortAvgDelta = delta,
+                                                                                  profileIsfMgdl = profileIsfMgdl,
+                                                                                  isfLearningActive = isfPhysicsFromIsf)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
         // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
         // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
@@ -661,11 +665,71 @@ class CircadianLearner @Inject constructor(
         inPostMealLockout: Boolean,
         aggressiveness:    Double,
         aggrNotEnough:     Boolean = false,
-        lowGuardMgdl:      Double  = 90.0
+        lowGuardMgdl:      Double  = 90.0,
+        activity:          Double  = 0.0,
+        shortAvgDelta:     Double  = 0.0,
+        profileIsfMgdl:    Double  = 0.0,
+        isfLearningActive: Boolean = false   // true when updateIsfLearner fired this cycle
     ): Boolean {
+        var signal0Fired = false
         var driftFired   = false
         var negIobFired  = false
         var predTrimFired = false
+
+        // -- Signal 0: Per-cycle unexplained-delta basal learning -----------------
+        // Mirror of ISF learning but for basal. During fasting when ISF is NOT learning
+        // (activity below threshold, or negative activity), we instead attribute any BG
+        // movement not explained by current IOB activity to basal error.
+        //
+        // Logic:
+        //   expectedDeltaFromActivity = -activity * profileIsfMgdl * 5  (same as ISF learner)
+        //   unexplainedDelta = actualDelta - expectedDeltaFromActivity
+        //
+        // If IOB activity is near-zero (loop quiet, basal dominant), actualDelta IS the
+        // basal signal. If BG is rising with no IOB effect → basal too low → mult UP.
+        // If BG falling with no IOB effect → basal too high → mult DOWN.
+        //
+        // Gated on:
+        //   - ISF learner did NOT fire this cycle (mutually exclusive — if ISF is learning
+        //     from activity, the same activity explains the delta; no residual for basal)
+        //   - activity below ISF learning threshold (clean basal-dominant window)
+        //   - basalIob near zero (loop not aggressively compensating — would mask signal)
+        //   - BG in a reasonable range (above low guard, below high sanity gate)
+        //   - Not in post-meal lockout
+        if (!isfLearningActive &&
+            !inPostMealLockout &&
+            abs(activity) < MIN_ACTIVITY &&           // same gate that blocks ISF — basal is dominant
+            abs(basalIob) < BASAL_S0_MAX_BASALIOB &&  // loop not aggressively pushing/cutting
+            bg > lowGuardMgdl &&
+            bg < BASAL_S0_HIGH_GATE_MGDL &&
+            profileIsfMgdl > 0.0) {
+
+            // With near-zero activity, expectedDelta ≈ 0. actualDelta is driven by basal.
+            // Positive delta (BG rising) → basal too low → mult UP (more background insulin)
+            // Negative delta (BG falling) → basal too high → mult DOWN (less background insulin)
+            val unexplainedDelta = shortAvgDelta   // activity ≈ 0, so expected ≈ 0
+
+            if (abs(unexplainedDelta) >= BASAL_S0_MIN_DELTA_MGDL) {
+                // Normalise to a fractional adjustment, same clamp philosophy as ISF:
+                // allow faster retreat (negative, BG falling too much) than advance (BG rising).
+                val normAdj = (unexplainedDelta / BASAL_S0_SENSITIVITY).coerceIn(-1.0, 0.5)
+                val newMult = (basalState.get(dow, hour) + normAdj).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+
+                val conf  = basalState.getConfidence(dow, hour)
+                val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
+
+                basalState = basalState.updated(dow, hour, newMult, alpha)
+                signal0Fired = true
+                lastBasalSignal = "CyclicDelta: Δ=${"%.2f".format(unexplainedDelta)} normAdj=${"%.3f".format(normAdj)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[S0] h=$hour delta=${"%.2f".format(unexplainedDelta)} " +
+                                     "normAdj=${"%.3f".format(normAdj)} activity=${"%.5f".format(activity)} " +
+                                     "basalIob=${"%.2f".format(basalIob)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+            } else {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[S0] skip: delta=${"%.2f".format(unexplainedDelta)} < $BASAL_S0_MIN_DELTA_MGDL noise gate")
+            }
+        }
 
         // -- Signal 1: Drift-based learning -----------------------------------
         // Measures sustained BG drift during quiet fasting — if BG is drifting up
@@ -841,7 +905,7 @@ class CircadianLearner @Inject constructor(
             }
         }
 
-        return driftFired || negIobFired || predTrimFired || subTargetFired
+        return signal0Fired || driftFired || negIobFired || predTrimFired || subTargetFired
     }
 
     // -- Predictive basal trim helper -----------------------------------------
@@ -1187,6 +1251,15 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift ? 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
+
+        // Signal 0: per-cycle unexplained-delta basal learning
+        // Fires when ISF is NOT learning (activity < MIN_ACTIVITY) so they're mutually exclusive.
+        // With near-zero IOB activity, BG delta is driven by basal — use it directly.
+        // Same philosophy as ISF learning but for background insulin.
+        private const val BASAL_S0_MAX_BASALIOB    = 0.20   // basalIob within ±0.20U — loop not aggressively compensating
+        private const val BASAL_S0_HIGH_GATE_MGDL  = 180.0  // don't learn above 10 mmol — likely post-meal contamination
+        private const val BASAL_S0_MIN_DELTA_MGDL  = 1.0    // noise gate — same as ISF MIN_EXPECTED_DELTA_MGDL
+        private const val BASAL_S0_SENSITIVITY     = 5.0    // 5 mg/dL/5min unexplained delta → ~1.0 full mult adjustment
 
         // Predictive basal trim — forward-projects BG using current drift rate
         // and pre-emptively adjusts basal multiplier if projection is off target.
