@@ -784,6 +784,7 @@ class SmartInsulinFragment : DaggerFragment() {
             addRow(c, "Acceleration (2nd derivative)", d.lastAccelDebug.ifEmpty { "(no data)" })
             addRow(c, "Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
             addRow(c, "Last basal signal", d.lastBasalSignal.ifEmpty { "(no data)" })
+            addRow(c, "Cycle summary (live)", d.lastCycleSummary.ifEmpty { "(no data)" })
         }
     }
 

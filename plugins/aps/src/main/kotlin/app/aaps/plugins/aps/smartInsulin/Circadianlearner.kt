@@ -66,6 +66,11 @@ class CircadianLearner @Inject constructor(
     var lastPredTrimDebug: String = "No data"
         private set
 
+    // Consolidated per-cycle diagnostic summary — shown in-app via Fragment debug
+    // section instead of logcat, since logcat isn't practically viewable on-device.
+    var lastCycleSummary: String = "No cycle data yet"
+        private set
+
     // Tracks when the last aggressiveness penalty fired (rollercoaster or soft-low).
     // Used by applyAggrNudge to attenuate nudge strength during the cooldown window.
     private var lastPenaltyMs: Long = 0L
@@ -195,7 +200,18 @@ class CircadianLearner @Inject constructor(
             previousMealModeForDrift = mealMode
         }
 
-        if (skipReason != null) return
+        if (skipReason != null) {
+            // Still emit the summary line on skip cycles so the log has no gaps —
+            // this is exactly the window (post-meal, P/F) where most contradictions
+            // in mult direction turned out to originate from a PRIOR cycle's write
+            // being misread as "from this moment" in the UI's was/now comparison.
+            lastCycleSummary =
+                "h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
+                    "mode=$mealMode cob=${"%.1f".format(cobG)}\nSKIPPED ($skipReason) — no writes this cycle\n" +
+                    "ISF×${"%.3f".format(isfMultiplier(hour))} basal×${"%.3f".format(basalMultiplier(hour))} aggrCeil=${"%.3f".format(aggrCeiling(hour))}"
+            aapsLogger.debug(LTag.APS, "CircadianLearner SUMMARY ${lastCycleSummary.replace("\n", " | ")}")
+            return
+        }
 
         // Clear trim history if BG crosses below low guard
         if (bg < lowGuardMgdl) {
@@ -273,6 +289,49 @@ class CircadianLearner @Inject constructor(
                                                       isfPhysicsFired = isfPhysicsFired,
                                                       basalPhysicsFired = basalPhysicsFired,
                                                       iob = iob)
+
+        // -- CYCLE SUMMARY — single consolidated string, every cycle -------------
+        // Purpose: make "why did this number move" answerable from one place
+        // instead of re-deriving signal interactions from source. Captures:
+        //   - net mult change this cycle for the CURRENT hour bucket (ISF, basal, aggrCeil)
+        //   - which writer(s) actually fired (vs just ran and no-op'd)
+        //   - the live diagnostic strings each signal already maintains
+        // direction tag: UP = more aggressive/more insulin, DOWN = less aggressive/less insulin
+        // (UP for ISF mult specifically means dosingISF goes DOWN — smaller mmol — more insulin)
+        // Stored in lastCycleSummary (multi-line, on-device viewable via Fragment debug
+        // section) and also mirrored to logcat as a single line for anyone who does have
+        // log access.
+        run {
+            val isfBefore   = prevIsf.get(dow, hour)
+            val isfAfter    = isfState.get(dow, hour)
+            val basBefore   = prevBasal.get(dow, hour)
+            val basAfter    = basalState.get(dow, hour)
+            val ceilBefore  = prevAggr.get(dow, hour)
+            val ceilAfter   = aggrState.get(dow, hour)
+
+            fun dirTag(before: Double, after: Double): String = when {
+                after > before + 1e-6 -> "UP"
+                after < before - 1e-6 -> "DOWN"
+                else                  -> "—"
+            }
+
+            lastCycleSummary =
+                "h=$hour dow=${DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0,6)]} " +
+                    "bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} delta=${"%.2f".format(delta)}\n" +
+                    "iob=${"%.2f".format(iob)} basalIob=${"%.2f".format(basalIob)} activity=${"%.4f".format(activity)} " +
+                    "postMeal=$inPostMealLockout mode=$mealMode\n" +
+                    "ISF mult ${"%.3f".format(isfBefore)}→${"%.3f".format(isfAfter)} [${dirTag(isfBefore, isfAfter)}] " +
+                    "(fired=$isfPhysicsFromIsf)\n" +
+                    "BASAL mult ${"%.3f".format(basBefore)}→${"%.3f".format(basAfter)} [${dirTag(basBefore, basAfter)}] " +
+                    "(fired=$basalPhysicsFired)\n" +
+                    "CEIL ${"%.3f".format(ceilBefore)}→${"%.3f".format(ceilAfter)} [${dirTag(ceilBefore, ceilAfter)}] " +
+                    "(notEnough=$aggrNotEnough)\n" +
+                    "basalSignal: $lastBasalSignal\n" +
+                    "aggrNudge: $lastAggrNudgeStatus\n" +
+                    "predTrim: $lastPredTrimDebug"
+
+            aapsLogger.debug(LTag.APS, "CircadianLearner SUMMARY ${lastCycleSummary.replace("\n", " | ")}")
+        }
 
         // Only persist if any EWMA state was actually updated this cycle
         if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr) {
