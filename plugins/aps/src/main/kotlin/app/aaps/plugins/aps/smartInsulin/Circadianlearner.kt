@@ -195,21 +195,7 @@ class CircadianLearner @Inject constructor(
             previousMealModeForDrift = mealMode
         }
 
-        if (skipReason != null) {
-            // If we're skipping due to non-fasting mode, reset the trim timer.
-            // trimMins is wall-clock based (now - trimStartMs) so it accumulates through
-            // P/F, meal, and any other non-fasting mode if we don't clear it here.
-            // "Sustained high for Xm" should only count fasting time when the learner
-            // is actually active — not total elapsed time since trim first fired.
-            if (mealMode != MealMode.FASTING && trimActive) {
-                trimActive    = false
-                trimStrength  = 0.0
-                trimDirection = 0
-                trimStartMs   = 0L
-                aapsLogger.debug(LTag.APS, "CircadianLearner: trim reset on mode=$mealMode — timer only counts fasting time")
-            }
-            return
-        }
+        if (skipReason != null) return
 
         // Clear trim history if BG crosses below low guard
         if (bg < lowGuardMgdl) {
@@ -265,7 +251,8 @@ class CircadianLearner @Inject constructor(
                                                                                   activity = activity,
                                                                                   shortAvgDelta = delta,
                                                                                   profileIsfMgdl = profileIsfMgdl,
-                                                                                  isfLearningActive = isfPhysicsFromIsf)
+                                                                                  isfLearningActive = isfPhysicsFromIsf,
+                                                                                  totalIob = iob)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
         // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
         // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
@@ -683,7 +670,8 @@ class CircadianLearner @Inject constructor(
         activity:          Double  = 0.0,
         shortAvgDelta:     Double  = 0.0,
         profileIsfMgdl:    Double  = 0.0,
-        isfLearningActive: Boolean = false   // true when updateIsfLearner fired this cycle
+        isfLearningActive: Boolean = false,  // true when updateIsfLearner fired this cycle
+        totalIob:          Double  = 0.0     // total IOB (bolus + basal) — used to gate Signal 1
     ): Boolean {
         var signal0Fired = false
         var driftFired   = false
@@ -748,7 +736,21 @@ class CircadianLearner @Inject constructor(
         // -- Signal 1: Drift-based learning -----------------------------------
         // Measures sustained BG drift during quiet fasting — if BG is drifting up
         // or down over 60+ min despite the loop, profile basal is wrong.
-        basalDriftWindow.addLast(now to bg)
+        // IOB gate: only collect samples when IOB is low enough that the drift is
+        // genuinely basal-driven, not bolus-tail driven. High IOB pulling BG down
+        // looks exactly like "basal too high" drift — and it's not.
+        if (totalIob < BASAL_DRIFT_MAX_IOB) {
+            basalDriftWindow.addLast(now to bg)
+        } else {
+            // IOB too high — don't add this sample. Also clear the window if it
+            // already has samples, since they may have been collected when IOB was
+            // lower and mixing them with the current IOB state gives a corrupted signal.
+            if (basalDriftWindow.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[drift] skip sample: totalIob=${"%.2f".format(totalIob)}U > $BASAL_DRIFT_MAX_IOB gate — clearing window")
+                basalDriftWindow.clear()
+            }
+        }
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
@@ -1265,6 +1267,7 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift ? 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
+        private const val BASAL_DRIFT_MAX_IOB      = 0.5            // skip drift sample if total IOB > 0.5U — bolus tail contaminates signal
 
         // Signal 0: per-cycle unexplained-delta basal learning
         // Fires when ISF is NOT learning (activity < MIN_ACTIVITY) so they're mutually exclusive.
