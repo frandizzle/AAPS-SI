@@ -195,7 +195,21 @@ class CircadianLearner @Inject constructor(
             previousMealModeForDrift = mealMode
         }
 
-        if (skipReason != null) return
+        if (skipReason != null) {
+            // If we're skipping due to non-fasting mode, reset the trim timer.
+            // trimMins is wall-clock based (now - trimStartMs) so it accumulates through
+            // P/F, meal, and any other non-fasting mode if we don't clear it here.
+            // "Sustained high for Xm" should only count fasting time when the learner
+            // is actually active — not total elapsed time since trim first fired.
+            if (mealMode != MealMode.FASTING && trimActive) {
+                trimActive    = false
+                trimStrength  = 0.0
+                trimDirection = 0
+                trimStartMs   = 0L
+                aapsLogger.debug(LTag.APS, "CircadianLearner: trim reset on mode=$mealMode — timer only counts fasting time")
+            }
+            return
+        }
 
         // Clear trim history if BG crosses below low guard
         if (bg < lowGuardMgdl) {
