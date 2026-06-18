@@ -239,7 +239,7 @@ class CircadianLearner @Inject constructor(
         // -- 1. ISF learning — skip during CGM warmup (unreliable data) -----
         val isFasting = mealMode == MealMode.FASTING
         val isfPhysicsFromIsf = if (!suppressAdaptiveLearning)
-            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl)
+            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, targetMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
         // -- 2. Basal learning — skip during CGM warmup -----------------------
@@ -251,8 +251,7 @@ class CircadianLearner @Inject constructor(
                                                                                   activity = activity,
                                                                                   shortAvgDelta = delta,
                                                                                   profileIsfMgdl = profileIsfMgdl,
-                                                                                  isfLearningActive = isfPhysicsFromIsf,
-                                                                                  totalIob = iob)
+                                                                                  isfLearningActive = isfPhysicsFromIsf)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
         // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
         // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
@@ -293,7 +292,8 @@ class CircadianLearner @Inject constructor(
         isFasting:         Boolean,
         aggressiveness:    Double,
         bg:                Double  = 0.0,
-        lowGuardMgdl:      Double  = 90.0
+        lowGuardMgdl:      Double  = 90.0,
+        targetMgdl:        Double  = 99.0
     ): Boolean {
         // Only train ISF from clean fasting signal — meal/UAM/P/F BG changes are food-driven
         if (!isFasting || inPostMealLockout) {
@@ -330,11 +330,25 @@ class CircadianLearner @Inject constructor(
         // Safety-biased clamp: negative deviation (BG fell MORE than expected -> LESS insulin)
         // may move up to 2.0 (fast retreat); positive deviation (insulin looked weak -> MORE
         // insulin) is capped at 1.0 so a single noisy reading can't push dosing ISF down hard.
-        val normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 0.5)   // was (-2.0, 1.0)        // dosingISF = profileISF / isfMult
+        var normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 0.5)   // was (-2.0, 1.0)        // dosingISF = profileISF / isfMult
         // expectedDelta is negative (BG should fall from insulin)
         // actualDelta - expectedDelta:
         //   BG drops MORE than expected ? deviation negative ? mult DOWN ? dosingISF UP ? less aggressive ?
         //   BG drops LESS than expected (insulin weaker) ? deviation positive ? mult UP ? dosingISF DOWN ? more aggressive ?
+
+        // --- BELOW-TARGET GUARD ---
+        // The deviation calc above only compares actual vs IOB-predicted delta — it has no
+        // awareness of where BG actually sits. During a sustained low with decaying IOB tail,
+        // BG can flatten out (stop falling) while activity is still positive. That reads as
+        // "insulin weaker than expected" (positive deviation) and would push mult UP (more
+        // aggressive) — exactly backwards when BG is already below target. Block ONLY the
+        // up-direction in that case; the down-direction (less aggressive) stays available
+        // since reducing aggressiveness while low is always safe.
+        if (normDeviation > 0.0 && bg < targetMgdl) {
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner ISF: blocked positive normDev=${"%.2f".format(normDeviation)} — bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)}, would increase aggressiveness while low")
+            normDeviation = 0.0
+        }
         val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
         // Confidence-weighted learning speed:
@@ -670,8 +684,7 @@ class CircadianLearner @Inject constructor(
         activity:          Double  = 0.0,
         shortAvgDelta:     Double  = 0.0,
         profileIsfMgdl:    Double  = 0.0,
-        isfLearningActive: Boolean = false,  // true when updateIsfLearner fired this cycle
-        totalIob:          Double  = 0.0     // total IOB (bolus + basal) — used to gate Signal 1
+        isfLearningActive: Boolean = false   // true when updateIsfLearner fired this cycle
     ): Boolean {
         var signal0Fired = false
         var driftFired   = false
@@ -736,21 +749,7 @@ class CircadianLearner @Inject constructor(
         // -- Signal 1: Drift-based learning -----------------------------------
         // Measures sustained BG drift during quiet fasting — if BG is drifting up
         // or down over 60+ min despite the loop, profile basal is wrong.
-        // IOB gate: only collect samples when IOB is low enough that the drift is
-        // genuinely basal-driven, not bolus-tail driven. High IOB pulling BG down
-        // looks exactly like "basal too high" drift — and it's not.
-        if (totalIob < BASAL_DRIFT_MAX_IOB) {
-            basalDriftWindow.addLast(now to bg)
-        } else {
-            // IOB too high — don't add this sample. Also clear the window if it
-            // already has samples, since they may have been collected when IOB was
-            // lower and mixing them with the current IOB state gives a corrupted signal.
-            if (basalDriftWindow.isNotEmpty()) {
-                aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner Basal[drift] skip sample: totalIob=${"%.2f".format(totalIob)}U > $BASAL_DRIFT_MAX_IOB gate — clearing window")
-                basalDriftWindow.clear()
-            }
-        }
+        basalDriftWindow.addLast(now to bg)
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
@@ -1267,7 +1266,6 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift ? 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
-        private const val BASAL_DRIFT_MAX_IOB      = 0.5            // skip drift sample if total IOB > 0.5U — bolus tail contaminates signal
 
         // Signal 0: per-cycle unexplained-delta basal learning
         // Fires when ISF is NOT learning (activity < MIN_ACTIVITY) so they're mutually exclusive.
