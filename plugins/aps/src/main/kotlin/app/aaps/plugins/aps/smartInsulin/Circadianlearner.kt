@@ -1150,7 +1150,16 @@ class CircadianLearner @Inject constructor(
         }
 
         // -- Recovery signal: good outcome ------------------------------------
-        val stableNearTarget = abs(bg - targetMgdl) < STABLE_BAND_MGDL && abs(delta) < STABLE_DELTA_MGDL
+        // BUG FIX: stableNearTarget previously used a symmetric ±18mg/dL (±1mmol) band,
+        // which let it fire when BG was BELOW target (e.g. bg=89, target=99 — 10mg/dL low,
+        // well within the symmetric band, flagged "stable"). Recovering the ceiling means
+        // becoming MORE aggressive — that should only happen when BG is stable AT OR ABOVE
+        // target, never when it's stable-but-low. A loop sitting quietly below target with
+        // basal backed off is not evidence the ceiling was too conservative; it's evidence
+        // the current (suppressed) ceiling is appropriate or even still slightly too high.
+        val stableNearTarget = bg >= targetMgdl - STABLE_RECOVERY_LOW_TOLERANCE_MGDL &&
+            bg - targetMgdl < STABLE_BAND_MGDL &&
+            abs(delta) < STABLE_DELTA_MGDL
         if (stableNearTarget && currentCeil < 1.0) {
             val recovered = (currentCeil + AGGR_RECOVERY_STEP).coerceAtMost(AGGR_CEIL_MAX)
             aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
@@ -1432,6 +1441,7 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_CEIL_MAX         = 1.20
         private const val STABLE_BAND_MGDL      = 18.0   // ±1 mmol = stable
         private const val STABLE_DELTA_MGDL     = 1.5    // mg/dL per 5min = flat
+        private const val STABLE_RECOVERY_LOW_TOLERANCE_MGDL = 3.6  // ~0.2 mmol grace below target — noise tolerance only, not a real "below target" allowance
         private const val SOFT_LOW_DELTA_MGDL   = -1.5   // falling at least this fast (mg/dL per 5min)
         private const val SOFT_LOW_APPROACH_MGDL = 18.0  // ~1 mmol above low guard — approaching but not yet below
         private const val SOFT_LOW_MIN_IOB      = 0.3    // must have meaningful IOB
