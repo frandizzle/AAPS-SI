@@ -267,7 +267,8 @@ class CircadianLearner @Inject constructor(
                                                                                   activity = activity,
                                                                                   shortAvgDelta = delta,
                                                                                   profileIsfMgdl = profileIsfMgdl,
-                                                                                  isfLearningActive = isfPhysicsFromIsf)
+                                                                                  isfLearningActive = isfPhysicsFromIsf,
+                                                                                  totalIob = iob)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
         // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
         // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
@@ -743,7 +744,10 @@ class CircadianLearner @Inject constructor(
         activity:          Double  = 0.0,
         shortAvgDelta:     Double  = 0.0,
         profileIsfMgdl:    Double  = 0.0,
-        isfLearningActive: Boolean = false   // true when updateIsfLearner fired this cycle
+        isfLearningActive: Boolean = false,  // true when updateIsfLearner fired this cycle
+        totalIob:          Double  = 0.0     // total IOB (basal + SMB) — the loop is SMB-based, so
+        // basalIob alone misses SMB tails; use this for "is the
+        // loop currently doing meaningful work" gates
     ): Boolean {
         var signal0Fired = false
         var driftFired   = false
@@ -767,13 +771,16 @@ class CircadianLearner @Inject constructor(
         //   - ISF learner did NOT fire this cycle (mutually exclusive — if ISF is learning
         //     from activity, the same activity explains the delta; no residual for basal)
         //   - activity below ISF learning threshold (clean basal-dominant window)
-        //   - basalIob near zero (loop not aggressively compensating — would mask signal)
+        //   - total IOB near zero (loop not aggressively compensating via basal OR SMB —
+        //     basalIob alone is unreliable here: this is an SMB-based loop, so a zero-temp
+        //     following an SMB shows up as deeply negative basalIob even while the SMB
+        //     itself is still active and doing the real work. Total iob captures both.)
         //   - BG in a reasonable range (above low guard, below high sanity gate)
         //   - Not in post-meal lockout
         if (!isfLearningActive &&
             !inPostMealLockout &&
             abs(activity) < MIN_ACTIVITY &&           // same gate that blocks ISF — basal is dominant
-            abs(basalIob) < BASAL_S0_MAX_BASALIOB &&  // loop not aggressively pushing/cutting
+            abs(totalIob) < BASAL_S0_MAX_BASALIOB &&  // total IOB (basal+SMB) near zero — clean basal-only window
             bg > lowGuardMgdl &&
             bg < BASAL_S0_HIGH_GATE_MGDL &&
             profileIsfMgdl > 0.0) {
@@ -798,7 +805,7 @@ class CircadianLearner @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] h=$hour delta=${"%.2f".format(unexplainedDelta)} " +
                                      "normAdj=${"%.3f".format(normAdj)} activity=${"%.5f".format(activity)} " +
-                                     "basalIob=${"%.2f".format(basalIob)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                                     "totalIob=${"%.2f".format(totalIob)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
             } else {
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] skip: delta=${"%.2f".format(unexplainedDelta)} < $BASAL_S0_MIN_DELTA_MGDL noise gate")
@@ -808,7 +815,25 @@ class CircadianLearner @Inject constructor(
         // -- Signal 1: Drift-based learning -----------------------------------
         // Measures sustained BG drift during quiet fasting — if BG is drifting up
         // or down over 60+ min despite the loop, profile basal is wrong.
-        basalDriftWindow.addLast(now to bg)
+        //
+        // IOB gate: this window feeds BOTH Signal 1 (drift) and Signal 3 (predTrim) —
+        // fixing it here protects both at once. Only collect samples when totalIob is
+        // low enough that the drift is genuinely basal-driven, not an SMB tail. This is
+        // an SMB-based loop: a bolus tail decaying looks exactly like "basal too high"
+        // drift, and projecting 60 min ahead from a contaminated window (predTrim) would
+        // compound the error rather than just mis-firing once.
+        if (totalIob < BASAL_DRIFT_MAX_IOB) {
+            basalDriftWindow.addLast(now to bg)
+        } else {
+            // totalIob too high — don't add this sample. Clear the window if it already
+            // has samples, since mixing pre-SMB and during-SMB readings corrupts both the
+            // drift slope and the predTrim projection.
+            if (basalDriftWindow.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[drift] skip sample: totalIob=${"%.2f".format(totalIob)}U > $BASAL_DRIFT_MAX_IOB gate — clearing window (protects drift + predTrim)")
+                basalDriftWindow.clear()
+            }
+        }
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
@@ -852,12 +877,20 @@ class CircadianLearner @Inject constructor(
         // When the loop has been consistently zero-temping (negative basalIob) to hold BG
         // below target during fasting, drift shows near-zero because the loop is compensating —
         // but profile basal is genuinely too high. This signal catches that blind spot.
+        //
+        // SMB CAVEAT: this is an SMB-based loop. A zero-temp following an SMB shows up as
+        // deeply negative basalIob even when the SMB (not excess basal) is what's actually
+        // suppressing BG. basalIob alone can't tell the two apart. Require totalIob to also
+        // be low/negative — if there's a meaningful positive total IOB, an SMB tail is still
+        // active and is the more likely explanation; don't blame basal for what the SMB did.
+        //
         // Mutually exclusive with drift — if drift fired this cycle, skip negIOB.
         // Not active during post-meal lockout — negative IOB could be meal bolus tail.
         if (!driftFired &&
             !inPostMealLockout &&
             bg < targetMgdl &&
             basalIob < BASAL_NEG_IOB_THRESHOLD &&
+            totalIob < BASAL_NEG_IOB_TOTAL_GATE &&   // no active SMB tail explaining the suppression
             basalDriftWindow.size >= BASAL_NEG_IOB_MIN_SAMPLES) {
 
             val belowTargetMgdl = targetMgdl - bg
@@ -865,10 +898,10 @@ class CircadianLearner @Inject constructor(
             val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
             basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
             negIobFired = true
-            lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+            lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U totalIOB=${"%.2f".format(totalIob)}U ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[negIOB] h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
-                                 "basalIob=${"%.2f".format(basalIob)} belowTarget=${"%.1f".format(belowTargetMgdl)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
+                                 "basalIob=${"%.2f".format(basalIob)} totalIob=${"%.2f".format(totalIob)} belowTarget=${"%.1f".format(belowTargetMgdl)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
         }
 
         // -- Signal 3: Predictive basal trim (feed-forward) -------------------
@@ -916,6 +949,11 @@ class CircadianLearner @Inject constructor(
         // None of them cleanly capture the pattern "I've been sitting below target for 45+ min with
         // the loop backed off — therefore my ISF and basal are too aggressive."
         //
+        // SMB CAVEAT: basalIob alone can't distinguish "basal genuinely too strong" from "an SMB
+        // is still active and the zero-temp afterward is just bookkeeping." If totalIob is still
+        // meaningfully positive, an SMB tail is the more likely explanation for sub-target BG —
+        // require totalIob to also be low/negative before concluding ISF/basal need weakening.
+        //
         // This signal requires a sustained window of consistent evidence before moving anything,
         // so a single dip or brief excursion below target doesn't corrupt the learner.
         // Both ISF and basal mult are reduced — less aggressive ISF and lower background insulin.
@@ -927,7 +965,8 @@ class CircadianLearner @Inject constructor(
             !inPostMealLockout &&
             bg >= lowGuardMgdl &&                           // not a hard low — that's handled elsewhere
             bg < targetMgdl - SUB_TARGET_DEAD_BAND_MGDL && // meaningfully below target, not just touching it
-            basalIob < SUB_TARGET_NEG_IOB_GATE              // loop is actively withholding insulin
+            basalIob < SUB_TARGET_NEG_IOB_GATE &&           // loop is actively withholding basal
+            totalIob < SUB_TARGET_TOTAL_IOB_GATE            // no active SMB tail explaining the sub-target BG
 
         if (qualifyingCycle) {
             subTargetNegIobWindow.addLast(now to bg)
@@ -937,7 +976,7 @@ class CircadianLearner @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[subTarget] window reset — condition broke " +
                                      "(bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} basalIob=${"%.2f".format(basalIob)} " +
-                                     "drift=$driftFired negIob=$negIobFired postMeal=$inPostMealLockout)")
+                                     "totalIob=${"%.2f".format(totalIob)} drift=$driftFired negIob=$negIobFired postMeal=$inPostMealLockout)")
                 subTargetNegIobWindow.clear()
             }
         }
@@ -1325,6 +1364,7 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift ? 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
+        private const val BASAL_DRIFT_MAX_IOB      = 0.5            // skip drift/predTrim sample if totalIob > 0.5U — SMB tail contaminates signal
 
         // Signal 0: per-cycle unexplained-delta basal learning
         // Fires when ISF is NOT learning (activity < MIN_ACTIVITY) so they're mutually exclusive.
@@ -1346,6 +1386,7 @@ class CircadianLearner @Inject constructor(
 
         // Negative IOB compensation signal
         private const val BASAL_NEG_IOB_THRESHOLD   = -0.15          // basalIob must be at least this negative (U)
+        private const val BASAL_NEG_IOB_TOTAL_GATE  = 0.30           // totalIob must be below this — rules out active SMB tail
         private const val BASAL_NEG_IOB_MIN_SAMPLES = 6              // ~30 min of consistent signal before acting
         private const val BASAL_NEG_IOB_SENSITIVITY = 36.0           // 2 mmol below target ? max adjustment
         private const val BASAL_NEG_IOB_MAX_ADJUST  = 0.10           // cap at 10% reduction per firing
@@ -1357,6 +1398,7 @@ class CircadianLearner @Inject constructor(
         private const val SUB_TARGET_MIN_ELAPSED_HRS   = 0.6           // at least 36 min of spread in the window
         private const val SUB_TARGET_DEAD_BAND_MGDL    = 5.4           // ~0.3 mmol — must be this far below target to qualify
         private const val SUB_TARGET_NEG_IOB_GATE      = -0.15         // basalIob must be at least this negative (U)
+        private const val SUB_TARGET_TOTAL_IOB_GATE    = 0.30          // totalIob must be below this — rules out active SMB tail
         private const val SUB_TARGET_SENSITIVITY        = 18.0          // 1 mmol below target → ~5.5% reduction per firing
         private const val SUB_TARGET_MAX_ADJUST         = 0.08          // cap at 8% reduction per firing
 
