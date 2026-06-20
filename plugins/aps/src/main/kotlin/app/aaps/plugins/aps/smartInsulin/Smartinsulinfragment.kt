@@ -690,7 +690,13 @@ class SmartInsulinFragment : DaggerFragment() {
                 val sIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull() ?: 1.0
                 val cIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: 1.0
                 val sBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 1.0
-                val cBasMult = nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: 1.0
+                // cBasMult previously came straight from the raw aggrNudge debug string, which
+                // only carries CircadianLearner's OWN per-hour multiplier — not the combined
+                // (flat BasalLearner × circadian) multiplier actually delivered. That caused the
+                // "now" basal U/h shown here to disagree with the per-hour table (which correctly
+                // uses combinedBasalMultiplier via d.basalMultiplier). Use d.basalMultiplier instead
+                // so this card matches what's actually delivered and what the table shows.
+                val cBasMult = d.basalMultiplier
 
                 val nudgeAction = if (isHigh) "Adding insulin" else "Removing insulin"
                 stHeadline = if (isHigh) "⬆️ Pattern detected — $nudgeAction" else "⬇️ Pattern detected — $nudgeAction"
@@ -735,9 +741,14 @@ class SmartInsulinFragment : DaggerFragment() {
         addDivider(c)
         addSectionHeader(c, "Long-term learning")
 
-        // Use multipliers from status if active, otherwise use current plugin state
+        // Use multipliers from status if active, otherwise use current plugin state.
+        // ISF has no separate flat-multiplier layer to combine, so the raw nudge value is fine there.
+        // Basal DOES have a separate flat BasalLearner multiplier stacked on top of the circadian
+        // one (see combinedBasalMultiplier in the plugin) — nudgeParts[7] only ever carries the
+        // circadian-only piece, never the combined value. Always use d.basalMultiplier (already
+        // combined) so this card agrees with the per-hour table instead of showing a different number.
         val ltIsfMult = if (nudgeActive) nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: d.isfMultiplier else d.isfMultiplier
-        val ltBasMult = if (nudgeActive) nudgeParts.getOrNull(7)?.toDoubleOrNull() ?: d.basalMultiplier else d.basalMultiplier
+        val ltBasMult = d.basalMultiplier
 
         val day = if (nudgeActive) nudgeParts.getOrNull(2) ?: d.dayLabel else d.dayLabel
         val hour = if (nudgeActive) nudgeParts.getOrNull(3)?.toIntOrNull() ?: d.hour else d.hour

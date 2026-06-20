@@ -243,7 +243,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val pb2Status: String, val pb3Status: String,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
-        val lowGuardMgdl: Double
+        val lowGuardMgdl: Double,
+        val lastCycleSummary: String
     )
 
     fun fragmentData(): FragmentData {
@@ -320,7 +321,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
-            lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
+            lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
+            lastCycleSummary = circadianLearner.lastCycleSummary
         )
     }
 
