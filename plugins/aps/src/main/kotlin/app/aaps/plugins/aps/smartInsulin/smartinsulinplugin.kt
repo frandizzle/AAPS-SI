@@ -182,20 +182,29 @@ open class SmartInsulinPlugin @Inject constructor(
     private fun fmtIsf(mgdl: Double): String = if (isMmol) String.format("%.1f", mgdl / 18.0) else String.format("%.0f", mgdl)
 
     /**
-     * Combined basal multiplier from the flat BasalLearner and the per-hour CircadianLearner.
-     * Both estimate the SAME fasting-drift signal, so their deviations from 1.0 are SUMMED
-     * (not multiplied) and the total is clamped once -- preventing the 1.5x1.5=2.25x compounding
-     * of a single physiological correction. Respects the BasalLearning enable flag everywhere
-     * (so the SI-tab display now matches what is actually dosed).
+     * Basal multiplier — now sourced ENTIRELY from CircadianLearner's per-hour basal signals.
+     *
+     * Previously this combined the per-hour CircadianLearner multiplier with the OLD flat
+     * (non-hour-aware) BasalLearner multiplier, summing their deviations from 1.0. Both
+     * learners were estimating the same underlying fasting-drift signal, so running them
+     * together double-counted it — and because the flat learner produces a single global
+     * value with no per-hour resolution, its contribution dominated and flattened out the
+     * genuine per-hour shape CircadianLearner had learned (visible in the SI tab table as
+     * most hours collapsing toward the same Bas× value).
+     *
+     * CircadianLearner's basal learning is now far more capable than the old flat learner —
+     * five distinct signals (drift, negIOB, predTrim, cyclic-delta, sub-target), SMB-aware
+     * total-IOB gating, and genuine 24×7 per-hour/per-day resolution — so it fully supersedes
+     * the old flat learner's drift-only approach. The flat BasalLearner instance is left in
+     * place (still resettable, still toggleable in settings) but no longer contributes here;
+     * its onLoopCycle is also no longer invoked (see below) so it doesn't silently accumulate
+     * stale state in the background.
      */
     private fun combinedBasalMultiplier(
         hour: Int = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
         dow: Int  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
     ): Double {
-        val flatEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue)
-        val flatMult = if (flatEnabled) basalLearner.multiplierClamped else 1.0
-        val circMult = circadianLearner.basalMultiplier(hour, dow)
-        return (1.0 + (flatMult - 1.0) + (circMult - 1.0))
+        return circadianLearner.basalMultiplier(hour, dow)
             .coerceIn(MIN_TOTAL_BASAL_MULT, MAX_TOTAL_BASAL_MULT)
     }
 
@@ -234,8 +243,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val pb2Status: String, val pb3Status: String,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
-        val lowGuardMgdl: Double,
-        val lastCycleSummary: String
+        val lowGuardMgdl: Double
     )
 
     fun fragmentData(): FragmentData {
@@ -312,8 +320,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
-            lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
-            lastCycleSummary = circadianLearner.lastCycleSummary
+            lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         )
     }
 
@@ -668,11 +675,15 @@ open class SmartInsulinPlugin @Inject constructor(
 
         // Use last MANUAL bolus only — SMBs fire every 5min during fasting and would permanently
         // block the basal learner if included. BS.Type.NORMAL = manual/wizard bolus only.
-        val minsLastManualBolus = persistenceLayer.getNewestBolusOfType(BS.Type.NORMAL)
-            ?.let { (now - it.timestamp) / 60000.0 } ?: Double.MAX_VALUE
-        if (sp.getBoolean(BooleanKey.ApsSmartInsulinBasalLearningEnabled.key, BooleanKey.ApsSmartInsulinBasalLearningEnabled.defaultValue) && mealMode == MealMode.FASTING && !highTempTarget && !(activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout)) {
-            basalLearner.onLoopCycle(glucoseStatus.glucose, glucoseStatus.delta, mealData.mealCOB, minsLastManualBolus, trueIsfMgdl, profile.getBasal())
-        }
+        // NOTE: the old flat BasalLearner is no longer invoked here. CircadianLearner's
+        // per-hour basal signals (drift, negIOB, predTrim, cyclic-delta, sub-target) fully
+        // supersede it, and running both double-counted the same fasting-drift signal while
+        // flattening the per-hour shape in the SI tab table (the flat learner's single global
+        // value dominated the additive combination). See combinedBasalMultiplier() above.
+        // The ApsSmartInsulinBasalLearningEnabled toggle and basalLearner instance are left in
+        // place (resettable, still present in settings) in case this needs revisiting, but the
+        // toggle no longer has any effect on dosing or display. minsLastManualBolus (the old
+        // learner's bolus-recency gate input) is removed too since nothing reads it now.
         val basalMultiplier = combinedBasalMultiplier()
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
