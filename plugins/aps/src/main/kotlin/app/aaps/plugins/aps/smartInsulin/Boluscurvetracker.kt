@@ -36,6 +36,11 @@ class BolusCurveTracker @Inject constructor(
     private var prevIob         = 0.0
     private val bgBuffer        = mutableListOf<Double>()
     private val curveHistory    = mutableListOf<Pair<Long, Double>>()
+    // Tracks basaliob (the basal-only component of IOB) alongside the BG curve. Used to
+    // detect when a flatline/nadir-recovery is actually the loop suspending basal rather
+    // than the tracked bolus finishing its pharmacological action — see the SUSPENSION
+    // GUARD checks in onLoopCycle. Same (timestamp, value) shape as curveHistory.
+    private val basalIobHistory  = mutableListOf<Pair<Long, Double>>()
     private var seededPrevIob   = false
 
     init {
@@ -61,6 +66,22 @@ class BolusCurveTracker @Inject constructor(
         private const val FLATLINE_BG_MAX_MGDL        = 162.0
         private const val FLATLINE_LEARNING_RATE_MULT = 0.7
 
+        // -- Basal suspension guard ------------------------------------------
+        // If basaliob has been at/below this threshold for most of the flatline/recovery
+        // window, the loop — not the bolus finishing — is the more likely explanation for
+        // the BG stabilising. basaliob this negative means the loop has been zero-temping
+        // or actively withholding basal; a curve flattening under that condition tells you
+        // about the LOOP's response, not the bolus's pharmacological DIA.
+        private const val SUSPENSION_BASAL_IOB_THRESHOLD = -0.10
+        // Fraction of samples in the relevant window that must show suspension before the
+        // observation is downgraded. Not "any single suspended reading" — a brief zero-temp
+        // blip is normal loop behaviour and shouldn't discard an otherwise clean observation.
+        private const val SUSPENSION_FRACTION_GATE        = 0.5
+        // When suspension is detected, the observation is still passed to the learner (the
+        // flatline/recovery genuinely happened, after all) but at a further-reduced rate —
+        // same philosophy as FLATLINE_LEARNING_RATE_MULT, stacked on top of it.
+        private const val SUSPENSION_LEARNING_RATE_MULT   = 0.4
+
         private const val K_TRACKING         = "tracking"
         private const val K_START_MS         = "trackStartMs"
         private const val K_MODE             = "trackMode"
@@ -74,7 +95,23 @@ class BolusCurveTracker @Inject constructor(
         private const val K_PREV_IOB         = "prevIob"
         private const val K_BG_BUFFER        = "bgBuffer"
         private const val K_CURVE_HISTORY    = "curveHistory"
+        private const val K_BASAL_IOB_HISTORY = "basalIobHistory"
         private const val MAX_CURVE_SAMPLES  = 200
+    }
+
+    // -- Suspension guard helper -----------------------------------------------
+    /**
+     * Fraction of basalIobHistory samples at/below [SUSPENSION_BASAL_IOB_THRESHOLD] within
+     * the given time window. Used to decide whether a flatline/recovery is more likely the
+     * loop suspending basal than the tracked bolus finishing — see callers in [onLoopCycle].
+     * Returns 0.0 (assume no suspension) if there's no history in the window, rather than
+     * blocking the observation on missing data.
+     */
+    private fun suspendedFraction(windowStartMs: Long): Double {
+        val windowSamples = basalIobHistory.filter { it.first >= windowStartMs }
+        if (windowSamples.isEmpty()) return 0.0
+        val suspendedCount = windowSamples.count { it.second <= SUSPENSION_BASAL_IOB_THRESHOLD }
+        return suspendedCount.toDouble() / windowSamples.size
     }
 
     fun statusSummary(currentMode: MealMode? = null): String {
@@ -103,6 +140,10 @@ class BolusCurveTracker @Inject constructor(
     ) {
         val currentIob = iobArray.firstOrNull()?.iob ?: return
         val currentBg  = glucoseStatus.glucose
+        // basaliob: the basal-only component of total IOB. Used to detect when the loop is
+        // actively suspending/withholding basal — see SUSPENSION_BASAL_IOB_THRESHOLD usage
+        // below. Same field/pattern CircadianLearner already uses for the equivalent check.
+        val currentBasalIob = iobArray.firstOrNull()?.basaliob ?: 0.0
 
         var stateDirty = false
 
@@ -139,6 +180,8 @@ class BolusCurveTracker @Inject constructor(
                 nadirConfirmed  = false
                 curveHistory.clear()
                 curveHistory.add(nowMs to smoothedBg)
+                basalIobHistory.clear()
+                basalIobHistory.add(nowMs to currentBasalIob)
                 stateDirty      = true
                 aapsLogger.debug(LTag.APS,
                                  "BolusCurveTracker: started tracking mode=${mealMode.label} iob=$currentIob spike=${"%.2f".format(Locale.US, iobSpike)} bg=$currentBg (smoothed=$smoothedBg)")
@@ -183,6 +226,8 @@ class BolusCurveTracker @Inject constructor(
             bgBuffer.add(currentBg)
             curveHistory.clear()
             curveHistory.add(nowMs to smoothedBg)
+            basalIobHistory.clear()
+            basalIobHistory.add(nowMs to currentBasalIob)
             saveState()
             return
         } else if (isSignificantSpike) {
@@ -191,6 +236,8 @@ class BolusCurveTracker @Inject constructor(
 
         curveHistory.add(nowMs to smoothedBg)
         if (curveHistory.size > MAX_CURVE_SAMPLES) curveHistory.removeAt(0)
+        basalIobHistory.add(nowMs to currentBasalIob)
+        if (basalIobHistory.size > MAX_CURVE_SAMPLES) basalIobHistory.removeAt(0)
         stateDirty = true
 
         if (currentIob > iobPeak) {
@@ -235,7 +282,23 @@ class BolusCurveTracker @Inject constructor(
                     avgBg <= FLATLINE_BG_MAX_MGDL
                 ) {
                     val observedDiaMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
-                    val flatlineLearningRate = PROFILE_LEARNING_RATE * FLATLINE_LEARNING_RATE_MULT
+
+                    // SUSPENSION GUARD: a flatline can mean "the bolus finished" OR "the loop
+                    // suspended basal and that arrested the BG fall" — the raw curve can't tell
+                    // these apart. Check what basaliob was doing over the SAME window we just
+                    // confirmed the flatline in. If the loop was suspended for most of it, this
+                    // observation is measuring the system's response, not the bolus's true DIA —
+                    // still worth learning from (it's real, actionable behaviour), but at a much
+                    // lower rate so it can't dominate the profile on its own.
+                    val suspFrac = suspendedFraction(windowStart)
+                    val suspended = suspFrac >= SUSPENSION_FRACTION_GATE
+                    val flatlineLearningRate = PROFILE_LEARNING_RATE * FLATLINE_LEARNING_RATE_MULT *
+                        (if (suspended) SUSPENSION_LEARNING_RATE_MULT else 1.0)
+                    if (suspended) {
+                        aapsLogger.debug(LTag.APS,
+                                         "BolusCurveTracker: flatline coincides with basal suspension (${"%.0f".format(Locale.US, suspFrac * 100)}% of window) — " +
+                                             "observedDia=${"%.0f".format(Locale.US, observedDiaMins)}m may reflect loop response, not true DIA. Learning at reduced rate.")
+                    }
 
                     val peakResult = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(
                         curve        = curveHistory.toList(),
@@ -266,6 +329,20 @@ class BolusCurveTracker @Inject constructor(
             nadirConfirmed = true
             val observedDiaMins = elapsedMs.toDouble() / 60_000.0
 
+            // SUSPENSION GUARD (recovery path): same concern as the flatline branch above —
+            // a "recovery" off the nadir can be the bolus finishing, OR it can be the loop
+            // resuming basal (or firing a correction) after having suspended through the fall.
+            // Check basaliob over the window from the nadir to now, since that's the period
+            // whose end we're using as observedDiaMins.
+            val suspFrac = suspendedFraction(nadirTimeMs)
+            val suspended = suspFrac >= SUSPENSION_FRACTION_GATE
+            val recoveryLearningRate = PROFILE_LEARNING_RATE * (if (suspended) SUSPENSION_LEARNING_RATE_MULT else 1.0)
+            if (suspended) {
+                aapsLogger.debug(LTag.APS,
+                                 "BolusCurveTracker: nadir recovery coincides with basal suspension (${"%.0f".format(Locale.US, suspFrac * 100)}% of post-nadir window) — " +
+                                     "observedDia=${"%.0f".format(Locale.US, observedDiaMins)}m may reflect loop response, not true DIA. Learning at reduced rate.")
+            }
+
             val peakResult = BolusCurveAnalysis.calculateInterpolatedPeakMinutes(
                 curve        = curveHistory.toList(),
                 trackStartMs = trackStartMs
@@ -280,7 +357,7 @@ class BolusCurveTracker @Inject constructor(
                 mode             = trackMode,
                 observedPeakMins = peakForLearner,
                 observedDiaMins  = observedDiaMins,
-                learningRate     = PROFILE_LEARNING_RATE
+                learningRate     = recoveryLearningRate
             )
             reset()
             return
@@ -312,6 +389,15 @@ class BolusCurveTracker @Inject constructor(
                     })
                 }
                 put(K_CURVE_HISTORY, curveJson)
+
+                val basalIobJson = org.json.JSONArray()
+                for ((ts, bIob) in basalIobHistory) {
+                    basalIobJson.put(org.json.JSONArray().apply {
+                        put(ts)
+                        put(bIob)
+                    })
+                }
+                put(K_BASAL_IOB_HISTORY, basalIobJson)
             }
             sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, json.toString()) }
         } catch (e: Exception) {
@@ -363,6 +449,21 @@ class BolusCurveTracker @Inject constructor(
                 }
             }
 
+            // basalIobHistory is best-effort: absent on upgrade from a pre-suspension-guard
+            // version, or if restore fails partway. An empty history just means
+            // suspendedFraction() returns 0.0 (assume not suspended) until fresh samples
+            // accumulate post-restore — safe default, not a crash risk.
+            basalIobHistory.clear()
+            json.optJSONArray(K_BASAL_IOB_HISTORY)?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val entry = arr.optJSONArray(i) ?: continue
+                    if (entry.length() < 2) continue
+                    val ts   = entry.optLong(0, -1L)
+                    val bIob = entry.optDouble(1, Double.NaN)
+                    if (ts > 0L && !bIob.isNaN()) basalIobHistory.add(ts to bIob)
+                }
+            }
+
             seededPrevIob   = true
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to restore state: ${e.message}")
@@ -382,6 +483,7 @@ class BolusCurveTracker @Inject constructor(
         nadirConfirmed  = false
         bgBuffer.clear()
         curveHistory.clear()
+        basalIobHistory.clear()
         try {
             sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, "") }
         } catch (e: Exception) {
