@@ -159,8 +159,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         else
             warnGuardMgdl
 
-        val systemDiaMins = (profile.dia ?: 6.0) * 60.0
-
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
         val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
@@ -172,8 +170,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5,
-            systemDiaMins  = systemDiaMins
+            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5
         )
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -417,47 +414,41 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:       Array<IobTotal>,
         isfMgdl:        Double,
         learnedProfile: LearnedInsulinProfile,
-        ticks:          Int,
-        systemDiaMins:  Double
+        ticks:          Int
     ): List<Double> {
-        var bg           = startBg
-        val predictions  = mutableListOf<Double>()
+        var bg          = startBg
+        val predictions = mutableListOf<Double>()
+
+        val peak = learnedProfile.safePeakMinutes
+        val dia  = learnedProfile.safeDiaMinutes
+
+        // Shape the forward insulin-activity curve with the LEARNED peak AND DIA as independent
+        // parameters (see InsulinActivityCurve), but anchor its MAGNITUDE to the real insulin on
+        // board. iobArray[0] is "now", built by AAPS from actual bolus/SMB history — we keep that
+        // real quantity and only re-time how it acts.
+        //
+        // Current IOB is a mixture of boluses at different ages. We collapse it to a single
+        // effective age (the age whose activity/IOB ratio matches what is observed right now) so
+        // the learned curve can reshape the forward decay WITHOUT needing per-bolus history. This
+        // reproduces current activity exactly at tick 0 and conserves total forward activity ==
+        // current IOB, while respecting that aged insulin is past its peak — so it never re-peaks
+        // already-decaying insulin the way a fresh-curve-from-zero model would.
+        val iobNow       = iobArray.firstOrNull()?.iob ?: 0.0
+        val activityNow  = iobArray.firstOrNull()?.activity ?: 0.0
+        val effAgeMins   = InsulinActivityCurve.effectiveAgeMinutes(activityNow, iobNow, peak, dia)
+        val iobFracAtAge = InsulinActivityCurve.iobFraction(effAgeMins, peak, dia)
+            .coerceAtLeast(IOB_FRACTION_FLOOR)
+        val anchorU      = iobNow / iobFracAtAge
+
         for (tick in 1..ticks) {
-            val activity   = getActivityAtMinute(tick * 5, iobArray, learnedProfile, systemDiaMins)
+            val futureMins = tick * 5.0
+            val activity   = max(0.0, anchorU * InsulinActivityCurve.activityFraction(effAgeMins + futureMins, peak, dia))
             val iobDelta   = -(activity * isfMgdl * 5.0)
             val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
             bg += iobDelta + predDev
             predictions.add(bg)
         }
         return predictions
-    }
-
-    private fun getActivityAtMinute(
-        minutes:        Int,
-        iobArray:       Array<IobTotal>,
-        learnedProfile: LearnedInsulinProfile,
-        systemDiaMins:  Double
-    ): Double {
-        val learnedDiaMins = learnedProfile.safeDiaMinutes
-        // timeScale > 1 means learned insulin is FASTER (shorter DIA)
-        // timeScale < 1 means learned insulin is SLOWER (longer DIA)
-        val timeScale = systemDiaMins / learnedDiaMins
-
-        val scaledMinutes = minutes * timeScale
-        val idx = (scaledMinutes / 5.0).toInt()
-
-        val baseActivity = if (idx < iobArray.size) {
-            iobArray[idx].activity
-        } else {
-            // Exponential decay from the end of the array if we ran off
-            val lastActivity = iobArray.lastOrNull()?.activity ?: 0.0
-            val extraTicks = idx - iobArray.size + 1
-            lastActivity * Math.exp(-extraTicks * 0.05)
-        }
-
-        // Multiply by timeScale to preserve AUC.
-        // e.g. if DIA is half as long, activity at each point must be twice as high.
-        return max(0.0, baseActivity * timeScale)
     }
 
     companion object {
@@ -471,5 +462,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Floor for rebound taper in caution zone — prevents delivering near-zero basal
         // while BG is already heading toward the warn guard.
         private const val CAUTION_REBOUND_TAPER_FLOOR = 0.5
+        // Floor on the learned-curve IOB fraction at the effective age, so anchoring current
+        // IOB to a near-spent curve (iobFraction → 0) can't blow up the magnitude. At this
+        // point remaining activity is tiny anyway, so the floor is a safe numerical guard.
+        private const val IOB_FRACTION_FLOOR          = 0.02
     }
 }
