@@ -1069,6 +1069,31 @@ class CircadianLearner @Inject constructor(
     // -- Predictive basal trim helper -----------------------------------------
     // Projects BG 60 min ahead using current drift rate from basalDriftWindow.
     // Returns projected BG in mg/dL, or null if insufficient data.
+    /**
+     * Projects BG 60 minutes ahead using a kinematic (2nd-order) model rather than
+     * pure linear extrapolation.
+     *
+     * PREVIOUSLY: projectedBg = newestBg + (driftMgdlPerHr * horizon) — a straight line.
+     * BG does not move in straight lines; it has acceleration (the curve flattening out
+     * after a peak, or steepening into one). A linear model over-corrects exactly when the
+     * curve is already flattening — e.g. a sustained high that's just started coming down
+     * gets projected as if it'll keep falling at the CURRENT rate for the full 60 minutes,
+     * when in reality deceleration means it's likely to level off well before then. That
+     * false low projection then drives PredTrim to cut basal harder than warranted right as
+     * BG is naturally stabilising — precisely the deadlock-prone scenario already described
+     * in the predTrim caller's comments (suppressed when aggrNudge notEnough is active).
+     *
+     * NOW: projectedBg = currentBg + v*t + 0.5*a*t² — a standard kinematic equation.
+     *   v (velocity)     = driftMgdlPerHr, from the same basalDriftWindow regression as before
+     *   a (acceleration) = computeAcceleration(), already computed elsewhere in this file for
+     *                      the aggression nudge, converted from mg/dL per (5min)² to mg/dL/hr²
+     *   t (time)         = PRED_TRIM_HORIZON_HRS (1.0 = 60 min)
+     *
+     * SAFETY: acceleration is extrapolated furthest of the three terms (t² vs t), so a single
+     * noisy 3-point computeAcceleration() reading could swing the projection wildly if used
+     * unclamped. The acceleration TERM (0.5*a*t²) is clamped to PRED_ACCEL_MAX_CONTRIB_MGDL
+     * before being added — it can nudge the linear projection but never dominate or reverse it.
+     */
     private fun projectBg60min(targetMgdl: Double): Double? {
         if (basalDriftWindow.size < PRED_MIN_WINDOW_SAMPLES) return null
         val oldest     = basalDriftWindow.first()
@@ -1077,7 +1102,25 @@ class CircadianLearner @Inject constructor(
         if (elapsedHrs < 0.2) return null  // need at least 12 min of spread
         val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
         if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) return null  // sanity gate
-        return newest.second + (driftMgdlPerHr * PRED_TRIM_HORIZON_HRS)
+
+        val t = PRED_TRIM_HORIZON_HRS
+        val linearTerm = driftMgdlPerHr * t
+
+        // computeAcceleration() is mg/dL per (5min)² — convert to mg/dL/hr² by the ratio
+        // of time units squared: (60min/5min)² = 144.
+        val accelMgdlPerHr2 = computeAcceleration() * ACCEL_5MIN2_TO_HR2
+        val rawAccelTerm     = 0.5 * accelMgdlPerHr2 * t * t
+        val accelTerm         = rawAccelTerm.coerceIn(-PRED_ACCEL_MAX_CONTRIB_MGDL, PRED_ACCEL_MAX_CONTRIB_MGDL)
+
+        val projected = newest.second + linearTerm + accelTerm
+
+        aapsLogger.debug(LTag.APS,
+                         "CircadianLearner predTrim kinematic: drift=${"%.2f".format(driftMgdlPerHr)}mg/dL/hr " +
+                             "accel=${"%.2f".format(accelMgdlPerHr2)}mg/dL/hr2 linearTerm=${"%.1f".format(linearTerm)} " +
+                             "rawAccelTerm=${"%.1f".format(rawAccelTerm)} clampedAccelTerm=${"%.1f".format(accelTerm)} " +
+                             "? projected=${"%.1f".format(projected)} (was linear-only=${"%.1f".format(newest.second + linearTerm)})")
+
+        return projected
     }
 
     private fun updateAggrLearner(
@@ -1438,6 +1481,13 @@ class CircadianLearner @Inject constructor(
         // and pre-emptively adjusts basal multiplier if projection is off target.
         // Fires INSTEAD of waiting for full drift window to confirm — faster convergence.
         private const val PRED_TRIM_HORIZON_HRS   = 1.0    // project 60 min ahead
+        // Kinematic projection constants (see projectBg60min):
+        private const val ACCEL_5MIN2_TO_HR2          = 144.0  // (60/5)^2 — converts computeAcceleration()'s
+        // mg/dL per (5min)^2 units to mg/dL/hr^2
+        private const val PRED_ACCEL_MAX_CONTRIB_MGDL = 27.0   // ~1.5 mmol cap on the acceleration term's
+        // contribution to the 60-min projection — it can
+        // refine the linear projection but never dominate
+        // or reverse it from a single noisy reading
         private const val PRED_TRIM_DEAD_BAND_MGDL = 9.0   // ~0.5 mmol — ignore small projected errors
         private const val PRED_TRIM_MAX_ADJUST     = 0.06  // cap at 6% per firing
         private const val PRED_TRIM_SENSITIVITY    = 36.0  // 2 mmol projected error ? full adjustment
