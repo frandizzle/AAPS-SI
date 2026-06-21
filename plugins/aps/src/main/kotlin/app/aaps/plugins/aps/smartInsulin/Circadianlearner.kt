@@ -102,11 +102,6 @@ class CircadianLearner @Inject constructor(
     // Prevents stale pre-P/F fasting samples from mixing with post-P/F fasting
     private var previousMealModeForDrift: MealMode = MealMode.FASTING
 
-    // -- Low guard penalty state ----------------------------------------------
-    // One-time 20% ISF+basal reduction when BG crosses below low guard.
-    // Resets when BG recovers back above low guard so it can fire again next low.
-    private var lowGuardPenaltyFired = false
-
     // -- Short-term fuel trim state -------------------------------------------
     private val trimBgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(36)
     private var trimWindowMs: Long = 90 * 60_000L
@@ -222,28 +217,18 @@ class CircadianLearner @Inject constructor(
                 trimStrength = 0.0
                 trimDirection = 0
             }
-            // One-time low guard penalty — 20% ISF mult and basal mult reduction at this hour.
-            // Only fires once per low event. Tells the learner "too much insulin at this hour".
-            // Does NOT keep firing so recovery BG behaviour doesn't compound the penalty.
-            if (!lowGuardPenaltyFired) {
-                lowGuardPenaltyFired = true
-                val d = dow.coerceIn(0, 6)
-                val prevIsfVal = isfState.days[d].get(hour)
-                val prevBasVal = basalState.days[d].get(hour)
-                val penalisedIsf = (prevIsfVal * 0.90).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                val penalisedBas = (prevBasVal * 0.90).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                isfState   = isfState.updatedDayOnly(dow, hour, penalisedIsf, 1.0)
-                basalState = basalState.updatedDayOnly(dow, hour, penalisedBas, 1.0)
-                aapsLogger.debug(LTag.APS,
-                                 "LowGuard penalty h=$hour: ISF mult ${"%.3f".format(prevIsfVal)}?${"%.3f".format(penalisedIsf)} " +
-                                     "basal mult ${"%.3f".format(prevBasVal)}?${"%.3f".format(penalisedBas)}")
-            }
-        } else {
-            // BG recovered above low guard — reset so penalty can fire again next low
-            if (lowGuardPenaltyFired) {
-                aapsLogger.debug(LTag.APS, "LowGuard penalty reset — BG recovered above low guard")
-                lowGuardPenaltyFired = false
-            }
+            // NOTE: the ISF/basal low-guard penalty itself is no longer applied here.
+            // This block and updateAggrLearner's "Hard low" penalty (Signal 2 there) were
+            // two independent mechanisms both cutting ISF/basal ×0.90 on the same low event,
+            // using two different "is this a new event" definitions (boolean-reset-on-recovery
+            // here vs. a 30-min time gate there) — they collided and could apply the cut up to
+            // three times across one isolated low (this block once, the aggr block once in the
+            // SAME cycle, then this block's flag got reset by the aggr block and fired again
+            // next cycle), corrupting that hour's learned ISF/basal toward ~0.9³ ≈ 0.73 instead
+            // of the intended 0.90. updateAggrLearner's version is kept as the single source of
+            // truth: it already has the correct !inPostMealLockout / isFasting gates (this block
+            // never had those) and a proper time-based new-event definition. See
+            // updateAggrLearner's "Penalty signal 2: Hard low" block.
         }
 
         // Maintain BG history for rollercoaster detection
@@ -468,6 +453,17 @@ class CircadianLearner @Inject constructor(
         val msSincePenalty = if (lastPenaltyMs > 0L) now - lastPenaltyMs else Long.MAX_VALUE
         val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
 
+        // BUG FIX: FuelTrim (below) and the aggrNudge tooMuch/notEnough block (further down in
+        // this same function) both write isfState/basalState, and both were only checking the
+        // INCOMING isfPhysicsFired/basalPhysicsFired params — which reflect the physics learners
+        // from update(), not each other. So when no physics fired but FuelTrim DID fire this
+        // cycle, aggrNudge's block had no way to know and could write on top of FuelTrim's value
+        // in the same cycle — multiplicative double-compounding in the same direction. These
+        // local flags track whether FuelTrim actually wrote this cycle; OR'd into every
+        // downstream check so aggrNudge correctly defers when FuelTrim already acted.
+        var trimWroteIsf   = false
+        var trimWroteBasal = false
+
         // -- Short-term fuel trim (? sensor analogy) ---------------------------
         if (!inPostMealLockout && bg > 0.0) {
             trimBgHistory.addLast(now to bg)
@@ -495,9 +491,20 @@ class CircadianLearner @Inject constructor(
                         // Not enough insulin — trim ceiling UP (more aggressive)
                         if (readyToReassess) {
                             val magnitude  = ((avgBg - targetMgdl) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            // BUG FIX: trimStartMs previously only reset when trimActive was false.
+                            // If BG flickered out of band and was mid-decay (trimActive still true,
+                            // trimStrength not yet below the 0.005 floor) when it re-entered aboveBand,
+                            // trimStartMs was NEVER refreshed — the displayed "sustained high for Xm"
+                            // kept counting from the ORIGINAL episode's start even though the live
+                            // magnitude driving the current dose is from a much more recent re-trigger.
+                            // A genuinely new episode is: direction was anything other than +1, OR we
+                            // were fully inactive. Either case means this is a fresh high, not a
+                            // continuation — reset the clock regardless of trimActive's exact state.
+                            val isNewEpisode = !trimActive || trimDirection != +1
                             trimStrength   = magnitude
                             trimDirection  = +1
-                            if (!trimActive) { trimActive = true; trimStartMs = now }
+                            trimActive     = true
+                            if (isNewEpisode) trimStartMs = now
 
                             val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
                                 .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
@@ -507,18 +514,23 @@ class CircadianLearner @Inject constructor(
                             val d = dow.coerceIn(0, 6)
                             // Mutual exclusion: don't stack the FuelTrim long-term nudge on top of a physics-learner
                             // update in the same cycle (same intent as the aggrNudge block below).
-                            if (!isfPhysicsFired)
+                            if (!isfPhysicsFired) {
                                 isfState = isfState.updatedDayOnly(dow, hour,
                                                                    (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
-                            if (!basalPhysicsFired)
+                                trimWroteIsf = true
+                            }
+                            if (!basalPhysicsFired) {
                                 basalState = basalState.updatedDayOnly(dow, hour,
                                                                        (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
+                                trimWroteBasal = true
+                            }
 
                             lastTrimActionMs = now // Reset the timer. We wait 90 mins from NOW before pushing harder.
 
                             aapsLogger.debug(LTag.APS,
                                              "FuelTrim[STEP +] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                                 "mag=${"%.3f".format(magnitude)} ? ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                                                 "mag=${"%.3f".format(magnitude)} ? ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}" +
+                                                 (if (isNewEpisode) " [NEW EPISODE — timer reset]" else ""))
                         } else {
                             aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding extra insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
                         }
@@ -529,9 +541,12 @@ class CircadianLearner @Inject constructor(
                             val baseMagnitude = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
                             val amplifier  = if (avgBg < lowGuardMgdl) 2.0 else 1.0
                             val magnitude  = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            // Same fix as aboveBand — see comment there.
+                            val isNewEpisode = !trimActive || trimDirection != -1
                             trimStrength   = -magnitude
                             trimDirection  = -1
-                            if (!trimActive) { trimActive = true; trimStartMs = now }
+                            trimActive     = true
+                            if (isNewEpisode) trimStartMs = now
 
                             val trimmedCeil = (aggrState.get(dow, hour) - magnitude * TRIM_CEIL_SCALE)
                                 .coerceIn(TRIM_CEIL_MIN, AGGR_CEIL_MAX)
@@ -541,18 +556,23 @@ class CircadianLearner @Inject constructor(
                             val d = dow.coerceIn(0, 6)
                             // Mutual exclusion: don't stack the FuelTrim long-term nudge on top of a physics-learner
                             // update in the same cycle (same intent as the aggrNudge block below).
-                            if (!isfPhysicsFired)
+                            if (!isfPhysicsFired) {
                                 isfState = isfState.updatedDayOnly(dow, hour,
                                                                    (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
-                            if (!basalPhysicsFired)
+                                trimWroteIsf = true
+                            }
+                            if (!basalPhysicsFired) {
                                 basalState = basalState.updatedDayOnly(dow, hour,
                                                                        (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
+                                trimWroteBasal = true
+                            }
 
                             lastTrimActionMs = now // Reset the timer.
 
                             aapsLogger.debug(LTag.APS,
                                              "FuelTrim[STEP -] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
-                                                 "mag=${"%.3f".format(magnitude)} ? ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}")
+                                                 "mag=${"%.3f".format(magnitude)} ? ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}" +
+                                                 (if (isNewEpisode) " [NEW EPISODE — timer reset]" else ""))
                         } else {
                             aapsLogger.debug(LTag.APS, "FuelTrim[WAIT]: Holding reduced insulin, waiting for peak (${timeSinceLastAction / 60_000}/${trimWindowMs / 60_000} mins)")
                         }
@@ -562,7 +582,7 @@ class CircadianLearner @Inject constructor(
                         if (trimActive) {
                             trimStrength *= TRIM_DECAY_RATE
                             if (kotlin.math.abs(trimStrength) < 0.005) {
-                                trimActive = false; trimStrength = 0.0; trimDirection = 0
+                                trimActive = false; trimStrength = 0.0; trimDirection = 0; trimStartMs = 0L
                                 // Set timer to half a window ago rather than 0 — prevents
                                 // immediate re-fire if BG briefly dips into band then exits.
                                 // Requires at least half a peak window before next trim fires.
@@ -657,14 +677,14 @@ class CircadianLearner @Inject constructor(
             nudgeSessionBlendedBasMult = basalMultiplier(hour, dow)
         }
 
-        // ISF nudge — skip if physics learner already updated ISF this cycle.
+        // ISF nudge — skip if physics learner OR FuelTrim already updated ISF this cycle.
         // Both push isfState based on different signals and can disagree; mutual exclusion
-        // prevents them cancelling each other out. Basal nudge still fires independently.
+        // prevents them cancelling each other out / compounding. Basal nudge still fires independently.
         val nudgedIsf = if (tooMuch)
             (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
         else
             (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        if (!isfPhysicsFired) {
+        if (!isfPhysicsFired && !trimWroteIsf) {
             isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, 1.0)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
@@ -672,18 +692,18 @@ class CircadianLearner @Inject constructor(
                                  "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} ? mult=${"%.3f".format(isfState.days[d].get(hour))}")
         } else {
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner ISF[aggrNudge] SKIPPED — physics learner already fired this cycle " +
+                             "CircadianLearner ISF[aggrNudge] SKIPPED — ${if (isfPhysicsFired) "physics learner" else "FuelTrim"} already fired this cycle " +
                                  "(would have nudged ${"%.3f".format(prevIsfMult)}?${"%.3f".format(nudgedIsf)})")
         }
 
-        // Basal nudge — skip if physics learner (drift/negIOB/predTrim) already fired this cycle.
+        // Basal nudge — skip if physics learner (drift/negIOB/predTrim) OR FuelTrim already fired this cycle.
         // Same mutual exclusion pattern as ISF: both signals push basalState from different
         // sources and can disagree cycle-to-cycle. Exclusive write keeps the signal clean.
         val nudgedBas = if (tooMuch)
             (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
         else
             (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        if (!basalPhysicsFired) {
+        if (!basalPhysicsFired && !trimWroteBasal) {
             basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
@@ -691,13 +711,13 @@ class CircadianLearner @Inject constructor(
                                  "nudge=${"%.4f".format(nudge)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
         } else {
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Basal[aggrNudge] SKIPPED — physics learner already fired this cycle " +
+                             "CircadianLearner Basal[aggrNudge] SKIPPED — ${if (basalPhysicsFired) "physics learner" else "FuelTrim"} already fired this cycle " +
                                  "(would have nudged ${"%.3f".format(prevBasMult)}?${"%.3f".format(nudgedBas)})")
         }
 
-        // Store status — include whether physics learner overrode the nudge this cycle
-        val isfApplied  = !isfPhysicsFired
-        val basApplied  = !basalPhysicsFired
+        // Store status — include whether physics learner or FuelTrim overrode the nudge this cycle
+        val isfApplied  = !isfPhysicsFired && !trimWroteIsf
+        val basApplied  = !basalPhysicsFired && !trimWroteBasal
         val direction = if (tooMuch) "ACTIVE_LOW" else "ACTIVE_HIGH"
         lastAggrNudgeStatus = "$direction|$deviationPct|$dayName|$hour|" +
             "${"%.4f".format(nudgeSessionIsfMult)}|${"%.4f".format(isfState.days[d].get(hour))}|" +
@@ -790,7 +810,20 @@ class CircadianLearner @Inject constructor(
             // Negative delta (BG falling) → basal too high → mult DOWN (less background insulin)
             val unexplainedDelta = shortAvgDelta   // activity ≈ 0, so expected ≈ 0
 
-            if (abs(unexplainedDelta) >= BASAL_S0_MIN_DELTA_MGDL) {
+            // --- BELOW-TARGET GUARD (Signal 0) ---
+            // Same blind spot as the main ISF learner had: bg ∈ (lowGuard, target) rising —
+            // exactly a rescue-carb/liver rebound out of a recent low — looks identical to
+            // "basal too low" (positive unexplainedDelta) but isn't one. The loop having
+            // zero-temped through the low means totalIob is often near zero too, so this
+            // gate alone doesn't exclude it. Block only the UP direction (more basal) when
+            // BG is below target; the DOWN direction (less basal) stays available since
+            // reducing basal while below target is never the wrong call.
+            val blockUp = unexplainedDelta > 0.0 && bg < targetMgdl
+            if (blockUp) {
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Basal[S0] blocked: positive delta=${"%.2f".format(unexplainedDelta)} " +
+                                     "but bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound, not basal deficit")
+            } else if (abs(unexplainedDelta) >= BASAL_S0_MIN_DELTA_MGDL) {
                 // Normalise to a fractional adjustment, same clamp philosophy as ISF:
                 // allow faster retreat (negative, BG falling too much) than advance (BG rising).
                 val normAdj = (unexplainedDelta / BASAL_S0_SENSITIVITY).coerceIn(-1.0, 0.5)
@@ -852,7 +885,19 @@ class CircadianLearner @Inject constructor(
                     }
                     else -> {
                         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
-                        val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                        // --- BELOW-TARGET GUARD (Signal 1) ---
+                        // Same blind spot as Signal 0: a positive drift (BG rising, adjustment > 1.0,
+                        // pushing basal UP) measured while current bg is below target is far more
+                        // likely a post-low/rescue-carb rebound than a genuine basal deficit. Clamp
+                        // the up-direction adjustment to neutral (1.0) in that case; the down-direction
+                        // (adjustment < 1.0, BG falling, less basal) is never blocked.
+                        val guardedAdjustment = if (adjustment > 1.0 && bg < targetMgdl) {
+                            aapsLogger.debug(LTag.APS,
+                                             "CircadianLearner Basal[drift] up-direction blocked: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr " +
+                                                 "but bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound, not basal deficit")
+                            1.0
+                        } else adjustment
+                        val newMult    = (basalState.get(dow, hour) * guardedAdjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
                         // Confidence-weighted learning speed:
                         val conf  = basalState.getConfidence(dow, hour)
@@ -1092,15 +1137,20 @@ class CircadianLearner @Inject constructor(
             val nowMs = System.currentTimeMillis()
             val msSinceLastHardLow = if (lastHardLowPenaltyMs > 0L) nowMs - lastHardLowPenaltyMs else Long.MAX_VALUE
             val isNewLowEvent = msSinceLastHardLow > HARD_LOW_BASAL_GATE_MS
-            lastHardLowPenaltyMs = nowMs
             lastPenaltyWasFasting = isFasting
-            // Reset lowGuardPenaltyFired on each new low event so the ISF/basal penalty
-            // fires once per episode (gated by HARD_LOW_BASAL_GATE_MS), not just once ever.
-            // Without this reset, lowGuardPenaltyFired stays true after the first event
-            // and subsequent new events skip the ISF/basal nudge entirely.
-            if (isNewLowEvent) lowGuardPenaltyFired = false
+            // This block is the single source of truth for the hard-low ISF/basal/ceiling
+            // penalty (the duplicate version that used to live in update() was removed).
+            //
+            // BUG FIX: lastHardLowPenaltyMs previously updated on EVERY cycle BG was below
+            // guard, not just when a penalty actually fired. That meant it tracked "time since
+            // the last low READING," not "time since the last penalized EVENT." A BG that sat
+            // low continuously refreshed this timestamp every 5 minutes; if it then recovered
+            // and dipped low again within 30 min of that LAST READING (not the event start),
+            // isNewLowEvent read false and the genuinely new low got no penalty at all. Now
+            // only stamped inside the isNewLowEvent block below, so it tracks event starts.
 
             if (isNewLowEvent) {
+                lastHardLowPenaltyMs = nowMs
                 // Short term: ceiling cut — applied directly (alpha=1.0), not EWMA-softened.
                 // Using AGGR_ALPHA_PENALTY=0.25 here only moved the ceiling by ~2.5% which
                 // is invisible in the table and has no meaningful effect on dosing.
