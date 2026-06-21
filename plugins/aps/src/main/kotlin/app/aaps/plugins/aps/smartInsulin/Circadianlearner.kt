@@ -61,6 +61,7 @@ class CircadianLearner @Inject constructor(
 
     // Last basal learning signal for SI tab display
     var lastBasalSignal:  String = "No signal yet"
+        private set
     var lastAccelDebug:    String = "No data"
         private set
     var lastPredTrimDebug: String = "No data"
@@ -108,6 +109,7 @@ class CircadianLearner @Inject constructor(
     var trimActive: Boolean = false
         private set
     var trimStrength = 0.0
+        private set
     private var trimDirection = 0
     private var trimStartMs  = 0L
     val trimMins: Long get() = if (trimActive && trimStartMs > 0L) (System.currentTimeMillis() - trimStartMs) / 60_000L else 0L
@@ -300,6 +302,14 @@ class CircadianLearner @Inject constructor(
                 after < before - 1e-6 -> "DOWN"
                 else                  -> "—"
             }
+            // changed=<bool> reflects whether the value ACTUALLY moved this cycle (before≠after),
+            // ground-truth rather than a tracked flag. Previously this label only checked
+            // isfPhysicsFromIsf/basalPhysicsFired, which under-reported: Signal 4 and FuelTrim
+            // can both write isfState/basalState too, and neither set those specific flags, so
+            // the summary could show a value that moved with "fired=false" next to it. Deriving
+            // from the actual before/after diff can't go stale the next time a new writer is
+            // added, since it doesn't need to be told who wrote — only whether something did.
+            fun changed(before: Double, after: Double): Boolean = abs(after - before) > 1e-6
 
             lastCycleSummary =
                 "h=$hour dow=${DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0,6)]} " +
@@ -307,9 +317,9 @@ class CircadianLearner @Inject constructor(
                     "iob=${"%.2f".format(iob)} basalIob=${"%.2f".format(basalIob)} activity=${"%.4f".format(activity)} " +
                     "postMeal=$inPostMealLockout mode=$mealMode\n" +
                     "ISF mult ${"%.3f".format(isfBefore)}→${"%.3f".format(isfAfter)} [${dirTag(isfBefore, isfAfter)}] " +
-                    "(fired=$isfPhysicsFromIsf)\n" +
+                    "(mainLearner=$isfPhysicsFromIsf changed=${changed(isfBefore, isfAfter)})\n" +
                     "BASAL mult ${"%.3f".format(basBefore)}→${"%.3f".format(basAfter)} [${dirTag(basBefore, basAfter)}] " +
-                    "(fired=$basalPhysicsFired)\n" +
+                    "(physicsSignal=$basalPhysicsFired changed=${changed(basBefore, basAfter)})\n" +
                     "CEIL ${"%.3f".format(ceilBefore)}→${"%.3f".format(ceilAfter)} [${dirTag(ceilBefore, ceilAfter)}] " +
                     "(notEnough=$aggrNotEnough)\n" +
                     "basalSignal: $lastBasalSignal\n" +
@@ -372,10 +382,13 @@ class CircadianLearner @Inject constructor(
         }
 
         val deviation     = actualDelta - expectedDelta
-        // Safety-biased clamp: negative deviation (BG fell MORE than expected -> LESS insulin)
-        // may move up to 2.0 (fast retreat); positive deviation (insulin looked weak -> MORE
-        // insulin) is capped at 1.0 so a single noisy reading can't push dosing ISF down hard.
-        var normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 0.5)   // was (-2.0, 1.0)        // dosingISF = profileISF / isfMult
+        // Safety-biased clamp, CURRENT values (-1.0, 0.5) — was (-2.0, 1.0), tightened this
+        // session: negative deviation (BG fell MORE than expected -> LESS insulin) may move
+        // down to -1.0 (retreat from aggressiveness); positive deviation (insulin looked weak
+        // -> MORE insulin) is capped at +0.5 so a single noisy reading can't push dosing ISF
+        // down hard. The retreat direction is intentionally allowed further than the
+        // more-aggressive direction — safety bias toward backing off, not pushing harder.
+        var normDeviation = (deviation / abs(expectedDelta)).coerceIn(-1.0, 0.5)
         // expectedDelta is negative (BG should fall from insulin)
         // actualDelta - expectedDelta:
         //   BG drops MORE than expected ? deviation negative ? mult DOWN ? dosingISF UP ? less aggressive ?
@@ -644,7 +657,10 @@ class CircadianLearner @Inject constructor(
         val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
 
         // -- Acceleration component — anticipatory signal that catches curves before velocity builds.
-        val accel = computeAcceleration()
+        // Reuses accelAlways (computed earlier in this same function) rather than calling
+        // computeAcceleration() again — bgHistory doesn't change in between, so the second
+        // call was a redundant identical computation.
+        val accel = accelAlways
 
         // Acceleration aligns with deviation based on direction:
         // tooMuch (need less insulin): Curving DOWN (accel < 0) agrees, curving UP (accel > 0) contradicts.
@@ -870,7 +886,12 @@ class CircadianLearner @Inject constructor(
         while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
-        if (basalDriftWindow.size >= BASAL_MIN_SAMPLES) {
+        // Firing condition gated on !signal0Fired (mutual exclusion — Signal 0 runs first in
+        // the function and targets the same near-zero-activity regime; if it already fired,
+        // skip drift's own adjustment this cycle). The window collection above stays
+        // unconditional regardless, since predTrim shares this same buffer and needs it kept
+        // fresh even on cycles where Signal 0 fired instead of drift.
+        if (!signal0Fired && basalDriftWindow.size >= BASAL_MIN_SAMPLES) {
             val oldest     = basalDriftWindow.first()
             val newest     = basalDriftWindow.last()
             val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
@@ -929,9 +950,15 @@ class CircadianLearner @Inject constructor(
         // be low/negative — if there's a meaningful positive total IOB, an SMB tail is still
         // active and is the more likely explanation; don't blame basal for what the SMB did.
         //
-        // Mutually exclusive with drift — if drift fired this cycle, skip negIOB.
+        // Mutually exclusive with drift AND Signal 0 — if either fired this cycle, skip negIOB.
+        // BUG FIX (found in audit): previously only excluded drift, not Signal 0. Both target
+        // the same quiet-fasting/near-zero-activity regime, so in a sub-target window with
+        // low activity, Signal 0 and negIOB could BOTH fire in the same cycle — two separate
+        // EWMA pulls toward "less basal" stacking on top of each other in one cycle, driving
+        // that hour's mult down faster than either signal's own alpha/cap intends.
         // Not active during post-meal lockout — negative IOB could be meal bolus tail.
         if (!driftFired &&
+            !signal0Fired &&
             !inPostMealLockout &&
             bg < targetMgdl &&
             basalIob < BASAL_NEG_IOB_THRESHOLD &&
@@ -964,7 +991,13 @@ class CircadianLearner @Inject constructor(
         if (aggrNotEnough) {
             lastPredTrimDebug = "suppressed — aggrNudge notEnough active (aggressiveness=${"%.3f".format(aggressiveness)})"
             aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] suppressed: aggrNudge notEnough active, aggressiveness=${"%.3f".format(aggressiveness)}")
-        } else if (!driftFired && !inPostMealLockout) {
+        } else if (!driftFired && !signal0Fired && !negIobFired && !inPostMealLockout) {
+            // BUG FIX (found in audit): previously only excluded driftFired, not signal0Fired
+            // or negIobFired. All three target the same quiet/low-activity/sub-target regime as
+            // Signal 4 below, which already correctly excludes all three — predTrim was the one
+            // signal that didn't match that pattern, leaving a gap where Signal 0 or negIOB
+            // could fire AND predTrim could also fire in the same cycle, stacking a third pull
+            // in the same direction on top of whichever of the first two already moved basalState.
             val projectedBg = projectBg60min(targetMgdl)
             if (projectedBg == null) {
                 lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
@@ -1006,7 +1039,7 @@ class CircadianLearner @Inject constructor(
         // Mutually exclusive with drift, negIOB, and predTrim (all three are higher-confidence
         // signals when they fire; this is the fallback for when the loop compensation masks them).
         var subTargetFired = false
-        val qualifyingCycle = !driftFired && !negIobFired && !predTrimFired &&
+        val qualifyingCycle = !driftFired && !signal0Fired && !negIobFired && !predTrimFired &&
             !inPostMealLockout &&
             bg >= lowGuardMgdl &&                           // not a hard low — that's handled elsewhere
             bg < targetMgdl - SUB_TARGET_DEAD_BAND_MGDL && // meaningfully below target, not just touching it
@@ -1194,6 +1227,18 @@ class CircadianLearner @Inject constructor(
 
             if (isNewLowEvent) {
                 lastHardLowPenaltyMs = nowMs
+                // BUG FIX (found in audit): this block previously only stamped
+                // lastHardLowPenaltyMs (used for this signal's own 30-min re-fire gate) but
+                // never lastPenaltyMs/lastPenaltyReason — the fields the rebound blindfolds
+                // (FuelTrim's isLowRecovery at the aboveBand check, and the main notEnough
+                // pause) actually key on. Rollercoaster and soft-low both stamp those; hard-low
+                // didn't. Result: an ISOLATED hard low (one that doesn't happen to coincide
+                // with a prior soft-low or rollercoaster reading on the same approach) left the
+                // rebound blindfold completely unarmed — a rescue-carb/liver rebound right after
+                // could be read as "not enough insulin" and stack basal-up/ISF-down onto the
+                // rebound, which is precisely the scenario the blindfold exists to prevent.
+                lastPenaltyMs     = nowMs
+                lastPenaltyReason = "hard low"
                 // Short term: ceiling cut — applied directly (alpha=1.0), not EWMA-softened.
                 // Using AGGR_ALPHA_PENALTY=0.25 here only moved the ceiling by ~2.5% which
                 // is invisible in the table and has no meaningful effect on dosing.
@@ -1225,8 +1270,9 @@ class CircadianLearner @Inject constructor(
         // Same gate as hard low — only penalise fasting profile for fasting lows.
         val iob = iobArray.firstOrNull()?.iob ?: 0.0
         // Soft low approach: BG above low guard but falling fast with IOB on board.
-        // Previous check was bg < lowGuardMgdl which is unreachable — hard low already
-        // returns at line 697. Correct condition: within SOFT_LOW_APPROACH_MGDL above guard.
+        // Previous check was bg < lowGuardMgdl which is unreachable — the hard-low penalty
+        // block above (gated on bg < lowGuardMgdl) already handles and returns for that case.
+        // Correct condition here: within SOFT_LOW_APPROACH_MGDL above guard, not below it.
         val approachingLow = isFasting && !inPostMealLockout &&
             bg >= lowGuardMgdl && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
             delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
@@ -1440,10 +1486,6 @@ class CircadianLearner @Inject constructor(
 
     private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     private fun currentDow(): Int  = DayOfWeekCircadianState.currentDayOfWeek()
-
-    /** Blend learned value toward default (1.0) based on confidence */
-    private fun blend(learned: Double, default: Double, confidence: Double) =
-        default + (learned - default) * confidence
 
     // -- Constants -------------------------------------------------------------
 
