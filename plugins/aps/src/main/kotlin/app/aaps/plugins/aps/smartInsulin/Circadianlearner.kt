@@ -124,6 +124,22 @@ class CircadianLearner @Inject constructor(
         lastAggrNudgeStatus = "PAUSED|$reason"
     }
 
+    /**
+     * End any in-progress short-term fuel-trim episode. Called whenever the cycle is not clean
+     * fasting (meal-mode / COB skip, or post-meal lockout). A meal changes the BG picture enough
+     * that a pre-meal excursion and a post-meal one are genuinely different episodes, so the
+     * sustained-trim clock (trimMins) must not span the interruption and the next fasting
+     * excursion starts a fresh episode. No-op when nothing is active.
+     */
+    private fun resetTrim() {
+        if (!trimActive && trimStrength == 0.0 && trimDirection == 0 && trimBgHistory.isEmpty()) return
+        trimBgHistory.clear()
+        trimActive    = false
+        trimStrength  = 0.0
+        trimDirection = 0
+        trimStartMs   = 0L
+    }
+
     // -- Core update — called every loop cycle ---------------------------------
 
     /**
@@ -198,6 +214,9 @@ class CircadianLearner @Inject constructor(
         }
 
         if (skipReason != null) {
+            // Not clean fasting this cycle (meal mode or COB on board) — end any in-progress
+            // fuel-trim episode so the sustained-trim clock never spans the interruption.
+            resetTrim()
             // Still emit the summary line on skip cycles so the log has no gaps —
             // this is exactly the window (post-meal, P/F) where most contradictions
             // in mult direction turned out to originate from a PRIOR cycle's write
@@ -476,6 +495,10 @@ class CircadianLearner @Inject constructor(
         // downstream check so aggrNudge correctly defers when FuelTrim already acted.
         var trimWroteIsf   = false
         var trimWroteBasal = false
+
+        // Post-meal lockout while still in FASTING mode doesn't trigger the skip-return above,
+        // so close any trim episode here too — same rule: only clean fasting accumulates.
+        if (inPostMealLockout) resetTrim()
 
         // -- Short-term fuel trim (? sensor analogy) ---------------------------
         if (!inPostMealLockout && bg > 0.0) {
