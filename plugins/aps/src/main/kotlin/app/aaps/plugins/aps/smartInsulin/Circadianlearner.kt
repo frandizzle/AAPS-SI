@@ -532,9 +532,14 @@ class CircadianLearner @Inject constructor(
                 // much insulin already on board, and the swing itself is excess loop gain; adding
                 // more just deepens the next low. detectRollercoaster() does NOT catch this: it
                 // requires BG to reach the low guard, but here only the (higher) target was crossed.
-                // Anchor on the live reading — if the window still says high but bg is already at/
-                // below target, treat it as an overshoot: route to the cut branch and NEVER add.
-                val overshootCrash = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && bg <= targetMgdl
+                // Anchor on the live reading. A real overshoot is when the window mean and the live
+                // reading STRADDLE target: mean on the high side of the dead band, current reading on
+                // the LOW side. Using bare `bg <= target` instead fired during normal at-target running
+                // (live reading just under target + a slightly-high trailing mean), hijacking the cut
+                // branch and blocking the increase-learning. Require bg a full dead band below target so
+                // this only triggers on a genuine straddle/crash — your 4.6-vs-5.5 case still qualifies.
+                val overshootCrash = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) &&
+                    (bg < targetMgdl - TRIM_DEAD_BAND_MGDL)
                 overshootThisCycle = overshootCrash
 
                 val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery && !overshootCrash
