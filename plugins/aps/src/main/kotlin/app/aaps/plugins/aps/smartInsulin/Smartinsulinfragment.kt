@@ -659,15 +659,22 @@ class SmartInsulinFragment : DaggerFragment() {
             nudgeTrim -> {
                 val trimDir = nudgeParts.getOrNull(1) ?: ""
                 val isHigh = trimDir == "ACTIVE_HIGH"
+                val isOvershoot = trimDir == "OVERSHOOT"
                 val wasIsfMult = d.nudgeSessionIsfMgdl.takeIf { it > 0 }?.let { profIsf / it } ?: 1.0
                 val wasBasMult = d.nudgeSessionBasalU.takeIf { it > 0 }?.let { it / profBas } ?: 1.0
                 val nowIsfMult = d.isfMultiplier
                 val nowBasMult = d.basalMultiplier
 
                 val trimAction = if (isHigh) "Adding insulin" else "Reducing insulin"
-                stHeadline = if (isHigh) "⬆️ Sustained high for ${d.trimMins}m — Adding insulin"
-                else "⬇️ Sustained low for ${d.trimMins}m — Reducing insulin"
-                stDetail   = "BG has been off target for ${d.trimMins}m. $trimAction to correct the trend.\n" +
+                stHeadline = when {
+                    isHigh      -> "⬆️ Sustained high for ${d.trimMins}m — Adding insulin"
+                    isOvershoot -> "⬇️ Overshoot after high — Reducing insulin"
+                    else        -> "⬇️ Sustained low for ${d.trimMins}m — Reducing insulin"
+                }
+                stDetail   = (if (isOvershoot)
+                    "BG spiked then fell back through target — too much insulin on board. Pulling insulin to stop the swing.\n"
+                else
+                    "BG has been off target for ${d.trimMins}m. $trimAction to correct the trend.\n") +
                     "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
                     "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}" +
                     learningPauseNote

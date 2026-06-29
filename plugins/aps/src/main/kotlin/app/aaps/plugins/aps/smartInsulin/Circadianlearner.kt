@@ -114,6 +114,9 @@ class CircadianLearner @Inject constructor(
     private var trimStartMs  = 0L
     val trimMins: Long get() = if (trimActive && trimStartMs > 0L) (System.currentTimeMillis() - trimStartMs) / 60_000L else 0L
     private var lastTrimActionMs = 0L // NEW: Tracks the "Wait and Re-assess" window
+    // True while the active cut came from an overshoot crash (spike that fell back through
+    // target). Lets the SI tab label it distinctly and keeps it out of the "sustained low" copy.
+    private var trimWasOvershoot = false
 
     // Last aggression nudge status for SI tab display
     var lastAggrNudgeStatus: String = "Inactive — no data yet"
@@ -138,6 +141,7 @@ class CircadianLearner @Inject constructor(
         trimStrength  = 0.0
         trimDirection = 0
         trimStartMs   = 0L
+        trimWasOvershoot = false
     }
 
     // -- Core update — called every loop cycle ---------------------------------
@@ -237,6 +241,7 @@ class CircadianLearner @Inject constructor(
                 trimActive = false
                 trimStrength = 0.0
                 trimDirection = 0
+                trimWasOvershoot = false
             }
             // NOTE: the ISF/basal low-guard penalty itself is no longer applied here.
             // This block and updateAggrLearner's "Hard low" penalty (Signal 2 there) were
@@ -495,6 +500,9 @@ class CircadianLearner @Inject constructor(
         // downstream check so aggrNudge correctly defers when FuelTrim already acted.
         var trimWroteIsf   = false
         var trimWroteBasal = false
+        // Set when FuelTrim sees a post-spike crash through target this cycle (scope-visible to
+        // the aggrNudge guards below, where overshootCrash itself is out of scope).
+        var overshootThisCycle = false
 
         // Post-meal lockout while still in FASTING mode doesn't trigger the skip-return above,
         // so close any trim episode here too — same rule: only clean fasting accumulates.
@@ -515,8 +523,22 @@ class CircadianLearner @Inject constructor(
                 // We only block "aboveBand" (adding insulin). "belowBand" (cutting insulin) stays active.
                 val isLowRecovery = cooldownActive &&
                     (lastPenaltyReason.contains("low") || lastPenaltyReason.contains("rollercoaster"))
-                val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery
-                val belowBand = avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL
+
+                // --- OVERSHOOT-CRASH GUARD (post-spike recovery back through target) ---
+                // avgBg is a trailing mean over the whole trim window (up to 120 min). After a
+                // high spike that crashes back THROUGH target, that mean is still dominated by the
+                // spike, so aboveBand reads "sustained high" and ADDS insulin — at the exact moment
+                // the live reading has already fallen to/below target. That is the signature of too
+                // much insulin already on board, and the swing itself is excess loop gain; adding
+                // more just deepens the next low. detectRollercoaster() does NOT catch this: it
+                // requires BG to reach the low guard, but here only the (higher) target was crossed.
+                // Anchor on the live reading — if the window still says high but bg is already at/
+                // below target, treat it as an overshoot: route to the cut branch and NEVER add.
+                val overshootCrash = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && bg <= targetMgdl
+                overshootThisCycle = overshootCrash
+
+                val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery && !overshootCrash
+                val belowBand = (avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL) || overshootCrash
 
                 // --- HUMAN "STEP AND WAIT" LOGIC ---
                 val timeSinceLastAction = now - lastTrimActionMs
@@ -540,6 +562,7 @@ class CircadianLearner @Inject constructor(
                             trimStrength   = magnitude
                             trimDirection  = +1
                             trimActive     = true
+                            trimWasOvershoot = false
                             if (isNewEpisode) trimStartMs = now
 
                             val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
@@ -574,9 +597,14 @@ class CircadianLearner @Inject constructor(
                     belowBand -> {
                         // Too much insulin — trim ceiling DOWN (less aggressive)
                         if (readyToReassess) {
-                            val baseMagnitude = ((targetMgdl - avgBg) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
-                            val amplifier  = if (avgBg < lowGuardMgdl) 2.0 else 1.0
-                            val magnitude  = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            // During an overshoot crash avgBg is stale-high, so the avg-anchored
+                            // formula would yield ~0. Anchor on the live reading instead: the cut
+                            // scales with how far below target we ALREADY are, amplified below low guard.
+                            val effLow        = if (overshootCrash) bg else avgBg
+                            val baseMagnitude = ((targetMgdl - effLow) / targetMgdl).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            val amplifier     = if (effLow < lowGuardMgdl) 2.0 else 1.0
+                            val magnitude     = (baseMagnitude * amplifier).coerceIn(0.0, TRIM_MAX_STRENGTH)
+                            trimWasOvershoot  = overshootCrash
                             // Same fix as aboveBand — see comment there.
                             val isNewEpisode = !trimActive || trimDirection != -1
                             trimStrength   = -magnitude
@@ -606,7 +634,7 @@ class CircadianLearner @Inject constructor(
                             lastTrimActionMs = now // Reset the timer.
 
                             aapsLogger.debug(LTag.APS,
-                                             "FuelTrim[STEP -] h=$hour avgBg=${"%.1f".format(avgBg)} target=${"%.0f".format(targetMgdl)} " +
+                                             "FuelTrim[${if (overshootCrash) "OVERSHOOT -" else "STEP -"}] h=$hour avgBg=${"%.1f".format(avgBg)} bg=${"%.1f".format(bg)} target=${"%.0f".format(targetMgdl)} " +
                                                  "mag=${"%.3f".format(magnitude)} ? ceil=${"%.3f".format(trimmedCeil)} ltNudge=${"%.4f".format(ltNudge)}" +
                                                  (if (isNewEpisode) " [NEW EPISODE — timer reset]" else ""))
                         } else {
@@ -618,7 +646,7 @@ class CircadianLearner @Inject constructor(
                         if (trimActive) {
                             trimStrength *= TRIM_DECAY_RATE
                             if (kotlin.math.abs(trimStrength) < 0.005) {
-                                trimActive = false; trimStrength = 0.0; trimDirection = 0; trimStartMs = 0L
+                                trimActive = false; trimStrength = 0.0; trimDirection = 0; trimStartMs = 0L; trimWasOvershoot = false
                                 // Set timer to half a window ago rather than 0 — prevents
                                 // immediate re-fire if BG briefly dips into band then exits.
                                 // Requires at least half a peak window before next trim fires.
@@ -664,9 +692,20 @@ class CircadianLearner @Inject constructor(
                                  "(iob=${"%.2f".format(iob)}U bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)})")
         }
 
+        // --- OVERSHOOT GUARD (aggrNudge) ---
+        // FuelTrim already detected a post-spike crash through target this cycle and is cutting.
+        // A global "needs more insulin" score is stale against the live crash, so block notEnough:
+        // otherwise its writes are skipped by the trimWrote guards anyway but it still overwrites the
+        // status to ACTIVE_HIGH, making the SI tab read "adding insulin" mid-overshoot. Blocking it
+        // lets the no-op return below publish the correct TRIM|OVERSHOOT status instead.
+        if (notEnough && overshootThisCycle) {
+            notEnough = false
+            aapsLogger.debug(LTag.APS, "CircadianLearner aggrNudge[notEnough] blocked — FuelTrim overshoot crash this cycle (bg through target)")
+        }
+
         if (!tooMuch && !notEnough) {
             if (!trimActive) lastAggrNudgeStatus = "INACTIVE"
-            else lastAggrNudgeStatus = "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
+            else lastAggrNudgeStatus = "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else if (trimWasOvershoot) "OVERSHOOT" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
             return
         }
 
