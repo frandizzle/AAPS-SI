@@ -716,8 +716,8 @@ class CircadianLearner @Inject constructor(
         // -- Attenuation during penalty cooldown -------------------------------
         val effectiveScale = when {
             msSincePenalty > AGGR_NUDGE_COOLDOWN_MS -> AGGR_NUDGE_SCALE                  // no recent penalty — full strength
-            lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * 0.35  // fasting penalty — 35%
-            else                                    -> AGGR_NUDGE_SCALE * 0.15  // meal penalty — 15%
+            lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_FASTING  // fasting penalty — 35%
+            else                                    -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_MEAL     // meal penalty — 15%
         }
         val cooldownNote   = if (cooldownActive) " [cooldown ${msSincePenalty / 60_000}min/${AGGR_NUDGE_COOLDOWN_MS / 60_000}min fasting=$lastPenaltyWasFasting]" else ""
         val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
@@ -1640,6 +1640,8 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this ? not enough insulin, nudge to increase
         private const val AGGR_NUDGE_SCALE        = 0.04           // 20% deviation ? 0.8% nudge per cycle
         private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
+        private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
+        private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
