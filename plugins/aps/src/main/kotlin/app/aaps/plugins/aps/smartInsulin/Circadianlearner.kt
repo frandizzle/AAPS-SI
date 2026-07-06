@@ -46,7 +46,7 @@ class CircadianLearner @Inject constructor(
 
     // -- Public outputs --------------------------------------------------------
 
-    /** ISF multiplier for current hour (0.7–1.5). >1.0 = less aggressive ISF */
+    /** ISF multiplier for current hour (0.7–1.5). >1.0 = MORE aggressive (dosingISF = profileISF / mult → smaller ISF → more insulin) */
     fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
         isfState.get(dow, hour).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
@@ -682,19 +682,18 @@ class CircadianLearner @Inject constructor(
             lastAggrNudgeStatus = "PAUSED|Low Recovery Spike"
         }
 
-        // --- NEGATIVE IOB + AT/BELOW TARGET GUARD ---
-        // When IOB is meaningfully negative AND BG is at or below target, the loop is already
-        // withholding insulin — that IS the correct response. The aggrCeiling history may say
-        // "not enough insulin at this hour" but the live state contradicts it: negative IOB with
-        // BG at/below target means any extra learned insulin would push BG lower, not higher.
-        // Block the notEnough nudge; let the loop handle it and wait for BG to actually rise
-        // before we conclude the profile needs more insulin.
-        if (notEnough && iob < AGGR_NUDGE_NEG_IOB_GATE && bg <= targetMgdl + TRIM_DEAD_BAND_MGDL) {
+        // --- AT/BELOW-TARGET GUARD ---
+        // "Not enough insulin" is contradicted by live BG at or below target regardless of
+        // IOB — there is no IOB value that makes adding insulin while under target during
+        // fasting the right conclusion. Supersedes the old NegIOB@target guard (which only
+        // engaged when iob < -0.20 and let the nudge write up every cycle through shallow
+        // sub-target hovers where IOB sat near zero).
+        if (notEnough && bg <= targetMgdl + TRIM_DEAD_BAND_MGDL) {
             notEnough = false
-            lastAggrNudgeStatus = "PAUSED|NegIOB@target (iob=${"%.2f".format(iob)}U bg=${"%.1f".format(bg)})"
+            lastAggrNudgeStatus = "PAUSED|At/below target (bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)})"
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner aggrNudge[notEnough] blocked — negative IOB with BG at/below target " +
-                                 "(iob=${"%.2f".format(iob)}U bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)})")
+                             "CircadianLearner aggrNudge[notEnough] blocked — BG at/below target " +
+                                 "(bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} iob=${"%.2f".format(iob)})")
         }
 
         // --- OVERSHOOT GUARD (aggrNudge) ---
@@ -717,8 +716,8 @@ class CircadianLearner @Inject constructor(
         // -- Attenuation during penalty cooldown -------------------------------
         val effectiveScale = when {
             msSincePenalty > AGGR_NUDGE_COOLDOWN_MS -> AGGR_NUDGE_SCALE                  // no recent penalty — full strength
-            lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_FASTING  // fasting penalty — 35%
-            else                                    -> AGGR_NUDGE_SCALE * AGGR_NUDGE_ATTN_MEAL     // meal penalty — 15%
+            lastPenaltyWasFasting                   -> AGGR_NUDGE_SCALE * 0.35  // fasting penalty — 35%
+            else                                    -> AGGR_NUDGE_SCALE * 0.15  // meal penalty — 15%
         }
         val cooldownNote   = if (cooldownActive) " [cooldown ${msSincePenalty / 60_000}min/${AGGR_NUDGE_COOLDOWN_MS / 60_000}min fasting=$lastPenaltyWasFasting]" else ""
         val deviation      = if (tooMuch) 1.0 - aggressiveness else aggressiveness - 1.0
@@ -1059,31 +1058,39 @@ class CircadianLearner @Inject constructor(
             lastPredTrimDebug = "suppressed — aggrNudge notEnough active (aggressiveness=${"%.3f".format(aggressiveness)})"
             aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] suppressed: aggrNudge notEnough active, aggressiveness=${"%.3f".format(aggressiveness)}")
         } else if (!driftFired && !signal0Fired && !negIobFired && !inPostMealLockout) {
-            // BUG FIX (found in audit): previously only excluded driftFired, not signal0Fired
-            // or negIobFired. All three target the same quiet/low-activity/sub-target regime as
-            // Signal 4 below, which already correctly excludes all three — predTrim was the one
-            // signal that didn't match that pattern, leaving a gap where Signal 0 or negIOB
-            // could fire AND predTrim could also fire in the same cycle, stacking a third pull
-            // in the same direction on top of whichever of the first two already moved basalState.
             val projectedBg = projectBg60min(targetMgdl)
             if (projectedBg == null) {
                 lastPredTrimDebug = "waiting — ${basalDriftWindow.size}/$PRED_MIN_WINDOW_SAMPLES samples"
             } else {
                 val projectedError = projectedBg - targetMgdl  // positive = projected high
-                lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | ${if (abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
-                if (abs(projectedError) > PRED_TRIM_DEAD_BAND_MGDL) {
-                    // Scale adjustment to projected error magnitude, capped at PRED_TRIM_MAX_ADJUST
-                    val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
-                    val adjustment = 1.0 + rawAdjust  // >1 = more basal needed, <1 = less
-                    val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                    basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
-                    predTrimFired = true
-                    lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                    lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
-                        "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA a=0.03 — slow)"
-                    aapsLogger.debug(LTag.APS,
-                                     "CircadianLearner Basal[predTrim] h=$hour projectedBg=${"%.1f".format(projectedBg)} " +
-                                         "target=${"%.1f".format(targetMgdl)} error=${"%.1f".format(projectedError)} rawAdjust=${"%.3f".format(rawAdjust)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
+                val wouldFire = kotlin.math.abs(projectedError) > PRED_TRIM_DEAD_BAND_MGDL
+                // --- BELOW-TARGET GUARD (Signal 3) ---
+                // Same blind spot as Signals 0 and 1: a projected-high while current BG is below
+                // target is more likely a rebound/recovery than a genuine basal deficit. Block
+                // only the up-direction; the down-direction (less basal) is never blocked.
+                val blockUp = projectedError > 0.0 && bg < targetMgdl
+                when {
+                    wouldFire && blockUp -> {
+                        lastPredTrimDebug = "blocked UP — proj=${"%.1f".format(projectedBg / 18.0)}mmol high but bg=${"%.1f".format(bg / 18.0)}mmol < target"
+                        aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] up-direction blocked: projectedError=${"%.1f".format(projectedError)} but bg below target")
+                    }
+                    wouldFire -> {
+                        // Scale adjustment to projected error magnitude, capped at PRED_TRIM_MAX_ADJUST
+                        val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
+                        val adjustment = 1.0 + rawAdjust  // >1 = more basal needed, <1 = less
+                        val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+                        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
+                        predTrimFired = true
+                        lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
+                            "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA a=0.03 — slow)"
+                        aapsLogger.debug(LTag.APS,
+                                         "CircadianLearner Basal[predTrim] h=$hour projectedBg=${"%.1f".format(projectedBg)} " +
+                                             "target=${"%.1f".format(targetMgdl)} error=${"%.1f".format(projectedError)} rawAdjust=${"%.3f".format(rawAdjust)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
+                    }
+                    else -> {
+                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | ${if (kotlin.math.abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
+                    }
                 }
             }
         }
@@ -1633,9 +1640,6 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this ? not enough insulin, nudge to increase
         private const val AGGR_NUDGE_SCALE        = 0.04           // 20% deviation ? 0.8% nudge per cycle
         private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
-        private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
-        private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
-        private const val AGGR_NUDGE_NEG_IOB_GATE = -0.20          // IOB must be less negative than this to block notEnough nudge when at/below target
 
         // Aggressiveness ceiling
         private const val AGGR_ALPHA_PENALTY    = 0.25   // penalty applies quickly
