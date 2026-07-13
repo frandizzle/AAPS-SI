@@ -19,7 +19,10 @@ class InsulinActivityCurveTest {
         88.0 to 300.0,   // a == 1 in the un-simplified IOB form — must not NaN/Inf
         90.0 to 420.0,
         120.0 to 480.0,
-        35.0 to 480.0
+        35.0 to 480.0,
+        75.0 to 540.0,   // ~9h — community reference DIA (see BolusCurveAnalysis)
+        120.0 to 600.0,  // new DIA_MAX_MINUTES ceiling
+        35.0 to 600.0
     )
 
     @Test fun activity_integrates_to_one_over_dia() {

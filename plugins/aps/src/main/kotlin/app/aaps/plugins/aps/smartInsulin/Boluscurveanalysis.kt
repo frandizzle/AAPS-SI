@@ -170,4 +170,57 @@ object BolusCurveAnalysis {
 
         return PeakResult.Ok(peakMins)
     }
+
+    /**
+     * Solve for the DIA implied by an observed BG-drop magnitude, holding peak fixed.
+     *
+     * Elapsed time to nadir alone systematically UNDERSHOOTS true DIA — nadir marks where
+     * insulin's momentary effect is overtaken by counter-regulation/basal, not where the dose's
+     * cumulative activity integral reaches zero (the same peak-vs-nadir distinction this file's
+     * class doc draws for [calculateInterpolatedPeakMinutes], applied to duration instead of
+     * timing — insulin activity has a long, thin tail well past the point BG stops falling).
+     *
+     * Rather than trust elapsed time directly as DIA, this treats it as ONE point on the model's
+     * IOB curve: given how much of the dose's total expected BG-lowering effect (doseU * ISF) has
+     * actually been delivered by [elapsedMinutes], find the DIA whose iobFraction(elapsedMinutes)
+     * reproduces that fraction-consumed. A short elapsed time with a low fraction consumed
+     * implies a long DIA (most of the dose still has a future); the same elapsed time with a high
+     * fraction consumed implies a short one.
+     *
+     * @param elapsedMinutes Minutes from bolus delivery to the observation point (BG nadir)
+     * @param peakMinutes    Fixed peak-activity time (already learned) to solve DIA against
+     * @param fractionUsed   Fraction of the dose's total expected BG-lowering effect observed by
+     *                       [elapsedMinutes] — (bgAtStart - bgNadir) / (doseU * isfMgdl)
+     * @param diaMin         Lower search bound (minutes)
+     * @param diaMax         Upper search bound (minutes)
+     * @return Solved DIA in minutes, always within [diaMin, diaMax]
+     */
+    fun solveDiaFromObservedFraction(
+        elapsedMinutes: Double,
+        peakMinutes:    Double,
+        fractionUsed:   Double,
+        diaMin:         Double = LearnedInsulinProfile.DIA_MIN_MINUTES,
+        diaMax:         Double = LearnedInsulinProfile.DIA_MAX_MINUTES
+    ): Double {
+        // Clamp away from the extremes — near 0 or 1 many DIA values fit almost equally well (or
+        // the target falls outside anything achievable in range), which would let noise dominate.
+        val targetIobFraction = 1.0 - fractionUsed.coerceIn(0.05, 0.95)
+
+        // Plain grid search rather than a solver that assumes monotonicity: cheap (121 evals of a
+        // closed-form curve), and robust even if iobFraction(dia) isn't perfectly monotonic at the
+        // edges of the search range.
+        var bestDia   = diaMin
+        var bestError = Double.MAX_VALUE
+        val steps = 120
+        for (i in 0..steps) {
+            val candidateDia = diaMin + (diaMax - diaMin) * i / steps
+            val predicted = InsulinActivityCurve.iobFraction(elapsedMinutes, peakMinutes, candidateDia)
+            val error = abs(predicted - targetIobFraction)
+            if (error < bestError) {
+                bestError = error
+                bestDia   = candidateDia
+            }
+        }
+        return bestDia
+    }
 }

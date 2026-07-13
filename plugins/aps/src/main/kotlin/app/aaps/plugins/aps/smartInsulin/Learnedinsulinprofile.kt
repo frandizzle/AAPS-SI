@@ -66,10 +66,14 @@ data class LearnedInsulinProfile(
         // -- Hard bounds — physiologically reasonable limits ------------------
         const val PEAK_MIN_MINUTES = 35.0
         const val PEAK_MAX_MINUTES = 120.0
-        const val DIA_MIN_MINUTES  = 300.0   // 5h floor: observed "DIA" is time-to-nadir and undershoots
-        // true DIA. Matches AAPS minimum DIA and caps the
-        // getActivityAtMinute timeScale compression at ~1.2x.
-        const val DIA_MAX_MINUTES  = 480.0
+        // 5h hard safety floor — physiologically implausible for a rapid/ultra-rapid analogue
+        // to be fully spent this fast. Matches AAPS' own minimum DIA.
+        const val DIA_MIN_MINUTES  = 300.0
+        // 10h ceiling — brackets published community reference values (~9h consistently across
+        // rapid/ultra-rapid insulins; see BolusCurveAnalysis.solveDiaFromObservedFraction, which
+        // infers DIA from observed BG-drop magnitude rather than raw elapsed-to-nadir time so it
+        // can actually reach this range instead of being structurally biased short).
+        const val DIA_MAX_MINUTES  = 600.0
 
         // Fallback constants used only when profileFunction/activeInsulin are unavailable at seed time
         const val FALLBACK_PEAK_MINS = 75.0

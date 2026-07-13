@@ -170,7 +170,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
             iobArray      = iobArray,
             isfMgdl       = dosingIsfMgdl,
             learnedProfile = learnedProfile,
-            ticks         = learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5
+            // Bounds match LearnedInsulinProfile's own DIA range — was hardcoded to (360, 480)
+            // independent of that range, which silently re-capped the prediction curve (and thus
+            // pred_min / low-guard decisions) at 8h even after DIA learning was fixed to reach
+            // the ~9h community reference value. Single source of truth now.
+            ticks         = learnedProfile.safeDiaMinutes.toInt()
+                .coerceIn(LearnedInsulinProfile.DIA_MIN_MINUTES.toInt(), LearnedInsulinProfile.DIA_MAX_MINUTES.toInt()) / 5
         )
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -200,7 +205,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // Populate rT.predBGs.IOB for the overview prediction graph
         val rawPrediction = mutableListOf<Int>()
-        predictedBg.take(learnedProfile.safeDiaMinutes.toInt().coerceIn(360, 480) / 5)
+        predictedBg.take(learnedProfile.safeDiaMinutes.toInt()
+                              .coerceIn(LearnedInsulinProfile.DIA_MIN_MINUTES.toInt(), LearnedInsulinProfile.DIA_MAX_MINUTES.toInt()) / 5)
             .forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction

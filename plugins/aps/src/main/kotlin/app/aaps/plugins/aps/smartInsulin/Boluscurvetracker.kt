@@ -27,6 +27,13 @@ class BolusCurveTracker @Inject constructor(
     private var trackStartMs    = 0L
     private var trackMode       = MealMode.FASTING
     private var iobAtStart      = 0.0
+    // Size of the bolus actually being tracked — the IOB SPIKE that started (or pivoted) the
+    // track, NOT iobAtStart (which includes whatever residual IOB was already on board). Feeds
+    // the magnitude-based DIA solve in onLoopCycle: expected total BG-lowering effect of the
+    // dose is trackedDoseU * ISF, which the observed BG drop is compared against. Also
+    // accumulates "ride-along" SMBs (significant but not large enough to pivot) so the expected
+    // effect keeps matching what's actually decaying — see the ride-along branch below.
+    private var trackedDoseU    = 0.0
     private var bgAtStart       = 0.0
     private var iobPeak         = 0.0
     private var iobDeclineSeen  = false
@@ -86,6 +93,7 @@ class BolusCurveTracker @Inject constructor(
         private const val K_START_MS         = "trackStartMs"
         private const val K_MODE             = "trackMode"
         private const val K_IOB_AT_START     = "iobAtStart"
+        private const val K_TRACKED_DOSE_U   = "trackedDoseU"
         private const val K_BG_AT_START      = "bgAtStart"
         private const val K_IOB_PEAK         = "iobPeak"
         private const val K_IOB_DECLINE_SEEN = "iobDeclineSeen"
@@ -114,6 +122,35 @@ class BolusCurveTracker @Inject constructor(
         return suspendedCount.toDouble() / windowSamples.size
     }
 
+    /**
+     * Turns the raw nadir observation into a DIA estimate via [BolusCurveAnalysis.solveDiaFromObservedFraction]
+     * instead of trusting elapsed-time-to-nadir directly (see that function's doc for why: nadir
+     * timing alone systematically undershoots true DIA). Uses the current learned peak for
+     * [trackMode] as the fixed shape parameter, and trackedDoseU * isfMgdl as the dose's total
+     * expected BG-lowering effect against which the observed drop is compared.
+     */
+    private fun solveObservedDiaMins(isfMgdl: Double): Double {
+        val elapsedToNadirMinutes = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
+        val peakForSolve          = profileLearner.getProfile(trackMode).safePeakMinutes
+        val expectedTotalDropMgdl = trackedDoseU * isfMgdl
+        val observedDropMgdl      = bgAtStart - bgNadir
+        // If dose or ISF is degenerate (shouldn't happen given MIN_BOLUS_SPIKE_U/MIN_TRACK_IOB_U
+        // gates), fall back to a neutral 0.5 fraction rather than dividing by ~0 — this lands the
+        // solve mid-range rather than blowing up or pinning to an edge.
+        val fractionUsed = if (expectedTotalDropMgdl > 1e-6) observedDropMgdl / expectedTotalDropMgdl else 0.5
+        val solvedDia = BolusCurveAnalysis.solveDiaFromObservedFraction(
+            elapsedMinutes = elapsedToNadirMinutes,
+            peakMinutes    = peakForSolve,
+            fractionUsed   = fractionUsed
+        )
+        aapsLogger.debug(LTag.APS,
+                         "BolusCurveTracker: DIA solve — elapsedToNadir=${"%.0f".format(Locale.US, elapsedToNadirMinutes)}m " +
+                             "dose=${"%.2f".format(Locale.US, trackedDoseU)}U isf=${"%.1f".format(Locale.US, isfMgdl)} " +
+                             "drop=${"%.1f".format(Locale.US, observedDropMgdl)} fractionUsed=${"%.2f".format(Locale.US, fractionUsed.coerceIn(0.0, 1.0))} " +
+                             "peak=${"%.0f".format(Locale.US, peakForSolve)} -> dia=${"%.0f".format(Locale.US, solvedDia)}")
+        return solvedDia
+    }
+
     fun statusSummary(currentMode: MealMode? = null): String {
         if (!tracking) return "tracker=idle"
         val elapsedMin = (System.currentTimeMillis() - trackStartMs) / 60_000.0
@@ -136,6 +173,7 @@ class BolusCurveTracker @Inject constructor(
         glucoseStatus: GlucoseStatus,
         mealMode:      MealMode,
         iobArray:      Array<IobTotal>,
+        isfMgdl:       Double,
         nowMs:         Long = System.currentTimeMillis()
     ) {
         val currentIob = iobArray.firstOrNull()?.iob ?: return
@@ -172,6 +210,7 @@ class BolusCurveTracker @Inject constructor(
                 trackStartMs    = nowMs
                 trackMode       = mealMode
                 iobAtStart      = currentIob
+                trackedDoseU    = iobSpike
                 bgAtStart       = smoothedBg
                 iobPeak         = currentIob
                 iobDeclineSeen  = false
@@ -216,6 +255,7 @@ class BolusCurveTracker @Inject constructor(
             trackStartMs    = nowMs
             trackMode       = mealMode
             iobAtStart      = currentIob
+            trackedDoseU    = iobSpikeWhileTracking
             bgAtStart       = smoothedBg
             iobPeak         = currentIob
             iobDeclineSeen  = false
@@ -231,7 +271,14 @@ class BolusCurveTracker @Inject constructor(
             saveState()
             return
         } else if (isSignificantSpike) {
-            aapsLogger.debug(LTag.APS, "BolusCurveTracker: spike ignored (ride-along) - spike=%.2f ratio=%.1f%%".format(Locale.US, iobSpikeWhileTracking, pivotRatio * 100))
+            // Ride-along SMB — not big enough to restart the track, but still real dose that
+            // will decay and contribute to the BG drop we observe. Fold it into trackedDoseU so
+            // the magnitude-based DIA solve's "expected total effect" (trackedDoseU * ISF)
+            // doesn't understate what's actually on board — an uncounted ride-along would make
+            // the observed drop look like a larger fraction of a smaller dose than it really is,
+            // biasing the solved DIA short again (the same failure mode this solve exists to fix).
+            trackedDoseU += iobSpikeWhileTracking
+            aapsLogger.debug(LTag.APS, "BolusCurveTracker: spike ignored (ride-along) - spike=%.2f ratio=%.1f%% trackedDose=%.2f".format(Locale.US, iobSpikeWhileTracking, pivotRatio * 100, trackedDoseU))
         }
 
         curveHistory.add(nowMs to smoothedBg)
@@ -281,7 +328,7 @@ class BolusCurveTracker @Inject constructor(
                     avgBg >= FLATLINE_BG_MIN_MGDL &&
                     avgBg <= FLATLINE_BG_MAX_MGDL
                 ) {
-                    val observedDiaMins = (nadirTimeMs - trackStartMs).toDouble() / 60_000.0
+                    val observedDiaMins = solveObservedDiaMins(isfMgdl)
 
                     // SUSPENSION GUARD: a flatline can mean "the bolus finished" OR "the loop
                     // suspended basal and that arrested the BG fall" — the raw curve can't tell
@@ -327,7 +374,7 @@ class BolusCurveTracker @Inject constructor(
             bgNadir < dropTarget
         ) {
             nadirConfirmed = true
-            val observedDiaMins = elapsedMs.toDouble() / 60_000.0
+            val observedDiaMins = solveObservedDiaMins(isfMgdl)
 
             // SUSPENSION GUARD (recovery path): same concern as the flatline branch above —
             // a "recovery" off the nadir can be the bolus finishing, OR it can be the loop
@@ -373,6 +420,7 @@ class BolusCurveTracker @Inject constructor(
                 put(K_START_MS,         trackStartMs)
                 put(K_MODE,             trackMode.name)
                 put(K_IOB_AT_START,     iobAtStart)
+                put(K_TRACKED_DOSE_U,   trackedDoseU)
                 put(K_BG_AT_START,      bgAtStart)
                 put(K_IOB_PEAK,         iobPeak)
                 put(K_IOB_DECLINE_SEEN, iobDeclineSeen)
@@ -422,6 +470,10 @@ class BolusCurveTracker @Inject constructor(
             trackStartMs    = restoredStartMs
             trackMode       = MealMode.valueOf(json.getString(K_MODE))
             iobAtStart      = json.getDouble(K_IOB_AT_START)
+            // Absent on upgrade from a pre-magnitude-solve version. 0.0 is safe: it just makes
+            // solveObservedDiaMins() fall back to the neutral 0.5 fraction for this one
+            // in-flight track (harmless, decays to real values on the very next tracked bolus).
+            trackedDoseU    = json.optDouble(K_TRACKED_DOSE_U, 0.0)
             bgAtStart       = json.getDouble(K_BG_AT_START)
             iobPeak         = json.getDouble(K_IOB_PEAK)
             iobDeclineSeen  = json.getBoolean(K_IOB_DECLINE_SEEN)
@@ -475,6 +527,7 @@ class BolusCurveTracker @Inject constructor(
         tracking        = false
         trackStartMs    = 0L
         iobAtStart      = 0.0
+        trackedDoseU    = 0.0
         bgAtStart       = 0.0
         iobPeak         = 0.0
         iobDeclineSeen  = false

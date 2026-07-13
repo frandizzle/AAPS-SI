@@ -15,6 +15,7 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 
 /**
  * Integration tests for [BolusCurveTracker].
@@ -40,14 +41,30 @@ class BolusCurveTrackerTest {
     private val BASE_MS   = 1_700_000_000_000L
     private val CYCLE_MS  = 5 * 60_000L   // 5 min
 
+    // Fixed peak the DIA solve is anchored against — see solveObservedDiaMins() in
+    // BolusCurveTracker, which reads profileLearner.getProfile(trackMode).safePeakMinutes.
+    private val STUBBED_PEAK_MINS = 75.0
+
     @BeforeEach
     fun setUp() {
         prefs         = FakePreferences()
         profileLearner = mock()
+        // BolusCurveTracker now reads the current learned peak to solve DIA from observed
+        // BG-drop magnitude — stub a deterministic value so existing tests (which never
+        // configured this) don't NPE, and so the new magnitude-solve test can compute its
+        // expected value independently.
+        whenever(profileLearner.getProfile(any())).thenAnswer { invocation ->
+            val mode = invocation.getArgument<MealMode>(0)
+            LearnedInsulinProfile.defaultFor(mode, STUBBED_PEAK_MINS, LearnedInsulinProfile.FALLBACK_DIA_MINS)
+        }
         tracker       = BolusCurveTracker(profileLearner, prefs, logger)
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    // Representative ISF (mg/dL per unit) used throughout — feeds the magnitude-based DIA solve
+    // (trackedDoseU * isfMgdl = expected total BG-lowering effect of the tracked dose).
+    private val ISF_MGDL = 50.0
 
     /** Single tracker cycle. */
     private fun cycle(
@@ -55,11 +72,13 @@ class BolusCurveTrackerTest {
         iob: Double,
         mode: MealMode = MealMode.FASTING,
         nowMs: Long    = BASE_MS,
-        timestamp: Long = nowMs
+        timestamp: Long = nowMs,
+        isfMgdl: Double = ISF_MGDL
     ) = tracker.onLoopCycle(
         glucoseStatus = glucoseStatus(glucose = bg, date = timestamp),
         mealMode      = mode,
         iobArray      = iobArray(iob = iob, activity = iob * 0.01),
+        isfMgdl       = isfMgdl,
         nowMs         = nowMs
     )
 
@@ -151,10 +170,12 @@ class BolusCurveTrackerTest {
         )
         val peak = peakCaptor.firstValue
         val dia  = diaCaptor.firstValue
-        // Peak may be null (parabola analysis might not find a clear peak in synthetic data)
-        // but DIA must be positive and plausible
-        assertTrue(dia > 0.0, "DIA should be positive, got $dia")
-        assertTrue(dia < 360.0, "DIA should be < 6h for a short synthetic track, got $dia")
+        // Peak may be null (parabola analysis might not find a clear peak in synthetic data).
+        // DIA is now solved from BG-drop magnitude rather than raw elapsed-to-nadir time, so it
+        // isn't bounded by the (short) synthetic track duration — it must land within the
+        // learner's physiological search range instead.
+        assertTrue(dia >= LearnedInsulinProfile.DIA_MIN_MINUTES, "DIA should be >= floor, got $dia")
+        assertTrue(dia <= LearnedInsulinProfile.DIA_MAX_MINUTES, "DIA should be <= ceiling, got $dia")
         if (peak != null) {
             assertTrue(peak > 0.0, "Peak should be positive when non-null, got $peak")
             assertTrue(peak < dia, "Peak should be less than DIA, got peak=$peak dia=$dia")
@@ -353,40 +374,58 @@ class BolusCurveTrackerTest {
     }
 
     @Test
-    fun `DIA from flatline exit is bolus-to-nadir time not bolus-to-now`() {
-        var t = BASE_MS
+    fun `flatline exit DIA increases with tracked dose size for the same BG-drop trajectory`() {
+        // Rather than hand-deriving an exact expected DIA (fragile — it would require replaying
+        // the 3-sample median smoothing filter by hand), this drives two runs with IDENTICAL BG
+        // trajectories (so bgAtStart, bgNadir and elapsed-to-nadir all come out identical) and
+        // varies only the tracked dose size. A bigger dose producing the SAME observed BG drop
+        // means a smaller fraction of it was used — which should only ever solve to a DIA that's
+        // >= the smaller dose's, never shorter. This exercises the actual mechanism
+        // (solveObservedDiaMins → BolusCurveAnalysis.solveDiaFromObservedFraction) without
+        // depending on precomputed smoothing-filter arithmetic.
+        fun runWithDose(iobPeak: Double): Double {
+            val localProfileLearner = mock<ProfileLearner>()
+            whenever(localProfileLearner.getProfile(any())).thenAnswer { invocation ->
+                val mode = invocation.getArgument<MealMode>(0)
+                LearnedInsulinProfile.defaultFor(mode, STUBBED_PEAK_MINS, LearnedInsulinProfile.FALLBACK_DIA_MINS)
+            }
+            val localTracker = BolusCurveTracker(localProfileLearner, FakePreferences(), FakeAAPSLogger(collect = false))
+            var t = BASE_MS
 
-        cycle(bg = 162.0, iob = 0.5, nowMs = t); t += CYCLE_MS
-        cycle(bg = 162.0, iob = 3.0, nowMs = t); t += CYCLE_MS
+            fun localCycle(bg: Double, iob: Double, nowMs: Long) = localTracker.onLoopCycle(
+                glucoseStatus = glucoseStatus(glucose = bg, date = nowMs),
+                mealMode      = MealMode.FASTING,
+                iobArray      = iobArray(iob = iob, activity = iob * 0.01),
+                isfMgdl       = ISF_MGDL,
+                nowMs         = nowMs
+            )
 
-        // BG falls over 10 cycles (~50 min) to nadir at 108 mg/dL
-        for (i in 1..10) {
-            cycle(bg = 162.0 - i * 5.4, iob = 3.0 * (1.0 - i * 0.07), nowMs = t)
-            t += CYCLE_MS
+            localCycle(162.0, 0.5, t); t += CYCLE_MS      // seed
+            localCycle(162.0, iobPeak, t); t += CYCLE_MS  // spike — dose = iobPeak - 0.5
+
+            for (i in 1..8) {
+                localCycle(162.0 - i * 6.75, iobPeak * (1.0 - i * 0.08), t)
+                t += CYCLE_MS
+            }
+            repeat(20) { localCycle(108.0, iobPeak * 0.2, t); t += CYCLE_MS }
+
+            val diaCaptor = argumentCaptor<Double>()
+            verify(localProfileLearner, times(1)).observeBolusCurve(
+                mode             = any(),
+                observedPeakMins = any(),
+                observedDiaMins  = diaCaptor.capture(),
+                learningRate     = any()
+            )
+            return diaCaptor.firstValue
         }
-        // Nadir established. Total time to nadir ≈ 12 cycles = 60 min
 
-        // Now flatline for 32 cycles (~160 min) — way past the 2h elapsed threshold
-        for (i in 0..31) {
-            cycle(bg = 108.0 + (if (i % 2 == 0) 1.0 else -1.0),
-                  iob = 0.5 - i * 0.01, nowMs = t)
-            t += CYCLE_MS
-        }
+        val diaSmallDose = runWithDose(iobPeak = 2.0)  // dose ≈ 1.5U
+        val diaLargeDose = runWithDose(iobPeak = 5.0)  // dose ≈ 4.5U — same BG trajectory
 
-        val diaCaptor = argumentCaptor<Double>()
-        verify(profileLearner).observeBolusCurve(
-            mode             = any(),
-            observedPeakMins = any(),
-            observedDiaMins  = diaCaptor.capture(),
-            learningRate     = any()
-        )
-
-        val observedDia = diaCaptor.firstValue
-        // Nadir was established after ~12 cycles = ~60 min from track start.
-        // DIA should be ~60 min, NOT ~220 min (which elapsed-to-now would give).
-        assertTrue(observedDia < 120.0,
-                   "Flatline DIA should be bolus→nadir time (~60 min), not bolus→now (~220 min), got $observedDia")
-        assertTrue(observedDia > 30.0,
-                   "Flatline DIA should be at least 30 min, got $observedDia")
+        assertTrue(diaSmallDose in LearnedInsulinProfile.DIA_MIN_MINUTES..LearnedInsulinProfile.DIA_MAX_MINUTES)
+        assertTrue(diaLargeDose in LearnedInsulinProfile.DIA_MIN_MINUTES..LearnedInsulinProfile.DIA_MAX_MINUTES)
+        assertTrue(diaLargeDose >= diaSmallDose,
+                   "A bigger tracked dose producing the same BG drop implies more of it is still " +
+                       "unspent, so the solved DIA should be >= the smaller dose's, got large=$diaLargeDose small=$diaSmallDose")
     }
 }
