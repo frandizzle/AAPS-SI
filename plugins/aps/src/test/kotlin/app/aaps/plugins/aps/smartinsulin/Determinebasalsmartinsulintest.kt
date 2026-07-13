@@ -18,11 +18,11 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.profile.Profile
 import org.json.JSONObject
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
@@ -84,7 +84,7 @@ class DetermineBasalSmartInsulinTest {
     private lateinit var fakeResult: FakeAPSResult
     private lateinit var sut: DetermineBasalSmartInsulin
 
-    @Before fun setUp() {
+    @BeforeEach fun setUp() {
         fakeResult = FakeAPSResult()
         sut = DetermineBasalSmartInsulin { fakeResult }
 
@@ -183,8 +183,8 @@ class DetermineBasalSmartInsulinTest {
     @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
         whenever(glucoseStatus.glucose).thenReturn(85.0)
         val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.015))
-        assertTrue("Reduced basal should be <= 0.5 U/hr, got ${r.rate}", r.rate <= 0.5001)
-        assertTrue("Reduced basal should be non-negative", r.rate >= 0.0)
+        assertTrue(r.rate <= 0.5001, "Reduced basal should be <= 0.5 U/hr, got ${r.rate}")
+        assertTrue(r.rate >= 0.0, "Reduced basal should be non-negative")
         assertEquals(0.0, r.smb, 0.001)
         assertTrue(r.reason.contains("CAUTION"))
     }
@@ -210,8 +210,8 @@ class DetermineBasalSmartInsulinTest {
         whenever(glucoseStatus.glucose).thenReturn(140.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(0.5)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0), microBolusAllowed = true)
-        assertTrue("SMB should be > 0 when above target, got ${r.smb}", r.smb > 0.0)
-        assertTrue("SMB should be < full correction, got ${r.smb}",     r.smb < 0.8)
+        assertTrue(r.smb > 0.0, "SMB should be > 0 when above target, got ${r.smb}")
+        assertTrue(r.smb < 0.8, "SMB should be < full correction, got ${r.smb}")
         assertTrue(r.reason.contains("NORMAL"))
     }
 
@@ -235,7 +235,7 @@ class DetermineBasalSmartInsulinTest {
         whenever(glucoseStatus.glucose).thenReturn(300.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(2.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
-        assertTrue("SMB must be <= 0.5 U cap, got ${r.smb}", r.smb <= 0.5001)
+        assertTrue(r.smb <= 0.5001, "SMB must be <= 0.5 U cap, got ${r.smb}")
     }
 
     // ── Prediction graph ─────────────────────────────────────────────────────
@@ -267,6 +267,6 @@ class DetermineBasalSmartInsulinTest {
         whenever(glucoseStatus.glucose).thenReturn(100.0)
         whenever(glucoseStatus.shortAvgDelta).thenReturn(5.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
-        assertTrue("Rising delta should push BG above 100", r.predictionsAsGv.first().value > 100.0)
+        assertTrue(r.predictionsAsGv.first().value > 100.0, "Rising delta should push BG above 100")
     }
 }

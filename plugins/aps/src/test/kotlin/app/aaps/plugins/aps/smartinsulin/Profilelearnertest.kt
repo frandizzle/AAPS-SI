@@ -1,11 +1,11 @@
 package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.smartInsulin.MealMode
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Before
-import org.junit.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
@@ -20,7 +20,7 @@ class ProfileLearnerTest {
     private val profileFunction: ProfileFunction = mock()
     private lateinit var learner: ProfileLearner
 
-    @Before fun setUp() {
+    @BeforeEach fun setUp() {
         // Return empty string for all profile keys → triggers defaultFor() fallback
         whenever(sp.getString(any<String>(), any<String>())).thenAnswer { it.getArgument<String>(1) }
         learner = ProfileLearner(logger, sp, profileFunction)
@@ -48,8 +48,8 @@ class ProfileLearnerTest {
         )
         val after = learner.getProfile(MealMode.FASTING).peakMinutes
         // Peak should have moved toward 50 from 75
-        assertTrue("Peak should decrease toward 50 (before=$before after=$after)", after < before)
-        assertTrue("Peak should not jump all the way to 50", after > 50.0)
+        assertTrue(after < before, "Peak should decrease toward 50 (before=$before after=$after)")
+        assertTrue(after > 50.0, "Peak should not jump all the way to 50")
     }
 
     @Test fun `repeated observations converge toward observed value`() {
@@ -85,7 +85,7 @@ class ProfileLearnerTest {
             learningRate     = 0.15,
         )
         val diaAfter = learner.getProfile(MealMode.EXTENDED).diaMinutes
-        assertEquals("DIA should not change in EXTENDED mode", diaBefore, diaAfter, 0.001)
+        assertEquals(diaBefore, diaAfter, 0.001, "DIA should not change in EXTENDED mode")
     }
 
     @Test fun `EXTENDED mode still updates peak`() {
@@ -97,7 +97,7 @@ class ProfileLearnerTest {
             learningRate     = 0.15,
         )
         val peakAfter = learner.getProfile(MealMode.EXTENDED).peakMinutes
-        assertTrue("Peak should update even in EXTENDED mode (before=$peakBefore, after=$peakAfter)", peakAfter != peakBefore)
+        assertTrue(peakAfter != peakBefore, "Peak should update even in EXTENDED mode (before=$peakBefore, after=$peakAfter)")
     }
 
     // ── Rejection of implausible observations ────────────────────────────────
@@ -125,7 +125,7 @@ class ProfileLearnerTest {
         )
         val after = learner.getProfile(MealMode.FASTING)
         // Peak should have moved toward 35 (clamped value), not 5
-        assertTrue("Peak should not go below PEAK_MIN", after.peakMinutes >= LearnedInsulinProfile.PEAK_MIN_MINUTES)
+        assertTrue(after.peakMinutes >= LearnedInsulinProfile.PEAK_MIN_MINUTES, "Peak should not go below PEAK_MIN")
     }
 
     // ── Mode independence ────────────────────────────────────────────────────
