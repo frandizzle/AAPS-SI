@@ -214,13 +214,14 @@ class DetermineBasalSmartInsulinTest {
 
     // ── CAUTION zone ─────────────────────────────────────────────────────────
 
-    // Current BG (75) sits directly between lowGuard (70.2) and warnGuard (81), with only a
-    // small IOB (0.3U) at low activity (0.005) so the predicted curve stays close to 75 rather
-    // than depending on precisely hand-derived curve-model arithmetic to land in the narrow
-    // caution band without overshooting into suspend.
+    // Calibrated from an actual run: iob=0.3/activity=0.005 from BG=75 produced predictedMinSafety
+    // ≈ 68.4 (a 6.6 mg/dL drop) — enough to slip below lowGuard (70.2) into SUSPEND. The
+    // effective-age reprojection depends only on the activity/iob RATIO, so anchorU (and thus the
+    // predicted drop) scales ~linearly with iob when that ratio is held fixed. Scaling both down
+    // by ~0.27x (same ratio) targets a ~1.8 mg/dL drop instead, landing comfortably mid-band.
     @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
-        whenever(glucoseStatus.glucose).thenReturn(75.0)
-        val r = invoke(iobArray = flatIobArray(iob = 0.3, activity = 0.005))
+        whenever(glucoseStatus.glucose).thenReturn(78.0)
+        val r = invoke(iobArray = flatIobArray(iob = 0.08, activity = 0.0013))
         assertTrue(r.rate <= 0.5001, "Reduced basal should be <= 0.5 U/hr, got ${r.rate}")
         assertTrue(r.rate >= 0.0, "Reduced basal should be non-negative")
         assertEquals(0.0, r.smb, 0.001)
@@ -228,8 +229,8 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `CAUTION zone sets 30-minute TBR`() {
-        whenever(glucoseStatus.glucose).thenReturn(75.0)
-        val r = invoke(iobArray = flatIobArray(iob = 0.3, activity = 0.005))
+        whenever(glucoseStatus.glucose).thenReturn(78.0)
+        val r = invoke(iobArray = flatIobArray(iob = 0.08, activity = 0.0013))
         assertEquals(30, r.duration)
         assertTrue(r.isTempBasalRequested)
     }
