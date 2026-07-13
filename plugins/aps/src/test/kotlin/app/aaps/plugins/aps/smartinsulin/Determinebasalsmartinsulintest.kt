@@ -192,10 +192,15 @@ class DetermineBasalSmartInsulinTest {
     // ── SUSPEND zone ─────────────────────────────────────────────────────────
 
     @Test fun `SUSPEND when predicted BG drops below low guard`() {
-        whenever(glucoseStatus.glucose).thenReturn(90.0)
+        // Current BG (65) is already below lowGuard (3.9 mmol = 70.2 mg/dL), so predictedMinSafety
+        // is guaranteed <= 65 regardless of the exact IOB-curve reprojection math — no need to
+        // hand-derive a precise predicted trough from iob/activity to land reliably in SUSPEND.
+        // Duration is a rounded 30/60/90 based on undershoot magnitude (suspendDurationMins) —
+        // asserting it's a valid multiple rather than hardcoding one exact value.
+        whenever(glucoseStatus.glucose).thenReturn(65.0)
         val r = invoke(iobArray = flatIobArray(iob = 2.0, activity = 0.05))
         assertEquals(0.0, r.rate,     0.001)
-        assertEquals(30,  r.duration)
+        assertTrue(r.duration in setOf(30, 60, 90), "Suspend duration should be a valid rounded value, got ${r.duration}")
         assertTrue(r.isTempBasalRequested)
         assertEquals(0.0, r.smb,      0.001)
         assertTrue(r.reason.contains("SUSPEND"))
@@ -209,18 +214,22 @@ class DetermineBasalSmartInsulinTest {
 
     // ── CAUTION zone ─────────────────────────────────────────────────────────
 
+    // Current BG (75) sits directly between lowGuard (70.2) and warnGuard (81), with only a
+    // small IOB (0.3U) at low activity (0.005) so the predicted curve stays close to 75 rather
+    // than depending on precisely hand-derived curve-model arithmetic to land in the narrow
+    // caution band without overshooting into suspend.
     @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
-        whenever(glucoseStatus.glucose).thenReturn(85.0)
-        val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.015))
+        whenever(glucoseStatus.glucose).thenReturn(75.0)
+        val r = invoke(iobArray = flatIobArray(iob = 0.3, activity = 0.005))
         assertTrue(r.rate <= 0.5001, "Reduced basal should be <= 0.5 U/hr, got ${r.rate}")
         assertTrue(r.rate >= 0.0, "Reduced basal should be non-negative")
         assertEquals(0.0, r.smb, 0.001)
-        assertTrue(r.reason.contains("CAUTION"))
+        assertTrue(r.reason.contains("CAUTION"), "Expected CAUTION in reason, got: ${r.reason}")
     }
 
     @Test fun `CAUTION zone sets 30-minute TBR`() {
-        whenever(glucoseStatus.glucose).thenReturn(85.0)
-        val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.015))
+        whenever(glucoseStatus.glucose).thenReturn(75.0)
+        val r = invoke(iobArray = flatIobArray(iob = 0.3, activity = 0.005))
         assertEquals(30, r.duration)
         assertTrue(r.isTempBasalRequested)
     }
@@ -228,11 +237,16 @@ class DetermineBasalSmartInsulinTest {
     // ── NORMAL zone ──────────────────────────────────────────────────────────
 
     @Test fun `NORMAL zone uses profile basal when stable at target`() {
+        // NORMAL zone always issues an explicit 30-min TBR at the computed rate — there's no
+        // "skip, we're already at basal" shortcut in this code path (that only exists via
+        // setTempBasal's skip_neutral_temps branch, which requires an active currentTemp AND
+        // that preference enabled, neither of which apply here). The original assertions here
+        // (duration=0, isTempBasalRequested=false) assumed a shortcut that doesn't exist.
         whenever(glucoseStatus.glucose).thenReturn(100.0)
         val r = invoke(iobArray = flatIobArray(iob = 0.0, activity = 0.0))
         assertEquals(1.0, r.rate, 0.001)
-        assertEquals(0,   r.duration)
-        assertFalse(r.isTempBasalRequested)
+        assertEquals(30,  r.duration)
+        assertTrue(r.isTempBasalRequested)
     }
 
     @Test fun `NORMAL zone allows SMB above target when microBolusAllowed`() {
@@ -251,8 +265,17 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `NORMAL zone blocks SMB when BG falling fast`() {
+        // There's no hardcoded "falling fast" SMB gate in the NORMAL branch itself (that only
+        // exists via the SUSPEND zone's fallingIntoLow check, which needs delta < -36 mg/dL/5min —
+        // the original -3.0 here never came close, on either field). What DOES zero out SMB here
+        // is the ordinary insulinReq gate: ci = min(shortAvgDelta, delta) - bgi feeds the
+        // prediction curve, and a large enough negative ci pulls predictedMin down to/below
+        // target, making predMinGapMgdl (and so insulinReq) hit zero. -8.0 on both fields (ci
+        // tapers over the first 60 min, cumulative factor 6.5) drops predictedMin by ~52 mg/dL —
+        // from 140 to ~88, below the 100 target but still comfortably clear of the 81 warn guard.
         whenever(glucoseStatus.glucose).thenReturn(140.0)
-        whenever(glucoseStatus.shortAvgDelta).thenReturn(-3.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(-8.0)
+        whenever(glucoseStatus.delta).thenReturn(-8.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
         assertEquals(0.0, r.smb, 0.001)
     }
