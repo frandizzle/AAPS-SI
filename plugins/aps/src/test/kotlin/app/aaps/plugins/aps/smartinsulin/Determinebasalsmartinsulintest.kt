@@ -218,11 +218,15 @@ class DetermineBasalSmartInsulinTest {
     // ≈ 68.4 (a 6.6 mg/dL drop) — enough to slip below lowGuard (70.2) into SUSPEND. The
     // effective-age reprojection depends only on the activity/iob RATIO, so anchorU (and thus the
     // predicted drop) scales ~linearly with iob when that ratio is held fixed. Scaling both down
-    // by ~0.27x (same ratio) targets a ~1.8 mg/dL drop instead, landing comfortably mid-band.
-    @Test fun `CAUTION zone reduces basal to 50 percent or below`() {
+    // by ~0.27x (same ratio) targets a ~1.8 mg/dL drop instead, landing in CAUTION (confirmed by
+    // the 30-min-TBR test below). The exact reduction fraction (warnFrac) is continuously
+    // guard-relative — how far predictedMin sits between lowGuard and warnGuard — not a fixed 50%
+    // constant, so this checks "meaningfully reduced from full profile basal" rather than an exact
+    // percentage a caller can't reliably hit without executing the curve model.
+    @Test fun `CAUTION zone reduces basal below full profile rate`() {
         whenever(glucoseStatus.glucose).thenReturn(78.0)
         val r = invoke(iobArray = flatIobArray(iob = 0.08, activity = 0.0013))
-        assertTrue(r.rate <= 0.5001, "Reduced basal should be <= 0.5 U/hr, got ${r.rate}")
+        assertTrue(r.rate < 1.0, "CAUTION should reduce basal below the 1.0 U/hr profile rate, got ${r.rate}")
         assertTrue(r.rate >= 0.0, "Reduced basal should be non-negative")
         assertEquals(0.0, r.smb, 0.001)
         assertTrue(r.reason.contains("CAUTION"), "Expected CAUTION in reason, got: ${r.reason}")
