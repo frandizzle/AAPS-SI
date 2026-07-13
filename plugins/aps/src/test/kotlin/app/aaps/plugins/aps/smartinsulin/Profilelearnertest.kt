@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import app.aaps.core.interfaces.insulin.Insulin
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.profile.ProfileFunction
 
@@ -18,12 +20,18 @@ class ProfileLearnerTest {
     private val logger: AAPSLogger = mock()
     private val sp: SP = mock()
     private val profileFunction: ProfileFunction = mock()
+    private val activePlugin: ActivePlugin = mock()
+    private val activeInsulin: Insulin = mock()
     private lateinit var learner: ProfileLearner
 
     @BeforeEach fun setUp() {
         // Return empty string for all profile keys → triggers defaultFor() fallback
         whenever(sp.getString(any<String>(), any<String>())).thenAnswer { it.getArgument<String>(1) }
-        learner = ProfileLearner(logger, sp, profileFunction)
+        // Matches FALLBACK_PEAK_MINS (75) so existing "default peak" assertions stay valid —
+        // ProfileLearner now reads peak from the active insulin plugin instead of hardcoding it.
+        whenever(activePlugin.activeInsulin).thenReturn(activeInsulin)
+        whenever(activeInsulin.peak).thenReturn(75)
+        learner = ProfileLearner(logger, sp, profileFunction, activePlugin)
     }
 
     // ── Default profiles ─────────────────────────────────────────────────────

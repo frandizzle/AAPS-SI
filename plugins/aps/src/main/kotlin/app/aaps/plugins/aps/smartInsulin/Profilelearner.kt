@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
+import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
@@ -20,7 +21,8 @@ import javax.inject.Singleton
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
     private val sp:              SP,
-    private val profileFunction: ProfileFunction
+    private val profileFunction: ProfileFunction,
+    private val activePlugin:    ActivePlugin
 ) : SmartInsulinLearner {
 
     private val profiles: MutableMap<MealMode, LearnedInsulinProfile> = mutableMapOf()
@@ -42,7 +44,12 @@ class ProfileLearner @Inject constructor(
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
         val profile  = profileFunction.getProfile()
         val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = profile?.dia?.let { 55.0 } ?: LearnedInsulinProfile.FALLBACK_PEAK_MINS // Simple fallback for 3.3
+        // Peak comes from whichever Insulin plugin is actually configured in Config Builder
+        // (Rapid-Acting=75, Ultra-rapid/Fiasp=55, Lyumjev=45, or the user-set value for
+        // Free-Peak Oref) — already in minutes, no conversion needed. Previously hardcoded to
+        // 55.0 (Fiasp's value) regardless of what insulin was selected, so switching insulin
+        // types and resetting profile learning always silently reseeded Fiasp's peak.
+        val peakMins = activePlugin.activeInsulin.peak.toDouble()
         return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
     }
 
@@ -150,9 +157,11 @@ class ProfileLearner @Inject constructor(
         return try {
             profileSeededDefault(mode)
         } catch (_: Exception) {
+            // Last-resort fallback if reading the active insulin plugin itself throws —
+            // use the same generic fallback constant as everywhere else, not a Fiasp-specific value.
             LearnedInsulinProfile.defaultFor(
                 mode,
-                55.0,
+                LearnedInsulinProfile.FALLBACK_PEAK_MINS,
                 LearnedInsulinProfile.FALLBACK_DIA_MINS
             )
         }
@@ -161,7 +170,9 @@ class ProfileLearner @Inject constructor(
     override fun resetProfiles() {
         val profile  = profileFunction.getProfile()
         val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        val peakMins = 55.0
+        // Same fix as profileSeededDefault() — read the actual configured insulin's peak
+        // instead of hardcoding Fiasp's 55.
+        val peakMins = activePlugin.activeInsulin.peak.toDouble()
         MealMode.entries.forEach { mode ->
             val seeded = LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
             profiles[mode] = seeded
