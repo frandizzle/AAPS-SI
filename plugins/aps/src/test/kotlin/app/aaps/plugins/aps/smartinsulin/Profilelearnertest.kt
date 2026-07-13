@@ -57,14 +57,17 @@ class ProfileLearnerTest {
             learner.observeBolusCurve(
                 mode             = MealMode.FASTING,
                 observedPeakMins = 55.0,
-                observedDiaMins  = 210.0,
+                // Must be >= LearnedInsulinProfile.DIA_MIN_MINUTES (300) — the original 210.0 here
+                // was always below the floor regardless of any DIA-solver changes, so the profile
+                // could never actually converge to it; this test just never ran before.
+                observedDiaMins  = 350.0,
                 learningRate     = 0.15,
             )
         }
         val profile = learner.getProfile(MealMode.FASTING)
         // After 50 identical observations it should be very close to the target
         assertEquals(55.0, profile.peakMinutes, 2.0)
-        assertEquals(210.0, profile.diaMinutes, 5.0)
+        assertEquals(350.0, profile.diaMinutes, 5.0)
     }
 
     @Test fun `sample count increments on each observation`() {
@@ -88,16 +91,19 @@ class ProfileLearnerTest {
         assertEquals(diaBefore, diaAfter, 0.001, "DIA should not change in EXTENDED mode")
     }
 
-    @Test fun `EXTENDED mode still updates peak`() {
+    @Test fun `EXTENDED mode does not update peak either — not in PEAK_LEARNING_MODES`() {
+        // Peak learning is restricted to PEAK_LEARNING_MODES (FASTING, LOW_CARB) — only those
+        // modes give a clean-enough curve to reliably observe peak action. EXTENDED is excluded
+        // from both peak and DIA learning, not just DIA.
         val peakBefore = learner.getProfile(MealMode.EXTENDED).peakMinutes
         learner.observeBolusCurve(
             mode             = MealMode.EXTENDED,
-            observedPeakMins = 60.0,   // different from default of 75
+            observedPeakMins = 60.0,   // different from default of 75 — should still be ignored
             observedDiaMins  = 350.0,
             learningRate     = 0.15,
         )
         val peakAfter = learner.getProfile(MealMode.EXTENDED).peakMinutes
-        assertTrue(peakAfter != peakBefore, "Peak should update even in EXTENDED mode (before=$peakBefore, after=$peakAfter)")
+        assertEquals(peakBefore, peakAfter, 0.001, "Peak should not change in EXTENDED mode either")
     }
 
     // ── Rejection of implausible observations ────────────────────────────────

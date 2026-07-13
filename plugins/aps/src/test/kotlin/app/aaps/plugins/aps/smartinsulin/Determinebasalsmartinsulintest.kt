@@ -64,7 +64,29 @@ class DetermineBasalSmartInsulinTest {
         override var oapsProfileAutoIsf: OapsProfileAutoIsf? = null
         override var mealData: MealData?                 = null
 
-        override fun with(result: RT): APSResult         = this
+        // Mirrors the real DetermineBasalResult.with() (implementation/.../DetermineBasalResult.kt) —
+        // the original version here was a no-op (`= this`), so rate/duration/smb/reason/predictions
+        // never actually got applied and every assertion silently checked the untouched defaults.
+        override fun with(result: RT): APSResult = this.also {
+            reason = result.reason.toString()
+            if (result.rate != null && result.duration != null) {
+                isTempBasalRequested = true
+                rate = maxOf(0.0, result.rate ?: 0.0)
+                duration = result.duration ?: 0
+            }
+            smb = result.units ?: 0.0
+            targetBG = result.targetBG ?: 0.0
+            // Simple 1:1 mirror of predBGs.IOB — ticks -> predictions, unlike the real class's
+            // predictionsAsGv (which skips index 0); kept simple since these tests assert directly
+            // on tick count and value.
+            predictionsAsGv.clear()
+            result.predBGs?.IOB?.forEach { v ->
+                predictionsAsGv.add(
+                    GV(timestamp = 0L, value = v.toDouble(), raw = 0.0, noise = 0.0,
+                       trendArrow = TrendArrow.NONE, sourceSensor = SourceSensor.IOB_PREDICTION)
+                )
+            }
+        }
         override fun resultAsString(): String            = reason
         override fun resultAsSpanned(): Spanned          = mock()
         override fun newAndClone(): APSResult            = FakeAPSResult()
@@ -97,6 +119,7 @@ class DetermineBasalSmartInsulinTest {
         whenever(oapsProfile.maxSMBBasalMinutes).thenReturn(30)
         whenever(oapsProfile.enableUAM).thenReturn(false)
         whenever(oapsProfile.max_basal).thenReturn(5.0)
+        whenever(oapsProfile.max_iob).thenReturn(5.0)
         whenever(oapsProfile.max_daily_basal).thenReturn(1.5)
         whenever(oapsProfile.max_daily_safety_multiplier).thenReturn(3.0)
         whenever(oapsProfile.current_basal_safety_multiplier).thenReturn(4.0)
@@ -122,7 +145,12 @@ class DetermineBasalSmartInsulinTest {
         warnGuardMmol:     Double               = 4.5,
         microBolusAllowed: Boolean              = true,
         bgWentLow:         Boolean              = false,
-        inReboundWindow:   Boolean              = false
+        inReboundWindow:   Boolean              = false,
+        maxSmbU:           Double               = 2.0,
+        // Matches SmartInsulinPlugin.SMB_DELIVERY_FRACTION — the fraction the real plugin always
+        // passes for FASTING mode. determine_basal's own default (1.0, i.e. full correction) only
+        // applies if a caller omits this, which the real plugin never does.
+        uamSmbFraction:    Double               = 0.5
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -135,7 +163,7 @@ class DetermineBasalSmartInsulinTest {
             mealMode              = MealMode.FASTING,
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
-            maxSmbU               = 2.0,
+            maxSmbU               = maxSmbU,
             maxTbrU               = 5.0,
             aggressiveness        = 1.0,
             tirSummary            = "100%",
@@ -155,7 +183,8 @@ class DetermineBasalSmartInsulinTest {
             activityTargetOffsetMmol = 0.0,
             cgmSmbFraction        = 1.0,
             cgmDeltaPlausible     = true,
-            cgmWarmupReason       = ""
+            cgmWarmupReason       = "",
+            uamSmbFraction        = uamSmbFraction
         )
         return fakeResult
     }
@@ -228,14 +257,14 @@ class DetermineBasalSmartInsulinTest {
         assertEquals(0.0, r.smb, 0.001)
     }
 
-    @Test fun `SMB is capped by maxSMBBasalMinutes`() {
-        // cap = 1.0 U/hr / 60 * 30 min = 0.5 U
-        whenever(oapsProfile.current_basal).thenReturn(1.0)
-        whenever(oapsProfile.maxSMBBasalMinutes).thenReturn(30)
+    @Test fun `SMB is capped by maxSmbU`() {
+        // The actual SMB cap in this codebase is minOf(maxSmbU, iobHeadroom) — see
+        // Determinebasalsmartinsulin.kt's smbCap calc. maxSMBBasalMinutes isn't referenced by
+        // dosing math at all (unlike stock OpenAPS), so a large gap-to-target here should still
+        // clamp down to the maxSmbU passed in, not to any current_basal/maxSMBBasalMinutes-derived value.
         whenever(glucoseStatus.glucose).thenReturn(300.0)
-        whenever(glucoseStatus.shortAvgDelta).thenReturn(2.0)
-        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
-        assertTrue(r.smb <= 0.5001, "SMB must be <= 0.5 U cap, got ${r.smb}")
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0), maxSmbU = 0.5)
+        assertTrue(r.smb <= 0.5001, "SMB must be <= the 0.5U maxSmbU cap, got ${r.smb}")
     }
 
     // ── Prediction graph ─────────────────────────────────────────────────────
@@ -265,7 +294,10 @@ class DetermineBasalSmartInsulinTest {
 
     @Test fun `positive delta with no IOB predicts rising BG at t=1`() {
         whenever(glucoseStatus.glucose).thenReturn(100.0)
+        // ci = min(shortAvgDelta, delta) - bgi — both must be positive for a rising prediction,
+        // since the curve takes the SLOWER of the two deltas as the safe carb-impact estimate.
         whenever(glucoseStatus.shortAvgDelta).thenReturn(5.0)
+        whenever(glucoseStatus.delta).thenReturn(5.0)
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
         assertTrue(r.predictionsAsGv.first().value > 100.0, "Rising delta should push BG above 100")
     }
