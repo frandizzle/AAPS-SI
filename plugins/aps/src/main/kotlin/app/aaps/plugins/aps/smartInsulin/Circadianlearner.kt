@@ -472,6 +472,42 @@ class CircadianLearner @Inject constructor(
         return (c - b) - (b - a)            // change in delta = acceleration
     }
 
+    /**
+     * If the hour just changed while a correction is actively pushing in one direction (FuelTrim
+     * or aggrNudge), seed the new hour's bucket with whichever of {outgoing hour's ending value,
+     * new hour's own value} is FURTHER ALONG in that direction — rather than letting the new
+     * hour's independent history discard the progress the episode already made and force it to
+     * re-earn the same ground. Never regresses a bucket that's already more corrected on its own
+     * merits than the outgoing hour was. Safe to call more than once per cycle (from both the
+     * FuelTrim-gated and aggrNudge-gated call sites) — a no-op once a bucket already reflects the
+     * carried-over value.
+     */
+    private fun carryOverHourBoundary(dow: Int, hour: Int, pushingUp: Boolean, pushingDown: Boolean) {
+        if (!pushingUp && !pushingDown) return
+        if (nudgeSessionHour == -1 || (nudgeSessionHour == hour && nudgeSessionDow == dow)) return
+        val outDow = nudgeSessionDow.coerceIn(0, 6)
+        val d0     = dow.coerceIn(0, 6)
+        val outgoingIsfMult = isfState.days[outDow].get(nudgeSessionHour)
+        val outgoingBasMult = basalState.days[outDow].get(nudgeSessionHour)
+        val newHourIsfMult  = isfState.days[d0].get(hour)
+        val newHourBasMult  = basalState.days[d0].get(hour)
+
+        val carriedIsf = (if (pushingUp) maxOf(outgoingIsfMult, newHourIsfMult) else minOf(outgoingIsfMult, newHourIsfMult))
+            .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        val carriedBas = (if (pushingUp) maxOf(outgoingBasMult, newHourBasMult) else minOf(outgoingBasMult, newHourBasMult))
+            .coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+
+        if (carriedIsf != newHourIsfMult) isfState = isfState.updatedDayOnly(dow, hour, carriedIsf, 1.0)
+        if (carriedBas != newHourBasMult) basalState = basalState.updatedDayOnly(dow, hour, carriedBas, 1.0)
+
+        if (carriedIsf != newHourIsfMult || carriedBas != newHourBasMult) {
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner hour-boundary carryover: h=$nudgeSessionHour→$hour (pushingUp=$pushingUp) " +
+                                 "isf ${"%.3f".format(newHourIsfMult)}→${"%.3f".format(carriedIsf)} " +
+                                 "bas ${"%.3f".format(newHourBasMult)}→${"%.3f".format(carriedBas)}")
+        }
+    }
+
     private fun applyAggrNudge(
         hour:              Int,
         dow:               Int,
@@ -489,6 +525,13 @@ class CircadianLearner @Inject constructor(
         // This allows both the STFT and the Nudge Learner to share the same blindfold logic
         val msSincePenalty = if (lastPenaltyMs > 0L) now - lastPenaltyMs else Long.MAX_VALUE
         val cooldownActive = msSincePenalty <= AGGR_NUDGE_COOLDOWN_MS
+
+        // Hour-boundary carryover for FuelTrim specifically — gated on FuelTrim's OWN direction
+        // state (already vetted by its own internal guards, e.g. isLowRecovery/overshootCrash),
+        // not the aggrNudge tooMuch/notEnough flags (those get their own carryover call below,
+        // AFTER their blindfold guards run, so a rebound-triggered false "notEnough" can't carry
+        // progress across an hour boundary any more than it could act on it directly).
+        carryOverHourBoundary(dow, hour, pushingUp = trimActive && trimDirection > 0, pushingDown = trimActive && trimDirection < 0)
 
         // BUG FIX: FuelTrim (below) and the aggrNudge tooMuch/notEnough block (further down in
         // this same function) both write isfState/basalState, and both were only checking the
@@ -745,6 +788,13 @@ class CircadianLearner @Inject constructor(
         val nudge          = combinedDeviation * effectiveScale
         val dayName        = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         val deviationPct   = "${"%.0f".format(deviation * 100)}%"
+        // Hour-boundary carryover for aggrNudge — gated on tooMuch/notEnough AFTER all the
+        // blindfold guards above (post-low pause, at/below-target, overshoot) have already had
+        // the chance to clear a false positive. Using the fully-guarded flags here (rather than
+        // the raw aggressiveness comparison) means a rebound that's correctly blocked from acting
+        // this cycle can't carry stale "notEnough" progress across an hour boundary either.
+        carryOverHourBoundary(dow, hour, pushingUp = notEnough, pushingDown = tooMuch)
+
         val d          = dow.coerceIn(0, 6)
         val prevIsfMult = isfState.days[d].get(hour)
         val prevBasMult = basalState.days[d].get(hour)
