@@ -281,9 +281,14 @@ class CircadianLearner @Inject constructor(
                                                                                   isfLearningActive = isfPhysicsFromIsf,
                                                                                   totalIob = iob)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
-        // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner.
-        // Merge into isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
+        // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner, and Signals
+        // 0-3 now also write a smaller CROSS_NUDGE_FRACTION cross-nudge to isfState. Merge into
+        // isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
         val isfPhysicsFired = isfPhysicsFromIsf || basalPhysicsFired
+        // Symmetric merge for basal: the main ISF learner now also writes a cross-nudge to
+        // basalState whenever it fires, so applyAggrNudge's basal-side mutual exclusion needs to
+        // see that too, not just updateBasalLearner's own signals.
+        val basalPhysicsFiredCombined = basalPhysicsFired || isfPhysicsFromIsf
 
         // -- 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) -
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
@@ -299,7 +304,7 @@ class CircadianLearner @Inject constructor(
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
                                                       bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = nowMs,
                                                       isfPhysicsFired = isfPhysicsFired,
-                                                      basalPhysicsFired = basalPhysicsFired,
+                                                      basalPhysicsFired = basalPhysicsFiredCombined,
                                                       iob = iob)
 
         // -- CYCLE SUMMARY — single consolidated string, every cycle -------------
@@ -445,9 +450,16 @@ class CircadianLearner @Inject constructor(
         // confidence crossed DAY_CONFIDENCE_THRESHOLD.
         isfState = isfState.updated(dow, hour, multTarget, alpha)
 
+        // Cross-nudge: a genuine ISF shift is often co-caused by a broader sensitivity change
+        // that likely also affects basal — nudge basalState a smaller amount (CROSS_NUDGE_FRACTION)
+        // in the same direction, as a lower-confidence co-movement prior rather than a direct
+        // measurement (this cycle's data measured ISF, not basal).
+        val crossBasalTarget = (basalState.get(dow, hour) + normDeviation * CROSS_NUDGE_FRACTION).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        basalState = basalState.updated(dow, hour, crossBasalTarget, alpha)
+
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f target=%.3f a=%.3f ? mult=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, isfState.get(dow, hour)))
+                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f target=%.3f a=%.3f ? mult=%.3f crossBasal=%.3f"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, isfState.get(dow, hour), basalState.get(dow, hour)))
         return true
     }
 
@@ -966,6 +978,13 @@ class CircadianLearner @Inject constructor(
 
                 basalState = basalState.updated(dow, hour, newMult, alpha)
                 signal0Fired = true
+
+                // Cross-nudge to ISF — no extra gating needed: Signal 0 only ever runs when
+                // !isfLearningActive (its own entry condition above), so the main ISF learner
+                // can't have also written isfState this same cycle.
+                val crossIsfTarget = (isfState.get(dow, hour) + normAdj * CROSS_NUDGE_FRACTION).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                isfState = isfState.updated(dow, hour, crossIsfTarget, alpha)
+
                 lastBasalSignal = "CyclicDelta: Δ=${"%.2f".format(unexplainedDelta)} normAdj=${"%.3f".format(normAdj)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] h=$hour delta=${"%.2f".format(unexplainedDelta)} " +
@@ -1043,6 +1062,17 @@ class CircadianLearner @Inject constructor(
                         basalState = basalState.updated(dow, hour, newMult, alpha)
                         basalDriftWindow.clear()
                         driftFired = true
+
+                        // Cross-nudge to ISF — gated on !isfLearningActive: unlike Signal 0, drift
+                        // has no structural exclusion against the main ISF learner firing the same
+                        // cycle (different, not-guaranteed-disjoint activity/IOB gates), so this
+                        // guard is needed to avoid colliding with that write.
+                        if (!isfLearningActive) {
+                            val crossIsfMult = (isfState.get(dow, hour) * (1.0 + (guardedAdjustment - 1.0) * CROSS_NUDGE_FRACTION))
+                                .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                            isfState = isfState.updated(dow, hour, crossIsfMult, alpha)
+                        }
+
                         lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mgdlhr ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                         aapsLogger.debug(LTag.APS,
                                          "CircadianLearner Basal[drift] h=$hour drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr a=%.3f ? mult=${"%.3f".format(basalState.get(dow, hour))}")
@@ -1086,6 +1116,15 @@ class CircadianLearner @Inject constructor(
             val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
             basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
             negIobFired = true
+
+            // Cross-nudge to ISF — gated on !isfLearningActive: negIOB has no structural
+            // exclusion against the main ISF learner firing the same cycle.
+            if (!isfLearningActive) {
+                val crossIsfMult = (isfState.get(dow, hour) * (1.0 - (1.0 - adjustment) * CROSS_NUDGE_FRACTION))
+                    .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                isfState = isfState.updated(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
+            }
+
             lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U totalIOB=${"%.2f".format(totalIob)}U ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[negIOB] h=$hour bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
@@ -1131,6 +1170,15 @@ class CircadianLearner @Inject constructor(
                         val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
                         basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
                         predTrimFired = true
+
+                        // Cross-nudge to ISF — gated on !isfLearningActive: predTrim has no
+                        // structural exclusion against the main ISF learner firing the same cycle.
+                        if (!isfLearningActive) {
+                            val crossIsfMult = (isfState.get(dow, hour) * (1.0 + rawAdjust * CROSS_NUDGE_FRACTION))
+                                .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+                            isfState = isfState.updated(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
+                        }
+
                         lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                         lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
                             "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA a=0.03 — slow)"
@@ -1614,6 +1662,17 @@ class CircadianLearner @Inject constructor(
     // -- Constants -------------------------------------------------------------
 
     companion object {
+        // Cross-nudge — a signal measured for one quantity (ISF or basal) also nudges the OTHER
+        // a smaller amount in the same direction, as a lower-confidence co-movement prior: the
+        // most likely cause of a genuine, sustained miscalibration (exercise, illness, hormones,
+        // weight change) usually shifts whole-body sensitivity broadly, not just the one quantity
+        // that happened to be directly measurable this cycle. Deliberately NOT applied by giving
+        // ISF a full copy of basal's 5 signals — those all fire specifically when insulin activity
+        // is near zero, which is exactly the regime where ISF has no correction event to measure
+        // a sensitivity ratio against at all (see updateIsfLearner's own activity gate). Attributing
+        // quiet-fasting drift to ISF would mean learning from data where ISF wasn't even in play.
+        private const val CROSS_NUDGE_FRACTION = 0.15
+
         // ISF learner
         private const val ISF_ALPHA              = 0.04   // slow EWMA — each sample moves ~8%
         private const val ISF_MULT_MIN           = 0.7
