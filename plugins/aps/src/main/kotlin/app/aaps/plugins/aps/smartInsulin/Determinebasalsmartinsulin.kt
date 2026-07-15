@@ -47,6 +47,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (isMmol) String.format(Locale.US, "%.1f", mgdl / MMOL_TO_MGDL)
         else        String.format(Locale.US, "%.0f", mgdl)
 
+    // ISF needs one more decimal than BG/delta/target so mmol overrides like 0.85 don't get rounded away in the reason string.
+    private fun fmtIsf(mgdl: Double, isMmol: Boolean): String =
+        if (isMmol) String.format(Locale.US, "%.2f", mgdl / MMOL_TO_MGDL)
+        else        String.format(Locale.US, "%.0f", mgdl)
+
     private fun setTempBasal(rate: Double, duration: Int, profile: OapsProfile, rT: RT, currentTemp: CurrentTemp) {
         val maxSafe = min(profile.max_basal,
                           min(profile.max_daily_safety_multiplier * profile.max_daily_basal,
@@ -231,7 +236,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
-        sb.append(" | ISF=${fmt(dosingIsfMgdl, isMmol)}")
+        sb.append(" | ISF=${fmtIsf(dosingIsfMgdl, isMmol)}")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
         sb.append(" | ${pkLabel}=${learnedProfile.safePeakMinutes.toInt()}m DIA=${learnedProfile.safeDiaMinutes.toInt()}m")
