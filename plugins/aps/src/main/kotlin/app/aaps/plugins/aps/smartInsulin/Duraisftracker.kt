@@ -25,12 +25,19 @@ class DuraIsfTracker @Inject constructor() {
         // Internal ramp constant — mirrors AutoISF's dura_ISF_weight. The user-facing "strength"
         // control is the configured ISF floor (a hard clamp), not this constant.
         private const val DURA_WEIGHT       = 1.0
+        // A single cycle falling at least this fast (-0.2 mmol/5min) resets immediately, regardless
+        // of the band check. The band alone is too forgiving for a real, gradual recovery: since the
+        // anchor incrementally follows in-band values, a slow steady decline can keep getting absorbed
+        // into the anchor cycle after cycle without ever breaking out — so stuckMinutes would keep
+        // climbing even while BG is genuinely (if slowly) coming down.
+        private const val RESET_ON_DROP_MGDL = -3.6
     }
 
     /** Call once per loop cycle. [active] should be false whenever DURA isn't currently enabled
-     *  for the active meal mode — resets the tracker so a later activation starts clean. */
-    fun onCycle(bgMgdl: Double, active: Boolean, cycleMinutes: Double = 5.0) {
-        if (!active) { reset(); return }
+     *  for the active meal mode — resets the tracker so a later activation starts clean.
+     *  [deltaMgdl] is this cycle's BG delta (mg/dL/5min) — a fast enough drop resets immediately. */
+    fun onCycle(bgMgdl: Double, active: Boolean, deltaMgdl: Double = 0.0, cycleMinutes: Double = 5.0) {
+        if (!active || deltaMgdl <= RESET_ON_DROP_MGDL) { reset(); return }
         if (anchorMgdl <= 0.0) {
             anchorMgdl   = bgMgdl
             stuckMinutes = 0.0

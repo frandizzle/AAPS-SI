@@ -642,7 +642,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // DURA-enabled meal mode override. Tracker resets itself whenever DURA isn't
         // active (mode ended or toggle off), so a stuck plateau never leaks between activations.
         val duraActive = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
-        duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive)
+        duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive, glucoseStatus.delta)
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         if (duraActive) {
             val duraMult = duraIsfTracker.multiplier(targetBg)
