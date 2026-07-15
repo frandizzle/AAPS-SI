@@ -179,7 +179,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     private fun fmtBg(mgdl: Double): String = if (isMmol) String.format("%.1f", mgdl / 18.0) else String.format("%.0f", mgdl)
     private fun fmtDelta(mmol: Double): String = if (isMmol) String.format("%+.2f", mmol) else String.format("%+.1f", mmol * 18.0)
-    private fun fmtIsf(mgdl: Double): String = if (isMmol) String.format("%.1f", mgdl / 18.0) else String.format("%.0f", mgdl)
+    private fun fmtIsf(mgdl: Double): String = if (isMmol) String.format("%.2f", mgdl / 18.0) else String.format("%.0f", mgdl)
 
     /**
      * Basal multiplier — now sourced ENTIRELY from CircadianLearner's per-hour basal signals.

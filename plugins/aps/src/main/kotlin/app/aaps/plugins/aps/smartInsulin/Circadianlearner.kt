@@ -54,7 +54,7 @@ class CircadianLearner @Inject constructor(
     fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
         basalState.get(dow, hour).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
-    /** Aggressiveness ceiling for current hour (0.6–1.2).
+    /** Aggressiveness ceiling for current hour (AGGR_CEIL_MIN–AGGR_CEIL_MAX).
      *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling) */
     fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow()): Double =
         aggrState.get(dow, hour).coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
@@ -98,6 +98,14 @@ class CircadianLearner @Inject constructor(
         private set
     var lastRollercoasterMs: Long = 0L
         private set
+    // Recovery escalation — mirrors consecutiveRollercoasters but for the OPPOSITE direction:
+    // penalties cut the ceiling hard and instantly (up to -15%, alpha=1.0 for hard lows), but
+    // recovery was a flat +1%/cycle regardless of how long stability had held, so a suppressed
+    // ceiling could stay suppressed for hours after the cause resolved — pure "under-dosing
+    // highs" time that costs HbA1c without ever showing up as a low. Recovery speed now escalates
+    // the longer stability persists, the same way the rollercoaster penalty escalates with
+    // repetition. Reset to 0 by any penalty firing or by stability breaking.
+    private var consecutiveStableCycles: Int = 0
 
     // -- Mode transition tracking — clears drift window on mode change --------
     // Prevents stale pre-P/F fasting samples from mixing with post-P/F fasting
@@ -1346,6 +1354,7 @@ class CircadianLearner @Inject constructor(
         // sees the current BG reading that was just added to bgHistory.
         val rollercoaster = detectRollercoaster(targetMgdl, lowGuardMgdl)
         if (rollercoaster) {
+            consecutiveStableCycles = 0
             // Shape-based compression filter — gate only the LEARNER penalty, not safety actions.
             // Real lows (exercise, alcohol, spontaneous) must always fire the penalty regardless of IOB.
             // Compression lows have a characteristic V-shape: stable pre-trend, rapid symmetric
@@ -1379,6 +1388,7 @@ class CircadianLearner @Inject constructor(
         // If in meal mode, UAM, P/F, or post-meal lockout, the low is food-driven —
         // penalising the fasting profile would corrupt clean fasting data.
         if (bg < lowGuardMgdl && isFasting && !inPostMealLockout) {
+            consecutiveStableCycles = 0
             // All hard low penalties fire ONCE per low event (30-min gate).
             // Fire once, observe, let the loop and rebound window handle delivery.
             // Don't hammer ISF/basal/ceiling every 5 min while BG stays low.
@@ -1449,6 +1459,7 @@ class CircadianLearner @Inject constructor(
             bg >= lowGuardMgdl && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
             delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
+            consecutiveStableCycles = 0
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
             aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             lastPenaltyMs   = System.currentTimeMillis()
@@ -1471,12 +1482,22 @@ class CircadianLearner @Inject constructor(
         val stableNearTarget = bg >= targetMgdl - STABLE_RECOVERY_LOW_TOLERANCE_MGDL &&
             bg - targetMgdl < STABLE_BAND_MGDL &&
             abs(delta) < STABLE_DELTA_MGDL
-        if (stableNearTarget && currentCeil < 1.0) {
-            val recovered = (currentCeil + AGGR_RECOVERY_STEP).coerceAtMost(AGGR_CEIL_MAX)
-            aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
-            aapsLogger.debug(LTag.APS,
-                             "CircadianLearner Aggr h=$hour STABLE_RECOVERY ? ceil=%.3f"
-                                 .format(aggrState.get(dow, hour)))
+        if (stableNearTarget) {
+            consecutiveStableCycles++
+            if (currentCeil < 1.0) {
+                // Escalating recovery step — the longer stability has genuinely held, the faster
+                // we trust it and speed up unwinding a prior penalty, mirroring how the
+                // rollercoaster penalty escalates with repetition in the other direction.
+                val escalatedStep = (AGGR_RECOVERY_STEP + consecutiveStableCycles * AGGR_RECOVERY_ESCALATION_PER_CYCLE)
+                    .coerceAtMost(AGGR_RECOVERY_MAX_STEP)
+                val recovered = (currentCeil + escalatedStep).coerceAtMost(AGGR_CEIL_MAX)
+                aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
+                aapsLogger.debug(LTag.APS,
+                                 "CircadianLearner Aggr h=$hour STABLE_RECOVERY (streak=$consecutiveStableCycles step=%.4f) ? ceil=%.3f"
+                                     .format(escalatedStep, aggrState.get(dow, hour)))
+            }
+        } else {
+            consecutiveStableCycles = 0
         }
     }
 
@@ -1760,9 +1781,16 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_HARD_LOW_BASAL_NUDGE = 0.90   // 10% long-term basal nudge down on hard low (once per event)
         private const val HARD_LOW_BASAL_GATE_MS    = 30 * 60_000L  // basal nudge only fires once per 30-min low event
         private const val AGGR_PENALTY_SOFT_LOW     = 0.90   // 10% cut on soft low approach
-        private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle
+        private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle (base — see escalation below)
+        // Recovery escalation: step grows with consecutiveStableCycles, capped at 4x the base
+        // step once ~30 consecutive stable cycles (~2.5h) have genuinely held — penalties cut
+        // hard and instantly, so recovery should eventually speed up too rather than staying a
+        // flat +1%/cycle crawl that leaves a suppressed ceiling costing time-in-range long after
+        // the cause has resolved.
+        private const val AGGR_RECOVERY_ESCALATION_PER_CYCLE = 0.001
+        private const val AGGR_RECOVERY_MAX_STEP             = 0.04
         private const val AGGR_CEIL_MIN         = 0.60
-        private const val AGGR_CEIL_MAX         = 1.20
+        private const val AGGR_CEIL_MAX         = 1.40
         private const val STABLE_BAND_MGDL      = 18.0   // ±1 mmol = stable
         private const val STABLE_DELTA_MGDL     = 1.5    // mg/dL per 5min = flat
         private const val STABLE_RECOVERY_LOW_TOLERANCE_MGDL = 3.6  // ~0.2 mmol grace below target — noise tolerance only, not a real "below target" allowance
@@ -1785,7 +1813,11 @@ class CircadianLearner @Inject constructor(
         private const val TRIM_DEAD_BAND_MGDL      = 5.4    // ~0.3 mmol — must be this far from target to trim
         private const val TRIM_MAX_STRENGTH         = 0.20   // cap trim magnitude at 20%
         private const val TRIM_CEIL_SCALE           = 0.15   // ceiling shift per unit of trim magnitude
-        private const val TRIM_CEIL_MAX             = 1.20   // ceiling upper bound from trim
+        // Kept equal to AGGR_CEIL_MAX (1.40) — FuelTrim's aboveBand branch clamps to this bound
+        // directly, so if it were left lower than AGGR_CEIL_MAX, FuelTrim would actively pull a
+        // ceiling back down whenever the slow-recovery mechanism had legitimately earned it above
+        // this value, undermining the point of raising AGGR_CEIL_MAX at all.
+        private const val TRIM_CEIL_MAX             = 1.40   // ceiling upper bound from trim
         private const val TRIM_CEIL_MIN             = 0.80   // ceiling lower bound from trim
         private const val TRIM_LONG_TERM_FRACTION   = 0.50   // long-term nudge = 50% of trim magnitude
         private const val TRIM_DECAY_RATE           = 0.70   // trim decays by 30% each in-range cycle

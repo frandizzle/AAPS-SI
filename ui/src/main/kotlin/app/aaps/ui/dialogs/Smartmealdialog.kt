@@ -135,8 +135,8 @@ class SmartMealDialog : DialogFragmentWithDate() {
         // Range and step are unit-aware: mmol users see 0–20 step 0.1, mg/dL users see 0–360 step 1
         val isMmol   = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
         val isfMax   = if (isMmol) 20.0 else 360.0
-        val isfStep  = if (isMmol) 0.1  else 1.0
-        val isfFmt   = if (isMmol) DecimalFormat("0.0") else DecimalFormat("0")
+        val isfStep  = if (isMmol) 0.05 else 1.0
+        val isfFmt   = if (isMmol) DecimalFormat("0.00") else DecimalFormat("0")
         val isfFallbackMgdl = sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key, UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
         val isfFallback = if (isfFallbackMgdl == 0.0) 0.0
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)

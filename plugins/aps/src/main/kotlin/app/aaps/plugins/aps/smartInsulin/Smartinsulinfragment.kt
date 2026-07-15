@@ -482,8 +482,9 @@ class SmartInsulinFragment : DaggerFragment() {
         val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
         val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
-        addRow(c, "Insulin sensitivity: ${"%.1f".format(fIsf)} $isfUnit",
-               "Profile ${"%.1f".format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${"%.1f".format(fIsf)} $isfUnit\n" +
+        val isfFmt = if (d.isMmol) "%.2f" else "%.1f"
+        addRow(c, "Insulin sensitivity: ${isfFmt.format(fIsf)} $isfUnit",
+               "Profile ${isfFmt.format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${isfFmt.format(fIsf)} $isfUnit\n" +
                    "Lower ISF = more insulin delivered per BG gap. Multiplier >1 reduces ISF, <1 raises ISF.")
 
         // Convert drift signal units if user is in mmol
