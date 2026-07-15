@@ -24,6 +24,12 @@ interface MealOverrideManager {
     /** ISF multiplier for current loop cycle — 1.0 if no override active */
     val activeIsfMultiplier: Double
 
+    /** True if DURA_ISF is enabled for the currently active meal mode */
+    val activeDuraEnabled: Boolean
+
+    /** DURA_ISF floor (mg/dL/U) for the currently active meal mode — 0.0 if not set/no override active */
+    val activeDuraFloorMgdl: Double
+
     /** Milliseconds remaining in the active mode window, or 0 if no override active */
     val modeTimeRemainingMs: Long
 
@@ -59,7 +65,9 @@ interface MealOverrideManager {
         preBolus2U:       Double = 0.0,
         preBolus2DelayMs: Long   = 0L,
         preBolus3U:       Double = 0.0,
-        preBolus3DelayMs: Long   = 0L
+        preBolus3DelayMs: Long   = 0L,
+        duraEnabled:      Boolean = false,
+        duraFloorMgdl:    Double  = 0.0
     )
 
     fun cancelOverride()

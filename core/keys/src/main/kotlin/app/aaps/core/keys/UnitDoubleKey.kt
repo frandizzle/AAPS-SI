@@ -50,6 +50,14 @@ enum class UnitDoubleKey(
     ApsSmartInsulinDinnerIsf(       "si_dinner_isf2",         0.0, 0, 360, defaultedBySM = true),
     ApsSmartInsulinLowCarbIsf(      "si_lowcarb_isf2",        0.0, 0, 360, defaultedBySM = true),
     ApsSmartInsulinExtendedIsf(     "si_extended_isf2",       0.0, 0, 360, defaultedBySM = true),
+
+    // Per-meal DURA_ISF floor (mg/dL/U) — the lowest (strongest) ISF DURA is allowed to push
+    // toward while BG sits stuck above target during this mode. 0.0 = no floor set (DURA no-ops).
+    ApsSmartInsulinBreakfastDuraFloor("si_breakfast_dura_floor", 0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinBreakfastDuraEnabled),
+    ApsSmartInsulinLunchDuraFloor(    "si_lunch_dura_floor",     0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLunchDuraEnabled),
+    ApsSmartInsulinDinnerDuraFloor(   "si_dinner_dura_floor",    0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinDinnerDuraEnabled),
+    ApsSmartInsulinLowCarbDuraFloor(  "si_lowcarb_dura_floor",   0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLowCarbDuraEnabled),
+    ApsSmartInsulinExtendedDuraFloor( "si_extended_dura_floor",  0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinExtendedDuraEnabled),
     ApsSmartInsulinUamBreakfastIsf( "si_uam_breakfast_isf2",  0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
     ApsSmartInsulinUamLunchIsf(     "si_uam_lunch_isf2",      0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
     ApsSmartInsulinUamDinnerIsf(    "si_uam_dinner_isf2",     0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),

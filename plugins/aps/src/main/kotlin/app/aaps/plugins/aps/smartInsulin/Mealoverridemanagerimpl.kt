@@ -54,6 +54,8 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus3U",       s.preBolus3U)
             put("preBolus3DelayMs", s.preBolus3DelayMs)
             if (s.preBolus3FiredMs != null) put("preBolus3FiredMs", s.preBolus3FiredMs)
+            put("duraEnabled",      s.duraEnabled)
+            put("duraFloorMgdl",    s.duraFloorMgdl)
         }
         sp.edit { putString(StringKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -82,7 +84,9 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus2FiredMs = if (json.has("preBolus2FiredMs")) json.getLong("preBolus2FiredMs") else null,
                 preBolus3U       = json.optDouble("preBolus3U", 0.0),
                 preBolus3DelayMs = json.optLong("preBolus3DelayMs", 0L),
-                preBolus3FiredMs = if (json.has("preBolus3FiredMs")) json.getLong("preBolus3FiredMs") else null
+                preBolus3FiredMs = if (json.has("preBolus3FiredMs")) json.getLong("preBolus3FiredMs") else null,
+                duraEnabled      = json.optBoolean("duraEnabled", false),
+                duraFloorMgdl    = json.optDouble("duraFloorMgdl", 0.0)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -112,6 +116,9 @@ class MealOverrideManagerImpl @Inject constructor(
     }
 
     override val activeIsfMultiplier: Double get() = 1.0
+
+    override val activeDuraEnabled: Boolean get() = activeMealMode != null && _state?.duraEnabled == true
+    override val activeDuraFloorMgdl: Double get() = if (activeMealMode != null) _state?.duraFloorMgdl ?: 0.0 else 0.0
 
     override val activeDoseU: Double? get() = if (activeMealMode != null) _state?.doseU else null
     override val activePb2DoseU: Double? get() {
@@ -315,7 +322,9 @@ class MealOverrideManagerImpl @Inject constructor(
         preBolus2U:       Double,
         preBolus2DelayMs: Long,
         preBolus3U:       Double,
-        preBolus3DelayMs: Long
+        preBolus3DelayMs: Long,
+        duraEnabled:      Boolean,
+        duraFloorMgdl:    Double
     ) {
         val now = System.currentTimeMillis()
         _state = MealOverrideState(
@@ -328,13 +337,16 @@ class MealOverrideManagerImpl @Inject constructor(
             preBolus2FiredMs = null,
             preBolus3U       = preBolus3U,
             preBolus3DelayMs = preBolus3DelayMs,
-            preBolus3FiredMs = null
+            preBolus3FiredMs = null,
+            duraEnabled      = duraEnabled,
+            duraFloorMgdl    = duraFloorMgdl
         )
         persistState()
         aapsLogger.debug(LTag.APS,
                          "SmartInsulin override: mode=${mode.label} modeTTL=${modeWindowMs / 60_000}min" +
                              (if (preBolus2U > 0.0) " pb2=${preBolus2U}U in ${preBolus2DelayMs / 60_000}min" else "") +
-                             (if (preBolus3U > 0.0) " pb3=${preBolus3U}U ${preBolus3DelayMs / 60_000}min after pb2" else ""))
+                             (if (preBolus3U > 0.0) " pb3=${preBolus3U}U ${preBolus3DelayMs / 60_000}min after pb2" else "") +
+                             (if (duraEnabled) " dura=on floor=${duraFloorMgdl}mg/dL" else ""))
     }
 
     override fun cancelOverride() {

@@ -86,10 +86,10 @@ class UamControllerBurstTest {
     )
 
     private fun verifyFired(times: Int = 1) =
-        verify(mealOverrideManager, times(times)).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, times(times)).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any())
 
     private fun verifyNotFired() =
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any())
 
     // ── Test 1: 3-reading accumulation ───────────────────────────────────────
 

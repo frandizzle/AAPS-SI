@@ -92,7 +92,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val basalLearner: BasalLearner,
     private val circadianLearner: CircadianLearner,
     private val activityMonitor:  ActivityMonitor,
-    private val cgmWarmupGuard:   CgmWarmupGuard
+    private val cgmWarmupGuard:   CgmWarmupGuard,
+    private val duraIsfTracker:   DuraIsfTracker
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -635,6 +636,23 @@ open class SmartInsulinPlugin @Inject constructor(
             val lModeIsf = modeIsfMgdl(latestMealMode, currentHour)
             mealMode = latestMealMode
             if (lModeIsf > 0.0) dosingIsfMgdl = lModeIsf
+        }
+
+        // -- DURA_ISF: strengthen ISF the longer BG sits stuck above target during a
+        // DURA-enabled meal mode override. Tracker resets itself whenever DURA isn't
+        // active (mode ended or toggle off), so a stuck plateau never leaks between activations.
+        val duraActive = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
+        duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive)
+        if (duraActive) {
+            val duraMult = duraIsfTracker.multiplier(targetBg)
+            if (duraMult > 1.0) {
+                val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
+                val duraIsfMgdl = dosingIsfMgdl / duraMult
+                dosingIsfMgdl = if (duraFloorMgdl > 0.0) duraIsfMgdl.coerceAtLeast(duraFloorMgdl) else duraIsfMgdl
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin DURA: mult=${"%.2f".format(duraMult)} " +
+                                     "stuck=${"%.0f".format(duraIsfTracker.stuckMinutesForDisplay)}min isf->${"%.1f".format(dosingIsfMgdl)}")
+            }
         }
 
         // -- UAM entry SMB fraction --------------------------------------------

@@ -60,6 +60,13 @@ enum class BooleanKey(
     ApsSmartInsulinUamProteinFatEnabled("si_uam_proteinfat_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamWobbleTolerance("si_uam_wobble_tolerance", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
 
+    // DURA_ISF (per meal mode) — strengthens ISF over time while BG sits stuck above target
+    ApsSmartInsulinBreakfastDuraEnabled("si_breakfast_dura_enabled", false, defaultedBySM = true),
+    ApsSmartInsulinLunchDuraEnabled(    "si_lunch_dura_enabled",     false, defaultedBySM = true),
+    ApsSmartInsulinDinnerDuraEnabled(   "si_dinner_dura_enabled",    false, defaultedBySM = true),
+    ApsSmartInsulinLowCarbDuraEnabled(  "si_lowcarb_dura_enabled",   false, defaultedBySM = true),
+    ApsSmartInsulinExtendedDuraEnabled( "si_extended_dura_enabled",  false, defaultedBySM = true),
+
     BgSourceUploadToNs("dexcomg5_nsupload", true, defaultedBySM = true, hideParentScreenIfHidden = true),
     BgSourceCreateSensorChange("dexcom_lognssensorchange", true, defaultedBySM = true),
 
