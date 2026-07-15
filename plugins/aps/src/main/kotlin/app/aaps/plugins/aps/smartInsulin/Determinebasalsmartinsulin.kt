@@ -105,7 +105,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         reboundWindowMins:        Double = 60.0,
         circCeil:                 Double = 1.0,
         fuelTrimStrength:         Double = 0.0,
-        isMmol:                   Boolean = true
+        isMmol:                   Boolean = true,
+        duraStatusText:           String = ""  // "" when DURA_ISF isn't currently strengthening ISF
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -237,6 +238,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
         sb.append(" | ISF=${fmtIsf(dosingIsfMgdl, isMmol)}")
+        if (duraStatusText.isNotEmpty()) sb.append(" | $duraStatusText")
         sb.append(" | basal=${"%.3f".format(Locale.US, profileBasal)}(x${"%.2f".format(Locale.US, basalMultiplier)})")
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
         sb.append(" | ${pkLabel}=${learnedProfile.safePeakMinutes.toInt()}m DIA=${learnedProfile.safeDiaMinutes.toInt()}m")

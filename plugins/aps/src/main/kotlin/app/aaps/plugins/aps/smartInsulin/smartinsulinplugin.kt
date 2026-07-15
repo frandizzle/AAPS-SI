@@ -643,15 +643,18 @@ open class SmartInsulinPlugin @Inject constructor(
         // active (mode ended or toggle off), so a stuck plateau never leaks between activations.
         val duraActive = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
         duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive)
+        var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         if (duraActive) {
             val duraMult = duraIsfTracker.multiplier(targetBg)
             if (duraMult > 1.0) {
                 val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
                 val duraIsfMgdl = dosingIsfMgdl / duraMult
                 dosingIsfMgdl = if (duraFloorMgdl > 0.0) duraIsfMgdl.coerceAtLeast(duraFloorMgdl) else duraIsfMgdl
+                val duraStuckMins = duraIsfTracker.stuckMinutesForDisplay
+                duraStatusText = "DURA=${"%.2f".format(duraMult)}x stuck=${"%.0f".format(duraStuckMins)}m"
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin DURA: mult=${"%.2f".format(duraMult)} " +
-                                     "stuck=${"%.0f".format(duraIsfTracker.stuckMinutesForDisplay)}min isf->${"%.1f".format(dosingIsfMgdl)}")
+                                     "stuck=${"%.0f".format(duraStuckMins)}min isf->${"%.1f".format(dosingIsfMgdl)}")
             }
         }
 
@@ -758,7 +761,8 @@ open class SmartInsulinPlugin @Inject constructor(
             reboundWindowMins        = reboundGuardMs / 60_000.0,  // total window incl. rollercoaster extension
             circCeil                 = circadianLearner.aggrCeiling(),
             fuelTrimStrength         = circadianLearner.trimStrength,
-            isMmol                   = isMmol
+            isMmol                   = isMmol,
+            duraStatusText           = duraStatusText
         )
 
         lastAPSResult = apsResult; lastAPSRun = now
