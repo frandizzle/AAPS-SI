@@ -123,6 +123,7 @@ class UamController @Inject constructor(
         shortAvgDeltaMmol: Double,
         bgiMmol:           Double,
         currentHour:       Int,
+        currentMinute:     Int = 0,
         bgWentLow:         Boolean,
         inReboundWindow:   Boolean,
         lastLowTimeMs:     Long,
@@ -219,7 +220,7 @@ class UamController @Inject constructor(
         lastBurstRiseMmol = if (burstAnchorBgMmol > 0.0 && currentBgMmol > burstAnchorBgMmol) currentBgMmol - burstAnchorBgMmol else 0.0
         lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol) currentBgMmol - burstPrevBgMmol else 0.0
 
-        val uamMode = resolveUamMode(currentHour) ?: run {
+        val uamMode = resolveUamMode(currentHour, currentMinute) ?: run {
             lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, inPostMealLockout)
             burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs
             resetStreak(); return
@@ -419,18 +420,28 @@ class UamController @Inject constructor(
         mealOverrideManager.activateOverride(mode = mode, doseU = null, carbsG = 0, modeWindowMs = durationMins * 60_000L, preBolus2U = 0.0, preBolus2DelayMs = 0L, preBolus3U = 0.0, preBolus3DelayMs = 0L)
     }
 
-    private fun resolveUamMode(currentHour: Int): MealMode? {
-        val candidates = listOf(
-            Triple(MealMode.UAM_BREAKFAST, IntKey.ApsSmartInsulinUamBreakfastStartHour, IntKey.ApsSmartInsulinUamBreakfastEndHour),
-            Triple(MealMode.UAM_LUNCH, IntKey.ApsSmartInsulinUamLunchStartHour, IntKey.ApsSmartInsulinUamLunchEndHour),
-            Triple(MealMode.UAM_DINNER, IntKey.ApsSmartInsulinUamDinnerStartHour, IntKey.ApsSmartInsulinUamDinnerEndHour),
-            Triple(MealMode.UAM_SNACK, IntKey.ApsSmartInsulinUamSnackStartHour, IntKey.ApsSmartInsulinUamSnackEndHour),
-            Triple(MealMode.UAM_AFTERNOON, IntKey.ApsSmartInsulinUamAfternoonStartHour, IntKey.ApsSmartInsulinUamAfternoonEndHour),
-        )
-        return candidates.firstOrNull { (mode, start, end) -> uamModeEnabled(mode) && hourInWindow(currentHour, sp.getInt(start.key, start.defaultValue), sp.getInt(end.key, end.defaultValue)) }?.first
+    // Afternoon/Dinner get minute-precision boundaries (e.g. Afternoon ending 17:30, Dinner
+    // taking over from there) — the other windows stay whole-hour only (minuteKey = null -> :00).
+    private fun boundaryMins(hourKey: IntKey, minuteKey: IntKey?): Int {
+        val hour   = sp.getInt(hourKey.key, hourKey.defaultValue)
+        val minute = minuteKey?.let { sp.getInt(it.key, it.defaultValue) } ?: 0
+        return hour * 60 + minute
     }
 
-    private fun hourInWindow(hour: Int, start: Int, end: Int): Boolean = if (start <= end) hour in start until end else hour >= start || hour < end
+    private fun resolveUamMode(currentHour: Int, currentMinute: Int): MealMode? {
+        val nowMins = currentHour * 60 + currentMinute
+        val candidates = listOf(
+            Triple(MealMode.UAM_BREAKFAST, boundaryMins(IntKey.ApsSmartInsulinUamBreakfastStartHour, null), boundaryMins(IntKey.ApsSmartInsulinUamBreakfastEndHour, null)),
+            Triple(MealMode.UAM_LUNCH, boundaryMins(IntKey.ApsSmartInsulinUamLunchStartHour, null), boundaryMins(IntKey.ApsSmartInsulinUamLunchEndHour, null)),
+            Triple(MealMode.UAM_DINNER, boundaryMins(IntKey.ApsSmartInsulinUamDinnerStartHour, IntKey.ApsSmartInsulinUamDinnerStartMinute), boundaryMins(IntKey.ApsSmartInsulinUamDinnerEndHour, IntKey.ApsSmartInsulinUamDinnerEndMinute)),
+            Triple(MealMode.UAM_SNACK, boundaryMins(IntKey.ApsSmartInsulinUamSnackStartHour, null), boundaryMins(IntKey.ApsSmartInsulinUamSnackEndHour, null)),
+            Triple(MealMode.UAM_AFTERNOON, boundaryMins(IntKey.ApsSmartInsulinUamAfternoonStartHour, IntKey.ApsSmartInsulinUamAfternoonStartMinute), boundaryMins(IntKey.ApsSmartInsulinUamAfternoonEndHour, IntKey.ApsSmartInsulinUamAfternoonEndMinute)),
+        )
+        return candidates.firstOrNull { (mode, startMins, endMins) -> uamModeEnabled(mode) && minsInWindow(nowMins, startMins, endMins) }?.first
+    }
+
+    private fun minsInWindow(nowMins: Int, startMins: Int, endMins: Int): Boolean =
+        if (startMins <= endMins) nowMins in startMins until endMins else nowMins >= startMins || nowMins < endMins
 
     private fun uamModeEnabled(mode: MealMode): Boolean = when (mode) {
         MealMode.UAM_BREAKFAST -> sp.getBoolean(BooleanKey.ApsSmartInsulinUamBreakfastEnabled.key, BooleanKey.ApsSmartInsulinUamBreakfastEnabled.defaultValue)

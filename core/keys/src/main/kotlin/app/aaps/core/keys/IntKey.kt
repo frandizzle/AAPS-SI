@@ -101,14 +101,18 @@ enum class IntKey(
     ApsSmartInsulinUamLunchDurationMins("si_uam_lunch_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
     // Dinner UAM window
     ApsSmartInsulinUamDinnerStartHour("si_uam_dinner_start", 17, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamDinnerStartMinute("si_uam_dinner_start_minute", 0, 0, 59, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
     ApsSmartInsulinUamDinnerEndHour("si_uam_dinner_end", 21, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
+    ApsSmartInsulinUamDinnerEndMinute("si_uam_dinner_end_minute", 0, 0, 59, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
     ApsSmartInsulinUamDinnerDurationMins("si_uam_dinner_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled),
     // Snack UAM window
     ApsSmartInsulinUamSnackStartHour("si_uam_snack_start", 21, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     ApsSmartInsulinUamSnackEndHour("si_uam_snack_end", 23, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     ApsSmartInsulinUamSnackDurationMins("si_uam_snack_duration", 30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled),
     ApsSmartInsulinUamAfternoonStartHour("si_uam_afternoon_start", 14, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
+    ApsSmartInsulinUamAfternoonStartMinute("si_uam_afternoon_start_minute", 0, 0, 59, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     ApsSmartInsulinUamAfternoonEndHour("si_uam_afternoon_end", 17, 0, 23, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
+    ApsSmartInsulinUamAfternoonEndMinute("si_uam_afternoon_end_minute", 0, 0, 59, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     ApsSmartInsulinUamAfternoonDurationMins("si_uam_afternoon_duration", 60, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled),
     // Protein/Fat UAM — no time window, stuck-high detection runs until night cutoff
     ApsSmartInsulinUamProteinFatDurationMins  ("si_uam_proteinfat_duration",       30, 15, 120, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled),
