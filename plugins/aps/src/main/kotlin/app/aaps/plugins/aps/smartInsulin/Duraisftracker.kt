@@ -22,9 +22,9 @@ class DuraIsfTracker @Inject constructor() {
     companion object {
         private const val BAND_FRACTION     = 0.05  // within ±5% of the running average counts as "stuck"
         private const val MIN_STUCK_MINUTES = 10.0  // ignore short-lived plateaus
-        // Internal ramp constant — mirrors AutoISF's dura_ISF_weight. The user-facing "strength"
-        // control is the configured ISF floor (a hard clamp), not this constant.
-        private const val DURA_WEIGHT       = 1.0
+        // Default ramp weight when the caller doesn't supply one — mirrors AutoISF's
+        // dura_ISF_weight default of "no adjustment beyond the original fixed behaviour".
+        const val DEFAULT_WEIGHT            = 1.0
         // A single cycle falling at least this fast (-0.2 mmol/5min) resets immediately, regardless
         // of the band check. The band alone is too forgiving for a real, gradual recovery: since the
         // anchor incrementally follows in-band values, a slow steady decline can keep getting absorbed
@@ -59,11 +59,13 @@ class DuraIsfTracker @Inject constructor() {
         stuckMinutes = 0.0
     }
 
-    /** Divisor to apply to ISF (>1.0 strengthens/lowers ISF). 1.0 = no effect. */
-    fun multiplier(targetMgdl: Double): Double {
-        if (stuckMinutes < MIN_STUCK_MINUTES || anchorMgdl <= targetMgdl || targetMgdl <= 0.0) return 1.0
+    /** Divisor to apply to ISF (>1.0 strengthens/lowers ISF). 1.0 = no effect.
+     *  [weight] scales how fast the multiplier ramps — user-configurable per mode
+     *  (0 = DURA has no effect, higher = strengthens ISF faster while stuck). */
+    fun multiplier(targetMgdl: Double, weight: Double = DEFAULT_WEIGHT): Double {
+        if (stuckMinutes < MIN_STUCK_MINUTES || anchorMgdl <= targetMgdl || targetMgdl <= 0.0 || weight <= 0.0) return 1.0
         val stuckHours = stuckMinutes / 60.0
-        val avgWeight  = DURA_WEIGHT / targetMgdl
+        val avgWeight  = weight / targetMgdl
         return 1.0 + stuckHours * avgWeight * (anchorMgdl - targetMgdl)
     }
 

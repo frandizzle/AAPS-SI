@@ -108,6 +108,19 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Strength (how fast ISF ramps while stuck)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/dura_strength_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
                 android:layout_marginBottom="4dp" />
 
         </LinearLayout>

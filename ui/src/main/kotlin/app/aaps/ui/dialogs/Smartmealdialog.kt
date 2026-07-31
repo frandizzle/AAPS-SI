@@ -111,10 +111,21 @@ class SmartMealDialog : DialogFragmentWithDate() {
         else               -> null
     }
 
-    /** Load the stored DURA enable/floor for the current mode into the toggle + picker */
+    /** Returns the DoubleKey for the DURA strength (ramp weight) of the given mode (null for non-manual modes) */
+    private fun duraStrengthKeyFor(mode: MealMode): DoubleKey? = when (mode) {
+        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastDuraStrength
+        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchDuraStrength
+        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerDuraStrength
+        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbDuraStrength
+        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedDuraStrength
+        else               -> null
+    }
+
+    /** Load the stored DURA enable/floor/strength for the current mode into the toggle + pickers */
     private fun loadDuraForMode(mode: MealMode) {
-        val enabledKey = duraEnabledKeyFor(mode) ?: return
-        val floorKey   = duraFloorKeyFor(mode) ?: return
+        val enabledKey  = duraEnabledKeyFor(mode) ?: return
+        val floorKey    = duraFloorKeyFor(mode) ?: return
+        val strengthKey = duraStrengthKeyFor(mode) ?: return
         val enabled    = sp.getBoolean(enabledKey.key, enabledKey.defaultValue)
         val storedMgdl = sp.getDouble(floorKey.key, floorKey.defaultValue)
         binding.duraSwitch.isChecked  = enabled
@@ -123,6 +134,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         else if (profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL)
             storedMgdl / 18.0
         else storedMgdl
+        binding.duraStrengthAmount.value = sp.getDouble(strengthKey.key, strengthKey.defaultValue)
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -195,6 +207,11 @@ class SmartMealDialog : DialogFragmentWithDate() {
             savedInstanceState?.getDouble("duraFloorAmount") ?: isfFallback,
             0.0, isfMax, isfStep,
             isfFmt, false, binding.okcancel.ok, null
+        )
+        binding.duraStrengthAmount.setParams(
+            savedInstanceState?.getDouble("duraStrengthAmount") ?: DoubleKey.ApsSmartInsulinDinnerDuraStrength.defaultValue,
+            0.0, 5.0, 0.1,
+            DecimalFormat("0.0"), false, binding.okcancel.ok, null
         )
         if (savedInstanceState == null) loadDuraForMode(selectedMode)
 
@@ -376,6 +393,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         val isMmol        = profileFunction.getUnits() == app.aaps.core.data.model.GlucoseUnit.MMOL
         val wantsDura     = binding.duraSwitch.isChecked
         val duraFloorValue = if (wantsDura) binding.duraFloorAmount.value else 0.0
+        val duraStrengthValue = binding.duraStrengthAmount.value
 
         val pb3DelayMs    = TimeUnit.MINUTES.toMillis(pb3DelayMins.toLong())
         val pb1Clamped = if (preBolus > 0.0) maxPreBolus.coerceAtMost(preBolus) else 0.0
@@ -400,7 +418,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         if (wantsDura) {
             actions.add(
                 "DURA: strengthens ISF if BG stuck high, floor " +
-                    "$duraFloorValue ${if (isMmol) "mmol" else "mg/dL"}"
+                    "$duraFloorValue ${if (isMmol) "mmol" else "mg/dL"}, strength ${duraStrengthValue}x"
                         .formatColor(context, rh, app.aaps.core.ui.R.attr.icBolusCarbsColor)
             )
         }
@@ -457,6 +475,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
                     else profileUtil.convertToMgdl(duraFloorValue, profileUtil.units)
                     duraEnabledKeyFor(selectedMode)?.let { key -> sp.putBoolean(key.key, wantsDura) }
                     duraFloorKeyFor(selectedMode)?.let { key -> sp.putDouble(key.key, duraFloorMgdl) }
+                    duraStrengthKeyFor(selectedMode)?.let { key -> sp.putDouble(key.key, duraStrengthValue) }
 
                     // Activate meal mode — PB2/PB3 params passed to manager for scheduled delivery
                     mealOverrideManager.activateOverride(
@@ -469,7 +488,8 @@ class SmartMealDialog : DialogFragmentWithDate() {
                         preBolus3U       = pb3Clamped,
                         preBolus3DelayMs = pb3DelayMs,
                         duraEnabled      = wantsDura,
-                        duraFloorMgdl    = duraFloorMgdl
+                        duraFloorMgdl    = duraFloorMgdl,
+                        duraStrength     = duraStrengthValue
                     )
 
                     // Deliver pre-bolus 1 immediately if requested
@@ -509,6 +529,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
         outState.putDouble("isfAmount",    binding.isfAmount.value)
         outState.putBoolean("duraEnabled", binding.duraSwitch.isChecked)
         outState.putDouble("duraFloorAmount", binding.duraFloorAmount.value)
+        outState.putDouble("duraStrengthAmount", binding.duraStrengthAmount.value)
         outState.putDouble("pb2DelayMins", binding.preBolus2DelayMins.value)
         outState.putDouble("pb2Amount",    binding.preBolus2Amount.value)
         outState.putDouble("pb3DelayMins", binding.preBolus3DelayMins.value)

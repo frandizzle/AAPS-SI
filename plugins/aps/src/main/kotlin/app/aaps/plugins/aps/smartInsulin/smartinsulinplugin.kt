@@ -647,7 +647,7 @@ open class SmartInsulinPlugin @Inject constructor(
         duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive, glucoseStatus.delta)
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         if (duraActive) {
-            val duraMult = duraIsfTracker.multiplier(targetBg)
+            val duraMult = duraIsfTracker.multiplier(targetBg, mealOverrideManager.activeDuraStrength)
             if (duraMult > 1.0) {
                 val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
                 val duraIsfMgdl = dosingIsfMgdl / duraMult

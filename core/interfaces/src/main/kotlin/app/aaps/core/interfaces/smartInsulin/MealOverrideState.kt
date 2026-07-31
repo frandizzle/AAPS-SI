@@ -21,7 +21,8 @@ data class MealOverrideState(
     val preBolus3DelayMs: Long   = 0L,
     val preBolus3FiredMs: Long?  = null,
     val duraEnabled:      Boolean = false,  // DURA_ISF: strengthen ISF while BG sits stuck above target
-    val duraFloorMgdl:    Double  = 0.0     // lowest (strongest) ISF DURA may push toward; 0.0 = no-op
+    val duraFloorMgdl:    Double  = 0.0,    // lowest (strongest) ISF DURA may push toward; 0.0 = no-op
+    val duraStrength:     Double  = 1.0     // how fast DURA ramps while stuck (mirrors DuraIsfTracker.DEFAULT_WEIGHT)
 ) {
     /** True if a second bolus was requested and hasn't fired yet */
     val preBolus2Pending: Boolean

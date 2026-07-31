@@ -30,6 +30,9 @@ interface MealOverrideManager {
     /** DURA_ISF floor (mg/dL/U) for the currently active meal mode — 0.0 if not set/no override active */
     val activeDuraFloorMgdl: Double
 
+    /** DURA_ISF strength (ramp weight) for the currently active meal mode — 1.0 default, 0 = no effect */
+    val activeDuraStrength: Double
+
     /** Milliseconds remaining in the active mode window, or 0 if no override active */
     val modeTimeRemainingMs: Long
 
@@ -67,7 +70,8 @@ interface MealOverrideManager {
         preBolus3U:       Double = 0.0,
         preBolus3DelayMs: Long   = 0L,
         duraEnabled:      Boolean = false,
-        duraFloorMgdl:    Double  = 0.0
+        duraFloorMgdl:    Double  = 0.0,
+        duraStrength:     Double  = 1.0
     )
 
     fun cancelOverride()

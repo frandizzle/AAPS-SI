@@ -62,6 +62,14 @@ enum class DoubleKey(
     // LowGuard, WarnGuard moved to UnitDoubleKey (ApsSmartInsulinLowGuard, ApsSmartInsulinWarnGuard)
     ApsSmartInsulinDawnSmbReduction("si_dawn_smb_reduction", 0.5, 0.1, 1.0, defaultedBySM = true),
     ApsSmartInsulinRestingHrBpm("si_resting_hr_bpm", 70.0, 50.0, 110.0, defaultedBySM = true),
+    // DURA_ISF strength (per meal mode) — how fast ISF ramps down while BG sits stuck above
+    // target. Mirrors AutoISF's dura_ISF_weight, but per-mode and settable up to 5.0 (AutoISF
+    // caps at 3.0). 1.0 = original fixed behaviour; higher = strengthens ISF faster when stuck.
+    ApsSmartInsulinBreakfastDuraStrength("si_breakfast_dura_strength", 1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinBreakfastDuraEnabled),
+    ApsSmartInsulinLunchDuraStrength(    "si_lunch_dura_strength",     1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLunchDuraEnabled),
+    ApsSmartInsulinDinnerDuraStrength(   "si_dinner_dura_strength",    1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinDinnerDuraEnabled),
+    ApsSmartInsulinLowCarbDuraStrength(  "si_lowcarb_dura_strength",   1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLowCarbDuraEnabled),
+    ApsSmartInsulinExtendedDuraStrength( "si_extended_dura_strength",  1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinExtendedDuraEnabled),
     ApsSmartInsulinUamEntrySmbFraction           ("si_uam_entry_smb_fraction",            0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamEntrySmbFractionBreakfast  ("si_uam_entry_smb_fraction_breakfast",   0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled),
     ApsSmartInsulinUamEntrySmbFractionLunch      ("si_uam_entry_smb_fraction_lunch",       0.8, 0.1, 1.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled),
