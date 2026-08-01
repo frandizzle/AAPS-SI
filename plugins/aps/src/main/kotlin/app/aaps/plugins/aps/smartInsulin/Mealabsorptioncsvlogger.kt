@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import android.content.Context
+import android.os.Environment
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import java.io.File
@@ -13,8 +14,9 @@ import javax.inject.Singleton
 /**
  * Appends one CSV row per completed meal/UAM episode, for the user to retrieve and paste back
  * for validating [MealAbsorptionTracker]'s estimates against what was actually eaten.
- * File location: <external files>/SmartInsulin/meal_absorption_log.csv (same directory
- * LoopCsvLogger already uses — no runtime storage permission required).
+ * File location: Documents/AAPS/SmartInsulin/meal_absorption_log.csv — the same
+ * Documents/AAPS root FileListProviderImpl already uses for its plain-File "results" location
+ * (resultPath), so it doesn't depend on the SAF export-directory permission being set up.
  */
 @Singleton
 class MealAbsorptionCsvLogger @Inject constructor(
@@ -26,7 +28,8 @@ class MealAbsorptionCsvLogger @Inject constructor(
     private val timeFormat = SimpleDateFormat("HH:mm", Locale.US)
 
     private val logDir: File get() {
-        val dir = File(context.getExternalFilesDir(null), "SmartInsulin")
+        val aapsDocs = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "AAPS")
+        val dir = File(aapsDocs, "SmartInsulin")
         if (!dir.exists()) dir.mkdirs()
         return dir
     }
