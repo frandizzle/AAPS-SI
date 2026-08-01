@@ -876,9 +876,14 @@ class SmartInsulinFragment : DaggerFragment() {
         // residual after subtracting insulin's expected effect. Not a carbs/protein/fat
         // breakdown (can't be distinguished from BG alone) — doesn't feed dosing, purely
         // for comparing against what was actually eaten. Full history also written to
-        // <external files>/SmartInsulin/meal_absorption_log.csv.
+        // Documents/AAPS/SmartInsulin/meal_absorption_log.csv.
         addDivider(c)
         addSectionHeader(c, "Meal Absorption Log (estimated, observation-only)")
+        if (d.mealAbsorptionInProgress.isNotBlank()) {
+            addRow(c, "In progress: ${d.mealAbsorptionInProgress}",
+                   "Updates live each loop cycle — only finalized into the log below once this mode ends.",
+                   Color.parseColor("#FF64B5F6"))
+        }
         val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
             addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))

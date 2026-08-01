@@ -29,6 +29,12 @@ data class CompletedMealEpisode(
     val estimatedGrams:  Double
 )
 
+data class InProgressEpisode(
+    val mode:                MealMode,
+    val startMs:             Long,
+    val estimatedGramsSoFar: Double
+)
+
 @Singleton
 class MealAbsorptionTracker @Inject constructor(
     private val sp:         SP,
@@ -42,6 +48,10 @@ class MealAbsorptionTracker @Inject constructor(
 
     private val _history = mutableListOf<CompletedMealEpisode>()
     val history: List<CompletedMealEpisode> get() = _history
+
+    /** Live snapshot of whatever episode is currently being tracked, or null if none is active. */
+    val inProgress: InProgressEpisode?
+        get() = episodeMode?.let { InProgressEpisode(mode = it, startMs = episodeStartMs, estimatedGramsSoFar = episodeGrams) }
 
     init { restoreHistory() }
 

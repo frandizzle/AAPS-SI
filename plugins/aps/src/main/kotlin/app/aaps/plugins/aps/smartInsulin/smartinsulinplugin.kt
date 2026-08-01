@@ -248,7 +248,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
         val lastCycleSummary: String,
-        val mealAbsorptionLog: String
+        val mealAbsorptionLog: String,
+        val mealAbsorptionInProgress: String
     )
 
     fun fragmentData(): FragmentData {
@@ -302,6 +303,13 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
+        val mealAbsorptionInProgressText = mealAbsorptionTracker.inProgress?.let { p ->
+            val elapsedMs = (nowMs - p.startMs).coerceAtLeast(0L)
+            val elapsedH = elapsedMs / 3_600_000
+            val elapsedM = (elapsedMs / 60_000) % 60
+            "${p.mode.label} — ${elapsedH}h${elapsedM.toString().padStart(2, '0')}m so far — ~${"%.0f".format(p.estimatedGramsSoFar)}g estimated"
+        } ?: ""
+
         return FragmentData(
             hour = hour, dayLabel = day, mealMode = activeMode?.label ?: "Fasting",
             modeRemMins = if (activeMode != null) (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt() else null,
@@ -339,7 +347,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
             lastCycleSummary = circadianLearner.lastCycleSummary,
-            mealAbsorptionLog = mealAbsorptionRaw
+            mealAbsorptionLog = mealAbsorptionRaw,
+            mealAbsorptionInProgress = mealAbsorptionInProgressText
         )
     }
 
