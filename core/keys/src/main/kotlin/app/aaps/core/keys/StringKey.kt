@@ -158,6 +158,15 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — MealAbsorptionTracker completed-episode history (JSON, observation-only)
+    ApsSmartInsulinMealAbsorptionLog(
+        "si_meal_absorption_log",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     // SmartInsulin — BasalLearner multiplier and sample state (JSON)
     ApsSmartInsulinBasalState(
         "si_basal_state",

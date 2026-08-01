@@ -79,7 +79,9 @@ class UamEntrySmbFractionPerModeTest {
             circadianLearner      = mock(),
             activityMonitor       = mock(),
             cgmWarmupGuard        = mock(),
-            duraIsfTracker        = mock()
+            duraIsfTracker        = mock(),
+            mealAbsorptionTracker = mock(),
+            mealAbsorptionCsvLogger = mock()
         )
     }
 

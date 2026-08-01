@@ -93,7 +93,9 @@ open class SmartInsulinPlugin @Inject constructor(
     private val circadianLearner: CircadianLearner,
     private val activityMonitor:  ActivityMonitor,
     private val cgmWarmupGuard:   CgmWarmupGuard,
-    private val duraIsfTracker:   DuraIsfTracker
+    private val duraIsfTracker:   DuraIsfTracker,
+    private val mealAbsorptionTracker:   MealAbsorptionTracker,
+    private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -245,7 +247,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
-        val lastCycleSummary: String
+        val lastCycleSummary: String,
+        val mealAbsorptionLog: String
     )
 
     fun fragmentData(): FragmentData {
@@ -287,6 +290,18 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs) (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
+        val dateFmt = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.US)
+        val mealAbsorptionRaw = buildString {
+            mealAbsorptionTracker.history.asReversed().forEach { e ->
+                val durH = e.durationMs / 3_600_000
+                val durM = (e.durationMs / 60_000) % 60
+                appendLine(
+                    "${dateFmt.format(java.util.Date(e.startMs)).padEnd(9)} ${e.mode.label.padEnd(20)} " +
+                        "${"${durH}h${durM.toString().padStart(2, '0')}m".padEnd(10)} ${"%.0f".format(e.estimatedGrams)}g"
+                )
+            }
+        }
+
         return FragmentData(
             hour = hour, dayLabel = day, mealMode = activeMode?.label ?: "Fasting",
             modeRemMins = if (activeMode != null) (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt() else null,
@@ -323,7 +338,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
-            lastCycleSummary = circadianLearner.lastCycleSummary
+            lastCycleSummary = circadianLearner.lastCycleSummary,
+            mealAbsorptionLog = mealAbsorptionRaw
         )
     }
 
@@ -659,6 +675,23 @@ open class SmartInsulinPlugin @Inject constructor(
                                      "stuck=${"%.0f".format(duraStuckMins)}min isf->${"%.1f".format(dosingIsfMgdl)}")
             }
         }
+
+        // -- Meal absorption estimator (observation-only) -----------------------
+        // Deconvolves BG movement into "insulin's expected effect" vs a leftover residual,
+        // same as oref0/AutoISF's carb-impact estimation — a single lumped carb-equivalent
+        // grams figure, not a carbs/protein/fat breakdown (BG alone can't tell those apart).
+        // Purely diagnostic: does not feed into dosing. Logged per completed mode activation
+        // so it can be compared against what was actually eaten.
+        val completedMealEpisode = mealAbsorptionTracker.onCycle(
+            activeMode     = mealOverrideManager.activeMealMode,
+            modeStartMs    = mealOverrideManager.modeStartMs,
+            deltaMgdl      = glucoseStatus.delta,
+            activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
+            isfMgdl        = dosingIsfMgdl,
+            carbRatio      = profile.getIc(),
+            nowMs          = now
+        )
+        if (completedMealEpisode != null) mealAbsorptionCsvLogger.log(completedMealEpisode)
 
         // -- UAM entry SMB fraction --------------------------------------------
         // For the first N SMBs after a UAM mode fires, use a reduced fraction

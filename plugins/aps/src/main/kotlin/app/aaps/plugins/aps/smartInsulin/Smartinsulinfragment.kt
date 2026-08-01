@@ -870,6 +870,33 @@ class SmartInsulinFragment : DaggerFragment() {
             .joinToString("\n") { it.trimStart() }
             .trim()
         addRow(c, pfPrimary, pfDebug.ifEmpty { null }, pfColor)
+
+        // -- Meal absorption log (observation-only) ----------------------------
+        // Estimated carb-equivalent grams per completed meal/UAM activation, from BG
+        // residual after subtracting insulin's expected effect. Not a carbs/protein/fat
+        // breakdown (can't be distinguished from BG alone) — doesn't feed dosing, purely
+        // for comparing against what was actually eaten. Full history also written to
+        // <external files>/SmartInsulin/meal_absorption_log.csv.
+        addDivider(c)
+        addSectionHeader(c, "Meal Absorption Log (estimated, observation-only)")
+        val ctx = context
+        if (d.mealAbsorptionLog.isBlank()) {
+            addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
+        } else if (ctx != null) {
+            c.addView(TextView(ctx).apply {
+                text = "Date      Meal                 Duration   Est. grams"
+                textSize = 11f; setTextColor(Color.parseColor("#FFCCCCCC"))
+                typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            })
+            c.addView(TextView(ctx).apply {
+                text = d.mealAbsorptionLog.trimEnd()
+                textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
+                typeface = android.graphics.Typeface.MONOSPACE
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .also { it.topMargin = (2 * dp).toInt() }
+            })
+        }
     }
 
     private fun addDivider(container: LinearLayout) {
