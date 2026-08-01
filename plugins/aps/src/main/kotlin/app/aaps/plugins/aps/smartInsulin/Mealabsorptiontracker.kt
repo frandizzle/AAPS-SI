@@ -69,14 +69,14 @@ class MealAbsorptionTracker @Inject constructor(
         nowMs:          Long
     ): CompletedMealEpisode? {
         if (activeMode == null) {
-            return if (episodeMode != null) finalizeEpisode() else null
+            return if (episodeMode != null) finalizeEpisode(nowMs) else null
         }
 
         var completed: CompletedMealEpisode? = null
         if (episodeMode == null || modeStartMs != episodeStartMs) {
             // Either nothing was being tracked, or this is a fresh activation (re-trigger)
             // replacing whatever we had — finalize the old one first if there was one.
-            if (episodeMode != null) completed = finalizeEpisode()
+            if (episodeMode != null) completed = finalizeEpisode(nowMs)
             episodeStartMs = modeStartMs
             episodeMode    = activeMode
             episodeGrams   = 0.0
@@ -96,7 +96,7 @@ class MealAbsorptionTracker @Inject constructor(
         return ci / csf
     }
 
-    private fun finalizeEpisode(): CompletedMealEpisode {
+    private fun finalizeEpisode(nowMs: Long): CompletedMealEpisode {
         val completed = CompletedMealEpisode(
             startMs       = episodeStartMs,
             mode          = episodeMode!!,
@@ -104,7 +104,7 @@ class MealAbsorptionTracker @Inject constructor(
             estimatedGrams = episodeGrams
         )
         _history.add(completed)
-        trimHistory()
+        trimHistory(nowMs)
         persistHistory()
         aapsLogger.debug(LTag.APS,
                          "MealAbsorptionTracker: ${completed.mode.label} finished — " +
@@ -115,8 +115,8 @@ class MealAbsorptionTracker @Inject constructor(
         return completed
     }
 
-    private fun trimHistory() {
-        val cutoff = System.currentTimeMillis() - HISTORY_RETENTION_MS
+    private fun trimHistory(nowMs: Long) {
+        val cutoff = nowMs - HISTORY_RETENTION_MS
         _history.removeAll { it.startMs < cutoff }
         if (_history.size > MAX_HISTORY_ENTRIES) {
             val excess = _history.size - MAX_HISTORY_ENTRIES
@@ -159,7 +159,7 @@ class MealAbsorptionTracker @Inject constructor(
                     )
                 )
             }
-            trimHistory()
+            trimHistory(System.currentTimeMillis())
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "MealAbsorptionTracker: restore failed: ${e.message}")
         }
