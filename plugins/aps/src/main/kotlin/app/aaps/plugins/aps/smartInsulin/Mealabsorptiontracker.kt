@@ -11,12 +11,15 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Estimates glucose-equivalent grams "absorbed" during a meal/UAM mode activation, purely
- * from the residual between actual BG movement and what insulin alone should be doing —
- * the same deconvolution oref0/AutoISF use for carb-impact estimation (CI = actualDelta -
- * expectedBGI, grams = CI / CSF). This does NOT distinguish carbs from protein/fat — they're
- * indistinguishable from BG alone, so this is a single lumped "carb-equivalent" number, not a
- * macro breakdown.
+ * Estimates glucose-equivalent grams "absorbed" during a meal/UAM mode activation, from the
+ * residual between actual BG movement and what's "expected" absent food — the same
+ * deconvolution oref0/AutoISF use for carb-impact estimation (CI = actualDelta - expectedDelta,
+ * grams = CI / CSF). The expected delta combines insulin's own predicted pull with a mild
+ * "should be drifting back toward target" assumption (see TARGET_SEEK_BLOCKS), so a BG that's
+ * simply stuck flat above target still counts as ongoing absorption rather than reading as zero
+ * just because it isn't actively rising. This does NOT distinguish carbs from protein/fat —
+ * they're indistinguishable from BG alone, so this is a single lumped "carb-equivalent" number,
+ * not a macro breakdown.
  *
  * Purely observational: nothing here feeds back into dosing. The intent is to build a
  * validated log the user can compare against what they actually ate before any future work
@@ -58,6 +61,10 @@ class MealAbsorptionTracker @Inject constructor(
     companion object {
         private const val HISTORY_RETENTION_MS = 5L * 24 * 60 * 60 * 1000  // "a few days" for the UI
         private const val MAX_HISTORY_ENTRIES  = 60
+        // How many 5-min cycles BG is assumed to take closing the gap to target absent food —
+        // 12 = 1 hour. Tunable: lower = counts "stuck above target" as carbs faster/harder,
+        // higher = more conservative (closer to AutoISF's own 24-block/2h horizon).
+        private const val TARGET_SEEK_BLOCKS = 12.0
 
         private const val K_START_MS = "startMs"
         private const val K_MODE     = "mode"
@@ -72,6 +79,8 @@ class MealAbsorptionTracker @Inject constructor(
     fun onCycle(
         activeMode:     MealMode?,
         modeStartMs:    Long,
+        bgMgdl:         Double,
+        targetMgdl:     Double,
         deltaMgdl:      Double,
         activityPerMin: Double,
         isfMgdl:        Double,
@@ -93,14 +102,23 @@ class MealAbsorptionTracker @Inject constructor(
         }
 
         lastSeenActiveMs = nowMs
-        episodeGrams += gramsThisCycle(deltaMgdl, activityPerMin, isfMgdl, carbRatio)
+        episodeGrams += gramsThisCycle(bgMgdl, targetMgdl, deltaMgdl, activityPerMin, isfMgdl, carbRatio)
         return completed
     }
 
-    private fun gramsThisCycle(deltaMgdl: Double, activityPerMin: Double, isfMgdl: Double, carbRatio: Double): Double {
+    private fun gramsThisCycle(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double, activityPerMin: Double, isfMgdl: Double, carbRatio: Double): Double {
         if (carbRatio <= 0.0 || isfMgdl <= 0.0) return 0.0
-        val expectedBgi = -activityPerMin * isfMgdl * 5.0
-        val ci = deltaMgdl - expectedBgi
+        val insulinPull = -activityPerMin * isfMgdl * 5.0
+        // Also expect BG to drift back toward target over TARGET_SEEK_BLOCKS cycles, same idea
+        // AutoISF's own expected-delta calc uses. Without this, a BG that's simply "stuck" (not
+        // rising, not falling) above target reads as zero residual even though, absent food, it
+        // should be heading back down given normal insulin coverage — so genuine ongoing
+        // digestion was invisible whenever it wasn't actively pushing BG up further. Only applied
+        // while a meal/UAM mode is active, where food is already the established explanation —
+        // NOT during plain Fasting, where "stuck above target" is ambiguous with ISF being wrong.
+        val targetSeekingPull = (targetMgdl - bgMgdl) / TARGET_SEEK_BLOCKS
+        val expectedDelta = insulinPull + targetSeekingPull
+        val ci = deltaMgdl - expectedDelta
         if (ci <= 0.0) return 0.0
         val csf = isfMgdl / carbRatio
         return ci / csf

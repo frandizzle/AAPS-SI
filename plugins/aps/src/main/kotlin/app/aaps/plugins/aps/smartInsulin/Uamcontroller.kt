@@ -53,7 +53,7 @@ class UamController @Inject constructor(
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
     private var currentlyCgmWarmup         = false  // true when CGM is in warmup — UAM/P/F blocked
     private var currentlyHighTempTarget    = false  // true when high temp target active — UAM/P/F blocked
-    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — P/F only arms after this
+    private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — tracked for display only; P/F no longer requires it
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
     // Burst detection uses a simple 2-reading sliding window, independent of streak state.
@@ -295,7 +295,11 @@ class UamController @Inject constructor(
     }
 
     private fun checkStuckHigh(currentBgMmol: Double, deltaMmol: Double, shortAvgDeltaMmol: Double, currentHour: Int, bgWentLow: Boolean, inReboundWindow: Boolean, lastLowTimeMs: Long, currentMealMode: MealMode, inPostMealLockout: Boolean, profileTargetMmol: Double, bgTimestampMs: Long = 0L) {
-        if (!sp.getBoolean(BooleanKey.ApsSmartInsulinUamProteinFatEnabled.key, BooleanKey.ApsSmartInsulinUamProteinFatEnabled.defaultValue) || currentMealMode != MealMode.FASTING || lastMealEndedMs == 0L) {
+        // No longer requires a tracked meal to have ended first (lastMealEndedMs != 0L) — P/F is
+        // purely BG-pattern-based (stuck + high + flat for N readings) and shouldn't depend on
+        // whether a Smart Meal Dialog activation happened to precede it. Real digestion tails
+        // happen even after untracked meals, or long after any tracked meal has "expired."
+        if (!sp.getBoolean(BooleanKey.ApsSmartInsulinUamProteinFatEnabled.key, BooleanKey.ApsSmartInsulinUamProteinFatEnabled.defaultValue) || currentMealMode != MealMode.FASTING) {
             stuckHighReadings = 0; return
         }
         val msSinceLow = if (lastLowTimeMs > 0L) System.currentTimeMillis() - lastLowTimeMs else Long.MAX_VALUE
@@ -392,7 +396,6 @@ class UamController @Inject constructor(
                 "P/F: off (rebound lockout — ${leftMins}min left)"
             }
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
-            lastMealEndedMs == 0L    -> "P/F: waiting for first meal today"
             else -> {
                 val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
                 val stuckNeeded = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatStuckReadings.key, IntKey.ApsSmartInsulinUamProteinFatStuckReadings.defaultValue)

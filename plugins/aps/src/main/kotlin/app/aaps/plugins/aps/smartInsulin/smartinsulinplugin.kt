@@ -694,6 +694,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val completedMealEpisode = mealAbsorptionTracker.onCycle(
             activeMode     = mealOverrideManager.activeMealMode,
             modeStartMs    = mealOverrideManager.modeStartMs,
+            bgMgdl         = glucoseStatus.glucose,
+            targetMgdl     = targetBg,
             deltaMgdl      = glucoseStatus.delta,
             activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
             isfMgdl        = dosingIsfMgdl,

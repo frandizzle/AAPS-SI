@@ -13,8 +13,13 @@ import org.junit.jupiter.api.Test
 
 /**
  * Tests for [MealAbsorptionTracker] — the observation-only carb-equivalent estimator.
- * Verifies the CI/grams math, episode boundary detection (start/finalize/re-trigger),
- * and bounded history persistence. Nothing here feeds dosing.
+ * Verifies the CI/grams math (insulin-pull term + target-seeking term), episode boundary
+ * detection (start/finalize/re-trigger), and bounded history persistence. Nothing here feeds
+ * dosing.
+ *
+ * Most tests use bgMgdl == targetMgdl to neutralize the target-seeking term and isolate the
+ * insulin-pull math; the dedicated "stuck above target" tests exercise the target-seeking term
+ * on its own.
  */
 class MealAbsorptionTrackerTest {
 
@@ -33,8 +38,8 @@ class MealAbsorptionTrackerTest {
     @Test
     fun `no active mode never starts an episode`() {
         val result = tracker.onCycle(
-            activeMode = null, modeStartMs = 0L, deltaMgdl = 5.0, activityPerMin = 0.02,
-            isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS
+            activeMode = null, modeStartMs = 0L, bgMgdl = 140.0, targetMgdl = 100.0,
+            deltaMgdl = 5.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS
         )
         assertNull(result)
         assertTrue(tracker.history.isEmpty())
@@ -42,17 +47,19 @@ class MealAbsorptionTrackerTest {
 
     @Test
     fun `accumulates grams across cycles using CI over CSF`() {
-        // expectedBgi = -activity*isf*5 = -0.02*50*5 = -5.0 mg/dL
-        // ci = delta - expectedBgi = 8.0 - (-5.0) = 13.0 mg/dL
+        // bgMgdl == targetMgdl neutralizes the target-seeking term, isolating insulin-pull math.
+        // expectedDelta = -activity*isf*5 = -0.02*50*5 = -5.0 mg/dL
+        // ci = delta - expectedDelta = 8.0 - (-5.0) = 13.0 mg/dL
         // csf = isf/carbRatio = 50/10 = 5.0 mg/dL per gram
         // grams this cycle = 13.0/5.0 = 2.6
-        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, deltaMgdl = 8.0, activityPerMin = 0.02,
-                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
-        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, deltaMgdl = 8.0, activityPerMin = 0.02,
-                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS + CYCLE_MS)
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS + CYCLE_MS)
 
-        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, deltaMgdl = 0.0, activityPerMin = 0.0,
-                                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS + 2 * CYCLE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 100.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                         nowMs = BASE_MS + 2 * CYCLE_MS)
 
         requireNotNull(completed)
         assertEquals(MealMode.DINNER, completed.mode)
@@ -63,31 +70,33 @@ class MealAbsorptionTrackerTest {
 
     @Test
     fun `negative or zero CI contributes zero grams, never goes negative`() {
-        // expectedBgi = -0.05*50*5 = -12.5; delta=-20 -> ci = -20-(-12.5) = -7.5 (insulin outperforming model)
-        tracker.onCycle(MealMode.LUNCH, modeStartMs = BASE_MS, deltaMgdl = -20.0, activityPerMin = 0.05,
-                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
-        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, deltaMgdl = 0.0, activityPerMin = 0.0,
-                                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS + CYCLE_MS)
+        // expectedDelta = -0.05*50*5 = -12.5; delta=-20 -> ci = -20-(-12.5) = -7.5 (insulin outperforming model)
+        tracker.onCycle(MealMode.LUNCH, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = -20.0, activityPerMin = 0.05, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 100.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                         nowMs = BASE_MS + CYCLE_MS)
         requireNotNull(completed)
         assertEquals(0.0, completed.estimatedGrams, 1e-9)
     }
 
     @Test
     fun `a re-trigger with a new modeStartMs finalizes the old episode before starting fresh`() {
-        tracker.onCycle(MealMode.UAM_DINNER, modeStartMs = BASE_MS, deltaMgdl = 8.0, activityPerMin = 0.02,
-                         isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        tracker.onCycle(MealMode.UAM_DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
 
         val newStart = BASE_MS + 30 * 60_000L
-        val completedOld = tracker.onCycle(MealMode.UAM_DINNER, modeStartMs = newStart, deltaMgdl = 8.0,
-                                            activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = newStart)
+        val completedOld = tracker.onCycle(MealMode.UAM_DINNER, modeStartMs = newStart, bgMgdl = 100.0, targetMgdl = 100.0,
+                                            deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = newStart)
 
         requireNotNull(completedOld)
         assertEquals(BASE_MS, completedOld.startMs)
         assertEquals(1, tracker.history.size)
 
         // the new episode is now tracking newStart, not the old one
-        val completedNew = tracker.onCycle(activeMode = null, modeStartMs = 0L, deltaMgdl = 0.0, activityPerMin = 0.0,
-                                            isfMgdl = 50.0, carbRatio = 10.0, nowMs = newStart + CYCLE_MS)
+        val completedNew = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 100.0, targetMgdl = 100.0,
+                                            deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                            nowMs = newStart + CYCLE_MS)
         requireNotNull(completedNew)
         assertEquals(newStart, completedNew.startMs)
         assertEquals(2, tracker.history.size)
@@ -95,10 +104,41 @@ class MealAbsorptionTrackerTest {
 
     @Test
     fun `zero carb ratio or ISF safely yields zero grams instead of dividing by zero`() {
-        tracker.onCycle(MealMode.UAM_SNACK, modeStartMs = BASE_MS, deltaMgdl = 8.0,
-                         activityPerMin = 0.02, isfMgdl = 0.0, carbRatio = 0.0, nowMs = BASE_MS)
-        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, deltaMgdl = 0.0, activityPerMin = 0.0,
-                                         isfMgdl = 0.0, carbRatio = 0.0, nowMs = BASE_MS + CYCLE_MS)
+        tracker.onCycle(MealMode.UAM_SNACK, modeStartMs = BASE_MS, bgMgdl = 140.0, targetMgdl = 100.0,
+                         deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 0.0, carbRatio = 0.0, nowMs = BASE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 140.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 0.0, carbRatio = 0.0,
+                                         nowMs = BASE_MS + CYCLE_MS)
+        requireNotNull(completed)
+        assertEquals(0.0, completed.estimatedGrams, 1e-9)
+    }
+
+    @Test
+    fun `stuck flat above target with no insulin activity still counts as ongoing absorption`() {
+        // The exact scenario this fixes: BG stuck at 180 mg/dL (target 100), completely flat
+        // (delta=0), with no active insulin (activity=0). Before the target-seeking term this
+        // read as zero residual purely because nothing was actively rising or being corrected.
+        // targetSeekingPull = (100-180)/12 = -6.6667 mg/dL/cycle
+        // ci = 0 - (-6.6667) = 6.6667; csf = 50/10 = 5.0 -> grams = 1.33333
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 180.0, targetMgdl = 100.0,
+                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 180.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                         nowMs = BASE_MS + CYCLE_MS)
+        requireNotNull(completed)
+        assertEquals((80.0 / 12.0) / 5.0, completed.estimatedGrams, 1e-9)
+        assertTrue(completed.estimatedGrams > 0.0, "Stuck-above-target should register as ongoing absorption, not zero")
+    }
+
+    @Test
+    fun `at or below target, stuck flat correctly registers zero — no phantom absorption`() {
+        // bg == target -> targetSeekingPull = 0, and with zero activity/delta there's no
+        // insulin-pull residual either, so this should stay exactly zero.
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 100.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                         nowMs = BASE_MS + CYCLE_MS)
         requireNotNull(completed)
         assertEquals(0.0, completed.estimatedGrams, 1e-9)
     }
