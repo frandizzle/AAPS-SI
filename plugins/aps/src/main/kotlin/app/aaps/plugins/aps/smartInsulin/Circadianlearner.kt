@@ -220,7 +220,7 @@ class CircadianLearner @Inject constructor(
             if (basalDriftWindow.isNotEmpty()) {
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner: mode transition $previousMealModeForDrift?$mealMode — clearing basalDriftWindow (${basalDriftWindow.size} samples)")
-                basalDriftWindow.clear()
+                clearDriftWindow()
             }
             previousMealModeForDrift = mealMode
         }
@@ -888,14 +888,28 @@ class CircadianLearner @Inject constructor(
     // In a closed loop, basalIob is almost always negative (loop zero-temps frequently).
     // Gating on basalIob is therefore wrong — it would almost never fire.
     //
-    // Instead: use a sustained BG drift window. Collect (timestamp, bg) pairs during
-    // quiet fasting periods (low COB, no bolus — already gated upstream in update()).
-    // Once enough samples accumulate over a long enough window, the net drift tells us
-    // whether profile basal is too high or too low — regardless of what the loop did
-    // to achieve it. If BG drifted up even with loop suppressing basal, profile basal
-    // is genuinely too low. If BG stayed flat with loop running normally, it's fine.
+    // Instead: use a sustained BG drift window collected during fasting (low COB, no bolus —
+    // already gated upstream in update()). Each sample also carries the running integral of
+    // insulin's expected BG effect, and the drift slope is computed NET of that integral —
+    // so the window no longer needs insulin to be absent, just modeled. Once enough samples
+    // accumulate over a long enough window, the compensated net drift tells us whether
+    // profile basal is too high or too low — regardless of what the loop did to achieve it.
 
-    private val basalDriftWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque(BASAL_WINDOW_MAX)
+    // Each drift sample carries the running integral of insulin's EXPECTED BG effect
+    // (mg/dL, from -activity * ISF * 5 per cycle) at the moment the sample was taken.
+    // Compensated drift over the window = (ΔBG − ΔcumExpected) / elapsed — i.e. the BG
+    // movement NOT explained by insulin activity, attributable to basal error. This is what
+    // lets the window collect samples at everyday IOB levels instead of requiring IOB ≈ 0:
+    // an SMB tail's expected effect is modeled out rather than contaminating the slope.
+    private data class DriftSample(val timeMs: Long, val bg: Double, val cumExpectedMgdl: Double)
+
+    private val basalDriftWindow: ArrayDeque<DriftSample> = ArrayDeque(BASAL_WINDOW_MAX)
+    private var driftCumExpectedMgdl = 0.0
+
+    private fun clearDriftWindow() {
+        basalDriftWindow.clear()
+        driftCumExpectedMgdl = 0.0
+    }
 
     // Signal 4: sustained below-target + negative IOB window.
     // Stores (timestampMs, bg) pairs collected only when both conditions are met each cycle.
@@ -1004,29 +1018,30 @@ class CircadianLearner @Inject constructor(
             }
         }
 
-        // -- Signal 1: Drift-based learning -----------------------------------
-        // Measures sustained BG drift during quiet fasting — if BG is drifting up
-        // or down over 60+ min despite the loop, profile basal is wrong.
+        // -- Signal 1: Drift-based learning (activity-compensated) -------------
+        // Measures sustained BG drift NOT explained by insulin activity during fasting —
+        // if the compensated residual drifts up or down over 60+ min, profile basal is wrong.
         //
-        // IOB gate: this window feeds BOTH Signal 1 (drift) and Signal 3 (predTrim) —
-        // fixing it here protects both at once. Only collect samples when totalIob is
-        // low enough that the drift is genuinely basal-driven, not an SMB tail. This is
-        // an SMB-based loop: a bolus tail decaying looks exactly like "basal too high"
-        // drift, and projecting 60 min ahead from a contaminated window (predTrim) would
-        // compound the error rather than just mis-firing once.
+        // Previously this window only collected samples while totalIob < 0.5U (an SMB tail
+        // decaying looks exactly like "basal too high" raw drift), which on an SMB-heavy
+        // loop meant the window almost never filled outside overnight hours — basal learning
+        // was starved of samples while ISF (gated only on activity being PRESENT) learned
+        // constantly. Now insulin's expected effect is integrated alongside each sample and
+        // subtracted out of the slope, so the tail no longer masquerades as basal error and
+        // collection can continue at everyday IOB levels. A high gross-contamination cap
+        // remains: at very large IOB the compensation itself (proportional to activity × ISF)
+        // amplifies any ISF miscalibration into the residual, so those cycles are skipped —
+        // WITHOUT clearing the window: the accumulator keeps integrating through the gap, so
+        // differences across it stay valid (unlike the raw-slope days, a gap no longer
+        // corrupts the window).
+        driftCumExpectedMgdl += -activity * profileIsfMgdl * 5.0
         if (totalIob < BASAL_DRIFT_MAX_IOB) {
-            basalDriftWindow.addLast(now to bg)
+            basalDriftWindow.addLast(DriftSample(now, bg, driftCumExpectedMgdl))
         } else {
-            // totalIob too high — don't add this sample. Clear the window if it already
-            // has samples, since mixing pre-SMB and during-SMB readings corrupts both the
-            // drift slope and the predTrim projection.
-            if (basalDriftWindow.isNotEmpty()) {
-                aapsLogger.debug(LTag.APS,
-                                 "CircadianLearner Basal[drift] skip sample: totalIob=${"%.2f".format(totalIob)}U > $BASAL_DRIFT_MAX_IOB gate — clearing window (protects drift + predTrim)")
-                basalDriftWindow.clear()
-            }
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner Basal[drift] skip sample: totalIob=${"%.2f".format(totalIob)}U > $BASAL_DRIFT_MAX_IOB gross gate (window kept, accumulator running)")
         }
-        while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().first > BASAL_DRIFT_WINDOW_MS)
+        while (basalDriftWindow.isNotEmpty() && now - basalDriftWindow.first().timeMs > BASAL_DRIFT_WINDOW_MS)
             basalDriftWindow.removeFirst()
 
         // Firing condition gated on !signal0Fired (mutual exclusion — Signal 0 runs first in
@@ -1037,15 +1052,17 @@ class CircadianLearner @Inject constructor(
         if (!signal0Fired && basalDriftWindow.size >= BASAL_MIN_SAMPLES) {
             val oldest     = basalDriftWindow.first()
             val newest     = basalDriftWindow.last()
-            val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
+            val elapsedHrs = (newest.timeMs - oldest.timeMs) / 3_600_000.0
             if (elapsedHrs >= BASAL_MIN_ELAPSED_HRS) {
-                val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
+                // Compensated drift: BG movement minus insulin's expected contribution over
+                // the same span — what's left is attributable to basal (see collection above).
+                val driftMgdlPerHr = ((newest.bg - oldest.bg) - (newest.cumExpectedMgdl - oldest.cumExpectedMgdl)) / elapsedHrs
                 when {
                     abs(driftMgdlPerHr) < BASAL_MIN_DRIFT_MGDL_HR ->
                         aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr < noise gate")
                     abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR -> {
                         aapsLogger.debug(LTag.APS, "CircadianLearner Basal skip: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr > sanity gate")
-                        basalDriftWindow.clear()
+                        clearDriftWindow()
                     }
                     else -> {
                         val adjustment = 1.0 + (driftMgdlPerHr / BASAL_DRIFT_SENSITIVITY)
@@ -1068,7 +1085,7 @@ class CircadianLearner @Inject constructor(
                         val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
 
                         basalState = basalState.updated(dow, hour, newMult, alpha)
-                        basalDriftWindow.clear()
+                        clearDriftWindow()
                         driftFired = true
 
                         // Cross-nudge to ISF — gated on !isfLearningActive: unlike Signal 0, drift
@@ -1311,9 +1328,14 @@ class CircadianLearner @Inject constructor(
         if (basalDriftWindow.size < PRED_MIN_WINDOW_SAMPLES) return null
         val oldest     = basalDriftWindow.first()
         val newest     = basalDriftWindow.last()
-        val elapsedHrs = (newest.first - oldest.first) / 3_600_000.0
+        val elapsedHrs = (newest.timeMs - oldest.timeMs) / 3_600_000.0
         if (elapsedHrs < 0.2) return null  // need at least 12 min of spread
-        val driftMgdlPerHr = (newest.second - oldest.second) / elapsedHrs
+        // COMPENSATED drift, same as Signal 1: the window now collects samples at everyday
+        // IOB levels, so the raw slope routinely contains a decaying SMB tail. PredTrim
+        // adjusts BASAL, so its velocity must be the basal-attributable residual — projecting
+        // the raw slope here would cut basal for what an SMB did (exactly the contamination
+        // the old totalIob<0.5 collection gate existed to prevent).
+        val driftMgdlPerHr = ((newest.bg - oldest.bg) - (newest.cumExpectedMgdl - oldest.cumExpectedMgdl)) / elapsedHrs
         if (abs(driftMgdlPerHr) > BASAL_MAX_DRIFT_MGDL_HR) return null  // sanity gate
 
         val t = PRED_TRIM_HORIZON_HRS
@@ -1325,7 +1347,7 @@ class CircadianLearner @Inject constructor(
         val rawAccelTerm     = 0.5 * accelMgdlPerHr2 * t * t
         val accelTerm         = rawAccelTerm.coerceIn(-PRED_ACCEL_MAX_CONTRIB_MGDL, PRED_ACCEL_MAX_CONTRIB_MGDL)
 
-        val projected = newest.second + linearTerm + accelTerm
+        val projected = newest.bg + linearTerm + accelTerm
 
         aapsLogger.debug(LTag.APS,
                          "CircadianLearner predTrim kinematic: drift=${"%.2f".format(driftMgdlPerHr)}mg/dL/hr " +
@@ -1712,7 +1734,12 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MAX_DRIFT_MGDL_HR  = 27.0            // > 1.5 mmol/hr = something else going on
         private const val BASAL_DRIFT_SENSITIVITY  = 18.0            // 18 mg/dL/hr drift ? 1.0 multiplier adjustment (1 mmol/L/hr)
         private const val BASAL_WINDOW_MAX         = 30              // ring buffer max size
-        private const val BASAL_DRIFT_MAX_IOB      = 0.5            // skip drift/predTrim sample if totalIob > 0.5U — SMB tail contaminates signal
+        // Gross-contamination cap only, NOT the old "must be nearly insulin-free" gate: the
+        // drift window is activity-compensated now (insulin's expected effect is subtracted
+        // from the slope), so everyday SMB-tail IOB no longer corrupts the signal. Above this
+        // cap the compensation term itself (activity × ISF) gets large enough that any ISF
+        // miscalibration is amplified into the residual — skip those cycles (window kept).
+        private const val BASAL_DRIFT_MAX_IOB      = 3.0
 
         // Signal 0: per-cycle unexplained-delta basal learning
         // Fires when ISF is NOT learning (activity < MIN_ACTIVITY) so they're mutually exclusive.
