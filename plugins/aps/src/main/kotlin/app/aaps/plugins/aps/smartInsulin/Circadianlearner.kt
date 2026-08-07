@@ -1353,7 +1353,7 @@ class CircadianLearner @Inject constructor(
                          "CircadianLearner predTrim kinematic: drift=${"%.2f".format(driftMgdlPerHr)}mg/dL/hr " +
                              "accel=${"%.2f".format(accelMgdlPerHr2)}mg/dL/hr2 linearTerm=${"%.1f".format(linearTerm)} " +
                              "rawAccelTerm=${"%.1f".format(rawAccelTerm)} clampedAccelTerm=${"%.1f".format(accelTerm)} " +
-                             "? projected=${"%.1f".format(projected)} (was linear-only=${"%.1f".format(newest.second + linearTerm)})")
+                             "? projected=${"%.1f".format(projected)} (was linear-only=${"%.1f".format(newest.bg + linearTerm)})")
 
         return projected
     }
