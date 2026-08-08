@@ -118,7 +118,8 @@ class MealAbsorptionTracker @Inject constructor(
         activityPerMin: Double,
         isfMgdl:        Double,
         carbRatio:      Double,
-        nowMs:          Long
+        nowMs:          Long,
+        cycleMinutes:   Double = 5.0
     ): CompletedMealEpisode? {
         if (activeMode == null) {
             return if (episodeMode != null) finalizeEpisode(nowMs) else null
