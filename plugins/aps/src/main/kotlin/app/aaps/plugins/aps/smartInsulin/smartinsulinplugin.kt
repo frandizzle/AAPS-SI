@@ -294,8 +294,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val postMealLeft = if (learningDirtyUntilMs > 0L && nowMs < learningDirtyUntilMs) (learningDirtyUntilMs - nowMs) / 60_000L else 0L
 
         val dateFmt = java.text.SimpleDateFormat("dd/MM/yy", java.util.Locale.US)
+        // Tab shows only the last 2 days — the tracker keeps 5 days in memory (for future
+        // meal-shape learning) and the CSV file keeps everything permanently.
+        val displayCutoffMs = nowMs - 2L * 24 * 60 * 60 * 1000
         val mealAbsorptionRaw = buildString {
-            mealAbsorptionTracker.history.asReversed().forEach { e ->
+            mealAbsorptionTracker.history.filter { it.startMs >= displayCutoffMs }.asReversed().forEach { e ->
                 val durH = e.durationMs / 3_600_000
                 val durM = (e.durationMs / 60_000) % 60
                 appendLine(
