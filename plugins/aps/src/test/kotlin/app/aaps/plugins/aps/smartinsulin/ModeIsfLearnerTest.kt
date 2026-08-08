@@ -33,11 +33,12 @@ class ModeIsfLearnerTest {
         mode: MealMode?, startMs: Long, nowMs: Long,
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, dura: Double = 1.0,
-        delta: Double = 0.0, activity: Double = 0.0
+        delta: Double = 0.0, activity: Double = 0.0,
+        baseSig: Double = 0.0
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
-        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs
+        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -127,6 +128,32 @@ class ModeIsfLearnerTest {
             t += CYCLE_MS
         }
         assertEquals(1.4, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `changing the mode's ISF override resets its learned multiplier`() {
+        // Learn a strengthen against base signature 21.6 (user's 1.2 mmol override)
+        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 160.0, baseSig = 21.6)
+        runQuietTail(BASE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+
+        // Next lunch starts with a different override (user changed 1.2 → 0.7 mmol = 12.6 mg/dL)
+        val newStart = BASE_MS + 6 * 60 * 60_000L
+        cycle(MealMode.LUNCH, newStart, newStart, bg = 120.0, baseSig = 12.6)
+        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9,
+                     "A changed base override must reset the learned multiplier — keeping it would double-apply the user's own correction")
+    }
+
+    @Test
+    fun `unchanged override does not reset the learned multiplier between episodes`() {
+        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 160.0, baseSig = 21.6)
+        runQuietTail(BASE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+
+        val newStart = BASE_MS + 6 * 60 * 60_000L
+        cycle(MealMode.LUNCH, newStart, newStart, bg = 120.0, baseSig = 21.6)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9,
+                     "Same base override — learned state must carry forward")
     }
 
     @Test

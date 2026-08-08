@@ -535,6 +535,21 @@ open class SmartInsulinPlugin @Inject constructor(
         else -> 0.0
     }
 
+    /**
+     * Fingerprint of a mode's user-set ISF override(s), for ModeIsfLearner's base-change reset.
+     * Must be stable across loop cycles while the settings are unchanged — so P/F uses a
+     * weighted combination of its four stored prefs rather than the hour-resolved pfIsfMgdl()
+     * (which legitimately changes value as the day/night/overnight windows roll over).
+     */
+    private fun modeIsfOverrideSignature(mode: MealMode): Double = when (mode) {
+        MealMode.UAM_PROTEIN_FAT ->
+            sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue) +
+                2.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue) +
+                3.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue) +
+                5.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
+        else -> modeIsfMgdl(mode, 0)  // non-P/F overrides are hour-independent; 0.0 = "profile ISF"
+    }
+
     internal fun entrySmbFractionForMode(mode: MealMode): Double = when (mode) {
         MealMode.UAM_BREAKFAST -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast.key,  DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast.defaultValue)
         MealMode.UAM_LUNCH     -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch.key,      DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch.defaultValue)
@@ -740,7 +755,8 @@ open class SmartInsulinPlugin @Inject constructor(
             activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
             fastingIsfMgdl = trueIsfMgdl,
             carbRatio      = profile.getIc(),
-            nowMs          = now
+            nowMs          = now,
+            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0
         )
 
         // -- UAM entry SMB fraction --------------------------------------------

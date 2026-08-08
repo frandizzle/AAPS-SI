@@ -34,7 +34,7 @@ class ModeIsfLearner @Inject constructor(
     private val aapsLogger: AAPSLogger
 ) {
 
-    private class ModeState(var mult: Double = 1.0, var episodes: Int = 0)
+    private class ModeState(var mult: Double = 1.0, var episodes: Int = 0, var baseSig: Double = Double.NaN)
 
     private val states = mutableMapOf<MealMode, ModeState>()
 
@@ -68,6 +68,7 @@ class ModeIsfLearner @Inject constructor(
 
         private const val K_MULT = "mult"
         private const val K_N    = "n"
+        private const val K_BASE = "baseSig"
     }
 
     /** Multiplier to apply to the mode's dosing ISF. <1.0 = stronger (lower ISF). */
@@ -97,13 +98,31 @@ class ModeIsfLearner @Inject constructor(
         activityPerMin: Double,
         fastingIsfMgdl: Double,
         carbRatio:      Double,
-        nowMs:          Long
+        nowMs:          Long,
+        baseSignature:  Double = 0.0  // fingerprint of the mode's user-set ISF override(s);
+        // a change means the user re-based the mode, so the old learned correction is stale
     ) {
         if (activeModeNow != null) {
             if (activeMode == null || modeStartMs != activeStartMs) {
                 // A new activation while an evaluation is still pending contaminates it —
                 // the tail can no longer be judged cleanly.
                 pendingMode?.let { skipPending("superseded by new ${activeModeNow.label} activation") }
+
+                // Base-change reset: the learned multiplier is a correction RELATIVE to the
+                // base ISF the user had set when it was learned. If the user changes the
+                // override (often in the same direction the learner was already pushing),
+                // keeping the multiplier would silently double-apply that correction — so a
+                // changed base resets this mode to a clean slate and re-learns from there.
+                val s = states.getOrPut(activeModeNow) { ModeState() }
+                if (!s.baseSig.isNaN() && kotlin.math.abs(s.baseSig - baseSignature) > 0.01 && (s.mult != 1.0 || s.episodes > 0)) {
+                    s.mult = 1.0
+                    s.episodes = 0
+                    lastOutcome = "${activeModeNow.label} ISF override changed — learned multiplier reset"
+                    aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+                }
+                s.baseSig = baseSignature
+                persist()
+
                 activeMode     = activeModeNow
                 activeStartMs  = modeStartMs
                 episodeLow     = false
@@ -199,7 +218,9 @@ class ModeIsfLearner @Inject constructor(
         try {
             val json = JSONObject()
             states.forEach { (mode, s) ->
-                json.put(mode.name, JSONObject().put(K_MULT, s.mult).put(K_N, s.episodes))
+                val obj = JSONObject().put(K_MULT, s.mult).put(K_N, s.episodes)
+                if (!s.baseSig.isNaN()) obj.put(K_BASE, s.baseSig)  // JSON rejects NaN
+                json.put(mode.name, obj)
             }
             sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, json.toString()) }
         } catch (e: Exception) {
@@ -217,7 +238,8 @@ class ModeIsfLearner @Inject constructor(
                 val obj  = json.optJSONObject(key) ?: return@forEach
                 states[mode] = ModeState(
                     mult     = obj.optDouble(K_MULT, 1.0).coerceIn(MULT_MIN, MULT_MAX),
-                    episodes = obj.optInt(K_N, 0)
+                    episodes = obj.optInt(K_N, 0),
+                    baseSig  = obj.optDouble(K_BASE, Double.NaN)
                 )
             }
         } catch (e: Exception) {
