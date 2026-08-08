@@ -144,6 +144,33 @@ class MealAbsorptionTrackerTest {
     }
 
     @Test
+    fun `phase segmentation splits an episode into rise then plateau then tail`() {
+        // bg == target throughout → grams = delta/csf = delta/5 per cycle (activity 0).
+        // Rate pattern: climbing (5, 10), holding (5), then near-zero — smoothed EWMA (keep 0.7)
+        // makes new peaks on the first two cycles (RISE), holds ≥ half peak next (PLATEAU),
+        // then decays below half peak (TAIL).
+        var t = BASE_MS
+        val deltas = listOf(5.0, 10.0, 5.0, 0.5, 0.0, 0.0, 0.0)
+        deltas.forEach { d ->
+            tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                             deltaMgdl = d, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0, nowMs = t)
+            t += CYCLE_MS
+        }
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 100.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0, nowMs = t)
+        requireNotNull(completed)
+        // Hand-traced smoothed rates (g = delta/5 → 1.0, 2.0, 1.0, 0.1, 0, 0, 0):
+        // s = 1.00(rise), 1.30(rise), 1.21(plateau), 0.877(plateau), 0.614(tail), 0.43(tail),
+        // 0.30(tail) against peak 1.30 / half-peak 0.65.
+        assertEquals(10L, completed.riseMins,    "First two climbing cycles should classify as rise")
+        assertEquals(10L, completed.plateauMins, "Cycles holding ≥ half the peak rate should classify as plateau")
+        assertEquals(15L, completed.tailMins,    "Decayed cycles below half peak should classify as tail")
+        assertEquals(completed.estimatedGrams,
+                     completed.riseGrams + completed.plateauGrams + completed.tailGrams, 1e-9,
+                     "Phase gram buckets must sum to the episode total")
+    }
+
+    @Test
     fun `restoring drops history entries older than the retention window`() {
         val staleMs = System.currentTimeMillis() - 10L * 24 * 60 * 60 * 1000  // 10 days ago
         val arr = JSONArray().put(

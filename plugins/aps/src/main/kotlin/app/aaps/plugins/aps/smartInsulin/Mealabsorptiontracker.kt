@@ -29,7 +29,17 @@ data class CompletedMealEpisode(
     val startMs:        Long,
     val mode:            MealMode,
     val durationMs:      Long,
-    val estimatedGrams:  Double
+    val estimatedGrams:  Double,
+    // Phase segmentation (observational): minutes and grams attributed to the rise
+    // (absorption rate still climbing to its peak), plateau (holding near peak), and
+    // tail (decayed below half peak). Feeds the CSV log for validating meal-shape
+    // patterns per mode/size — not used for dosing.
+    val riseMins:        Long   = 0L,
+    val plateauMins:     Long   = 0L,
+    val tailMins:        Long   = 0L,
+    val riseGrams:       Double = 0.0,
+    val plateauGrams:    Double = 0.0,
+    val tailGrams:       Double = 0.0
 )
 
 data class InProgressEpisode(
@@ -49,6 +59,18 @@ class MealAbsorptionTracker @Inject constructor(
     private var episodeGrams     = 0.0
     private var lastSeenActiveMs = 0L
 
+    // Phase segmentation state — smoothed absorption rate vs its running peak classifies
+    // each cycle as RISE (new smoothed peak), PLATEAU (≥ half peak), or TAIL (below half).
+    private var phaseSmoothedRate = 0.0
+    private var phasePeakRate     = 0.0
+    private var phaseSamples      = 0
+    private var riseMins          = 0L
+    private var plateauMins       = 0L
+    private var tailMins          = 0L
+    private var riseGrams         = 0.0
+    private var plateauGrams      = 0.0
+    private var tailGrams         = 0.0
+
     private val _history = mutableListOf<CompletedMealEpisode>()
     val history: List<CompletedMealEpisode> get() = _history
 
@@ -66,10 +88,21 @@ class MealAbsorptionTracker @Inject constructor(
         // higher = more conservative (closer to AutoISF's own 24-block/2h horizon).
         private const val TARGET_SEEK_BLOCKS = 12.0
 
+        // Phase segmentation: EWMA smoothing on the per-cycle absorption rate, and the
+        // fraction of the running peak below which the episode is considered in its tail.
+        private const val PHASE_SMOOTH_KEEP      = 0.7
+        private const val PHASE_PLATEAU_FRACTION = 0.5
+
         private const val K_START_MS = "startMs"
         private const val K_MODE     = "mode"
         private const val K_DUR_MS   = "durationMs"
         private const val K_GRAMS    = "estimatedGrams"
+        private const val K_RISE_M   = "riseMins"
+        private const val K_PLAT_M   = "plateauMins"
+        private const val K_TAIL_M   = "tailMins"
+        private const val K_RISE_G   = "riseGrams"
+        private const val K_PLAT_G   = "plateauGrams"
+        private const val K_TAIL_G   = "tailGrams"
     }
 
     /**
@@ -99,11 +132,36 @@ class MealAbsorptionTracker @Inject constructor(
             episodeStartMs = modeStartMs
             episodeMode    = activeMode
             episodeGrams   = 0.0
+            resetPhaseState()
         }
 
         lastSeenActiveMs = nowMs
-        episodeGrams += gramsThisCycle(bgMgdl, targetMgdl, deltaMgdl, activityPerMin, isfMgdl, carbRatio)
+        val g = gramsThisCycle(bgMgdl, targetMgdl, deltaMgdl, activityPerMin, isfMgdl, carbRatio)
+        episodeGrams += g
+
+        // -- Phase segmentation (observational) ---------------------------------
+        phaseSmoothedRate = if (phaseSamples == 0) g else PHASE_SMOOTH_KEEP * phaseSmoothedRate + (1.0 - PHASE_SMOOTH_KEEP) * g
+        phaseSamples++
+        val cycleMinsL = cycleMinutes.toLong()
+        when {
+            phaseSmoothedRate >= phasePeakRate -> {
+                phasePeakRate = phaseSmoothedRate
+                riseMins += cycleMinsL; riseGrams += g
+            }
+            phaseSmoothedRate >= PHASE_PLATEAU_FRACTION * phasePeakRate -> {
+                plateauMins += cycleMinsL; plateauGrams += g
+            }
+            else -> {
+                tailMins += cycleMinsL; tailGrams += g
+            }
+        }
         return completed
+    }
+
+    private fun resetPhaseState() {
+        phaseSmoothedRate = 0.0; phasePeakRate = 0.0; phaseSamples = 0
+        riseMins = 0L; plateauMins = 0L; tailMins = 0L
+        riseGrams = 0.0; plateauGrams = 0.0; tailGrams = 0.0
     }
 
     private fun gramsThisCycle(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double, activityPerMin: Double, isfMgdl: Double, carbRatio: Double): Double {
@@ -129,17 +187,25 @@ class MealAbsorptionTracker @Inject constructor(
             startMs       = episodeStartMs,
             mode          = episodeMode!!,
             durationMs    = (lastSeenActiveMs - episodeStartMs).coerceAtLeast(0L),
-            estimatedGrams = episodeGrams
+            estimatedGrams = episodeGrams,
+            riseMins      = riseMins,
+            plateauMins   = plateauMins,
+            tailMins      = tailMins,
+            riseGrams     = riseGrams,
+            plateauGrams  = plateauGrams,
+            tailGrams     = tailGrams
         )
         _history.add(completed)
         trimHistory(nowMs)
         persistHistory()
         aapsLogger.debug(LTag.APS,
                          "MealAbsorptionTracker: ${completed.mode.label} finished — " +
-                             "${completed.durationMs / 60_000}min, est. ${"%.1f".format(completed.estimatedGrams)}g")
+                             "${completed.durationMs / 60_000}min, est. ${"%.1f".format(completed.estimatedGrams)}g " +
+                             "(rise ${riseMins}m/${"%.0f".format(riseGrams)}g, plateau ${plateauMins}m/${"%.0f".format(plateauGrams)}g, tail ${tailMins}m/${"%.0f".format(tailGrams)}g)")
         episodeMode  = null
         episodeStartMs = 0L
         episodeGrams = 0.0
+        resetPhaseState()
         return completed
     }
 
@@ -162,6 +228,12 @@ class MealAbsorptionTracker @Inject constructor(
                         .put(K_MODE, e.mode.name)
                         .put(K_DUR_MS, e.durationMs)
                         .put(K_GRAMS, e.estimatedGrams)
+                        .put(K_RISE_M, e.riseMins)
+                        .put(K_PLAT_M, e.plateauMins)
+                        .put(K_TAIL_M, e.tailMins)
+                        .put(K_RISE_G, e.riseGrams)
+                        .put(K_PLAT_G, e.plateauGrams)
+                        .put(K_TAIL_G, e.tailGrams)
                 )
             }
             sp.edit { putString(StringKey.ApsSmartInsulinMealAbsorptionLog.key, arr.toString()) }
@@ -183,7 +255,13 @@ class MealAbsorptionTracker @Inject constructor(
                         startMs        = obj.getLong(K_START_MS),
                         mode           = mode,
                         durationMs     = obj.getLong(K_DUR_MS),
-                        estimatedGrams = obj.getDouble(K_GRAMS)
+                        estimatedGrams = obj.getDouble(K_GRAMS),
+                        riseMins       = obj.optLong(K_RISE_M, 0L),
+                        plateauMins    = obj.optLong(K_PLAT_M, 0L),
+                        tailMins       = obj.optLong(K_TAIL_M, 0L),
+                        riseGrams      = obj.optDouble(K_RISE_G, 0.0),
+                        plateauGrams   = obj.optDouble(K_PLAT_G, 0.0),
+                        tailGrams      = obj.optDouble(K_TAIL_G, 0.0)
                     )
                 )
             }

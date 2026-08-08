@@ -884,6 +884,12 @@ class SmartInsulinFragment : DaggerFragment() {
                    "Updates live each loop cycle — only finalized into the log below once this mode ends.",
                    Color.parseColor("#FF64B5F6"))
         }
+        if (d.modeIsfLearnerStatus.isNotBlank()) {
+            addRow(c, "Learned mode ISF adjustments",
+                   d.modeIsfLearnerStatus + "\n\nEach completed episode is judged after a ~75min settling tail:\n" +
+                       "ended low → ISF weakens, ended high / DURA had to rescue → strengthens,\nate again during tail → skipped.",
+                   Color.parseColor("#FFCCCCCC"))
+        }
         val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
             addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))

@@ -57,11 +57,20 @@ class MealAbsorptionCsvLogger @Inject constructor(
             timeFormat.format(date),
             e.mode.label,
             durationMins.toString(),
-            "%.1f".format(e.estimatedGrams)
+            "%.1f".format(e.estimatedGrams),
+            e.riseMins.toString(),
+            e.plateauMins.toString(),
+            e.tailMins.toString(),
+            "%.1f".format(e.riseGrams),
+            "%.1f".format(e.plateauGrams),
+            "%.1f".format(e.tailGrams)
         ).joinToString(",")
     }
 
     companion object {
-        private val HEADER = listOf("date", "start_time", "mode", "duration_min", "estimated_grams_carb_equiv").joinToString(",")
+        private val HEADER = listOf(
+            "date", "start_time", "mode", "duration_min", "estimated_grams_carb_equiv",
+            "rise_min", "plateau_min", "tail_min", "rise_g", "plateau_g", "tail_g"
+        ).joinToString(",")
     }
 }

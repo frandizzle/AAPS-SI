@@ -95,7 +95,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val cgmWarmupGuard:   CgmWarmupGuard,
     private val duraIsfTracker:   DuraIsfTracker,
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
-    private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger
+    private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
+    private val modeIsfLearner:          ModeIsfLearner
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -249,7 +250,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowGuardMgdl: Double,
         val lastCycleSummary: String,
         val mealAbsorptionLog: String,
-        val mealAbsorptionInProgress: String
+        val mealAbsorptionInProgress: String,
+        val modeIsfLearnerStatus: String
     )
 
     fun fragmentData(): FragmentData {
@@ -348,7 +350,8 @@ open class SmartInsulinPlugin @Inject constructor(
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
             lastCycleSummary = circadianLearner.lastCycleSummary,
             mealAbsorptionLog = mealAbsorptionRaw,
-            mealAbsorptionInProgress = mealAbsorptionInProgressText
+            mealAbsorptionInProgress = mealAbsorptionInProgressText,
+            modeIsfLearnerStatus = modeIsfLearner.statusString()
         )
     }
 
@@ -665,14 +668,28 @@ open class SmartInsulinPlugin @Inject constructor(
             if (lModeIsf > 0.0) dosingIsfMgdl = lModeIsf
         }
 
+        // -- Learned per-mode ISF (episode-outcome learning) --------------------
+        // Applied to the mode's base ISF before DURA — DURA is the within-episode rescue,
+        // this is the across-episodes correction learned from how past activations ended.
+        if (mealMode != MealMode.FASTING) {
+            val learnedModeMult = modeIsfLearner.multiplier(mealMode)
+            if (learnedModeMult != 1.0) {
+                dosingIsfMgdl *= learnedModeMult
+                aapsLogger.debug(LTag.APS,
+                                 "SmartInsulin modeISF: ${mealMode.label} learned ×${"%.3f".format(learnedModeMult)} → isf=${"%.1f".format(dosingIsfMgdl)}")
+            }
+        }
+
         // -- DURA_ISF: strengthen ISF the longer BG sits stuck above target during a
         // DURA-enabled meal mode override. Tracker resets itself whenever DURA isn't
         // active (mode ended or toggle off), so a stuck plateau never leaks between activations.
         val duraActive = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
         duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive, glucoseStatus.delta)
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
+        var duraMultThisCycle = 1.0  // exposed to ModeIsfLearner — big DURA interventions count as "mode ISF too weak"
         if (duraActive) {
             val duraMult = duraIsfTracker.multiplier(targetBg, mealOverrideManager.activeDuraStrength)
+            duraMultThisCycle = duraMult
             if (duraMult > 1.0) {
                 val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
                 val duraIsfMgdl = dosingIsfMgdl / duraMult
@@ -703,6 +720,25 @@ open class SmartInsulinPlugin @Inject constructor(
             nowMs          = now
         )
         if (completedMealEpisode != null) mealAbsorptionCsvLogger.log(completedMealEpisode)
+
+        // -- Per-mode ISF episode-outcome learner -------------------------------
+        // Judges each completed mode activation after a settling tail (low → weaken,
+        // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
+        // FASTING ISF for its tail contamination check — the mode ISF no longer applies
+        // once the mode has ended.
+        modeIsfLearner.onCycle(
+            activeModeNow  = mealOverrideManager.activeMealMode,
+            modeStartMs    = mealOverrideManager.modeStartMs,
+            bgMgdl         = glucoseStatus.glucose,
+            targetMgdl     = targetBg,
+            lowActive      = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            duraMult       = duraMultThisCycle,
+            deltaMgdl      = glucoseStatus.delta,
+            activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
+            fastingIsfMgdl = trueIsfMgdl,
+            carbRatio      = profile.getIc(),
+            nowMs          = now
+        )
 
         // -- UAM entry SMB fraction --------------------------------------------
         // For the first N SMBs after a UAM mode fires, use a reduced fraction

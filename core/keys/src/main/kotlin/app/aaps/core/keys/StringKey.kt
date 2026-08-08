@@ -167,6 +167,15 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — ModeIsfLearner per-mode learned ISF multipliers (JSON)
+    ApsSmartInsulinModeIsfLearnerState(
+        "si_mode_isf_learner_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     // SmartInsulin — BasalLearner multiplier and sample state (JSON)
     ApsSmartInsulinBasalState(
         "si_basal_state",

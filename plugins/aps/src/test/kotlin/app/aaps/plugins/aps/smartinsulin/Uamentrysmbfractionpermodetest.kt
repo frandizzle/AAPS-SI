@@ -81,7 +81,8 @@ class UamEntrySmbFractionPerModeTest {
             cgmWarmupGuard        = mock(),
             duraIsfTracker        = mock(),
             mealAbsorptionTracker = mock(),
-            mealAbsorptionCsvLogger = mock()
+            mealAbsorptionCsvLogger = mock(),
+            modeIsfLearner        = mock()
         )
     }
 
