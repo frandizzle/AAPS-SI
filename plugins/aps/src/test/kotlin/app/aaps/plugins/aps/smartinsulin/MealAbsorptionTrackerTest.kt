@@ -144,6 +144,22 @@ class MealAbsorptionTrackerTest {
     }
 
     @Test
+    fun `pre-bolused decline above target is not double-counted as absorption`() {
+        // Above target with strong insulin activity, BG falling exactly as the insulin model
+        // predicts: insulinPull = -0.04*50*5 = -10, targetSeek = (100-160)/12 = -5, delta = -10.
+        // The old summed formulation expected -15 → ci = +5 → ~1g/cycle of phantom grams for a
+        // perfectly-covered decline. With min(): expected = -10 → ci = 0 → zero grams.
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 160.0, targetMgdl = 100.0,
+                         deltaMgdl = -10.0, activityPerMin = 0.04, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        val completed = tracker.onCycle(activeMode = null, modeStartMs = 0L, bgMgdl = 150.0, targetMgdl = 100.0,
+                                         deltaMgdl = 0.0, activityPerMin = 0.0, isfMgdl = 50.0, carbRatio = 10.0,
+                                         nowMs = BASE_MS + CYCLE_MS)
+        requireNotNull(completed)
+        assertEquals(0.0, completed.estimatedGrams, 1e-9,
+                     "A decline fully explained by insulin must not book phantom grams from the target-seek term")
+    }
+
+    @Test
     fun `phase segmentation splits an episode into rise then plateau then tail`() {
         // bg == target throughout → grams = delta/csf = delta/5 per cycle (activity 0).
         // Rate pattern: climbing (5, 10), holding (5), then near-zero — smoothed EWMA (keep 0.7)

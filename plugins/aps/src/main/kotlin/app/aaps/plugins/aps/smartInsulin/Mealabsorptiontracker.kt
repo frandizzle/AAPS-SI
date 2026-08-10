@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.min
 
 /**
  * Estimates glucose-equivalent grams "absorbed" during a meal/UAM mode activation, from the
@@ -176,7 +177,15 @@ class MealAbsorptionTracker @Inject constructor(
         // while a meal/UAM mode is active, where food is already the established explanation —
         // NOT during plain Fasting, where "stuck above target" is ambiguous with ISF being wrong.
         val targetSeekingPull = (targetMgdl - bgMgdl) / TARGET_SEEK_BLOCKS
-        val expectedDelta = insulinPull + targetSeekingPull
+        // The two terms are NOT independent additive processes — the target-seek heuristic is a
+        // catch-all that already includes insulin's contribution. Summing them double-counted
+        // expected decline whenever pre-bolus/SMB insulin was active above target, inflating the
+        // grams estimate. Above target: expect whichever single mechanism predicts the steeper
+        // decline (insulin model when it dominates, target-seek when insulin is quiet — the
+        // stuck-BG case keeps working). Below target (seek term positive, expecting a rebound
+        // rise toward target): keep the sum so recovery out of a dip isn't credited as carbs.
+        val expectedDelta = if (targetSeekingPull < 0.0) min(insulinPull, targetSeekingPull)
+        else insulinPull + targetSeekingPull
         val ci = deltaMgdl - expectedDelta
         if (ci <= 0.0) return 0.0
         val csf = isfMgdl / carbRatio
