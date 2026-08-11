@@ -890,6 +890,16 @@ class SmartInsulinFragment : DaggerFragment() {
                        "ended low → ISF weakens, ended high / DURA had to rescue → strengthens,\nate again during tail → skipped.",
                    Color.parseColor("#FFCCCCCC"))
         }
+        if (d.uamEntryFractionStatus.isNotBlank()) {
+            addRow(c, "Learned UAM entry fraction adjustments",
+                   d.uamEntryFractionStatus + "\n\nShape knob — how front-loaded the first SMBs after a UAM entry are.\n" +
+                       "Low soon after entry → fraction lowered.\n" +
+                       "Big spike that peaks 40min+ after entry but ends on target → raised.\n" +
+                       "Spike peaking sooner than that → fast carbs, left alone (insulin couldn't\n" +
+                       "have beaten it). Ended high or late low → left alone (mode ISF's job).\n" +
+                       "Entry SMB count stays manual.",
+                   Color.parseColor("#FFCCCCCC"))
+        }
         val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
             addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))

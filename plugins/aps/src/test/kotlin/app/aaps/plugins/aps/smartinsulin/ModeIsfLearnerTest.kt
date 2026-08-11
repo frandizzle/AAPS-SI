@@ -69,9 +69,32 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `low during the episode weakens immediately at mode end without waiting for the tail`() {
-        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 80.0, low = true)
+        // LOW_CARB is a manually-activated mode — no UAM entry burst, so there's no entry-shape
+        // learner to arbitrate with and every low is this learner's (magnitude) evidence.
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 80.0, low = true)
         // single cycle after mode end — weaken should already have landed
         cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 90.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `early low after a UAM entry is skipped — owned by the entry-fraction learner`() {
+        // ARBITRATION: a low within the 75min entry window is shape evidence, not magnitude.
+        // UamEntryFractionLearner acts on it; this learner must stay put so one mistake
+        // isn't corrected twice.
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 130.0)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 85.0)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `late low after a UAM entry still weakens — that one is magnitude evidence`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        // 80 min in — past the 75min entry-attribution window
+        val lateMs = BASE_MS + 80 * 60_000L
+        cycle(MealMode.UAM_DINNER, BASE_MS, lateMs, bg = 68.0, low = true)
+        cycle(null, 0L, lateMs + CYCLE_MS, bg = 80.0)
         assertEquals(1.05, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
     }
 

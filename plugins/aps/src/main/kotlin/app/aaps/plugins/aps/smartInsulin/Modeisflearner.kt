@@ -39,10 +39,12 @@ class ModeIsfLearner @Inject constructor(
     private val states = mutableMapOf<MealMode, ModeState>()
 
     // Currently-active episode tracking
-    private var activeMode:     MealMode? = null
-    private var activeStartMs   = 0L
-    private var episodeLow      = false
-    private var episodeMaxDura  = 1.0
+    private var activeMode:      MealMode? = null
+    private var activeStartMs    = 0L
+    private var episodeLow       = false
+    private var episodeEarlyLow  = false  // low inside the UAM entry window — belongs to
+    // UamEntryFractionLearner (shape), not to this learner (magnitude)
+    private var episodeMaxDura   = 1.0
 
     // Pending post-episode evaluation (settling tail)
     private var pendingMode:      MealMode? = null
@@ -123,27 +125,42 @@ class ModeIsfLearner @Inject constructor(
                 s.baseSig = baseSignature
                 persist()
 
-                activeMode     = activeModeNow
-                activeStartMs  = modeStartMs
-                episodeLow     = false
-                episodeMaxDura = 1.0
+                activeMode      = activeModeNow
+                activeStartMs   = modeStartMs
+                episodeLow      = false
+                episodeEarlyLow = false
+                episodeMaxDura  = 1.0
             }
-            if (lowActive) episodeLow = true
+            if (lowActive) {
+                // ARBITRATION with UamEntryFractionLearner: a low soon after a UAM entry is
+                // evidence the entry burst was too front-loaded (a SHAPE problem the entry
+                // learner owns) — not that the mode's overall ISF is too strong. Attributing
+                // it to both would double-correct a single mistake. Record it separately and
+                // let the entry learner act; only later lows move this learner's multiplier.
+                val early = UamEntryFractionLearner.isEntryMode(activeModeNow) &&
+                    (nowMs - activeStartMs) <= UamEntryFractionLearner.ENTRY_ATTRIBUTION_MS
+                if (early) episodeEarlyLow = true else episodeLow = true
+            }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             return
         }
 
         // No mode active — did one just end?
         if (activeMode != null) {
-            val ended   = activeMode!!
-            val hadLow  = episodeLow
-            val maxDura = episodeMaxDura
+            val ended        = activeMode!!
+            val hadLow       = episodeLow
+            val hadEarlyLow  = episodeEarlyLow
+            val maxDura      = episodeMaxDura
             activeMode    = null
             activeStartMs = 0L
             if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
                 applyOutcome(ended, WEAKEN_STEP, "low during ${ended.label} episode — weakened")
+            } else if (hadEarlyLow) {
+                // Only an early (entry-window) low: the entry-fraction learner is acting on it.
+                // Judging it here too would correct one mistake twice.
+                skipPending("early low after ${ended.label} entry — attributed to UAM entry fraction")
             } else {
                 pendingMode      = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
@@ -207,7 +224,7 @@ class ModeIsfLearner @Inject constructor(
 
     fun reset() {
         states.clear()
-        activeMode = null; activeStartMs = 0L; episodeLow = false; episodeMaxDura = 1.0
+        activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false; episodeMaxDura = 1.0
         pendingMode = null
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, "") }

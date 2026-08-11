@@ -176,6 +176,15 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — UamEntryFractionLearner per-mode learned entry-fraction offsets (JSON)
+    ApsSmartInsulinUamEntryFractionLearnerState(
+        "si_uam_entry_fraction_learner_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     // SmartInsulin — BasalLearner multiplier and sample state (JSON)
     ApsSmartInsulinBasalState(
         "si_basal_state",

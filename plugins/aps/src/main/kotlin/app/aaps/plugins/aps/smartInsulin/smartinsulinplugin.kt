@@ -96,7 +96,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val duraIsfTracker:   DuraIsfTracker,
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
-    private val modeIsfLearner:          ModeIsfLearner
+    private val modeIsfLearner:          ModeIsfLearner,
+    private val uamEntryFractionLearner: UamEntryFractionLearner
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -251,7 +252,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val lastCycleSummary: String,
         val mealAbsorptionLog: String,
         val mealAbsorptionInProgress: String,
-        val modeIsfLearnerStatus: String
+        val modeIsfLearnerStatus: String,
+        val uamEntryFractionStatus: String
     )
 
     fun fragmentData(): FragmentData {
@@ -354,7 +356,8 @@ open class SmartInsulinPlugin @Inject constructor(
             lastCycleSummary = circadianLearner.lastCycleSummary,
             mealAbsorptionLog = mealAbsorptionRaw,
             mealAbsorptionInProgress = mealAbsorptionInProgressText,
-            modeIsfLearnerStatus = modeIsfLearner.statusString()
+            modeIsfLearnerStatus = modeIsfLearner.statusString(),
+            uamEntryFractionStatus = uamEntryFractionLearner.statusString()
         )
     }
 
@@ -759,6 +762,24 @@ open class SmartInsulinPlugin @Inject constructor(
             baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0
         )
 
+        // -- UAM entry-fraction shape learner -----------------------------------
+        // Learns how front-loaded the UAM entry burst should be, arbitrated against the ISF
+        // learner by timing: early lows are shape evidence (this learner), late lows and
+        // ended-high are magnitude evidence (ModeIsfLearner). Same base-change reset pattern.
+        uamEntryFractionLearner.onCycle(
+            activeModeNow  = mealOverrideManager.activeMealMode,
+            modeStartMs    = mealOverrideManager.modeStartMs,
+            bgMgdl         = glucoseStatus.glucose,
+            targetMgdl     = targetBg,
+            lowActive      = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            deltaMgdl      = glucoseStatus.delta,
+            activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
+            fastingIsfMgdl = trueIsfMgdl,
+            carbRatio      = profile.getIc(),
+            nowMs          = now,
+            baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0
+        )
+
         // -- UAM entry SMB fraction --------------------------------------------
         // For the first N SMBs after a UAM mode fires, use a reduced fraction
         // to soften the front-end response and avoid stacking before IOB propagates.
@@ -773,7 +794,9 @@ open class SmartInsulinPlugin @Inject constructor(
             uamEntrySmbsDelivered = 0
         }
         val entrySmbCount    = sp.getInt(IntKey.ApsSmartInsulinUamEntrySmbCount.key, IntKey.ApsSmartInsulinUamEntrySmbCount.defaultValue)
-        val entrySmbFraction = entrySmbFractionForMode(mealMode)
+        // Learned shape adjustment on top of the configured fraction (no-op until the entry
+        // learner has evidence). The COUNT stays exactly as configured — deliberately manual.
+        val entrySmbFraction = uamEntryFractionLearner.adjustedFraction(mealMode, entrySmbFractionForMode(mealMode))
         var uamSmbFraction   = if (currentModeIsUam && uamEntrySmbsDelivered < entrySmbCount)
             entrySmbFraction else SMB_DELIVERY_FRACTION
 
