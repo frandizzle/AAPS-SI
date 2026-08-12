@@ -264,6 +264,15 @@
                         android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
                 </LinearLayout>
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="20dp">
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        android:text="Meal mode learning (ISF + UAM entry)" android:textSize="16sp" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_mode_learners"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:paddingStart="24dp" android:paddingEnd="24dp" android:text="Reset" />
+                </LinearLayout>
                 <com.google.android.material.divider.MaterialDivider android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:layout_marginBottom="16dp" />
                 <com.google.android.material.button.MaterialButton android:id="@+id/btn_reset_all"

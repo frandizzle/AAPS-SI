@@ -215,6 +215,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     fun resetAllLearners() {
         aggressionLearner.reset(); basalLearner.reset(); circadianLearner.reset(); profileLearner.resetProfiles()
+        modeIsfLearner.reset(); uamEntryFractionLearner.reset()
         bgWentLow = false; reboundWindowStartMs = 0L; learningDirtyUntilMs = 0L
         previousMealModeForLockout = MealMode.FASTING; minBgDuringLow = Double.MAX_VALUE
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
@@ -226,6 +227,7 @@ open class SmartInsulinPlugin @Inject constructor(
     fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal() }
     fun resetCircadian() { circadianLearner.reset() }
     fun resetProfiles() { profileLearner.resetProfiles() }
+    fun resetModeLearners() { modeIsfLearner.reset(); uamEntryFractionLearner.reset() }
 
     data class FragmentData(
         val hour: Int, val dayLabel: String, val mealMode: String, val modeRemMins: Int?,
@@ -317,6 +319,41 @@ open class SmartInsulinPlugin @Inject constructor(
             "${p.mode.label} — ${elapsedH}h${elapsedM.toString().padStart(2, '0')}m so far — ~${"%.0f".format(p.estimatedGramsSoFar)}g estimated"
         } ?: ""
 
+        // Learned per-mode ISF: show the configured base and what the learner turned it into,
+        // so the adjustment is legible rather than an abstract multiplier. Modes with an
+        // override set show base→effective; modes running on profile ISF show the multiplier
+        // alone (their base varies hour to hour with circadian learning).
+        val modeIsfLearnerRaw = buildString {
+            MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
+                val mult = modeIsfLearner.multiplier(mode)
+                val n    = modeIsfLearner.episodeCount(mode)
+                if (n == 0 && mult == 1.0) return@forEach
+                val baseMgdl = modeIsfMgdl(mode, hour)
+                val valueTxt = if (baseMgdl > 0.0) {
+                    val b = if (isMmol) baseMgdl / 18.0 else baseMgdl
+                    val e = b * mult
+                    val f = if (isMmol) "%.2f" else "%.0f"
+                    "${f.format(b)}→${f.format(e)}"
+                } else "profile"
+                appendLine("${mode.label.padEnd(18)} ${valueTxt.padEnd(12)} ×${"%.3f".format(mult)}  n=$n")
+            }
+            if (isEmpty()) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
+            if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${modeIsfLearner.lastOutcome}")
+        }.trimEnd()
+
+        val uamEntryFractionRaw = buildString {
+            MealMode.entries.filter { UamEntryFractionLearner.isEntryMode(it) }.forEach { mode ->
+                val offset = uamEntryFractionLearner.offset(mode)
+                val n      = uamEntryFractionLearner.episodeCount(mode)
+                if (n == 0 && offset == 0.0) return@forEach
+                val configured = entrySmbFractionForMode(mode)
+                val adjusted   = uamEntryFractionLearner.adjustedFraction(mode, configured)
+                appendLine("${mode.label.padEnd(18)} ${"%.2f".format(configured)}→${"%.2f".format(adjusted)}  n=$n")
+            }
+            if (isEmpty()) appendLine("No completed UAM entry episodes yet.")
+            if (uamEntryFractionLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${uamEntryFractionLearner.lastOutcome}")
+        }.trimEnd()
+
         return FragmentData(
             hour = hour, dayLabel = day, mealMode = activeMode?.label ?: "Fasting",
             modeRemMins = if (activeMode != null) (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt() else null,
@@ -356,8 +393,8 @@ open class SmartInsulinPlugin @Inject constructor(
             lastCycleSummary = circadianLearner.lastCycleSummary,
             mealAbsorptionLog = mealAbsorptionRaw,
             mealAbsorptionInProgress = mealAbsorptionInProgressText,
-            modeIsfLearnerStatus = modeIsfLearner.statusString(),
-            uamEntryFractionStatus = uamEntryFractionLearner.statusString()
+            modeIsfLearnerStatus = modeIsfLearnerRaw,
+            uamEntryFractionStatus = uamEntryFractionRaw
         )
     }
 

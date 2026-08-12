@@ -59,6 +59,11 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.btnResetProfiles.setOnClickListener {
             confirmReset("Reset all learned insulin profiles back to defaults?") { smartInsulinPlugin.resetProfiles(); refreshStatus() }
         }
+        binding.btnResetModeLearners.setOnClickListener {
+            confirmReset("Reset learned per-meal ISF adjustments and UAM entry fractions back to your configured values?") {
+                smartInsulinPlugin.resetModeLearners(); refreshStatus()
+            }
+        }
         binding.btnResetAll.setOnClickListener {
             confirmReset("Reset ALL learners? This cannot be undone.") { smartInsulinPlugin.resetAllLearners(); refreshStatus() }
         }
@@ -884,22 +889,24 @@ class SmartInsulinFragment : DaggerFragment() {
                    "Updates live each loop cycle — only finalized into the log below once this mode ends.",
                    Color.parseColor("#FF64B5F6"))
         }
-        if (d.modeIsfLearnerStatus.isNotBlank()) {
-            addRow(c, "Learned mode ISF adjustments",
-                   d.modeIsfLearnerStatus + "\n\nEach completed episode is judged after a ~75min settling tail:\n" +
-                       "ended low → ISF weakens, ended high / DURA had to rescue → strengthens,\nate again during tail → skipped.",
-                   Color.parseColor("#FFCCCCCC"))
-        }
-        if (d.uamEntryFractionStatus.isNotBlank()) {
-            addRow(c, "Learned UAM entry fraction adjustments",
-                   d.uamEntryFractionStatus + "\n\nShape knob — how front-loaded the first SMBs after a UAM entry are.\n" +
-                       "Low soon after entry → fraction lowered.\n" +
-                       "Big spike that peaks 40min+ after entry but ends on target → raised.\n" +
-                       "Spike peaking sooner than that → fast carbs, left alone (insulin couldn't\n" +
-                       "have beaten it). Ended high or late low → left alone (mode ISF's job).\n" +
-                       "Entry SMB count stays manual.",
-                   Color.parseColor("#FFCCCCCC"))
-        }
+        addDivider(c)
+        addSectionHeader(c, "Learned Mode ISF (per meal / UAM mode)")
+        addMonospaceBlock(c, d.modeIsfLearnerStatus)
+        addMonospaceBlock(c, "Each completed episode is judged after a ~75min settling tail:\n" +
+            "ended low → ISF weakens, ended high / DURA had to rescue → strengthens,\n" +
+            "ate again during tail → skipped. Changing a mode's ISF override resets it.",
+                          Color.parseColor("#FF999999"))
+
+        addDivider(c)
+        addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")
+        addMonospaceBlock(c, d.uamEntryFractionStatus)
+        addMonospaceBlock(c, "Shape knob — how front-loaded the first SMBs after a UAM entry are.\n" +
+            "Low soon after entry → fraction lowered.\n" +
+            "Big spike peaking 40min+ after entry but ending on target → raised.\n" +
+            "Spike peaking sooner → fast carbs, left alone (insulin couldn't have\n" +
+            "beaten it). Ended high or late low → left alone (mode ISF's job).\n" +
+            "Entry SMB count stays manual.",
+                          Color.parseColor("#FF999999"))
         val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
             addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
@@ -934,6 +941,18 @@ class SmartInsulinFragment : DaggerFragment() {
         val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
         val prefix = if (passed) "✓ " else "✗ "
         addRow(container, "$prefix$primary", detail, color)
+    }
+
+    /** Monospace text block (no bold header) — for tables whose columns need to line up. */
+    private fun addMonospaceBlock(container: LinearLayout, text: String, color: Int = Color.parseColor("#FFDDDDDD")) {
+        val ctx = context ?: return
+        if (text.isBlank()) return
+        container.addView(TextView(ctx).apply {
+            this.text = text; textSize = 11f; setTextColor(color)
+            typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = (8 * dp).toInt() }
+        })
     }
 
     private fun addSectionHeader(container: LinearLayout, title: String) {

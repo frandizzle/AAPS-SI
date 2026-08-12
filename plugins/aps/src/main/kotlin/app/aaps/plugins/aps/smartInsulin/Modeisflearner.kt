@@ -76,13 +76,8 @@ class ModeIsfLearner @Inject constructor(
     /** Multiplier to apply to the mode's dosing ISF. <1.0 = stronger (lower ISF). */
     fun multiplier(mode: MealMode): Double = states[mode]?.mult ?: 1.0
 
-    fun statusString(): String = buildString {
-        MealMode.entries.forEach { mode ->
-            val s = states[mode] ?: return@forEach
-            if (s.episodes > 0) appendLine("${mode.label.padEnd(20)} ×${"%.3f".format(s.mult)} (n=${s.episodes})")
-        }
-        if (lastOutcome.isNotEmpty()) appendLine("Last: $lastOutcome")
-    }.trimEnd()
+    /** How many episodes have been evaluated for this mode. */
+    fun episodeCount(mode: MealMode): Int = states[mode]?.episodes ?: 0
 
     /**
      * Call once per loop cycle. [duraMult] is this cycle's DURA multiplier (1.0 when inactive).

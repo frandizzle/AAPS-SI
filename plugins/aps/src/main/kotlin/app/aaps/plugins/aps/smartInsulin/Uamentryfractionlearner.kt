@@ -117,16 +117,8 @@ class UamEntryFractionLearner @Inject constructor(
         if (!isEntryMode(mode)) configuredFraction
         else (configuredFraction + offset(mode)).coerceIn(FRACTION_MIN, FRACTION_MAX)
 
-    fun statusString(): String = buildString {
-        MealMode.entries.forEach { mode ->
-            val s = states[mode] ?: return@forEach
-            if (s.episodes > 0) {
-                val sign = if (s.offset >= 0) "+" else ""
-                appendLine("${mode.label.padEnd(20)} $sign${"%.2f".format(s.offset)} (n=${s.episodes})")
-            }
-        }
-        if (lastOutcome.isNotEmpty()) appendLine("Last: $lastOutcome")
-    }.trimEnd()
+    /** How many episodes have been evaluated for this mode. */
+    fun episodeCount(mode: MealMode): Int = states[mode]?.episodes ?: 0
 
     /**
      * Call once per loop cycle. [baseSignature] is the user's configured fraction for the active
