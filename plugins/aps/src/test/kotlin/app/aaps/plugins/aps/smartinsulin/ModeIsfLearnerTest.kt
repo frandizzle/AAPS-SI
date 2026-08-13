@@ -204,6 +204,6 @@ class ModeIsfLearnerTest {
         runQuietTail(BASE_MS, bg = 130.0)  // strengthen → 0.975
         val restored = ModeIsfLearner(sp, FakeAAPSLogger(collect = false))
         assertEquals(0.975, restored.multiplier(MealMode.DINNER), 1e-9)
-        assertTrue(restored.statusString().contains("Dinner"), "Status should list learned modes after restore")
+        assertTrue(restored.episodeCount(MealMode.DINNER) > 0, "Episode count should survive the restore too")
     }
 }
