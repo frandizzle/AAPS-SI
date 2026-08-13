@@ -97,7 +97,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
     private val modeIsfLearner:          ModeIsfLearner,
-    private val uamEntryFractionLearner: UamEntryFractionLearner
+    private val uamEntryFractionLearner: UamEntryFractionLearner,
+    private val unexplainedDropTracker:  UnexplainedDropTracker
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -779,6 +780,13 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         if (completedMealEpisode != null) mealAbsorptionCsvLogger.log(completedMealEpisode)
 
+        // -- Unexplained-drop detection (feeds both episode-outcome learners) ----
+        // Measures BG movement not accounted for by insulin activity, so a low caused by
+        // exercise (or missed food) doesn't get blamed on the mode's ISF. Uses the profile
+        // ISF as the physiological reference, not the mode's deliberately-aggressive override.
+        unexplainedDropTracker.onCycle(glucoseStatus.delta, iobArray.firstOrNull()?.activity ?: 0.0, trueIsfMgdl, now)
+        val exerciseSuspected = unexplainedDropTracker.exerciseSuspected
+
         // -- Per-mode ISF episode-outcome learner -------------------------------
         // Judges each completed mode activation after a settling tail (low → weaken,
         // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
@@ -796,7 +804,8 @@ open class SmartInsulinPlugin @Inject constructor(
             fastingIsfMgdl = trueIsfMgdl,
             carbRatio      = profile.getIc(),
             nowMs          = now,
-            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0
+            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0,
+            exerciseSuspected = exerciseSuspected
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -814,7 +823,8 @@ open class SmartInsulinPlugin @Inject constructor(
             fastingIsfMgdl = trueIsfMgdl,
             carbRatio      = profile.getIc(),
             nowMs          = now,
-            baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0
+            baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0,
+            exerciseSuspected = exerciseSuspected
         )
 
         // -- UAM entry SMB fraction --------------------------------------------

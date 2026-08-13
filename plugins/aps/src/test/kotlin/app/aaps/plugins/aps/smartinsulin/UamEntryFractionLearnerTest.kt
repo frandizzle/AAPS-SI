@@ -33,11 +33,12 @@ class UamEntryFractionLearnerTest {
         mode: MealMode?, startMs: Long, nowMs: Long,
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, delta: Double = 0.0, activity: Double = 0.0,
-        baseSig: Double = 0.8
+        baseSig: Double = 0.8, exercise: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, deltaMgdl = delta, activityPerMin = activity,
-        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig
+        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
+        exerciseSuspected = exercise
     )
 
     /** Ends the episode and runs the full 75-min settling tail quietly at [bg]. */
@@ -56,6 +57,16 @@ class UamEntryFractionLearnerTest {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true)
         cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 80.0)  // mode ends → immediate weaken
         assertEquals(-0.06, learner.offset(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `an early low with an unexplained drop reduces the fraction at a smaller step`() {
+        // Walk during the entry window: still reduces (safety direction) but 40% of the step,
+        // -0.024 instead of -0.06, so exercise doesn't ratchet the entry burst down over time.
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 130.0)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true, exercise = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 80.0)
+        assertEquals(-0.024, learner.offset(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test

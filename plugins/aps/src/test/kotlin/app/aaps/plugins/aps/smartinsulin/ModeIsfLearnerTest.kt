@@ -34,11 +34,12 @@ class ModeIsfLearnerTest {
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, dura: Double = 1.0,
         delta: Double = 0.0, activity: Double = 0.0,
-        baseSig: Double = 0.0
+        baseSig: Double = 0.0, exercise: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
-        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig
+        fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
+        exerciseSuspected = exercise
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -75,6 +76,24 @@ class ModeIsfLearnerTest {
         // single cycle after mode end — weaken should already have landed
         cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 90.0)
         assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a low with an unexplained drop weakens at a reduced step, not the full one`() {
+        // Exercise signature: the low arrived alongside BG falling faster than insulin explains.
+        // Still weakens (safety direction, classifier can be wrong) but only 40% of the step:
+        // 1.0 + 0.05*0.4 = 1.02 instead of 1.05.
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 80.0, low = true, exercise = true)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 90.0)
+        assertEquals(1.02, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a low in the settling tail with an unexplained drop also uses the reduced step`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 120.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 95.0)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 65.0, low = true, exercise = true)
+        assertEquals(1.02, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 
     @Test

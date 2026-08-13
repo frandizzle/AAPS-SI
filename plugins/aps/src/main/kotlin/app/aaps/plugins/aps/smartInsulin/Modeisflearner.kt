@@ -44,6 +44,8 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLow       = false
     private var episodeEarlyLow  = false  // low inside the UAM entry window — belongs to
     // UamEntryFractionLearner (shape), not to this learner (magnitude)
+    private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
+    // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
 
     // Pending post-episode evaluation (settling tail)
@@ -62,6 +64,16 @@ class ModeIsfLearner @Inject constructor(
         private const val TAIL_MS                 = 75 * 60_000L  // settling tail before judging the episode
         private const val STRENGTHEN_STEP         = 0.975         // -2.5% per strengthen (lower ISF = more insulin)
         private const val WEAKEN_STEP             = 1.05          // +5% per weaken — asymmetric, safety-biased
+        /**
+         * Fraction of the normal weaken step applied when the low came alongside a BG drop
+         * insulin can't account for (see [UnexplainedDropTracker]) — typically exercise.
+         *
+         * Deliberately reduced rather than skipped: the classifier can be wrong, and this is the
+         * safety direction, so some correction must still land. Mirrors the confound-handling
+         * idiom already used by BolusCurveTracker (learn slower on a suspected confound rather
+         * than discarding the observation).
+         */
+        private const val UNEXPLAINED_STEP_FRACTION = 0.4
         private const val MULT_MIN                = 0.6
         private const val MULT_MAX                = 1.4
         private const val STRENGTHEN_MARGIN_MGDL  = 18.0          // ~1 mmol above target at eval = under-dosed
@@ -96,8 +108,10 @@ class ModeIsfLearner @Inject constructor(
         fastingIsfMgdl: Double,
         carbRatio:      Double,
         nowMs:          Long,
-        baseSignature:  Double = 0.0  // fingerprint of the mode's user-set ISF override(s);
+        baseSignature:  Double = 0.0,  // fingerprint of the mode's user-set ISF override(s);
         // a change means the user re-based the mode, so the old learned correction is stale
+        exerciseSuspected: Boolean = false  // BG dropping faster than insulin explains — a low
+        // right now is probably not an ISF problem
     ) {
         if (activeModeNow != null) {
             if (activeMode == null || modeStartMs != activeStartMs) {
@@ -124,6 +138,7 @@ class ModeIsfLearner @Inject constructor(
                 activeStartMs   = modeStartMs
                 episodeLow      = false
                 episodeEarlyLow = false
+                episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
             }
             if (lowActive) {
@@ -135,6 +150,7 @@ class ModeIsfLearner @Inject constructor(
                 val early = UamEntryFractionLearner.isEntryMode(activeModeNow) &&
                     (nowMs - activeStartMs) <= UamEntryFractionLearner.ENTRY_ATTRIBUTION_MS
                 if (early) episodeEarlyLow = true else episodeLow = true
+                if (exerciseSuspected) episodeLowWasUnexplained = true
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             return
@@ -151,7 +167,10 @@ class ModeIsfLearner @Inject constructor(
             if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
-                applyOutcome(ended, WEAKEN_STEP, "low during ${ended.label} episode — weakened")
+                val unexplained = episodeLowWasUnexplained
+                applyOutcome(ended, weakenStep(unexplained),
+                             if (unexplained) "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
+                             else "low during ${ended.label} episode — weakened")
             } else if (hadEarlyLow) {
                 // Only an early (entry-window) low: the entry-fraction learner is acting on it.
                 // Judging it here too would correct one mistake twice.
@@ -166,7 +185,9 @@ class ModeIsfLearner @Inject constructor(
 
         val p = pendingMode ?: return
         if (lowActive) {
-            applyOutcome(p, WEAKEN_STEP, "low during ${p.label} settling tail — weakened")
+            applyOutcome(p, weakenStep(exerciseSuspected),
+                         if (exerciseSuspected) "low in ${p.label} settling tail, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
+                         else "low during ${p.label} settling tail — weakened")
             pendingMode = null
             return
         }
@@ -202,6 +223,10 @@ class ModeIsfLearner @Inject constructor(
         return ci / (isfMgdl / carbRatio)
     }
 
+    /** Full weaken step, or a reduced one when the low looks externally caused. */
+    private fun weakenStep(unexplained: Boolean): Double =
+        if (unexplained) 1.0 + (WEAKEN_STEP - 1.0) * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+
     private fun applyOutcome(mode: MealMode, step: Double, reason: String) {
         val s = states.getOrPut(mode) { ModeState() }
         s.mult = (s.mult * step).coerceIn(MULT_MIN, MULT_MAX)
@@ -219,7 +244,8 @@ class ModeIsfLearner @Inject constructor(
 
     fun reset() {
         states.clear()
-        activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false; episodeMaxDura = 1.0
+        activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
+        episodeLowWasUnexplained = false; episodeMaxDura = 1.0
         pendingMode = null
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, "") }

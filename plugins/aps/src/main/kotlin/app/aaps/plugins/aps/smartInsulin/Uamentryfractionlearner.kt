@@ -52,6 +52,7 @@ class UamEntryFractionLearner @Inject constructor(
     private var maxBgInEntryWindow  = 0.0
     private var maxBgOffsetMs       = 0L    // when that peak occurred, relative to entry
     private var earlyLow            = false
+    private var earlyLowUnexplained = false // that low came with a drop insulin can't explain
 
     // Pending post-episode evaluation (settling tail)
     private var pendingMode:          MealMode? = null
@@ -76,6 +77,10 @@ class UamEntryFractionLearner @Inject constructor(
         private const val OFFSET_MAX                 = 0.25
         private const val STRENGTHEN_STEP            = 0.03   // +3% fraction — entry arrived too late
         private const val WEAKEN_STEP                = 0.06   // -6% — asymmetric, safety-biased
+        /** Fraction of the weaken step applied when the low came with a BG drop insulin can't
+         *  explain (see [UnexplainedDropTracker]) — reduced rather than skipped, since this is
+         *  the safety direction and the classifier can be wrong. */
+        private const val UNEXPLAINED_STEP_FRACTION  = 0.4
         private const val EXCURSION_STRENGTHEN_MGDL  = 45.0   // ~2.5 mmol rise after entry = too slow off the mark
 
         /**
@@ -136,7 +141,8 @@ class UamEntryFractionLearner @Inject constructor(
         fastingIsfMgdl: Double,
         carbRatio:      Double,
         nowMs:          Long,
-        baseSignature:  Double = 0.0
+        baseSignature:  Double = 0.0,
+        exerciseSuspected: Boolean = false
     ) {
         if (isEntryMode(activeModeNow)) {
             val mode = activeModeNow!!
@@ -158,8 +164,9 @@ class UamEntryFractionLearner @Inject constructor(
                 activeStartMs      = modeStartMs
                 bgAtEntry          = bgMgdl
                 maxBgInEntryWindow = bgMgdl
-                maxBgOffsetMs      = 0L
-                earlyLow           = false
+                maxBgOffsetMs       = 0L
+                earlyLow            = false
+                earlyLowUnexplained = false
             }
             // Only the entry window shapes this learner's evidence — later movement is the
             // ISF learner's territory.
@@ -169,7 +176,10 @@ class UamEntryFractionLearner @Inject constructor(
                     maxBgInEntryWindow = bgMgdl
                     maxBgOffsetMs      = elapsed
                 }
-                if (lowActive) earlyLow = true
+                if (lowActive) {
+                    earlyLow = true
+                    if (exerciseSuspected) earlyLowUnexplained = true
+                }
             }
             return
         }
@@ -183,7 +193,11 @@ class UamEntryFractionLearner @Inject constructor(
             activeStartMs = 0L
             if (hadEarlyLow) {
                 // Definitive shape evidence — lands immediately, not skippable by later noise.
-                applyOutcome(ended, -WEAKEN_STEP, "low soon after ${ended.label} entry — entry fraction reduced")
+                val unexplained = earlyLowUnexplained
+                val step = if (unexplained) WEAKEN_STEP * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+                applyOutcome(ended, -step,
+                             if (unexplained) "low soon after ${ended.label} entry, but BG was falling faster than insulin explains (exercise?) — reduced at a smaller step"
+                             else "low soon after ${ended.label} entry — entry fraction reduced")
             } else {
                 pendingMode        = ended
                 pendingEvalAtMs    = nowMs + TAIL_MS
@@ -261,7 +275,7 @@ class UamEntryFractionLearner @Inject constructor(
 
     fun reset() {
         states.clear()
-        activeMode = null; activeStartMs = 0L; earlyLow = false
+        activeMode = null; activeStartMs = 0L; earlyLow = false; earlyLowUnexplained = false
         bgAtEntry = 0.0; maxBgInEntryWindow = 0.0; maxBgOffsetMs = 0L
         pendingMode = null
         lastOutcome = ""

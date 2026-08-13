@@ -97,12 +97,28 @@ data class DayOfWeekCircadianState(
 
     companion object {
         /**
-         * Minimum day-bucket confidence before day-specific values are
-         * fully trusted over the global average.
-         * At CONF_ALPHA=0.10, ~7 obs → conf≈0.52 (threshold met in ~35 min).
-         * Lowered from 0.5 to 0.3 so day bucket influences blend after ~4 observations (~20 min).
+         * Minimum day-bucket confidence before day-specific values are fully trusted over the
+         * global (cross-day) average.
+         *
+         * At CONF_ALPHA=0.10 confidence grows as 1 − 0.9^n and NEVER decays, so this constant
+         * sets how many observations a given weekday/hour needs before it permanently stops
+         * borrowing from the cross-day average:
+         *
+         *   n=4 → 0.34    n=7 → 0.52    n=15 → 0.79    n=22 → 0.90
+         *
+         * Was 0.3, which meant just ~4 observations — under twenty minutes of one visit to that
+         * hour — let a weekday bucket completely override a global bucket holding potentially
+         * hundreds of samples. In practice every weekday/hour saturated within a day or two of
+         * use and cross-day learning stopped entirely: a Monday 4PM low would never inform
+         * Tuesday 4PM. Raised to 0.9 (~22 observations, roughly two weeks of that weekday) so
+         * the global average keeps contributing until a day genuinely has its own evidence.
+         *
+         * NOTE this is a blend against a FIXED threshold, not against the global bucket's own
+         * confidence — so a day still eventually wins outright regardless of how much more data
+         * global has. Proper count-based shrinkage (n/(n+K)) would need real per-bucket
+         * observation counts persisted, which this state format doesn't carry.
          */
-        const val DAY_CONFIDENCE_THRESHOLD = 0.3
+        const val DAY_CONFIDENCE_THRESHOLD = 0.9
 
         fun fromJson(json: JSONObject): DayOfWeekCircadianState {
             val global = circadianStateFromJson(json.getJSONObject("global"))
