@@ -420,7 +420,30 @@ class UamController @Inject constructor(
         val now = System.currentTimeMillis()
         lastUamTriggerCount = if (lastUamMode == mode && now - lastUamTimeMs < 4 * 60 * 60 * 1000L) lastUamTriggerCount + 1 else 1
         lastUamMode = mode; lastUamTimeMs = now
-        mealOverrideManager.activateOverride(mode = mode, doseU = null, carbsG = 0, modeWindowMs = durationMins * 60_000L, preBolus2U = 0.0, preBolus2DelayMs = 0L, preBolus3U = 0.0, preBolus3DelayMs = 0L)
+        // DURA config for auto-fired modes comes from Settings (no activation dialog exists).
+        // P/F gets its own group — it's a slow digestive tail, not a meal entry, so it usually
+        // wants different strength/floor from the UAM entry modes.
+        val isPf = mode == MealMode.UAM_PROTEIN_FAT
+        val duraEnabled = if (isPf)
+            sp.getBoolean(BooleanKey.ApsSmartInsulinPfDuraEnabled.key, BooleanKey.ApsSmartInsulinPfDuraEnabled.defaultValue)
+        else
+            sp.getBoolean(BooleanKey.ApsSmartInsulinUamDuraEnabled.key, BooleanKey.ApsSmartInsulinUamDuraEnabled.defaultValue)
+        // Stored as mg/dL — read via sp.getDouble directly, NOT preferences.get(UnitDoubleKey),
+        // whose valueInCurrentUnitsDetect heuristic corrupts small mg/dL values.
+        val duraFloorMgdl = if (isPf)
+            sp.getDouble(UnitDoubleKey.ApsSmartInsulinPfDuraFloor.key, UnitDoubleKey.ApsSmartInsulinPfDuraFloor.defaultValue)
+        else
+            sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDuraFloor.key, UnitDoubleKey.ApsSmartInsulinUamDuraFloor.defaultValue)
+        val duraStrength = if (isPf)
+            sp.getDouble(DoubleKey.ApsSmartInsulinPfDuraStrength.key, DoubleKey.ApsSmartInsulinPfDuraStrength.defaultValue)
+        else
+            sp.getDouble(DoubleKey.ApsSmartInsulinUamDuraStrength.key, DoubleKey.ApsSmartInsulinUamDuraStrength.defaultValue)
+
+        mealOverrideManager.activateOverride(
+            mode = mode, doseU = null, carbsG = 0, modeWindowMs = durationMins * 60_000L,
+            preBolus2U = 0.0, preBolus2DelayMs = 0L, preBolus3U = 0.0, preBolus3DelayMs = 0L,
+            duraEnabled = duraEnabled, duraFloorMgdl = duraFloorMgdl, duraStrength = duraStrength
+        )
     }
 
     // Afternoon/Dinner get minute-precision boundaries (e.g. Afternoon ending 17:30, Dinner

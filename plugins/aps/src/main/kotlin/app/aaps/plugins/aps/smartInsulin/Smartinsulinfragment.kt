@@ -898,6 +898,15 @@ class SmartInsulinFragment : DaggerFragment() {
                           Color.parseColor("#FF999999"))
 
         addDivider(c)
+        addSectionHeader(c, "Learned DURA Strength (per mode)")
+        addMonospaceBlock(c, d.duraStrengthStatus)
+        addMonospaceBlock(c, "Learns DOWN only: if DURA engaged and the episode crashed low,\n" +
+            "its strength is cut for that mode. It never learns up — \"needed DURA\"\n" +
+            "already tells the mode ISF learner to strengthen the baseline, and\n" +
+            "raising both would correct one problem twice.",
+                          Color.parseColor("#FF999999"))
+
+        addDivider(c)
         addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")
         addMonospaceBlock(c, d.uamEntryFractionStatus)
         addMonospaceBlock(c, "Shape knob — how front-loaded the first SMBs after a UAM entry are.\n" +

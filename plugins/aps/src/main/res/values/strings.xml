@@ -363,6 +363,13 @@
     <string name="si_uam_afternoon_end_minute_title">UAM Afternoon window end minute (+ hour)</string>
     <string name="si_uam_afternoon_duration_title">UAM Afternoon mode duration (min)</string>
     <string name="si_uam_afternoon_isf_title">UAM Afternoon ISF (0 = profile)</string>
+    <string name="si_uam_dura_enabled_title">UAM: DURA enabled (strengthen ISF if BG stuck high)</string>
+    <string name="si_uam_dura_floor_title">UAM: DURA strongest ISF allowed (floor)</string>
+    <string name="si_uam_dura_strength_title">UAM: DURA strength</string>
+    <string name="si_pf_dura_enabled_title">Protein/Fat: DURA enabled (strengthen ISF if BG stuck high)</string>
+    <string name="si_pf_dura_floor_title">Protein/Fat: DURA strongest ISF allowed (floor)</string>
+    <string name="si_pf_dura_strength_title">Protein/Fat: DURA strength</string>
+
     <string name="si_uam_snack_enabled_title">UAM Snack enabled</string>
     <string name="si_uam_snack_start_title">UAM Snack window start hour</string>
     <string name="si_uam_snack_end_title">UAM Snack window end hour</string>

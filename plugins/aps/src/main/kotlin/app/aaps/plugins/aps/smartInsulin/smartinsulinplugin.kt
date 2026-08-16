@@ -98,7 +98,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
-    private val unexplainedDropTracker:  UnexplainedDropTracker
+    private val unexplainedDropTracker:  UnexplainedDropTracker,
+    private val duraStrengthLearner:     DuraStrengthLearner
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -216,7 +217,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     fun resetAllLearners() {
         aggressionLearner.reset(); basalLearner.reset(); circadianLearner.reset(); profileLearner.resetProfiles()
-        modeIsfLearner.reset(); uamEntryFractionLearner.reset()
+        modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset()
         bgWentLow = false; reboundWindowStartMs = 0L; learningDirtyUntilMs = 0L
         previousMealModeForLockout = MealMode.FASTING; minBgDuringLow = Double.MAX_VALUE
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
@@ -228,7 +229,7 @@ open class SmartInsulinPlugin @Inject constructor(
     fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal() }
     fun resetCircadian() { circadianLearner.reset() }
     fun resetProfiles() { profileLearner.resetProfiles() }
-    fun resetModeLearners() { modeIsfLearner.reset(); uamEntryFractionLearner.reset() }
+    fun resetModeLearners() { modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset() }
 
     data class FragmentData(
         val hour: Int, val dayLabel: String, val mealMode: String, val modeRemMins: Int?,
@@ -256,7 +257,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val mealAbsorptionLog: String,
         val mealAbsorptionInProgress: String,
         val modeIsfLearnerStatus: String,
-        val uamEntryFractionStatus: String
+        val uamEntryFractionStatus: String,
+        val duraStrengthStatus: String
     )
 
     fun fragmentData(): FragmentData {
@@ -342,6 +344,17 @@ open class SmartInsulinPlugin @Inject constructor(
             if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${modeIsfLearner.lastOutcome}")
         }.trimEnd()
 
+        val duraStrengthRaw = buildString {
+            MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
+                val f = duraStrengthLearner.factor(mode)
+                val n = duraStrengthLearner.episodeCount(mode)
+                if (n == 0 && f == 1.0) return@forEach
+                appendLine("${mode.label.padEnd(18)} ×${"%.2f".format(f)}  n=$n")
+            }
+            if (isEmpty()) appendLine("No DURA interventions evaluated yet.")
+            if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${duraStrengthLearner.lastOutcome}")
+        }.trimEnd()
+
         val uamEntryFractionRaw = buildString {
             MealMode.entries.filter { UamEntryFractionLearner.isEntryMode(it) }.forEach { mode ->
                 val offset = uamEntryFractionLearner.offset(mode)
@@ -395,7 +408,8 @@ open class SmartInsulinPlugin @Inject constructor(
             mealAbsorptionLog = mealAbsorptionRaw,
             mealAbsorptionInProgress = mealAbsorptionInProgressText,
             modeIsfLearnerStatus = modeIsfLearnerRaw,
-            uamEntryFractionStatus = uamEntryFractionRaw
+            uamEntryFractionStatus = uamEntryFractionRaw,
+            duraStrengthStatus = duraStrengthRaw
         )
     }
 
@@ -747,7 +761,10 @@ open class SmartInsulinPlugin @Inject constructor(
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         var duraMultThisCycle = 1.0  // exposed to ModeIsfLearner — big DURA interventions count as "mode ISF too weak"
         if (duraActive) {
-            val duraMult = duraIsfTracker.multiplier(targetBg, mealOverrideManager.activeDuraStrength)
+            // Learned factor can only soften the configured strength (crash-direction learning).
+            val effectiveDuraStrength = mealOverrideManager.activeDuraStrength *
+                duraStrengthLearner.factor(mealOverrideManager.activeMealMode)
+            val duraMult = duraIsfTracker.multiplier(targetBg, effectiveDuraStrength)
             duraMultThisCycle = duraMult
             if (duraMult > 1.0) {
                 val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
@@ -825,6 +842,20 @@ open class SmartInsulinPlugin @Inject constructor(
             nowMs          = now,
             baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0,
             exerciseSuspected = exerciseSuspected
+        )
+
+        // -- DURA strength learner (crash direction only) -----------------------
+        // Learns DOWN when DURA engaged and the episode crashed. Never learns up: "DURA had to
+        // rescue this" is already ModeIsfLearner's signal to strengthen the mode's base ISF, and
+        // acting on it here too would correct one problem twice.
+        duraStrengthLearner.onCycle(
+            activeModeNow     = mealOverrideManager.activeMealMode,
+            modeStartMs       = mealOverrideManager.modeStartMs,
+            lowActive         = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            duraMult          = duraMultThisCycle,
+            exerciseSuspected = exerciseSuspected,
+            nowMs             = now,
+            baseSignature     = mealOverrideManager.activeDuraStrength
         )
 
         // -- UAM entry SMB fraction --------------------------------------------
@@ -1178,6 +1209,15 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour, null, null, R.string.si_uam_proteinfat_overnight_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour, null, null, R.string.si_uam_proteinfat_overnight_end_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_overnight_isf_title))
+                // DURA for auto-fired modes. These have no activation dialog, so unlike the
+                // manual meal modes they're configured here. Grouped: one set for the UAM entry
+                // modes, one for P/F (a tail correction with quite different dynamics).
+                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamDuraEnabled, null, R.string.si_uam_dura_enabled_title))
+                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamDuraFloor, profileUtil, sp, null, R.string.si_uam_dura_floor_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamDuraStrength, null, R.string.si_uam_dura_strength_title))
+                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinPfDuraEnabled, null, R.string.si_pf_dura_enabled_title))
+                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinPfDuraFloor, profileUtil, sp, null, R.string.si_pf_dura_floor_title))
+                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinPfDuraStrength, null, R.string.si_pf_dura_strength_title))
             })
         }
     }

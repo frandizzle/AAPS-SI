@@ -65,6 +65,8 @@ enum class DoubleKey(
     // DURA_ISF strength (per meal mode) — how fast ISF ramps down while BG sits stuck above
     // target. Mirrors AutoISF's dura_ISF_weight, but per-mode and settable up to 5.0 (AutoISF
     // caps at 3.0). 1.0 = original fixed behaviour; higher = strengthens ISF faster when stuck.
+    ApsSmartInsulinUamDuraStrength(      "si_uam_dura_strength",       1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDuraEnabled),
+    ApsSmartInsulinPfDuraStrength(       "si_pf_dura_strength",        1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinPfDuraEnabled),
     ApsSmartInsulinBreakfastDuraStrength("si_breakfast_dura_strength", 1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinBreakfastDuraEnabled),
     ApsSmartInsulinLunchDuraStrength(    "si_lunch_dura_strength",     1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLunchDuraEnabled),
     ApsSmartInsulinDinnerDuraStrength(   "si_dinner_dura_strength",    1.0, 0.0, 5.0, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinDinnerDuraEnabled),

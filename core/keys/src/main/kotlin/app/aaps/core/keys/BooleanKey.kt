@@ -61,6 +61,12 @@ enum class BooleanKey(
     ApsSmartInsulinUamWobbleTolerance("si_uam_wobble_tolerance", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
 
     // DURA_ISF (per meal mode) — strengthens ISF over time while BG sits stuck above target
+    // UAM/P-F modes auto-fire with no dialog, so they're configured here rather than per-activation.
+    // Grouped rather than per-UAM-mode to keep the settings surface manageable; the floor is an
+    // absolute "never dose stronger than this ISF" bound, so one value per group is meaningful
+    // even though the modes have different base ISFs.
+    ApsSmartInsulinUamDuraEnabled("si_uam_dura_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    ApsSmartInsulinPfDuraEnabled( "si_pf_dura_enabled",  false, defaultedBySM = true, dependency = ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinBreakfastDuraEnabled("si_breakfast_dura_enabled", false, defaultedBySM = true),
     ApsSmartInsulinLunchDuraEnabled(    "si_lunch_dura_enabled",     false, defaultedBySM = true),
     ApsSmartInsulinDinnerDuraEnabled(   "si_dinner_dura_enabled",    false, defaultedBySM = true),

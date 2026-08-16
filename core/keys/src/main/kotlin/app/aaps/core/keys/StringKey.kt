@@ -176,6 +176,15 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — DuraStrengthLearner per-mode learned DURA strength factors (JSON)
+    ApsSmartInsulinDuraStrengthLearnerState(
+        "si_dura_strength_learner_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     // SmartInsulin — UamEntryFractionLearner per-mode learned entry-fraction offsets (JSON)
     ApsSmartInsulinUamEntryFractionLearnerState(
         "si_uam_entry_fraction_learner_state",

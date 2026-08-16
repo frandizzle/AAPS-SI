@@ -53,6 +53,8 @@ enum class UnitDoubleKey(
 
     // Per-meal DURA_ISF floor (mg/dL/U) — the lowest (strongest) ISF DURA is allowed to push
     // toward while BG sits stuck above target during this mode. 0.0 = no floor set (DURA no-ops).
+    ApsSmartInsulinUamDuraFloor(      "si_uam_dura_floor",       0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinUamDuraEnabled),
+    ApsSmartInsulinPfDuraFloor(       "si_pf_dura_floor",        0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinPfDuraEnabled),
     ApsSmartInsulinBreakfastDuraFloor("si_breakfast_dura_floor", 0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinBreakfastDuraEnabled),
     ApsSmartInsulinLunchDuraFloor(    "si_lunch_dura_floor",     0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinLunchDuraEnabled),
     ApsSmartInsulinDinnerDuraFloor(   "si_dinner_dura_floor",    0.0, 0, 360, defaultedBySM = true, dependency = BooleanKey.ApsSmartInsulinDinnerDuraEnabled),

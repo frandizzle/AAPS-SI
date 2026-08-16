@@ -84,7 +84,8 @@ class UamEntrySmbFractionPerModeTest {
             mealAbsorptionCsvLogger = mock(),
             modeIsfLearner        = mock(),
             uamEntryFractionLearner = mock(),
-            unexplainedDropTracker  = mock()
+            unexplainedDropTracker  = mock(),
+            duraStrengthLearner     = mock()
         )
     }
 
