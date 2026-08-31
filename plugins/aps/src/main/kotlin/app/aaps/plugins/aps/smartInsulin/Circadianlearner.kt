@@ -18,6 +18,7 @@ import kotlin.math.sign
  * CircadianLearner — three time-of-day aware learning systems:
  *
  *  1. ISF multiplier    — learns deviation patterns per hour ? scales dosingISF up/down
+ *     (dosingISF = trueISF / mult, so mult > 1.0 means a SMALLER ISF number and MORE insulin)
  *  2. Basal multiplier  — learns fasting BG drift per hour  ? replaces flat BasalLearner
  *  3. Aggression ceiling — detects rollercoasters + soft-low-approach per hour ? caps aggressiveness
  *
@@ -44,20 +45,73 @@ class CircadianLearner @Inject constructor(
 
     init { restore() }
 
+    // Minute-of-hour for the cycle currently being processed. Set once at the top of update()
+    // and read by every state write so all writes in a cycle share one timestamp, and so tests
+    // can drive the hour-boundary behaviour deterministically.
+    private var cycleMinute: Int = 0
+
+    // -- State write helpers ---------------------------------------------------
+    // Every isfState/basalState/aggrState write goes through these rather than calling
+    // updated()/updatedDayOnly() directly, so that (a) the minute-of-hour spread is applied
+    // uniformly and (b) the day-vs-global split for each writer is stated in exactly one place.
+
+    /** Physics write: measured behaviour of this hour, applies to every weekday. Day + global. */
+    private fun writeIsf(dow: Int, hour: Int, value: Double, alpha: Double) {
+        isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
+    }
+
+    private fun writeBasal(dow: Int, hour: Int, value: Double, alpha: Double) {
+        basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
+    }
+
+    private fun writeAggr(dow: Int, hour: Int, value: Double, alpha: Double) {
+        aggrState = aggrState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
+    }
+
+    /** Day-scoped write: nudge/trim corrections. Leaves the cross-day baseline untouched. */
+    private fun writeIsfDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
+        isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
+    }
+
+    private fun writeBasalDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
+        basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
+    }
+
+    private fun writeAggrDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
+        aggrState = aggrState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
+    }
+
+    /**
+     * Hard-low ceiling penalty: full-strength on the day it happened, and a slow trickle into the
+     * cross-day baseline so a low that recurs at the same hour on several days starts suppressing
+     * that hour on days it has not happened on yet. This is the channel that makes "I go low at
+     * 4AM most nights" generalise — the ceiling propagates, and every day's nudge then acts on it.
+     */
+    private fun writeAggrHardLow(dow: Int, hour: Int, value: Double) {
+        aggrState = aggrState.updatedSplit(dow, hour, cycleMinute, value, 1.0, AGGR_HARD_LOW_GLOBAL_ALPHA)
+    }
+
     // -- Public outputs --------------------------------------------------------
 
-    /** ISF multiplier for current hour (0.7–1.5). >1.0 = MORE aggressive (dosingISF = profileISF / mult → smaller ISF → more insulin) */
-    fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        isfState.get(dow, hour).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+    /**
+     * ISF multiplier for the current moment (0.7–1.5). >1.0 = MORE aggressive
+     * (dosingISF = profileISF / mult → smaller ISF → more insulin).
+     *
+     * Interpolated across the hour boundary by [minute] — learning earned late in one hour is
+     * already partly in force at the start of the next, instead of being dropped at :00.
+     */
+    fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow(), minute: Int = currentMinute()): Double =
+        isfState.get(dow, hour, minute).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
-    /** Basal multiplier for current hour (0.5–1.5) */
-    fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        basalState.get(dow, hour).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+    /** Basal multiplier for the current moment (0.5–1.5). Interpolated across the hour boundary. */
+    fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow(), minute: Int = currentMinute()): Double =
+        basalState.get(dow, hour, minute).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
-    /** Aggressiveness ceiling for current hour (AGGR_CEIL_MIN–AGGR_CEIL_MAX).
-     *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling) */
-    fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow()): Double =
-        aggrState.get(dow, hour).coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
+    /** Aggressiveness ceiling for the current moment (AGGR_CEIL_MIN–AGGR_CEIL_MAX).
+     *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling).
+     *  Interpolated across the hour boundary. */
+    fun aggrCeiling(hour: Int = currentHour(), dow: Int = currentDow(), minute: Int = currentMinute()): Double =
+        aggrState.get(dow, hour, minute).coerceIn(AGGR_CEIL_MIN, AGGR_CEIL_MAX)
 
     // Last basal learning signal for SI tab display
     var lastBasalSignal:  String = "No signal yet"
@@ -131,6 +185,11 @@ class CircadianLearner @Inject constructor(
         private set
 
     /** Called from plugin when learning is blocked — keeps status current */
+    /**
+     * Publishes a PAUSED status for the SI tab. Currently unused by the plugin — the nudge's own
+     * blindfolds set their PAUSED status inline, which keeps the status honest about whether the
+     * nudge actually ran. Kept as the entry point for any external pause reason.
+     */
     fun pauseNudgeStatus(reason: String) {
         lastAggrNudgeStatus = "PAUSED|$reason"
     }
@@ -176,14 +235,18 @@ class CircadianLearner @Inject constructor(
         suppressAdaptiveLearning: Boolean = false,
         lowGuardMgdl:             Double  = 90.0,
         inPostMealLockout:        Boolean = false,
+        inReboundWindow:          Boolean = false,
         aggressiveness:           Double  = 1.0,
         fastingPeakMins:          Double  = 90.0,   // learned fasting insulin peak — sets trim window
         // Time injection — defaults to wall clock. Override in tests to simulate specific
         // hours/days without waiting for real time to pass.
         hour:                     Int     = currentHour(),
         dow:                      Int     = currentDow(),
+        minute:                   Int     = currentMinute(),
         nowMs:                    Long    = System.currentTimeMillis()
     ) {
+        // Pin the minute for every write this cycle (see cycleMinute / the write helpers).
+        cycleMinute = minute.coerceIn(0, 59)
         val bg   = glucoseStatus.glucose
         val delta  = glucoseStatus.shortAvgDelta
         val now    = nowMs
@@ -274,7 +337,7 @@ class CircadianLearner @Inject constructor(
         // -- 1. ISF learning — skip during CGM warmup (unreliable data) -----
         val isFasting = mealMode == MealMode.FASTING
         val isfPhysicsFromIsf = if (!suppressAdaptiveLearning)
-            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, aggressiveness, bg, lowGuardMgdl, targetMgdl)
+            updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, bg, lowGuardMgdl, targetMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
 
         // -- 2. Basal learning — skip during CGM warmup -----------------------
@@ -310,6 +373,7 @@ class CircadianLearner @Inject constructor(
         trimWindowMs = (fastingPeakMins * 60_000.0).toLong().coerceIn(60 * 60_000L, 120 * 60_000L)
 
         if (!suppressAdaptiveLearning) applyAggrNudge(hour, dow, inPostMealLockout, aggressiveness,
+                                                      inReboundWindow = inReboundWindow,
                                                       bg = bg, targetMgdl = targetMgdl, lowGuardMgdl = lowGuardMgdl, now = nowMs,
                                                       isfPhysicsFired = isfPhysicsFired,
                                                       basalPhysicsFired = basalPhysicsFiredCombined,
@@ -382,7 +446,6 @@ class CircadianLearner @Inject constructor(
         profileIsfMgdl:    Double,
         inPostMealLockout: Boolean,
         isFasting:         Boolean,
-        aggressiveness:    Double,
         bg:                Double  = 0.0,
         lowGuardMgdl:      Double  = 90.0,
         targetMgdl:        Double  = 99.0
@@ -444,30 +507,43 @@ class CircadianLearner @Inject constructor(
                              "CircadianLearner ISF: blocked positive normDev=${"%.2f".format(normDeviation)} — bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)}, would increase aggressiveness while low")
             normDeviation = 0.0
         }
-        val multTarget    = (isfState.get(dow, hour) + normDeviation).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        // ISF_NORM_GAIN converts a dimensionless prediction error into a multiplier offset.
+        // normDeviation is a RATIO ("BG moved 60% more than predicted") and the multiplier lives
+        // in [0.7, 1.5]; adding one straight to the other, as this did, meant a single sample
+        // could propose the entire range. At 0.2 the strongest admissible sample proposes about a
+        // fifth of the range, which the EWMA below then applies a fraction of.
+        val multTarget    = (isfState.get(dow, hour) + normDeviation * ISF_NORM_GAIN).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
         // Confidence-weighted learning speed:
         // High confidence hours (0.8+) learn slower (stable).
         // Low confidence hours (<0.2) learn faster (converge quickly).
         val conf  = isfState.getConfidence(dow, hour)
-        val alpha = (ISF_ALPHA * (1.5 - conf)).coerceIn(ISF_ALPHA * 0.5, ISF_ALPHA * 1.5)
+        // Signal-strength weight. normDeviation divides by expectedDelta, so a weak expected
+        // signal inflates ordinary CGM noise into a large apparent deviation — at the old
+        // admission floor of 1 mg/dL, ±1–2 mg/dL of shortAvgDelta noise alone produced
+        // normDeviation of ±1. The floor now excludes those cycles outright and this weight
+        // ramps the rest in, so a cycle with a barely-admissible signal contributes
+        // proportionally less than one with a strong insulin action to measure against.
+        val signalWeight = (abs(expectedDelta) / ISF_FULL_WEIGHT_DELTA_MGDL).coerceIn(0.0, 1.0)
+        val alpha = (ISF_ALPHA * (1.5 - conf)).coerceIn(ISF_ALPHA * 0.5, ISF_ALPHA * 1.5) * signalWeight
+        if (alpha <= 0.0) return false
 
         // Write to both day bucket AND global so the blended output actually reflects
         // what the learner has observed. updatedDayOnly left global at 1.0 permanently,
         // causing get() to return 1.0 regardless of day bucket learnings until day
         // confidence crossed DAY_CONFIDENCE_THRESHOLD.
-        isfState = isfState.updated(dow, hour, multTarget, alpha)
+        writeIsf(dow, hour, multTarget, alpha)
 
         // Cross-nudge: a genuine ISF shift is often co-caused by a broader sensitivity change
         // that likely also affects basal — nudge basalState a smaller amount (CROSS_NUDGE_FRACTION)
         // in the same direction, as a lower-confidence co-movement prior rather than a direct
         // measurement (this cycle's data measured ISF, not basal).
-        val crossBasalTarget = (basalState.get(dow, hour) + normDeviation * CROSS_NUDGE_FRACTION).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        basalState = basalState.updated(dow, hour, crossBasalTarget, alpha)
+        val crossBasalTarget = (basalState.get(dow, hour) + normDeviation * ISF_NORM_GAIN * CROSS_NUDGE_FRACTION).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        writeBasal(dow, hour, crossBasalTarget, alpha)
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f target=%.3f a=%.3f ? mult=%.3f crossBasal=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, multTarget, alpha, isfState.get(dow, hour), basalState.get(dow, hour)))
+                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f w=%.2f target=%.3f a=%.3f ? mult=%.3f crossBasal=%.3f"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, signalWeight, multTarget, alpha, isfState.get(dow, hour), basalState.get(dow, hour)))
         return true
     }
 
@@ -517,8 +593,8 @@ class CircadianLearner @Inject constructor(
         val carriedBas = (if (pushingUp) maxOf(outgoingBasMult, newHourBasMult) else minOf(outgoingBasMult, newHourBasMult))
             .coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
-        if (carriedIsf != newHourIsfMult) isfState = isfState.updatedDayOnly(dow, hour, carriedIsf, 1.0)
-        if (carriedBas != newHourBasMult) basalState = basalState.updatedDayOnly(dow, hour, carriedBas, 1.0)
+        if (carriedIsf != newHourIsfMult) writeIsfDayOnly(dow, hour, carriedIsf, 1.0)
+        if (carriedBas != newHourBasMult) writeBasalDayOnly(dow, hour, carriedBas, 1.0)
 
         if (carriedIsf != newHourIsfMult || carriedBas != newHourBasMult) {
             aapsLogger.debug(LTag.APS,
@@ -528,11 +604,70 @@ class CircadianLearner @Inject constructor(
         }
     }
 
+    /**
+     * Pulls the day bucket back toward the cross-day physics baseline when the aggression ceiling
+     * is neutral — the counter-force to [applyAggrNudge].
+     *
+     * Only the part of the displacement that exceeds [AGGR_NUDGE_DECAY_BAND] is unwound, so
+     * genuine day-specific physics learning survives while nudge-sized excursions expire. Skips
+     * any quantity a physics learner already wrote this cycle: a fresh measurement outranks a
+     * decay toward an average.
+     *
+     * @return true if either bucket actually moved (drives the DECAY status in the SI tab).
+     */
+    private fun decayTowardBaseline(
+        dow:               Int,
+        hour:              Int,
+        isfPhysicsFired:   Boolean,
+        basalPhysicsFired: Boolean
+    ): Boolean {
+        val d = dow.coerceIn(0, 6)
+        var moved = false
+
+        if (!isfPhysicsFired) {
+            val edge = bandEdge(isfState.days[d].get(hour), isfState.globalValue(hour, cycleMinute))
+            if (edge != null) {
+                writeIsfDayOnly(dow, hour, edge.coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), AGGR_NUDGE_DECAY_ALPHA)
+                moved = true
+            }
+        }
+        if (!basalPhysicsFired) {
+            val edge = bandEdge(basalState.days[d].get(hour), basalState.globalValue(hour, cycleMinute))
+            if (edge != null) {
+                writeBasalDayOnly(dow, hour, edge.coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), AGGR_NUDGE_DECAY_ALPHA)
+                moved = true
+            }
+        }
+        if (moved) {
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner decay h=$hour day=${DayOfWeekCircadianState.DAY_LABELS[d]} " +
+                                 "isf ${"%.3f".format(isfState.days[d].get(hour))} (base ${"%.3f".format(isfState.globalValue(hour, cycleMinute))}) " +
+                                 "bas ${"%.3f".format(basalState.days[d].get(hour))} (base ${"%.3f".format(basalState.globalValue(hour, cycleMinute))})")
+        }
+        return moved
+    }
+
+    /**
+     * The edge of the ±[AGGR_NUDGE_DECAY_BAND] tolerance band around [baseline] that [day] has
+     * escaped, or null if it is still inside the band and needs no correction. EWMA-ing toward
+     * this edge asymptotes at the band rather than collapsing onto the baseline.
+     */
+    private fun bandEdge(day: Double, baseline: Double): Double? {
+        val hi = baseline * (1.0 + AGGR_NUDGE_DECAY_BAND)
+        val lo = baseline * (1.0 - AGGR_NUDGE_DECAY_BAND)
+        return when {
+            day > hi -> hi
+            day < lo -> lo
+            else     -> null
+        }
+    }
+
     private fun applyAggrNudge(
         hour:              Int,
         dow:               Int,
         inPostMealLockout: Boolean,
         aggressiveness:    Double,
+        inReboundWindow:   Boolean = false,
         bg:                Double  = 0.0,
         targetMgdl:        Double  = 99.0,
         lowGuardMgdl:      Double  = 90.0,
@@ -635,19 +770,19 @@ class CircadianLearner @Inject constructor(
 
                             val trimmedCeil = (aggrState.get(dow, hour) + magnitude * TRIM_CEIL_SCALE)
                                 .coerceIn(AGGR_CEIL_MIN, TRIM_CEIL_MAX)
-                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+                            writeAggrDayOnly(dow, hour, trimmedCeil, 1.0)
 
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
                             // Mutual exclusion: don't stack the FuelTrim long-term nudge on top of a physics-learner
                             // update in the same cycle (same intent as the aggrNudge block below).
                             if (!isfPhysicsFired) {
-                                isfState = isfState.updatedDayOnly(dow, hour,
+                                writeIsfDayOnly(dow, hour,
                                                                    (isfState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
                                 trimWroteIsf = true
                             }
                             if (!basalPhysicsFired) {
-                                basalState = basalState.updatedDayOnly(dow, hour,
+                                writeBasalDayOnly(dow, hour,
                                                                        (basalState.days[d].get(hour) * (1.0 + ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
                                 trimWroteBasal = true
                             }
@@ -682,19 +817,19 @@ class CircadianLearner @Inject constructor(
 
                             val trimmedCeil = (aggrState.get(dow, hour) - magnitude * TRIM_CEIL_SCALE)
                                 .coerceIn(TRIM_CEIL_MIN, AGGR_CEIL_MAX)
-                            aggrState = aggrState.updatedDayOnly(dow, hour, trimmedCeil, 1.0)
+                            writeAggrDayOnly(dow, hour, trimmedCeil, 1.0)
 
                             val ltNudge = magnitude * TRIM_LONG_TERM_FRACTION
                             val d = dow.coerceIn(0, 6)
                             // Mutual exclusion: don't stack the FuelTrim long-term nudge on top of a physics-learner
                             // update in the same cycle (same intent as the aggrNudge block below).
                             if (!isfPhysicsFired) {
-                                isfState = isfState.updatedDayOnly(dow, hour,
+                                writeIsfDayOnly(dow, hour,
                                                                    (isfState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX), BASAL_ALPHA * 0.5)
                                 trimWroteIsf = true
                             }
                             if (!basalPhysicsFired) {
-                                basalState = basalState.updatedDayOnly(dow, hour,
+                                writeBasalDayOnly(dow, hour,
                                                                        (basalState.days[d].get(hour) * (1.0 - ltNudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX), BASAL_ALPHA * 0.5)
                                 trimWroteBasal = true
                             }
@@ -737,6 +872,19 @@ class CircadianLearner @Inject constructor(
             "${if (abs(accelAlways) <= ACCEL_DEAD_BAND_MGDL) "dead-band" else if (accelAlways > 0) "curving?" else "curving?"} | " +
             "history=${bgHistory.size} readings"
 
+        // --- REBOUND-WINDOW BLINDFOLD ---
+        // The loop's own post-low rebound window is the authoritative "we are recovering from a
+        // low" signal. The penalty-cooldown blindfold below only arms if a penalty happened to
+        // fire, so an isolated low that the loop caught and suspended out of — without tripping a
+        // rollercoaster or soft-low penalty — left the nudge free to read the rescue-carb rise as
+        // "not enough insulin" and stack basal-up onto a recovery. Gate on the window itself.
+        // Only the add-insulin direction is blocked; cutting insulin during a recovery is safe.
+        if (notEnough && inReboundWindow) {
+            notEnough = false
+            lastAggrNudgeStatus = "PAUSED|Post-low recovery window"
+            aapsLogger.debug(LTag.APS, "CircadianLearner aggrNudge[notEnough] blocked — inside post-low rebound window")
+        }
+
         // --- POST-LOW BLINDFOLD (Main Learner) ---
         // If we are recovering from a low, the rise is from rescue carbs/liver, NOT a basal deficit.
         // Block the learner from falsely increasing insulin (dropping ISF / raising basal).
@@ -771,8 +919,26 @@ class CircadianLearner @Inject constructor(
         }
 
         if (!tooMuch && !notEnough) {
-            if (!trimActive) lastAggrNudgeStatus = "INACTIVE"
-            else lastAggrNudgeStatus = "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else if (trimWasOvershoot) "OVERSHOOT" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
+            // -- Dead-band restoring force ------------------------------------
+            // The ceiling is neutral for this hour, so whatever displacement a past penalty
+            // drove into these buckets is no longer supported by evidence. Without this, a
+            // single bad low left a permanent mark: the nudge only ever pushed away from the
+            // baseline and nothing ever pushed back, so the multipliers stayed where the worst
+            // night of the month put them until the opposite penalty happened to fire.
+            //
+            // The decay pulls the day bucket back toward the cross-day physics baseline, but
+            // only as far as DECAY_BAND — a weekday genuinely can differ from the week's average
+            // (shift work, a standing Saturday ride), and that difference is learned by the
+            // physics learners, which write day and global together. Collapsing the day bucket
+            // all the way onto global would delete real day-specific learning along with the
+            // stale nudge. Pulling it back to within ±DECAY_BAND removes excursions only the
+            // nudge could have produced and leaves ordinary day-to-day variation alone.
+            val decayed = !trimActive && decayTowardBaseline(dow, hour, isfPhysicsFired, basalPhysicsFired)
+            lastAggrNudgeStatus = when {
+                trimActive -> "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else if (trimWasOvershoot) "OVERSHOOT" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
+                decayed    -> "DECAY|${"%.3f".format(isfState.days[dow.coerceIn(0, 6)].get(hour))}|${"%.3f".format(basalState.days[dow.coerceIn(0, 6)].get(hour))}"
+                else       -> "INACTIVE"
+            }
             return
         }
 
@@ -805,7 +971,30 @@ class CircadianLearner @Inject constructor(
         // Combine: accel adds to existing deviation, or provides standalone signal.
         // coerceAtLeast(0.0) ensures a contradicting accel can cancel but not reverse the nudge.
         val combinedDeviation = (deviation + accelNudge).coerceAtLeast(0.0)
-        val nudge          = combinedDeviation * effectiveScale
+
+        // -- Bounded target, not an open-loop step -----------------------------
+        // This used to be `mult *= (1 ± deviation * scale)` written back with alpha 1.0 every
+        // cycle: an integrator whose output never fed back into its input. The ceiling only
+        // recovers on stability near target, which is unreachable while the nudge is still
+        // cutting insulin — so "hour ran high" was not a signal that could stop it, and both
+        // multipliers walked to their floors over a few days of occupying that hour.
+        //
+        // Now the ceiling names a DESTINATION rather than a direction. The nudge-free cross-day
+        // baseline (global — the physics learners write it, the nudge never does) is the anchor,
+        // the ceiling deficit sets a bounded displacement from that anchor, and the day bucket
+        // EWMAs toward it. Steps shrink as the gap closes, so it converges instead of ratcheting;
+        // if the ceiling then recovers, the target moves back and the same mechanism unwinds it.
+        val displacement = (combinedDeviation * AGGR_NUDGE_AUTHORITY).coerceAtMost(AGGR_NUDGE_MAX_DISPLACEMENT)
+        val nudgeDir     = if (tooMuch) -1.0 else 1.0
+        val isfBaseline  = isfState.globalValue(hour, cycleMinute)
+        val basBaseline  = basalState.globalValue(hour, cycleMinute)
+        val isfTarget    = (isfBaseline * (1.0 + nudgeDir * displacement)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        val basTarget    = (basBaseline * (1.0 + nudgeDir * displacement)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        // effectiveScale is now the RATE of approach to that target, not the size of a step off
+        // the current value. That also defuses the cooldown attenuation: throttling the rate
+        // right after a penalty slows how fast the nudge gets there but no longer changes where
+        // it ends up, so a busy cooldown period can't quietly under- or over-shoot the endpoint.
+        val nudgeAlpha     = effectiveScale.coerceIn(0.0, 1.0)
         val dayName        = DayOfWeekCircadianState.DAY_LABELS[dow.coerceIn(0, 6)]
         val deviationPct   = "${"%.0f".format(deviation * 100)}%"
         // Hour-boundary carryover for aggrNudge — gated on tooMuch/notEnough AFTER all the
@@ -832,16 +1021,15 @@ class CircadianLearner @Inject constructor(
         // ISF nudge — skip if physics learner OR FuelTrim already updated ISF this cycle.
         // Both push isfState based on different signals and can disagree; mutual exclusion
         // prevents them cancelling each other out / compounding. Basal nudge still fires independently.
-        val nudgedIsf = if (tooMuch)
-            (prevIsfMult * (1.0 - nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-        else
-            (prevIsfMult * (1.0 + nudge)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        val nudgedIsf = prevIsfMult + (isfTarget - prevIsfMult) * nudgeAlpha
         if (!isfPhysicsFired && !trimWroteIsf) {
-            isfState = isfState.updatedDayOnly(dow, hour, nudgedIsf, 1.0)
+            writeIsfDayOnly(dow, hour, isfTarget, nudgeAlpha)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                                  "h=$hour day=$dayName ceil=${"%.3f".format(aggressiveness)} " +
-                                 "deviation=${"%.3f".format(deviation)} nudge=${"%.4f".format(nudge)} ? mult=${"%.3f".format(isfState.days[d].get(hour))}")
+                                 "deviation=${"%.3f".format(deviation)} disp=${"%.3f".format(displacement)} " +
+                                 "base=${"%.3f".format(isfBaseline)} target=${"%.3f".format(isfTarget)} a=${"%.3f".format(nudgeAlpha)} " +
+                                 "? mult=${"%.3f".format(isfState.days[d].get(hour))}")
         } else {
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner ISF[aggrNudge] SKIPPED — ${if (isfPhysicsFired) "physics learner" else "FuelTrim"} already fired this cycle " +
@@ -851,16 +1039,14 @@ class CircadianLearner @Inject constructor(
         // Basal nudge — skip if physics learner (drift/negIOB/predTrim) OR FuelTrim already fired this cycle.
         // Same mutual exclusion pattern as ISF: both signals push basalState from different
         // sources and can disagree cycle-to-cycle. Exclusive write keeps the signal clean.
-        val nudgedBas = if (tooMuch)
-            (prevBasMult * (1.0 - nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        else
-            (prevBasMult * (1.0 + nudge)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        val nudgedBas = prevBasMult + (basTarget - prevBasMult) * nudgeAlpha
         if (!basalPhysicsFired && !trimWroteBasal) {
-            basalState = basalState.updatedDayOnly(dow, hour, nudgedBas, 1.0)
+            writeBasalDayOnly(dow, hour, basTarget, nudgeAlpha)
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[aggrNudge/${if (tooMuch) "reduce" else "increase"}]$cooldownNote " +
                                  "h=$hour ceil=${"%.3f".format(aggressiveness)} deviation=${"%.3f".format(deviation)} " +
-                                 "nudge=${"%.4f".format(nudge)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
+                                 "disp=${"%.3f".format(displacement)} base=${"%.3f".format(basBaseline)} target=${"%.3f".format(basTarget)} " +
+                                 "a=${"%.3f".format(nudgeAlpha)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
         } else {
             aapsLogger.debug(LTag.APS,
                              "CircadianLearner Basal[aggrNudge] SKIPPED — ${if (basalPhysicsFired) "physics learner" else "FuelTrim"} already fired this cycle " +
@@ -998,14 +1184,14 @@ class CircadianLearner @Inject constructor(
                 val conf  = basalState.getConfidence(dow, hour)
                 val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
 
-                basalState = basalState.updated(dow, hour, newMult, alpha)
+                writeBasal(dow, hour, newMult, alpha)
                 signal0Fired = true
 
                 // Cross-nudge to ISF — no extra gating needed: Signal 0 only ever runs when
                 // !isfLearningActive (its own entry condition above), so the main ISF learner
                 // can't have also written isfState this same cycle.
                 val crossIsfTarget = (isfState.get(dow, hour) + normAdj * CROSS_NUDGE_FRACTION).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                isfState = isfState.updated(dow, hour, crossIsfTarget, alpha)
+                writeIsf(dow, hour, crossIsfTarget, alpha)
 
                 lastBasalSignal = "CyclicDelta: Δ=${"%.2f".format(unexplainedDelta)} normAdj=${"%.3f".format(normAdj)} → ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
                 aapsLogger.debug(LTag.APS,
@@ -1072,10 +1258,19 @@ class CircadianLearner @Inject constructor(
                         // likely a post-low/rescue-carb rebound than a genuine basal deficit. Clamp
                         // the up-direction adjustment to neutral (1.0) in that case; the down-direction
                         // (adjustment < 1.0, BG falling, less basal) is never blocked.
-                        val guardedAdjustment = if (adjustment > 1.0 && bg < targetMgdl) {
+                        // --- POST-MEAL LOCKOUT GUARD (Signal 1) ---
+                        // The drift window deliberately keeps running through the post-meal
+                        // lockout, on the reasoning that it measures real BG physics. That holds
+                        // for the down-direction, but not the up: a fat/protein tail still lifting
+                        // BG hours after the meal reads as a sustained unexplained rise, and AAPS's
+                        // COB has usually decayed below the 5 g gate by then, so nothing else
+                        // catches it. Raising basal on a P/F tail is exactly the corruption the
+                        // lockout exists to prevent. Block the up-direction only; a fall during
+                        // the lockout still means too much basal and is safe to learn from.
+                        val guardedAdjustment = if (adjustment > 1.0 && (bg < targetMgdl || inPostMealLockout)) {
                             aapsLogger.debug(LTag.APS,
                                              "CircadianLearner Basal[drift] up-direction blocked: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr " +
-                                                 "but bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound, not basal deficit")
+                                                 "but ${if (inPostMealLockout) "post-meal lockout active — likely fat/protein tail" else "bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound"}, not basal deficit")
                             1.0
                         } else adjustment
                         val newMult    = (basalState.get(dow, hour) * guardedAdjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
@@ -1084,7 +1279,7 @@ class CircadianLearner @Inject constructor(
                         val conf  = basalState.getConfidence(dow, hour)
                         val alpha = (BASAL_ALPHA * (1.5 - conf)).coerceIn(BASAL_ALPHA * 0.5, BASAL_ALPHA * 1.5)
 
-                        basalState = basalState.updated(dow, hour, newMult, alpha)
+                        writeBasal(dow, hour, newMult, alpha)
                         clearDriftWindow()
                         driftFired = true
 
@@ -1095,7 +1290,7 @@ class CircadianLearner @Inject constructor(
                         if (!isfLearningActive) {
                             val crossIsfMult = (isfState.get(dow, hour) * (1.0 + (guardedAdjustment - 1.0) * CROSS_NUDGE_FRACTION))
                                 .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                            isfState = isfState.updated(dow, hour, crossIsfMult, alpha)
+                            writeIsf(dow, hour, crossIsfMult, alpha)
                         }
 
                         lastBasalSignal = "Drift: ${"%.1f".format(driftMgdlPerHr)} mgdlhr ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
@@ -1139,7 +1334,7 @@ class CircadianLearner @Inject constructor(
             val belowTargetMgdl = targetMgdl - bg
             val adjustment = 1.0 - (belowTargetMgdl / BASAL_NEG_IOB_SENSITIVITY).coerceIn(0.0, BASAL_NEG_IOB_MAX_ADJUST)
             val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-            basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
+            writeBasal(dow, hour, newMult, BASAL_ALPHA * 0.5) // half alpha — softer signal
             negIobFired = true
 
             // Cross-nudge to ISF — gated on !isfLearningActive: negIOB has no structural
@@ -1147,7 +1342,7 @@ class CircadianLearner @Inject constructor(
             if (!isfLearningActive) {
                 val crossIsfMult = (isfState.get(dow, hour) * (1.0 - (1.0 - adjustment) * CROSS_NUDGE_FRACTION))
                     .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                isfState = isfState.updated(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
+                writeIsf(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
             }
 
             lastBasalSignal = "NegIOB: BG ${"%.1f".format(bg)} < target ${"%.1f".format(targetMgdl)}, basalIOB=${"%.2f".format(basalIob)}U totalIOB=${"%.2f".format(totalIob)}U ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
@@ -1193,7 +1388,7 @@ class CircadianLearner @Inject constructor(
                         val rawAdjust  = (projectedError / PRED_TRIM_SENSITIVITY).coerceIn(-PRED_TRIM_MAX_ADJUST, PRED_TRIM_MAX_ADJUST)
                         val adjustment = 1.0 + rawAdjust  // >1 = more basal needed, <1 = less
                         val newMult    = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                        basalState = basalState.updated(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
+                        writeBasal(dow, hour, newMult, BASAL_ALPHA * 0.5)  // softer alpha
                         predTrimFired = true
 
                         // Cross-nudge to ISF — gated on !isfLearningActive: predTrim has no
@@ -1201,7 +1396,7 @@ class CircadianLearner @Inject constructor(
                         if (!isfLearningActive) {
                             val crossIsfMult = (isfState.get(dow, hour) * (1.0 + rawAdjust * CROSS_NUDGE_FRACTION))
                                 .coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                            isfState = isfState.updated(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
+                            writeIsf(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
                         }
 
                         lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
@@ -1274,11 +1469,11 @@ class CircadianLearner @Inject constructor(
                 val adjustment   = 1.0 - rawAdjust      // <1.0 = reduce multiplier
 
                 val newBasMult   = (basalState.get(dow, hour) * adjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                basalState = basalState.updated(dow, hour, newBasMult, BASAL_ALPHA * 0.5)
+                writeBasal(dow, hour, newBasMult, BASAL_ALPHA * 0.5)
 
                 // ISF mult DOWN → dosingISF = profileISF / lowerMult → dosingISF UP → less aggressive
                 val newIsfMult   = (isfState.get(dow, hour) * adjustment).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                isfState = isfState.updated(dow, hour, newIsfMult, ISF_ALPHA * 0.5)
+                writeIsf(dow, hour, newIsfMult, ISF_ALPHA * 0.5)
 
                 subTargetNegIobWindow.clear()
                 subTargetFired = true
@@ -1387,7 +1582,7 @@ class CircadianLearner @Inject constructor(
                                  "CircadianLearner Aggr h=$hour ROLLERCOASTER detected but shape suggests compression low — skipping learner penalty")
             } else {
                 val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
-                aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+                writeAggr(dow, hour, penalised, AGGR_ALPHA_PENALTY)
                 lastPenaltyMs = System.currentTimeMillis()
                 lastPenaltyWasFasting = isFasting
                 lastPenaltyReason = "rollercoaster"
@@ -1448,16 +1643,19 @@ class CircadianLearner @Inject constructor(
                 // is invisible in the table and has no meaningful effect on dosing.
                 // Direct write ensures the penalty is actually felt this cycle.
                 val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
-                aggrState = aggrState.updatedDayOnly(dow, hour, penalised, 1.0)
+                // Day bucket takes the full cut immediately; the cross-day baseline takes a slow
+                // trickle so a low that repeats at this hour across nights generalises to every
+                // day, while a one-off stays where it happened. See writeAggrHardLow.
+                writeAggrHardLow(dow, hour, penalised)
                 // Basal: mult DOWN — less background insulin
                 val d = dow.coerceIn(0, 6)
                 val prevBasVal   = basalState.days[d].get(hour)
                 val nudgedBasMult = (prevBasVal * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-                basalState = basalState.updatedDayOnly(dow, hour, nudgedBasMult, 1.0)
+                writeBasalDayOnly(dow, hour, nudgedBasMult, 1.0)
                 // ISF: mult DOWN ? dosingISF = profileISF / lowerMult ? dosingISF UP ? less aggressive ? less insulin ?
                 val prevIsfVal   = isfState.days[d].get(hour)
                 val nudgedIsfMult = (prevIsfVal * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                isfState = isfState.updatedDayOnly(dow, hour, nudgedIsfMult, 1.0)
+                writeIsfDayOnly(dow, hour, nudgedIsfMult, 1.0)
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
                                      "fasting=$isFasting ? ceil=%.3f basal %.4f?%.4f isf %.4f?%.4f"
@@ -1483,7 +1681,7 @@ class CircadianLearner @Inject constructor(
         if (approachingLow) {
             consecutiveStableCycles = 0
             val penalised = (currentCeil * AGGR_PENALTY_SOFT_LOW).coerceAtLeast(AGGR_CEIL_MIN)
-            aggrState = aggrState.updated(dow, hour, penalised, AGGR_ALPHA_PENALTY)
+            writeAggr(dow, hour, penalised, AGGR_ALPHA_PENALTY)
             lastPenaltyMs   = System.currentTimeMillis()
             lastPenaltyWasFasting = isFasting
             lastPenaltyReason = "soft low approach"
@@ -1513,7 +1711,7 @@ class CircadianLearner @Inject constructor(
                 val escalatedStep = (AGGR_RECOVERY_STEP + consecutiveStableCycles * AGGR_RECOVERY_ESCALATION_PER_CYCLE)
                     .coerceAtMost(AGGR_RECOVERY_MAX_STEP)
                 val recovered = (currentCeil + escalatedStep).coerceAtMost(AGGR_CEIL_MAX)
-                aggrState = aggrState.updated(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
+                writeAggr(dow, hour, recovered, AGGR_ALPHA_RECOVERY)
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour STABLE_RECOVERY (streak=$consecutiveStableCycles step=%.4f) ? ceil=%.3f"
                                      .format(escalatedStep, aggrState.get(dow, hour)))
@@ -1700,6 +1898,7 @@ class CircadianLearner @Inject constructor(
     // -- Helpers ---------------------------------------------------------------
 
     private fun currentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+    private fun currentMinute(): Int = Calendar.getInstance().get(Calendar.MINUTE)
     private fun currentDow(): Int  = DayOfWeekCircadianState.currentDayOfWeek()
 
     // -- Constants -------------------------------------------------------------
@@ -1721,7 +1920,17 @@ class CircadianLearner @Inject constructor(
         private const val ISF_MULT_MIN           = 0.7
         private const val ISF_MULT_MAX           = 1.5
         private const val MIN_ACTIVITY           = 0.005  // min IOB activity to learn from
-        private const val MIN_EXPECTED_DELTA_MGDL = 1.0
+        // Admission floor for the ISF signal. normDeviation is deviation/expectedDelta, so this
+        // is the denominator gate: below it, shortAvgDelta noise (±1–2 mg/dL) dominates the
+        // numerator and the learner is fitting sensor noise. 5 mg/dL of expected movement needs
+        // roughly a real SMB tail to be acting; quieter cycles are the basal learner's regime
+        // (it fires when activity < MIN_ACTIVITY), so nothing is left unlearned by raising this.
+        private const val MIN_EXPECTED_DELTA_MGDL = 5.0
+        // Expected movement at which a sample carries full weight (~0.5 mmol/5min). Between the
+        // floor and this, samples ramp in linearly rather than counting the same as a strong one.
+        private const val ISF_FULL_WEIGHT_DELTA_MGDL = 9.0
+        // Ratio -> multiplier-offset gain. See the comment at the multTarget calculation.
+        private const val ISF_NORM_GAIN          = 0.2
 
         // Basal learner — drift window approach (basalIob gate removed, always negative in closed loop)
         private const val BASAL_ALPHA              = 0.06
@@ -1795,7 +2004,27 @@ class CircadianLearner @Inject constructor(
         // No additional cycle counting needed — the ceiling IS the confirmation filter.
         private const val AGGR_NUDGE_THRESHOLD    = 0.95           // ceiling below this ? too much insulin, nudge to reduce
         private const val AGGR_NUDGE_SURPLUS      = 1.05           // ceiling above this ? not enough insulin, nudge to increase
-        private const val AGGR_NUDGE_SCALE        = 0.04           // 20% deviation ? 0.8% nudge per cycle
+        // Rate at which the day bucket approaches the nudge target (EWMA alpha). At 0.04 it
+        // covers half the remaining gap in ~17 cycles (~85 min of occupying that hour). This is
+        // a RATE now, not a step size — it sets how fast the target is reached, never how far.
+        private const val AGGR_NUDGE_SCALE        = 0.04
+        // Ceiling deficit -> displacement from the physics baseline. At 1.0 the mapping is
+        // direct and legible: a ceiling of 0.85 ("run this hour at 85% aggressiveness") parks the
+        // multipliers 15% below the cross-day baseline, and no further.
+        private const val AGGR_NUDGE_AUTHORITY    = 1.0
+        // Hard cap on that displacement. The ceiling floor is AGGR_CEIL_MIN (0.60), which would
+        // otherwise map to a 40% cut; the nudge is a heuristic correction sitting on top of
+        // measured physics, so it is not allowed to move dosing by more than a quarter on its own.
+        private const val AGGR_NUDGE_MAX_DISPLACEMENT = 0.25
+        // Dead-band restoring force: rate at which a displaced day bucket returns toward the
+        // cross-day baseline while the ceiling is neutral. At 0.02, half the excess is unwound in
+        // ~35 cycles at that hour — about three days — so an unrepeated bad night expires instead
+        // of being permanent, while a pattern that keeps re-firing the ceiling holds its ground.
+        private const val AGGR_NUDGE_DECAY_ALPHA  = 0.02
+        // Displacement from baseline the decay tolerates without acting. Real day-of-week physics
+        // differences live inside this band and are left alone; only larger excursions, which
+        // only the nudge can produce, are unwound.
+        private const val AGGR_NUDGE_DECAY_BAND   = 0.05
         private const val AGGR_NUDGE_COOLDOWN_MS  = 120 * 60_000L  // 120 min penalty cooldown window
         private const val AGGR_NUDGE_ATTN_FASTING = 0.35           // attenuated scale during cooldown — fasting penalty (more likely profile issue)
         private const val AGGR_NUDGE_ATTN_MEAL    = 0.15           // attenuated scale during cooldown — meal/post-meal penalty (less likely profile issue)
@@ -1806,6 +2035,13 @@ class CircadianLearner @Inject constructor(
         private const val AGGR_PENALTY_ROLLER       = 0.85   // 15% cut on rollercoaster
         private const val AGGR_PENALTY_HARD_LOW     = 0.90   // 10% short-term ceiling cut when BG crosses below low guard
         private const val AGGR_HARD_LOW_BASAL_NUDGE = 0.90   // 10% long-term basal nudge down on hard low (once per event)
+        // Fraction of a hard-low ceiling penalty that reaches the cross-day (global) bucket.
+        // At 0.05 a single low moves the cross-day ceiling for that hour by ~0.5%, but three or
+        // four lows at the same hour on different nights compound into a real suppression that
+        // applies on nights it has not happened yet — which is the point: a 4AM low is a property
+        // of 4AM, not of Tuesday. Deliberately much smaller than the day-bucket write so one bad
+        // night can never rewrite the baseline for the whole week.
+        private const val AGGR_HARD_LOW_GLOBAL_ALPHA = 0.05
         private const val HARD_LOW_BASAL_GATE_MS    = 30 * 60_000L  // basal nudge only fires once per 30-min low event
         private const val AGGR_PENALTY_SOFT_LOW     = 0.90   // 10% cut on soft low approach
         private const val AGGR_RECOVERY_STEP    = 0.01   // +1% per stable cycle (base — see escalation below)

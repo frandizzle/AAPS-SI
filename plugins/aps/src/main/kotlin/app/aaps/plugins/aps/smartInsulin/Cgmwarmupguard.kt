@@ -81,6 +81,23 @@ class CgmWarmupGuard @Inject constructor(
 
         val suppressLearning = sensorAgeHours < WARMUP_HOURS
 
+        // Implausible-delta block runs BEFORE the enabled check and at every sensor age. This is
+        // an artifact guard, not a warmup feature: a >MAX_PLAUSIBLE_DELTA_MMOL jump between
+        // readings is not physiology at any sensor age, and turning the warmup guard off should
+        // not also remove the only protection against dosing on a sensor glitch.
+        val deltaPlausible = abs(deltaMmol) <= MAX_PLAUSIBLE_DELTA_MMOL
+        if (!deltaPlausible) {
+            aapsLogger.debug(LTag.APS,
+                             "CgmWarmupGuard: implausible delta ${"%+.1f".format(deltaMmol)} mmol/L — SMBs blocked")
+            return SAFE_STATE.copy(
+                deltaPlausible   = false,
+                inWarmup         = suppressLearning,
+                sensorAgeHours   = sensorAgeHours,
+                suppressLearning = suppressLearning,
+                reason           = "cgmJump(delta=${"%.1f".format(deltaMmol)}mmol SMBsBlocked TBRok)"
+            )
+        }
+
         if (!enabled) {
             return if (suppressLearning)
                 SAFE_STATE.copy(
@@ -91,17 +108,6 @@ class CgmWarmupGuard @Inject constructor(
                 )
             else
                 SAFE_STATE
-        }
-
-        val deltaPlausible = abs(deltaMmol) <= MAX_PLAUSIBLE_DELTA_MMOL
-        if (!deltaPlausible) {
-            aapsLogger.debug(LTag.APS,
-                             "CgmWarmupGuard: implausible delta ${"%+.1f".format(deltaMmol)} mmol/L — SMBs blocked")
-            return SAFE_STATE.copy(
-                deltaPlausible = false,
-                suppressLearning = suppressLearning,
-                reason = "cgmJump(delta=${"%.1f".format(deltaMmol)}mmol SMBsBlocked TBRok)"
-            )
         }
 
         if (sensorAgeHours >= WARMUP_HOURS) return SAFE_STATE

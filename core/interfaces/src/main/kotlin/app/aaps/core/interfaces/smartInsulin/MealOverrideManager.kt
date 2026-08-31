@@ -91,11 +91,18 @@ interface MealOverrideManager {
      * Called every loop cycle from SmartInsulinPlugin.invoke().
      * Checks if pre-bolus 2/3 is due, runs safety checks, fires if safe.
      */
+    /**
+     * @param loopRestraining true when the main loop is actively holding insulin back — inside a
+     *   post-low rebound window, or its last decision was a zero temp. A pre-bolus scheduled
+     *   20–40 minutes earlier carries no knowledge of what has happened since, so without this
+     *   it can land as a fixed dose at the moment the loop has decided to deliver nothing.
+     */
     fun onLoopCycle(
-        glucoseStatus: GlucoseStatus,
-        iobArray:      Array<IobTotal>,
-        maxIobU:       Double,
-        profile:       Profile? = null
+        glucoseStatus:   GlucoseStatus,
+        iobArray:        Array<IobTotal>,
+        maxIobU:         Double,
+        profile:         Profile? = null,
+        loopRestraining: Boolean  = false
     )
 
     data class Pb2GateData(

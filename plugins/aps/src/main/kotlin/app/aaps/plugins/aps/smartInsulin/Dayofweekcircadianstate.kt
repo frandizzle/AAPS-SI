@@ -47,6 +47,22 @@ data class DayOfWeekCircadianState(
     }
 
     /**
+     * Minute-aware read — same day/global blend as [get], but each side is interpolated across
+     * the hour boundary (see [CircadianState.get]). This is the read used for dosing, so the
+     * effective multiplier moves continuously through the day rather than stepping at :00.
+     */
+    fun get(dayOfWeek: Int, hour: Int, minute: Int): Double {
+        val d       = dayOfWeek.coerceIn(0, 6)
+        val dayConf = days[d].getConfidence(hour, minute)
+        val blend   = (dayConf / DAY_CONFIDENCE_THRESHOLD).coerceIn(0.0, 1.0)
+        return global.get(hour, minute) * (1.0 - blend) + days[d].get(hour, minute) * blend
+    }
+
+    /** Nudge-free cross-day baseline for [hour]/[minute] — the physics estimate the aggression
+     *  nudge anchors its target to, and decays back toward when the ceiling is neutral. */
+    fun globalValue(hour: Int, minute: Int): Double = global.get(hour, minute)
+
+    /**
      * Effective confidence for display — average of day and global confidence,
      * weighted by how much day data has accumulated.
      */
@@ -55,6 +71,14 @@ data class DayOfWeekCircadianState(
         val dayConf = days[d].getConfidence(hour)
         val blend   = (dayConf / DAY_CONFIDENCE_THRESHOLD).coerceIn(0.0, 1.0)
         return global.getConfidence(hour) * (1.0 - blend) + dayConf * blend
+    }
+
+    /** Minute-aware confidence — same interpolation as [get]. */
+    fun getConfidence(dayOfWeek: Int, hour: Int, minute: Int): Double {
+        val d       = dayOfWeek.coerceIn(0, 6)
+        val dayConf = days[d].getConfidence(hour, minute)
+        val blend   = (dayConf / DAY_CONFIDENCE_THRESHOLD).coerceIn(0.0, 1.0)
+        return global.getConfidence(hour, minute) * (1.0 - blend) + dayConf * blend
     }
 
     // ── Write ─────────────────────────────────────────────────────────────────
@@ -84,6 +108,36 @@ data class DayOfWeekCircadianState(
         val newDays = days.copyOf()
         newDays[d]  = days[d].updated(hour, newValue, alpha)
         return DayOfWeekCircadianState(newDays, global)  // global unchanged
+    }
+
+    /**
+     * General minute-aware write: the day bucket takes [dayAlpha], the cross-day [global] bucket
+     * takes [globalAlpha], and both spread into the adjacent hour bucket by minute-of-hour
+     * (see [CircadianState.updatedSmoothed]).
+     *
+     * The two alphas are separate because the three writers want different cross-day behaviour:
+     *  - physics learners write both at the same alpha (a measured sensitivity applies to the
+     *    hour, not to the weekday),
+     *  - the aggression nudge writes day-only (globalAlpha = 0) — global has to stay nudge-free
+     *    because it is the baseline the nudge's own target is computed from, and feeding the
+     *    nudge back into its own anchor is exactly the positive-feedback loop this rework removes,
+     *  - the hard-low ceiling penalty writes day hard and global softly, so a low that recurs at
+     *    the same hour on several days migrates into the cross-day baseline while a one-off stays
+     *    on the day it happened.
+     */
+    fun updatedSplit(
+        dayOfWeek:   Int,
+        hour:        Int,
+        minute:      Int,
+        newValue:    Double,
+        dayAlpha:    Double,
+        globalAlpha: Double
+    ): DayOfWeekCircadianState {
+        val d         = dayOfWeek.coerceIn(0, 6)
+        val newDays   = days.copyOf()
+        newDays[d]    = if (dayAlpha > 0.0) days[d].updatedSmoothed(hour, minute, newValue, dayAlpha) else days[d]
+        val newGlobal = if (globalAlpha > 0.0) global.updatedSmoothed(hour, minute, newValue, globalAlpha) else global
+        return DayOfWeekCircadianState(newDays, newGlobal)
     }
 
     // ── Serialisation ─────────────────────────────────────────────────────────

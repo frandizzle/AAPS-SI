@@ -186,8 +186,18 @@ class MealOverrideManagerImpl @Inject constructor(
             reasons += "BG falling"
         if (shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)
             reasons += "Trend falling"
+        // The gates above all read glucose state, which is what a pre-bolus decision was based on
+        // when it was scheduled. They say nothing about what the loop has since decided to do.
+        // If the loop is suspending or working through a post-low rebound, a scheduled fixed dose
+        // is directly opposed to the decision the loop just made — hold it and re-check next cycle
+        // (the mode-expiry path above eventually discards it if the window closes).
+        if (loopRestraining)
+            reasons += "Loop restraining insulin"
         return reasons
     }
+
+    // Set from onLoopCycle each cycle — see the loopRestraining parameter on MealOverrideManager.
+    @Volatile private var loopRestraining = false
 
     // Cache last known glucose values so statusText can reflect safety state between loop cycles
     @Volatile private var lastBgMgdl        = 0.0
@@ -394,11 +404,13 @@ class MealOverrideManagerImpl @Inject constructor(
     // ── Pre-bolus 2 delivery ──────────────────────────────────────────────────
 
     override fun onLoopCycle(
-        glucoseStatus: GlucoseStatus,
-        iobArray:      Array<IobTotal>,
-        maxIobU:       Double,
-        profile:       app.aaps.core.interfaces.profile.Profile?
+        glucoseStatus:   GlucoseStatus,
+        iobArray:        Array<IobTotal>,
+        maxIobU:         Double,
+        profile:         app.aaps.core.interfaces.profile.Profile?,
+        loopRestraining: Boolean
     ) {
+        this.loopRestraining = loopRestraining
         val s = _state ?: return
         // Skip entirely if neither PB2 nor PB3 is pending
         if (!s.preBolus2Pending && !s.preBolus3Pending) return

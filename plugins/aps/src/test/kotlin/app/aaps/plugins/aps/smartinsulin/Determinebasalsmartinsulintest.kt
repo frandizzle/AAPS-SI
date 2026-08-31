@@ -329,4 +329,95 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
         assertTrue(r.predictionsAsGv.first().value > 100.0, "Rising delta should push BG above 100")
     }
+
+    // ── Safety clamps ────────────────────────────────────────────────────────
+
+    @Test fun `a zero temp is still issued when skip_neutral_temps is on and profile basal is zero`() {
+        // skip_neutral_temps drops a TBR whose rate equals the profile's current basal. On a pump
+        // profile with a 0 U/h basal segment, a SUSPEND's rate of 0.0 equalled current_basal 0.0
+        // and the zero temp was silently swallowed — the loop reported a suspend it never
+        // commanded. A zero rate is never a "neutral" temp, whatever the profile says.
+        whenever(oapsProfile.skip_neutral_temps).thenReturn(true)
+        whenever(oapsProfile.current_basal).thenReturn(0.0)
+        whenever(glucoseStatus.glucose).thenReturn(65.0)
+
+        val r = invoke(iobArray = flatIobArray(iob = 2.0, activity = 0.05))
+
+        assertTrue(r.reason.contains("SUSPEND"), "precondition: this scenario must reach a suspend branch")
+        assertTrue(r.isTempBasalRequested, "The zero temp must actually be requested, not skipped as neutral")
+        assertEquals(0.0, r.rate, 1e-9)
+        assertTrue(r.duration > 0, "Suspend must carry a real duration, got ${r.duration}")
+    }
+
+    @Test fun `neutral temps are still skipped for a genuinely neutral non-zero rate`() {
+        // Control for the test above: the neutral-temp optimisation must still work where it was
+        // meant to — a normal-dosing rate landing exactly on profile basal.
+        whenever(oapsProfile.skip_neutral_temps).thenReturn(true)
+        whenever(oapsProfile.current_basal).thenReturn(1.0)
+        whenever(glucoseStatus.glucose).thenReturn(100.0)
+
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
+
+        assertFalse(r.isTempBasalRequested,
+                    "A rate equal to profile basal should still be skipped, got rate=${r.rate}")
+    }
+
+    @Test fun `carb impact is clamped so a sensor artifact cannot inflate the prediction`() {
+        // A sustained sensor artifact survives the min(shortAvgDelta, delta) blunting, and ci is
+        // fed into every tick of the forward curve with a linear 60-min fade — total contribution
+        // is ci * 6.5. Unclamped, a 200 mg/dL/5min jump would add ~1300 mg/dL of imaginary rise
+        // to predictedMin and straight into insulinReq.
+        whenever(glucoseStatus.glucose).thenReturn(150.0)
+        whenever(glucoseStatus.delta).thenReturn(200.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(200.0)
+
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
+
+        // CI_MAX_MGDL_PER_5MIN (27) * 6.5 ticks of faded contribution = 175.5 above the start BG.
+        val peak = r.predictionsAsGv.maxOf { it.value }
+        assertTrue(peak <= 150.0 + 27.0 * 6.5 + 1.0,
+                   "Predicted peak must be bounded by the ci clamp, got $peak")
+    }
+
+    @Test fun `genuine carb impact below the clamp is passed through untouched`() {
+        // Control: a real post-meal rise must not be truncated. 18 mg/dL/5min (1 mmol) is a brisk
+        // but ordinary absorption rate and sits below CI_MAX_MGDL_PER_5MIN.
+        whenever(glucoseStatus.glucose).thenReturn(150.0)
+        whenever(glucoseStatus.delta).thenReturn(18.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(18.0)
+
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0))
+
+        val peak = r.predictionsAsGv.maxOf { it.value }
+        assertEquals(150.0 + 18.0 * 6.5, peak, 0.5,
+                     "Sub-clamp carb impact should reach the prediction in full, got $peak")
+    }
+
+    @Test fun `a degenerate dosing ISF produces finite output`() {
+        // dosingIsfMgdl is profile ISF scaled by learned multipliers and aggressiveness. Every
+        // insulinReq-style calculation divides by it, so a near-zero value would divide into an
+        // unbounded insulin request. Pins that the floor keeps every output finite.
+        whenever(glucoseStatus.glucose).thenReturn(200.0)
+
+        sut.determine_basal(
+            glucoseStatus = glucoseStatus, currentTemp = currentTemp,
+            iobArray = flatIobArray(0.0, 0.0), oapsProfile = oapsProfile, mealData = mealData,
+            profile = profile, learnedProfile = defaultLearned(), mealMode = MealMode.FASTING,
+            lowGuardMmol = 3.9, warnGuardMmol = 4.5, maxSmbU = 2.0, maxTbrU = 5.0,
+            aggressiveness = 1.0, tirSummary = "100%", basalMultiplier = 1.0,
+            dosingIsfMgdl = 0.0,
+            microBolusAllowed = true, inReboundWindow = false, msSinceLastSuspend = 3600_000L,
+            currentTime = System.currentTimeMillis(), isTempTarget = false, profileTargetMgdl = 100.0,
+            dawnWindowStartHour = 4, dawnWindowEndHour = 9, dawnSmbReduction = 0.0,
+            bgWentLow = false, activityLevel = ActivityMonitor.ActivityLevel.SEDENTARY,
+            activityTargetOffsetMmol = 0.0, cgmSmbFraction = 1.0, cgmDeltaPlausible = true,
+            cgmWarmupReason = "", uamSmbFraction = 0.5
+        )
+
+        assertTrue(fakeResult.rate.isFinite(), "TBR rate must be finite, got ${fakeResult.rate}")
+        assertTrue(fakeResult.smb.isFinite(), "SMB must be finite, got ${fakeResult.smb}")
+        assertTrue(fakeResult.smb <= 2.0 + 1e-9, "SMB must respect maxSmbU, got ${fakeResult.smb}")
+        assertTrue(fakeResult.predictionsAsGv.all { it.value.isFinite() },
+                   "Every predicted BG must be finite")
+    }
 }

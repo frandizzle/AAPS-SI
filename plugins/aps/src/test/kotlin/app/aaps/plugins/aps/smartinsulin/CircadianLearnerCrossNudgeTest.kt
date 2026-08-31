@@ -32,6 +32,12 @@ class CircadianLearnerCrossNudgeTest {
     private val BASE_MS  = 1_700_000_000_000L
     private val CYCLE_MS = 5 * 60_000L
 
+    // Hour buckets are interpolated across their boundaries (CircadianState.get(hour, minute)),
+    // so both reads and writes must name a minute or they pick up the wall clock and bleed into
+    // an adjacent bucket. Minute 30 is the bucket's own centre: zero neighbour weight, which is
+    // what lets these tests assert exact values.
+    private val BUCKET_CENTRE = 30
+
     @BeforeEach
     fun setUp() {
         learner = CircadianLearner(logger, FakePreferences())
@@ -61,15 +67,17 @@ class CircadianLearnerCrossNudgeTest {
             profileIsfMgdl   = 50.0,
             targetMgdl       = 100.0,
             aggressiveness   = 1.0,   // neutral -> applyAggrNudge is a no-op this cycle
-            hour = 0, dow = 0, nowMs = BASE_MS
+            hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = BASE_MS
         )
 
-        val isfAfter   = learner.isfMultiplier(0, 0)
-        val basalAfter = learner.basalMultiplier(0, 0)
+        val isfAfter   = learner.isfMultiplier(0, 0, BUCKET_CENTRE)
+        val basalAfter = learner.basalMultiplier(0, 0, BUCKET_CENTRE)
 
-        // Fresh state: alpha = ISF_ALPHA(0.04) * 1.5 = 0.06 (zero confidence hits the ceiling).
-        // isfAfter = 1.0 + normDeviation(0.5) * alpha(0.06) = 1.03 exactly.
-        assertEquals(1.03, isfAfter, 1e-9, "Main ISF learner should move isf by normDeviation*alpha exactly")
+        // Fresh state: alpha = ISF_ALPHA(0.04) * 1.5 = 0.06 (zero confidence hits the ceiling),
+        // then scaled by signalWeight = |expectedDelta|/ISF_FULL_WEIGHT_DELTA_MGDL = 5.0/9.0.
+        // isfAfter = 1.0 + normDeviation(0.5) * ISF_NORM_GAIN(0.2) * alpha(0.06 * 5/9).
+        val expectedIsf = 1.0 + 0.5 * 0.2 * (0.06 * 5.0 / 9.0)
+        assertEquals(expectedIsf, isfAfter, 1e-9, "Main ISF learner should move isf by normDeviation*gain*alpha exactly")
         assertTrue(basalAfter > 1.0, "Basal should be cross-nudged in the same (upward) direction, got $basalAfter")
 
         val isfMove   = isfAfter - 1.0
@@ -94,11 +102,11 @@ class CircadianLearnerCrossNudgeTest {
             profileIsfMgdl   = 50.0,
             targetMgdl       = 100.0,
             aggressiveness   = 1.0,
-            hour = 0, dow = 0, nowMs = BASE_MS
+            hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = BASE_MS
         )
 
-        val isfAfter   = learner.isfMultiplier(0, 0)
-        val basalAfter = learner.basalMultiplier(0, 0)
+        val isfAfter   = learner.isfMultiplier(0, 0, BUCKET_CENTRE)
+        val basalAfter = learner.basalMultiplier(0, 0, BUCKET_CENTRE)
 
         // Fresh state: alpha = BASAL_ALPHA(0.06) * 1.5 = 0.09. normAdj = (3.0/5.0).coerceIn(-1,0.5)
         // clamps to +0.5. basalAfter = 1.0 + 0.5*0.09 = 1.045 exactly.
@@ -134,7 +142,7 @@ class CircadianLearnerCrossNudgeTest {
                 profileIsfMgdl = 50.0,
                 targetMgdl     = 100.0,
                 aggressiveness = 1.0,
-                hour = 0, dow = 0, nowMs = t
+                hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = t
             )
             t += CYCLE_MS
         }
@@ -142,8 +150,8 @@ class CircadianLearnerCrossNudgeTest {
         // Sanity: nothing should have touched isf/basal yet — drift needs a 12th sample to fire,
         // predTrim stays under its dead band the whole time (see comment above), and Signal 0
         // never writes (shortAvgDelta=0.0 is below its noise gate every cycle above).
-        assertEquals(1.0, learner.isfMultiplier(0, 0), 1e-9, "ISF should be untouched before the trigger cycle")
-        assertEquals(1.0, learner.basalMultiplier(0, 0), 1e-9, "Basal should be untouched before the trigger cycle")
+        assertEquals(1.0, learner.isfMultiplier(0, 0, BUCKET_CENTRE), 1e-9, "ISF should be untouched before the trigger cycle")
+        assertEquals(1.0, learner.basalMultiplier(0, 0, BUCKET_CENTRE), 1e-9, "Basal should be untouched before the trigger cycle")
 
         // Trigger cycle: 12th sample completes the drift window AND activity is high enough to
         // fire the main ISF learner in the same cycle.
@@ -155,17 +163,17 @@ class CircadianLearnerCrossNudgeTest {
             profileIsfMgdl = 50.0,
             targetMgdl     = 100.0,
             aggressiveness = 1.0,
-            hour = 0, dow = 0, nowMs = t
+            hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = t
         )
 
-        val isfAfter   = learner.isfMultiplier(0, 0)
-        val basalAfter = learner.basalMultiplier(0, 0)
+        val isfAfter   = learner.isfMultiplier(0, 0, BUCKET_CENTRE)
+        val basalAfter = learner.basalMultiplier(0, 0, BUCKET_CENTRE)
 
         // isfState entered this cycle untouched (confidence still 0), so the main learner's own
-        // write is the exact same formula as the first test: 1.0 + 0.5*0.06 = 1.03. If drift's
+        // write is the exact same formula as the first test. If drift's
         // cross-nudge had NOT been suppressed, this would be measurably higher (drift's own
         // adjustment is also upward here).
-        assertEquals(1.03, isfAfter, 1e-9,
+        assertEquals(1.0 + 0.5 * 0.2 * (0.06 * 5.0 / 9.0), isfAfter, 1e-9,
                      "ISF should reflect ONLY the main learner's own write — drift's cross-nudge must be " +
                          "suppressed while the main learner is active this cycle, got $isfAfter")
 

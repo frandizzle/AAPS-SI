@@ -604,6 +604,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val nudgeActive     = nudgeState == "ACTIVE_HIGH" || nudgeState == "ACTIVE_LOW"
         val nudgeTrim       = nudgeState == "TRIM"
         val nudgePaused     = nudgeState == "PAUSED"
+        val nudgeDecay      = nudgeState == "DECAY"
 
         // Positions in status string:
         // TRIM|dir|mag% -> position 1=dir, 2=mag
@@ -742,6 +743,15 @@ class SmartInsulinFragment : DaggerFragment() {
                 }
                 stColor    = Color.parseColor("#FF64B5F6")
             }
+            nudgeDecay -> {
+                stHeadline = "↩ Unwinding an old correction"
+                stDetail   = "This hour is behaving normally again, so a past adjustment that is no longer " +
+                    "supported by evidence is being released back toward the cross-day average. " +
+                    "A one-off bad night fades out over about three days if it does not repeat.\n" +
+                    "ISF ${fmtIsf(d.isfMultiplier)} · Basal ${fmtBas(d.basalMultiplier)}" +
+                    learningPauseNote
+                stColor    = Color.parseColor("#FF64B5F6")
+            }
             else -> {
                 stHeadline = "⏺ Stable — No short-term adjustments"
                 stDetail   = "BG is responding normally. Loop is running at profile aggressiveness."
@@ -749,6 +759,9 @@ class SmartInsulinFragment : DaggerFragment() {
             }
         }
         addRow(c, stHeadline, stDetail, stColor)
+        d.lastRunError?.let {
+            addRow(c, "⚠️ Last loop cycle failed", it, Color.parseColor("#FFE53935"))
+        }
 
         // --- LONG-TERM LEARNING ---
         addDivider(c)

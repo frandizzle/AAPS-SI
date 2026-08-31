@@ -20,7 +20,17 @@ class AggressionLearner @Inject constructor(
     private val sp:          SP,
     private val aapsLogger:  AAPSLogger
 ) {
-    private data class BgSample(val timestampMs: Long, val zone: Zone, val fasting: Boolean)
+    /**
+     * @param scorable false when the sample was taken while learning was suppressed — post-meal
+     *   lockout, CGM warmup, or a detected activity window. Such samples are still kept for
+     *   display and history but are excluded from every TIR calculation that moves a score.
+     */
+    private data class BgSample(
+        val timestampMs: Long,
+        val zone:        Zone,
+        val fasting:     Boolean,
+        val scorable:    Boolean = true
+    )
     private enum class Zone { LOW, IN_RANGE, HIGH }
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -32,12 +42,16 @@ class AggressionLearner @Inject constructor(
     private val daySampleCount = IntArray(7) { 0 }
     private var globalScore    = 1.0
     private var lastUpdateMs   = 0L
+    private var lastSaveMs     = 0L
 
     init { restoreState() }
 
     companion object {
         private const val WINDOW_MS            = 24 * 60 * 60 * 1000L
         private const val UPDATE_INTERVAL_MS   = 60 * 60 * 1000L
+        // Independent of UPDATE_INTERVAL_MS: the 24h sample window is worth persisting far more
+        // often than the score is worth recomputing.
+        private const val SAVE_INTERVAL_MS     = 15 * 60 * 1000L
         private const val MIN_SAMPLES_TO_LEARN = 24
 
         private const val TARGET_TIR_PCT       = 70.0
@@ -55,6 +69,7 @@ class AggressionLearner @Inject constructor(
         private const val K_TS           = "ts"
         private const val K_ZONE         = "zone"
         private const val K_FASTING      = "fasting"
+        private const val K_SCORABLE     = "scorable"
     }
 
     val aggressiveness: Double
@@ -91,7 +106,13 @@ class AggressionLearner @Inject constructor(
             else                    -> Zone.IN_RANGE
         }
         val isFasting = mealMode == MealMode.FASTING
-        val sample  = BgSample(nowMs, zone, isFasting)
+        // suppressScoring has to travel WITH the sample, not just skip this cycle's scoring pass.
+        // The post-meal lockout sets mealMode back to FASTING while a meal's tail is still
+        // raising BG, so those readings were landing in fastingSamples permanently and the next
+        // hourly pass scored them as fasting highs — pushing aggressiveness UP on exactly the
+        // data the lockout exists to keep out. Tagging the sample instead means the lockout
+        // actually excludes it for the full 24h the window holds it.
+        val sample  = BgSample(nowMs, zone, isFasting, scorable = !suppressScoring)
 
         allSamples.addLast(sample)
         if (isFasting) fastingSamples.addLast(sample)
@@ -102,6 +123,12 @@ class AggressionLearner @Inject constructor(
         if (!suppressScoring && nowMs - lastUpdateMs >= UPDATE_INTERVAL_MS) {
             updateScore()
             lastUpdateMs = nowMs
+            lastSaveMs   = nowMs
+            saveState()
+        } else if (nowMs - lastSaveMs >= SAVE_INTERVAL_MS) {
+            // Samples used to reach disk only when a score update fired (hourly), so a restart
+            // discarded up to an hour of the 24h window. Persist on a shorter cadence of its own.
+            lastSaveMs = nowMs
             saveState()
         }
     }
@@ -140,7 +167,7 @@ class AggressionLearner @Inject constructor(
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         val dayEnd = dayStart + 24 * 60 * 60 * 1000L
-        val todayStats = computeTir(ArrayDeque(fastingSamples.filter { isSameDay(it.timestampMs, dayStart, dayEnd) }))
+        val todayStats = computeTir(fastingSamples.filter { isSameDay(it.timestampMs, dayStart, dayEnd) })
         if (todayStats != null) {
             val prev = dayScores[dow]
             dayScores[dow] = stepScore(dayScores[dow], todayStats, floor, ceil)
@@ -162,12 +189,14 @@ class AggressionLearner @Inject constructor(
 
     private fun currentDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
 
-    private fun computeTir(sampleSet: ArrayDeque<BgSample>): TirStats? {
-        if (sampleSet.size < MIN_SAMPLES_TO_LEARN) return null
-        val total   = sampleSet.size.toDouble()
-        val inRange = sampleSet.count { it.zone == Zone.IN_RANGE }
-        val high    = sampleSet.count { it.zone == Zone.HIGH }
-        val low     = sampleSet.count { it.zone == Zone.LOW }
+    /** TIR over the scorable samples only — see [BgSample.scorable]. */
+    private fun computeTir(sampleSet: Collection<BgSample>): TirStats? {
+        val scored  = sampleSet.filter { it.scorable }
+        if (scored.size < MIN_SAMPLES_TO_LEARN) return null
+        val total   = scored.size.toDouble()
+        val inRange = scored.count { it.zone == Zone.IN_RANGE }
+        val high    = scored.count { it.zone == Zone.HIGH }
+        val low     = scored.count { it.zone == Zone.LOW }
         return TirStats(inRange / total * 100.0, high / total * 100.0, low / total * 100.0)
     }
 
@@ -193,7 +222,7 @@ class AggressionLearner @Inject constructor(
             val arr    = JSONArray()
             val toSave = if (allSamples.size > 288) allSamples.takeLast(288) else allSamples
             toSave.forEach { s ->
-                arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting))
+                arr.put(JSONObject().put(K_TS, s.timestampMs).put(K_ZONE, s.zone.name).put(K_FASTING, s.fasting).put(K_SCORABLE, s.scorable))
             }
             val dayArr = org.json.JSONArray()
             for (i in 0..6) dayArr.put(JSONObject().put("score", dayScores[i]).put("n", daySampleCount[i]))
@@ -232,7 +261,10 @@ class AggressionLearner @Inject constructor(
                 if (nowMs - ts > WINDOW_MS) continue
                 val zone     = Zone.valueOf(obj.getString(K_ZONE))
                 val isFasting = obj.optBoolean(K_FASTING, true)
-                val sample   = BgSample(ts, zone, isFasting)
+                // Absent in state written before scorable existed — those samples were already
+                // being scored, so defaulting to true preserves the old behaviour on upgrade.
+                val scorable = obj.optBoolean(K_SCORABLE, true)
+                val sample   = BgSample(ts, zone, isFasting, scorable)
                 allSamples.addLast(sample)
                 if (isFasting) fastingSamples.addLast(sample)
                 else mealSamples.addLast(sample)

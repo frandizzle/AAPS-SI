@@ -21,8 +21,11 @@ import javax.inject.Singleton
  * isf_used_mmol, basal_used, aggr_used,
  * circadian_isf_mult, circadian_basal_mult, circadian_aggr_ceil,
  * smb_u, tbr_rate, zone,
- * rebound_active, rebound_elapsed_min,
- * bg_30min_ago (retrospective — filled from previous row)
+ * rebound_active, rebound_elapsed_min
+ *
+ * NOTE: this class is not currently invoked from the loop — nothing constructs a [Row]. It is
+ * kept as the offline-analysis hook. The doc block previously also listed a bg_30min_ago column
+ * that HEADER has never emitted; removed rather than left describing a column that does not exist.
  */
 @Singleton
 class LoopCsvLogger @Inject constructor(

@@ -118,6 +118,11 @@ open class SmartInsulinPlugin @Inject constructor(
     override val algorithm = APSResult.Algorithm.SMB
     override var lastAPSResult: APSResult? = null
 
+    /** Set when determine_basal throws, cleared on the next successful cycle. Surfaced on the SI
+     *  tab so a crashing dosing core is visible rather than looking like an idle loop. */
+    var lastRunError: String? = null
+        private set
+
     var bgWentLow: Boolean = false
     var minBgDuringLow: Double = Double.MAX_VALUE
     var iobAtLowTime: Double = 0.0
@@ -176,6 +181,9 @@ open class SmartInsulinPlugin @Inject constructor(
         private const val HBA1C_CACHE_REFRESH_MS  = 2 * 60 * 60 * 1000L
         // Bounds for the COMBINED basal multiplier (flat BasalLearner + CircadianLearner).
         // Pump safety multipliers in setTempBasal remain the hard backstop; tune if needed.
+        // Per-hour table rows are read at the bucket centre so the table shows each hour's own
+        // learned value, not the boundary-interpolated value applying at the current minute.
+        private const val TABLE_BUCKET_MINUTE  = 30
         private const val MIN_TOTAL_BASAL_MULT = 0.5
         private const val MAX_TOTAL_BASAL_MULT = 1.5
     }
@@ -209,9 +217,13 @@ open class SmartInsulinPlugin @Inject constructor(
      */
     private fun combinedBasalMultiplier(
         hour: Int = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY),
-        dow: Int  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
+        dow: Int  = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+        // Minute matters because the circadian buckets are interpolated across the hour
+        // boundary. The per-hour TABLE wants a whole-hour value (:30 = the bucket's own centre,
+        // no neighbour bleed), so it passes 30 explicitly; live dosing passes the real minute.
+        minute: Int = java.util.Calendar.getInstance().get(java.util.Calendar.MINUTE)
     ): Double {
-        return circadianLearner.basalMultiplier(hour, dow)
+        return circadianLearner.basalMultiplier(hour, dow, minute)
             .coerceIn(MIN_TOTAL_BASAL_MULT, MAX_TOTAL_BASAL_MULT)
     }
 
@@ -254,6 +266,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
         val lastCycleSummary: String,
+        val lastRunError: String?,
         val mealAbsorptionLog: String,
         val mealAbsorptionInProgress: String,
         val modeIsfLearnerStatus: String,
@@ -278,18 +291,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val rawFinalBasal = profileBasal * basalMult
         val roundedFinalBasal = Math.round(rawFinalBasal / tbrStep) * tbrStep
 
-        val circRaw = buildString {
-            val isfUnit = if (isMmol) "mmol/U" else "mg/dL/U"
-            appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
-            for (h in 0..23) {
-                val marker = if (h == hour) "→" else " "
-                val hIsfMult = circadianLearner.isfMultiplier(h)
-                val hBasMult = combinedBasalMultiplier(h)
-                val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
-                val hBas = if (profileBasal > 0) "%.3f".format(profileBasal * hBasMult) else "—"
-                appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h))}  ${"%.0f".format(circadianLearner.confidencePct(h))}%")
-            }
-        }
+        // Same table the day-picker uses — one builder, marked at the current hour.
+        val circRaw = circadianDataForDay(markerHour = hour)
 
         val profRaw = buildString {
             MealMode.entries.forEach { mode ->
@@ -405,6 +408,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
             lastCycleSummary = circadianLearner.lastCycleSummary,
+            lastRunError = lastRunError,
             mealAbsorptionLog = mealAbsorptionRaw,
             mealAbsorptionInProgress = mealAbsorptionInProgressText,
             modeIsfLearnerStatus = modeIsfLearnerRaw,
@@ -521,18 +525,29 @@ open class SmartInsulinPlugin @Inject constructor(
         return "Mode: $modeStr · ${getLearningState()}"
     }
 
-    fun circadianDataForDay(dow: Int): String {
+    /**
+     * The 24-row per-hour circadian table for one weekday. Rows are read at minute 30 — the
+     * bucket's own centre — so the table shows each hour's learned value rather than the
+     * boundary-interpolated value that happens to apply at the current minute.
+     *
+     * @param markerHour hour to flag with an arrow, or -1 for no marker.
+     */
+    fun circadianDataForDay(
+        dow:        Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
+        markerHour: Int = -1
+    ): String {
         val profileIsf   = cachedProfileIsf
         val profileBasal = cachedProfileBasal
         val isfUnit = if (isMmol) "mmol/U" else "mg/dL/U"
         return buildString {
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
             for (h in 0..23) {
-                val hIsfMult = circadianLearner.isfMultiplier(h, dow)
-                val hBasMult = combinedBasalMultiplier(h, dow)
+                val marker   = if (h == markerHour) "→" else " "
+                val hIsfMult = circadianLearner.isfMultiplier(h, dow, minute = TABLE_BUCKET_MINUTE)
+                val hBasMult = combinedBasalMultiplier(h, dow, minute = TABLE_BUCKET_MINUTE)
                 val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
                 val hBas = if (profileBasal > 0) "%.3f".format(profileBasal * hBasMult) else "—"
-                appendLine(" ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h, dow))}  ${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
+                appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h, dow, minute = TABLE_BUCKET_MINUTE))}  ${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
             }
         }
     }
@@ -640,6 +655,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val nowCal = java.util.Calendar.getInstance().also { it.timeInMillis = now }
         val currentHour = nowCal.get(java.util.Calendar.HOUR_OF_DAY)
         val currentMinute = nowCal.get(java.util.Calendar.MINUTE)
+        val currentDow    = nowCal.get(java.util.Calendar.DAY_OF_WEEK) - 1
         val tb = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
         val currentTemp = CurrentTemp(tb?.plannedRemainingMinutes ?: 0, tb?.convertedToAbsolute(now, profile) ?: 0.0, tb?.getPassedDurationToTimeInMinutes(now))
 
@@ -681,8 +697,8 @@ open class SmartInsulinPlugin @Inject constructor(
         if (!highTempTarget) {
             // Capture multipliers BEFORE update() so "was" reflects the baseline the
             // loop was delivering before this cycle's nudge fires.
-            val isfMultBefore        = circadianLearner.isfMultiplier()
-            val totalBasalMultBefore = combinedBasalMultiplier()
+            val isfMultBefore        = circadianLearner.isfMultiplier(currentHour, currentDow, currentMinute)
+            val totalBasalMultBefore = combinedBasalMultiplier(currentHour, currentDow, currentMinute)
             val lastDirection = run {
                 val parts = lastSeenNudgeState.split("|")
                 val p = parts.getOrNull(0) ?: "INACTIVE"
@@ -691,7 +707,28 @@ open class SmartInsulinPlugin @Inject constructor(
                 else null
             }
 
-            circadianLearner.update(glucoseStatus, iobArray, mealMode, mealData.mealCOB, trueIsfMgdl, targetBg, activityMonitor.suppressLearning || cgmState.suppressLearning, spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard), inPostMealLockout, aggressionLearner.aggressiveness, profileLearner.getProfile(MealMode.FASTING).peakMinutes)
+            circadianLearner.update(
+                glucoseStatus            = glucoseStatus,
+                iobArray                 = iobArray,
+                mealMode                 = mealMode,
+                cobG                     = mealData.mealCOB,
+                profileIsfMgdl           = trueIsfMgdl,
+                targetMgdl               = targetBg,
+                suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning,
+                lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
+                inPostMealLockout        = inPostMealLockout,
+                inReboundWindow          = inReboundWindow,
+                aggressiveness           = aggressionLearner.aggressiveness,
+                fastingPeakMins          = profileLearner.getProfile(MealMode.FASTING).peakMinutes,
+                // Drive the learner from the loop's clock (dateUtil.now()), not its own
+                // Calendar.getInstance() defaults — otherwise the learner can be reading a
+                // different hour/minute than the cycle it is learning from, and nothing in a
+                // test can pin either.
+                hour                     = currentHour,
+                dow                      = currentDow,
+                minute                   = currentMinute,
+                nowMs                    = now
+            )
 
             // Detect a new nudge session starting — capture "was" ISF/basal at the moment
             // the nudge direction first appears. We only capture once per episode (direction
@@ -713,10 +750,15 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             lastSeenNudgeState = currentNudgeStatus
         }
-        val circIsfMult = circadianLearner.isfMultiplier()
+        val circIsfMult = circadianLearner.isfMultiplier(currentHour, currentDow, currentMinute)
         var dosingIsfMgdl = if (mIsfMgdl > 0.0) mIsfMgdl else trueIsfMgdl / circIsfMult
 
-        mealOverrideManager.onLoopCycle(glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile)
+        mealOverrideManager.onLoopCycle(
+            glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
+            // Rebound state and the previous decision are both carried over from the last cycle —
+            // this call runs before determine_basal, so that is the freshest view available.
+            loopRestraining = inReboundWindow || (previousAPSResult?.let { it.rate == 0.0 && it.duration > 0 } ?: false)
+        )
 
         // Auto-cancel UAM mode if BG has returned to profile target or below.
         // Must be checked here (not in UamController) because UamController.onLoopCycle()
@@ -896,7 +938,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         activityMonitor.recompute(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
         aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout, now)
-        val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling())
+        val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute))
 
         // Use last MANUAL bolus only — SMBs fire every 5min during fasting and would permanently
         // block the basal learner if included. BS.Type.NORMAL = manual/wizard bolus only.
@@ -909,7 +951,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // place (resettable, still present in settings) in case this needs revisiting, but the
         // toggle no longer has any effect on dosing or display. minsLastManualBolus (the old
         // learner's bolus-recency gate input) is removed too since nothing reads it now.
-        val basalMultiplier = combinedBasalMultiplier()
+        val basalMultiplier = combinedBasalMultiplier(currentHour, currentDow, currentMinute)
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (glucoseStatus.glucose < REBOUND_LOW_THRESHOLD_MGDL) {
@@ -926,7 +968,12 @@ open class SmartInsulinPlugin @Inject constructor(
         if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) { reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
-        val apsResult = determineBasalSmartInsulin.determine_basal(
+        // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
+        // null with nothing said about it — every other early return sets a reason the user can
+        // see. An exception here means no decision this cycle; surface that rather than looking
+        // like the loop simply had nothing to do.
+        val apsResult = try {
+            determineBasalSmartInsulin.determine_basal(
             glucoseStatus            = glucoseStatus,
             currentTemp              = currentTemp,
             iobArray                 = iobArray,
@@ -959,15 +1006,21 @@ open class SmartInsulinPlugin @Inject constructor(
             cgmDeltaPlausible        = cgmState.deltaPlausible,
             cgmWarmupReason          = cgmState.reason,
             uamSmbFraction           = uamSmbFraction,
-            targetRespectEnabled     = true,
             reboundWindowMins        = reboundGuardMs / 60_000.0,  // total window incl. rollercoaster extension
-            circCeil                 = circadianLearner.aggrCeiling(),
+            circCeil                 = circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute),
             fuelTrimStrength         = circadianLearner.trimStrength,
             isMmol                   = isMmol,
             duraStatusText           = duraStatusText
-        )
+            )
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)
+            lastAPSResult = null
+            lastAPSRun = now
+            lastRunError = "${e.javaClass.simpleName}: ${e.message ?: "no message"}"
+            return
+        }
 
-        lastAPSResult = apsResult; lastAPSRun = now
+        lastAPSResult = apsResult; lastAPSRun = now; lastRunError = null
 
         // Increment UAM entry SMB counter if an entry-fraction SMB was delivered
         val fractionUsed = uamSmbFraction

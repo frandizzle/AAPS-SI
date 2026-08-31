@@ -60,7 +60,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Epsilon comparison — exact double equality is fragile against any upstream arithmetic
         // drift (e.g. rate=1.0000000001 would silently bypass neutral-temp skip, causing
         // redundant TBR commands to the pump).
-        if (profile.skip_neutral_temps && abs(r - profile.current_basal) < NEUTRAL_TEMP_EPSILON) {
+        // r > 0.0 guard: a zero temp is never a "neutral" temp, whatever the profile's current
+        // basal happens to be. On a pump profile with a 0 U/h segment, r == current_basal == 0.0
+        // matched this condition and the SUSPEND/LGS branches' zero temp was silently dropped —
+        // the loop reported a suspend it had not actually commanded.
+        if (profile.skip_neutral_temps && r > 0.0 && abs(r - profile.current_basal) < NEUTRAL_TEMP_EPSILON) {
             if (currentTemp.duration > 0) { rT.duration = 0; rT.rate = 0.0 }
             return
         }
@@ -101,7 +105,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         cgmDeltaPlausible:        Boolean,
         cgmWarmupReason:          String,
         uamSmbFraction:           Double = 1.0,
-        targetRespectEnabled:     Boolean = false,
         reboundWindowMins:        Double = 60.0,
         circCeil:                 Double = 1.0,
         fuelTrimStrength:         Double = 0.0,
@@ -168,7 +171,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
         val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
-        val ci  = min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi
+        // Upper clamp on carb impact. min(shortAvgDelta, delta) already blunts a single-reading
+        // spike, but a sustained sensor artifact survives that and ci is fed into every tick of
+        // the forward curve — so a bad sensor could inject well over 100 mg/dL of imaginary rise
+        // into predictedMin and straight into insulinReq. CI_MAX_MGDL_PER_5MIN is above any real
+        // absorption rate (1.5 mmol/L per 5 min), so it never truncates genuine carb impact.
+        // Only the positive side is capped: a large negative ci predicts a fall and produces
+        // restraint, which is the safe direction and must not be limited.
+        val ci  = (min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi).coerceAtMost(CI_MAX_MGDL_PER_5MIN)
+
+        // Every insulinReq-style division below uses this rather than dosingIsfMgdl directly.
+        // dosingIsfMgdl is profileISF scaled by learned multipliers and aggressiveness; if any of
+        // those ever produced a near-zero value the division would explode into an unbounded
+        // insulin request. The floor is far below any usable ISF, so it never binds in practice.
+        val safeIsfMgdl = dosingIsfMgdl.coerceAtLeast(MIN_DOSING_ISF_MGDL)
 
         val predictedBg = predictBgCurve(
             startBg       = currentBg,
@@ -226,7 +242,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // predictedMin to target. predictedMin already has existing IOB baked in,
         // so this naturally self-limits — no iobSufficient gate needed.
         val predMinGapMgdl = (predictedMin - targetBg).coerceAtLeast(0.0)
-        val insulinReq     = predMinGapMgdl / dosingIsfMgdl
+        val insulinReq     = predMinGapMgdl / safeIsfMgdl
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -264,7 +280,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the loop doesn't run again for 60+ minutes (connectivity loss, etc).
         fun suspendDurationMins(worstBgMgdl: Double): Int {
             val bgUndershoot    = targetBg - worstBgMgdl  // how far below target worst case goes
-            val insulinReqU     = bgUndershoot / dosingIsfMgdl
+            val insulinReqU     = bgUndershoot / safeIsfMgdl
             // Defensive floor on profileBasal — prevents Inf/NaN from profileBasal=0
             // (pump-off, misconfigured profile, or near-zero basalMultiplier).
             // 0.01 U/hr is well below any realistic basal rate but non-zero.
@@ -352,12 +368,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
                     // Target respect: reduce basal when pred_min is below target.
-                    // Gate: only fires for targets > 6.0 mmol normally, OR always if switch is on.
                     // Uses ISF math so small gaps → tiny reduction, large gaps → zero basal.
-                    predictedMin < targetBg &&
-                        (targetRespectEnabled || targetBg > (6.0 * MMOL_TO_MGDL)) -> {
+                    // This used to be gated behind `targetRespectEnabled || targetBg > 6.0 mmol`,
+                    // but the plugin is the only caller and passes the flag true unconditionally,
+                    // so the target threshold has never been reachable. Removed rather than left
+                    // in place looking like a live configuration option.
+                    predictedMin < targetBg -> {
                         val missingBgMgdl   = targetBg - predictedMin
-                        val missingInsulinU = missingBgMgdl / dosingIsfMgdl
+                        val missingInsulinU = missingBgMgdl / safeIsfMgdl
                         val reducedBasal    = profileBasal - (missingInsulinU / TBR_WINDOW_HOURS)
                         reducedBasal.coerceIn(0.0, profileBasal)
                     }
@@ -479,5 +497,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // IOB to a near-spent curve (iobFraction → 0) can't blow up the magnitude. At this
         // point remaining activity is tiny anyway, so the floor is a safe numerical guard.
         private const val IOB_FRACTION_FLOOR          = 0.02
+        private const val CI_MAX_MGDL_PER_5MIN        = 1.5 * MMOL_TO_MGDL  // 27 mg/dL per 5 min
+        // ~0.5 mmol/L per unit — an ISF this strong is outside any real profile; this exists
+        // purely so a corrupt multiplier can never turn a division into an unbounded dose.
+        private const val MIN_DOSING_ISF_MGDL         = 9.0
     }
 }
