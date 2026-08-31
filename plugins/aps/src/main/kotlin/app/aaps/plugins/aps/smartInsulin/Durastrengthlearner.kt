@@ -16,7 +16,9 @@ import javax.inject.Singleton
  *
  *   - DURA engaged meaningfully and the episode ended in a low → DURA over-corrected →
  *     reduce its strength for that mode. Nothing else owns this signal, and it's the
- *     safety-relevant direction.
+ *     safety-relevant direction. A dip close to the low guard that never reached it counts too,
+ *     at a reduced step — otherwise DURA can repeatedly hand BG back a whisker above the guard
+ *     and never once be told it pushed too hard.
  *   - DURA engaged but BG stayed stuck → do NOT raise strength here. [ModeIsfLearner]
  *     already treats "needed DURA" as evidence the mode's base ISF is too weak and
  *     strengthens that instead. Raising DURA strength on the same evidence would correct
@@ -41,7 +43,8 @@ class DuraStrengthLearner @Inject constructor(
     private var activeStartMs  = 0L
     private var episodeMaxDura = 1.0
 
-    // Post-episode watch window — a DURA-driven crash often lands after the mode itself ends
+    // Post-episode watch window — a DURA-driven crash often lands after the mode itself ends,
+    // and more so now that at-target auto-cancel ends modes while their insulin is still working.
     private var pendingMode:       MealMode? = null
     private var pendingUntilMs     = 0L
     private var pendingMaxDura     = 1.0
@@ -52,12 +55,18 @@ class DuraStrengthLearner @Inject constructor(
     init { restore() }
 
     companion object {
-        private const val TAIL_MS                   = 75 * 60_000L
+        private const val TAIL_MS                   = 105 * 60_000L
         private const val ENGAGED_THRESHOLD         = 1.10  // DURA must have actually done something
         private const val REDUCE_STEP               = 0.85  // -15% per crash
         private const val FACTOR_MIN                = 0.3
         private const val FACTOR_MAX                = 1.0
         private const val UNEXPLAINED_STEP_FRACTION = 0.4   // exercise low — soften, don't fully credit
+        /** Undershoot (close to the low guard, never below it) — DURA still pushed too hard, but
+         *  the outcome was milder than a crash, so the correction is milder too. */
+        private const val UNDERSHOOT_STEP_FRACTION  = 0.5
+        /** DURA needs time to have caused anything; a mode that starts inside the undershoot band
+         *  says nothing about DURA's strength in its first cycles. */
+        private const val UNDERSHOOT_MIN_ELAPSED_MS = 25 * 60_000L
 
         private const val K_FACTOR = "factor"
         private const val K_N      = "n"
@@ -81,7 +90,9 @@ class DuraStrengthLearner @Inject constructor(
         duraMult:          Double,
         exerciseSuspected: Boolean,
         nowMs:             Long,
-        baseSignature:     Double = 0.0
+        baseSignature:     Double = 0.0,
+        undershootActive:  Boolean = false  // close to the low guard but above it — a DURA
+        // over-correction that never became a hypo is still a DURA over-correction
     ) {
         if (activeModeNow != null) {
             if (activeMode == null || modeStartMs != activeStartMs) {
@@ -104,8 +115,9 @@ class DuraStrengthLearner @Inject constructor(
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             // A low while the mode is still running, with DURA meaningfully engaged, is
             // immediate evidence — act now rather than waiting for the mode to expire.
-            if (lowActive && episodeMaxDura >= ENGAGED_THRESHOLD) {
-                reduce(activeModeNow, exerciseSuspected, episodeMaxDura, "during")
+            val undershootCounts = undershootActive && (nowMs - activeStartMs) >= UNDERSHOOT_MIN_ELAPSED_MS
+            if ((lowActive || undershootCounts) && episodeMaxDura >= ENGAGED_THRESHOLD) {
+                reduce(activeModeNow, exerciseSuspected, episodeMaxDura, "during", undershoot = !lowActive)
                 episodeMaxDura = 1.0  // don't fire repeatedly on one low
             }
             return
@@ -124,8 +136,8 @@ class DuraStrengthLearner @Inject constructor(
         }
 
         val p = pendingMode ?: return
-        if (lowActive) {
-            reduce(p, exerciseSuspected, pendingMaxDura, "in the tail after")
+        if (lowActive || undershootActive) {
+            reduce(p, exerciseSuspected, pendingMaxDura, "in the tail after", undershoot = !lowActive)
             pendingMode = null
             return
         }
@@ -139,14 +151,18 @@ class DuraStrengthLearner @Inject constructor(
         }
     }
 
-    private fun reduce(mode: MealMode, exerciseSuspected: Boolean, maxDura: Double, whenTxt: String) {
+    private fun reduce(mode: MealMode, exerciseSuspected: Boolean, maxDura: Double, whenTxt: String, undershoot: Boolean = false) {
         val s = states.getOrPut(mode) { ModeState() }
-        val step = if (exerciseSuspected) 1.0 - (1.0 - REDUCE_STEP) * UNEXPLAINED_STEP_FRACTION else REDUCE_STEP
+        var fraction = 1.0
+        if (exerciseSuspected) fraction *= UNEXPLAINED_STEP_FRACTION
+        if (undershoot)        fraction *= UNDERSHOOT_STEP_FRACTION
+        val step = 1.0 - (1.0 - REDUCE_STEP) * fraction
         s.factor = (s.factor * step).coerceIn(FACTOR_MIN, FACTOR_MAX)
         s.episodes++
         persist()
-        lastOutcome = "low $whenTxt ${mode.label} with DURA ×${"%.2f".format(maxDura)}" +
-            (if (exerciseSuspected) ", but BG fell faster than insulin explains — reduced at a smaller step" else " — DURA strength reduced") +
+        lastOutcome = (if (undershoot) "dip toward the low guard $whenTxt " else "low $whenTxt ") + "${mode.label} with DURA ×${"%.2f".format(maxDura)}" +
+            (if (exerciseSuspected) ", but BG fell faster than insulin explains" else "") +
+            " — DURA strength reduced" + (if (fraction < 1.0) " at a smaller step" else "") +
             " → ×${"%.2f".format(s.factor)} (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
     }

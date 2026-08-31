@@ -17,6 +17,10 @@ import javax.inject.Singleton
  * as a whole AFTER a settling tail, when absorption should be finished:
  *
  *   - Episode (or tail) contained a low/rebound  → mode ISF WEAKENS (bigger step — safety bias)
+ *   - Episode (or tail) dipped close to the low guard → mode ISF WEAKENS at a reduced step.
+ *     Scoring only frank hypos left a blind spot big enough to drive through: a mode that hands
+ *     BG back just above the guard never tripped it, so it was recorded as a clean success. The
+ *     caller decides how close counts, anchored to the same low guard.
  *   - BG still above target+margin at evaluation → mode ISF STRENGTHENS (small step)
  *   - DURA had to intervene hard mid-episode     → STRENGTHENS (a clean ending that only
  *     happened because DURA cranked ISF still means the base mode ISF is too weak)
@@ -44,6 +48,8 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLow       = false
     private var episodeEarlyLow  = false  // low inside the UAM entry window — belongs to
     // UamEntryFractionLearner (shape), not to this learner (magnitude)
+    private var episodeUndershoot = false  // BG dropped close to the low guard without reaching
+    // it — the mode overshot its job, just not far enough to be scored as a hypo
     private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
     // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
@@ -54,6 +60,16 @@ class ModeIsfLearner @Inject constructor(
     private var pendingMaxDura   = 1.0
     private var pendingTailGrams = 0.0
 
+    // Post-episode low/undershoot watch. Deliberately separate from the pending evaluation:
+    // the evaluation asks "did this land well?" and is legitimately voided by contamination or
+    // by a new activation, whereas this asks "did this mode drive BG too far down?" — a safety
+    // signal that must survive both. It matters more since at-target auto-cancel landed: a mode
+    // that cancels the moment BG reaches target ends with MORE insulin on board than one that
+    // ran to expiry, so the low it causes now routinely arrives after the mode is already gone.
+    private var watchMode:     MealMode? = null
+    private var watchUntilMs  = 0L
+    private var watchReduced  = false  // evaluation was voided — still weaken, but at a smaller step
+
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
     var lastOutcome = ""
         private set
@@ -62,6 +78,10 @@ class ModeIsfLearner @Inject constructor(
 
     companion object {
         private const val TAIL_MS                 = 75 * 60_000L  // settling tail before judging the episode
+        /** How long after a mode ends its insulin can still be blamed for a low. Outlives
+         *  [TAIL_MS] because the evaluation only needs absorption to be finished, whereas the
+         *  low watch needs the mode's *insulin* to be finished — which takes longer. */
+        private const val WATCH_MS                = TAIL_MS + 30 * 60_000L
         private const val STRENGTHEN_STEP         = 0.975         // -2.5% per strengthen (lower ISF = more insulin)
         private const val WEAKEN_STEP             = 1.05          // +5% per weaken — asymmetric, safety-biased
         /**
@@ -74,6 +94,22 @@ class ModeIsfLearner @Inject constructor(
          * than discarding the observation).
          */
         private const val UNEXPLAINED_STEP_FRACTION = 0.4
+        /**
+         * Step fraction for an undershoot — BG close to the low guard but never below it.
+         * Real evidence the mode dosed too hard, but a milder outcome than a hypo, so it earns a
+         * milder correction. Without this the learner is blind to exactly the episode that ends
+         * a whisker above the guard: not a low, yet plainly too much insulin.
+         */
+        private const val UNDERSHOOT_STEP_FRACTION = 0.5
+        /**
+         * An undershoot only counts once the mode has had time to act. Guards the case of a mode
+         * started at a BG that is already inside the undershoot band (a pre-bolus taken at 4.7),
+         * where the first cycles say nothing about whether the dose was too big.
+         */
+        private const val UNDERSHOOT_MIN_ELAPSED_MS = 25 * 60_000L
+        /** Step fraction once the evaluation has been voided — the low is still real, but the
+         *  episode is no longer clean enough to credit it in full. */
+        private const val VOIDED_STEP_FRACTION      = 0.5
         private const val MULT_MIN                = 0.6
         private const val MULT_MAX                = 1.4
         private const val STRENGTHEN_MARGIN_MGDL  = 18.0          // ~1 mmol above target at eval = under-dosed
@@ -110,14 +146,20 @@ class ModeIsfLearner @Inject constructor(
         nowMs:          Long,
         baseSignature:  Double = 0.0,  // fingerprint of the mode's user-set ISF override(s);
         // a change means the user re-based the mode, so the old learned correction is stale
-        exerciseSuspected: Boolean = false  // BG dropping faster than insulin explains — a low
+        exerciseSuspected: Boolean = false,  // BG dropping faster than insulin explains — a low
         // right now is probably not an ISF problem
+        undershootActive: Boolean = false  // BG within the caller's undershoot band above the low
+        // guard — too far down to call the episode a success, not far enough to call it a hypo
     ) {
         if (activeModeNow != null) {
             if (activeMode == null || modeStartMs != activeStartMs) {
                 // A new activation while an evaluation is still pending contaminates it —
                 // the tail can no longer be judged cleanly.
                 pendingMode?.let { skipPending("superseded by new ${activeModeNow.label} activation") }
+
+                // The watch hands over to the new episode, which tracks its own lows from here.
+                // Keeping the old one open would weaken twice for a single low.
+                clearWatch()
 
                 // Base-change reset: the learned multiplier is a correction RELATIVE to the
                 // base ISF the user had set when it was learned. If the user changes the
@@ -138,6 +180,7 @@ class ModeIsfLearner @Inject constructor(
                 activeStartMs   = modeStartMs
                 episodeLow      = false
                 episodeEarlyLow = false
+                episodeUndershoot = false
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
             }
@@ -151,6 +194,9 @@ class ModeIsfLearner @Inject constructor(
                     (nowMs - activeStartMs) <= UamEntryFractionLearner.ENTRY_ATTRIBUTION_MS
                 if (early) episodeEarlyLow = true else episodeLow = true
                 if (exerciseSuspected) episodeLowWasUnexplained = true
+            } else if (undershootActive && (nowMs - activeStartMs) >= UNDERSHOOT_MIN_ELAPSED_MS) {
+                episodeUndershoot = true
+                if (exerciseSuspected) episodeLowWasUnexplained = true
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             return
@@ -161,39 +207,65 @@ class ModeIsfLearner @Inject constructor(
             val ended        = activeMode!!
             val hadLow       = episodeLow
             val hadEarlyLow  = episodeEarlyLow
+            val hadUndershoot = episodeUndershoot
             val maxDura      = episodeMaxDura
+            val unexplained  = episodeLowWasUnexplained
             activeMode    = null
             activeStartMs = 0L
             if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
-                val unexplained = episodeLowWasUnexplained
                 applyOutcome(ended, weakenStep(unexplained),
                              if (unexplained) "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
                              else "low during ${ended.label} episode — weakened")
+                clearWatch()
             } else if (hadEarlyLow) {
                 // Only an early (entry-window) low: the entry-fraction learner is acting on it.
                 // Judging it here too would correct one mistake twice.
                 skipPending("early low after ${ended.label} entry — attributed to UAM entry fraction")
+                clearWatch()
+            } else if (hadUndershoot) {
+                // Never reached the low guard, so no other learner sees this at all — but the
+                // mode drove BG down near the low guard, which is over-dosing by any reading of it.
+                applyOutcome(ended, weakenStep(unexplained, undershoot = true),
+                             "${ended.label} undershot toward the low guard — weakened at reduced step")
+                clearWatch()
             } else {
                 pendingMode      = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
                 pendingTailGrams = 0.0
+                openWatch(ended, nowMs)
             }
         }
 
-        val p = pendingMode ?: return
-        if (lowActive) {
-            applyOutcome(p, weakenStep(exerciseSuspected),
-                         if (exerciseSuspected) "low in ${p.label} settling tail, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                         else "low during ${p.label} settling tail — weakened")
-            pendingMode = null
-            return
+        // Low watch, checked before (and independently of) the pending evaluation. A mode that
+        // auto-cancels at target hands back a BG that looks fine and an IOB tail that isn't, so
+        // this has to keep looking after the evaluation itself has been voided or superseded.
+        watchMode?.let { w ->
+            if (lowActive || undershootActive) {
+                val soft = undershootActive && !lowActive
+                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced),
+                             (if (soft) "BG near the low guard after ${w.label} ended" else "low after ${w.label} ended") +
+                                 (if (exerciseSuspected) ", but BG was falling faster than insulin explains (exercise?)" else "") +
+                                 (if (watchReduced) ", episode no longer clean" else "") +
+                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced) " at reduced step" else ""))
+                clearWatch()
+                pendingMode = null
+                return
+            }
+            if (nowMs >= watchUntilMs) clearWatch()
         }
+
+        val p = pendingMode ?: return
         pendingTailGrams += tailGramsThisCycle(deltaMgdl, activityPerMin, fastingIsfMgdl, carbRatio)
         if (pendingTailGrams > TAIL_CONTAMINATION_G) {
+            // Voids the *evaluation* only. The low watch stays open at a reduced step: BG that
+            // refuses to fall as fast as the insulin on board predicts reads as fresh absorption,
+            // which is exactly what a fat tail looks like — so this fires routinely on the very
+            // episodes most likely to end low, and dropping the watch here would lose them.
             skipPending("fresh absorption (~${"%.0f".format(pendingTailGrams)}g) in ${p.label} tail")
+            watchReduced = true
             return
         }
         if (nowMs >= pendingEvalAtMs) {
@@ -223,9 +295,31 @@ class ModeIsfLearner @Inject constructor(
         return ci / (isfMgdl / carbRatio)
     }
 
-    /** Full weaken step, or a reduced one when the low looks externally caused. */
-    private fun weakenStep(unexplained: Boolean): Double =
-        if (unexplained) 1.0 + (WEAKEN_STEP - 1.0) * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+    /**
+     * Weaken step, scaled down for each reason to be less than fully confident in the signal:
+     * the drop looks externally caused, the outcome was an undershoot rather than a hypo, or the
+     * episode was no longer clean when the low landed. Reasons compound — always reduce, never
+     * discard, since this is the safety direction.
+     */
+    private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false): Double {
+        var fraction = 1.0
+        if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
+        if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
+        if (voided)      fraction *= VOIDED_STEP_FRACTION
+        return 1.0 + (WEAKEN_STEP - 1.0) * fraction
+    }
+
+    private fun openWatch(mode: MealMode, nowMs: Long) {
+        watchMode    = mode
+        watchUntilMs = nowMs + WATCH_MS
+        watchReduced = false
+    }
+
+    private fun clearWatch() {
+        watchMode    = null
+        watchUntilMs = 0L
+        watchReduced = false
+    }
 
     private fun applyOutcome(mode: MealMode, step: Double, reason: String) {
         val s = states.getOrPut(mode) { ModeState() }
@@ -245,8 +339,9 @@ class ModeIsfLearner @Inject constructor(
     fun reset() {
         states.clear()
         activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
-        episodeLowWasUnexplained = false; episodeMaxDura = 1.0
+        episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
         pendingMode = null
+        clearWatch()
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, "") }
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: reset")

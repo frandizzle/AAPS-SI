@@ -192,6 +192,35 @@ open class SmartInsulinPlugin @Inject constructor(
         private const val AUTO_CANCEL_TARGET_EPSILON_MGDL = 0.18
 
         /**
+         * How much of the gap between the low guard and target counts as "undershot" for the
+         * episode-outcome learners — the lower half of the room a mode has to work in.
+         *
+         * A fixed offset above the guard can't work, because the two settings move independently:
+         * a 4.0 guard with a 5.5 target has 1.5 mmol of room, while a 4.7 guard with the same
+         * target has 0.8, and +1 mmol there would land at 5.7 — above target, where nothing is
+         * wrong at all. Scaling keeps the band meaning the same thing at any pair of settings,
+         * and by construction it can never reach target.
+         */
+        private const val UNDERSHOOT_BAND_FRACTION = 0.5
+
+        /** Absolute cap on the band's width (1 mmol), so a high profile target can't stretch it
+         *  up into BG that is simply normal. */
+        private const val UNDERSHOOT_BAND_MAX_MGDL = 18.0
+
+        /**
+         * Upper edge of the undershoot band the episode-outcome learners score against: BG below
+         * this but at or above the low guard means the mode pushed too far without producing a hypo.
+         *
+         * Both edges come from settings the user already tunes. [targetMgdl] should be the profile
+         * target, not the effective one — the band describes what counts as too low for this person,
+         * which shouldn't drift with a temporary exercise target. A target at or below the guard
+         * leaves no room and yields an empty band, so only frank lows score.
+         */
+        internal fun undershootCeilingMgdl(lowGuardMgdl: Double, targetMgdl: Double): Double =
+            (lowGuardMgdl + UNDERSHOOT_BAND_FRACTION * (targetMgdl - lowGuardMgdl))
+                .coerceAtMost(lowGuardMgdl + UNDERSHOOT_BAND_MAX_MGDL)
+
+        /**
          * Whether an active meal override should be auto-cancelled because BG has come back to
          * profile target.
          *
@@ -870,6 +899,20 @@ open class SmartInsulinPlugin @Inject constructor(
         unexplainedDropTracker.onCycle(glucoseStatus.delta, iobArray.firstOrNull()?.activity ?: 0.0, trueIsfMgdl, now)
         val exerciseSuspected = unexplainedDropTracker.exerciseSuspected
 
+        // Two severities of "this mode gave too much", both fed to the episode-outcome learners.
+        // lowActive is a frank hypo (or its rebound window); undershootActive is the band just
+        // above it — BG handed back at, say, 4.4 mmol. The learners used to see only the former,
+        // so a mode that reliably undershot to just above the low guard was scored as a success
+        // every time and never weakened.
+        //
+        // The band spans the lower half of the room between the low guard and target, so it
+        // follows both settings instead of being pinned to a separate preference, and a mode that
+        // lands on target can never be read as having undershot.
+        val lowGuardNowMgdl   = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
+        val undershootCeiling = undershootCeilingMgdl(lowGuardNowMgdl, profile.getTargetMgdl())
+        val lowActiveNow      = glucoseStatus.glucose < lowGuardNowMgdl || inReboundWindow
+        val undershootNow     = !lowActiveNow && glucoseStatus.glucose < undershootCeiling
+
         // -- Per-mode ISF episode-outcome learner -------------------------------
         // Judges each completed mode activation after a settling tail (low → weaken,
         // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
@@ -880,7 +923,7 @@ open class SmartInsulinPlugin @Inject constructor(
             modeStartMs    = mealOverrideManager.modeStartMs,
             bgMgdl         = glucoseStatus.glucose,
             targetMgdl     = targetBg,
-            lowActive      = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            lowActive      = lowActiveNow,
             duraMult       = duraMultThisCycle,
             deltaMgdl      = glucoseStatus.delta,
             activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
@@ -888,7 +931,8 @@ open class SmartInsulinPlugin @Inject constructor(
             carbRatio      = profile.getIc(),
             nowMs          = now,
             baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0,
-            exerciseSuspected = exerciseSuspected
+            exerciseSuspected = exerciseSuspected,
+            undershootActive  = undershootNow
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -900,7 +944,7 @@ open class SmartInsulinPlugin @Inject constructor(
             modeStartMs    = mealOverrideManager.modeStartMs,
             bgMgdl         = glucoseStatus.glucose,
             targetMgdl     = targetBg,
-            lowActive      = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            lowActive      = lowActiveNow,
             deltaMgdl      = glucoseStatus.delta,
             activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
             fastingIsfMgdl = trueIsfMgdl,
@@ -917,11 +961,12 @@ open class SmartInsulinPlugin @Inject constructor(
         duraStrengthLearner.onCycle(
             activeModeNow     = mealOverrideManager.activeMealMode,
             modeStartMs       = mealOverrideManager.modeStartMs,
-            lowActive         = glucoseStatus.glucose < spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard) || inReboundWindow,
+            lowActive         = lowActiveNow,
             duraMult          = duraMultThisCycle,
             exerciseSuspected = exerciseSuspected,
             nowMs             = now,
-            baseSignature     = mealOverrideManager.activeDuraStrength
+            baseSignature     = mealOverrideManager.activeDuraStrength,
+            undershootActive  = undershootNow
         )
 
         // -- UAM entry SMB fraction --------------------------------------------
