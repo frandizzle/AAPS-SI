@@ -488,24 +488,6 @@ class UamController @Inject constructor(
         else                   -> 30L
     }
 
-    /**
-     * Called each loop cycle when a UAM mode is currently active.
-     * Cancels the active UAM override if BG has returned to target or below.
-     *
-     * @param currentBgMmol   latest CGM reading in mmol/L
-     * @param profileTargetMmol profile target in mmol/L
-     * @return true if UAM was cancelled this cycle
-     */
-    fun checkAutoCancelUam(currentBgMmol: Double, profileTargetMmol: Double): Boolean {
-        if (!sp.getBoolean(BooleanKey.ApsSmartInsulinUamEnabled.key, BooleanKey.ApsSmartInsulinUamEnabled.defaultValue)) return false
-        if (currentBgMmol <= profileTargetMmol + 0.01) {
-            aapsLogger.debug(LTag.APS, "UAM: auto-cancel — BG ${fmtBg(currentBgMmol)} returned to/below target ${fmtBg(profileTargetMmol)}")
-            mealOverrideManager.cancelOverride()
-            return true
-        }
-        return false
-    }
-
     private fun uamIsfMgdl(mode: MealMode): Double = when (mode) {
         MealMode.UAM_BREAKFAST   -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf)
         MealMode.UAM_LUNCH       -> isfPrefMgdl(UnitDoubleKey.ApsSmartInsulinUamLunchIsf)

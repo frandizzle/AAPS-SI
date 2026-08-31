@@ -186,6 +186,28 @@ open class SmartInsulinPlugin @Inject constructor(
         private const val TABLE_BUCKET_MINUTE  = 30
         private const val MIN_TOTAL_BASAL_MULT = 0.5
         private const val MAX_TOTAL_BASAL_MULT = 1.5
+
+        /** Tolerance on the at-target comparison (mg/dL) — ~0.01 mmol, so a reading sitting
+         *  exactly on target counts as having reached it rather than missing by a rounding step. */
+        private const val AUTO_CANCEL_TARGET_EPSILON_MGDL = 0.18
+
+        /**
+         * Whether an active meal override should be auto-cancelled because BG has come back to
+         * profile target.
+         *
+         * Scope is deliberate: this applies to the AUTO-DETECTED (UAM) modes only — including
+         * Protein/Fat. Those modes are the loop's own guess that food is on board, so once BG is
+         * back at target the guess has served its purpose and holding an aggressive mode ISF
+         * against an at-target BG only risks driving through it.
+         *
+         * The manually-set meal modes (Breakfast, Lunch, Dinner, Low Carb, Extended) are NOT
+         * cancelled here. The user declared those deliberately and knows what they ate; they run
+         * for their configured duration and are the user's to cancel.
+         */
+        internal fun shouldAutoCancelAtTarget(mode: MealMode?, bgMgdl: Double, targetMgdl: Double): Boolean {
+            if (mode == null || !mode.isUam) return false
+            return bgMgdl <= targetMgdl + AUTO_CANCEL_TARGET_EPSILON_MGDL
+        }
     }
 
     val isMmol: Boolean get() = profileUtil.units == GlucoseUnit.MMOL
@@ -760,17 +782,19 @@ open class SmartInsulinPlugin @Inject constructor(
             loopRestraining = inReboundWindow || (previousAPSResult?.let { it.rate == 0.0 && it.duration > 0 } ?: false)
         )
 
-        // Auto-cancel UAM mode if BG has returned to profile target or below.
+        // Auto-cancel an auto-detected (UAM) mode once BG has returned to profile target.
         // Must be checked here (not in UamController) because UamController.onLoopCycle()
         // exits early when currentMealMode != FASTING and never runs during an active UAM mode.
+        //
+        // Protein/Fat used to be excluded from this, so it was the one UAM mode that kept running
+        // an aggressive mode ISF after BG had already come back to target — it only ended on its
+        // duration timer. Included now: see shouldAutoCancelAtTarget for the scope rule.
         val activeUamMode = mealOverrideManager.activeMealMode
-        if (activeUamMode != null && activeUamMode.isUam && activeUamMode != MealMode.UAM_PROTEIN_FAT) {
-            val bgMmol = glucoseStatus.glucose / 18.0
-            val targetMmol = profile.getTargetMgdl() / 18.0
-            if (bgMmol <= targetMmol + 0.01) {
-                aapsLogger.debug(LTag.APS, "SmartInsulin: UAM auto-cancel — BG ${String.format("%.1f", bgMmol)} ≤ target ${String.format("%.1f", targetMmol)} mmol")
-                mealOverrideManager.cancelOverride()
-            }
+        if (shouldAutoCancelAtTarget(activeUamMode, glucoseStatus.glucose, profile.getTargetMgdl())) {
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin: UAM auto-cancel (${activeUamMode?.label}) — BG ${fmtBg(glucoseStatus.glucose)} " +
+                                 "≤ target ${fmtBg(profile.getTargetMgdl())} $unitLabel")
+            mealOverrideManager.cancelOverride()
         }
 
         uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date)
