@@ -1321,6 +1321,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDurationMins, null, null, R.string.si_uam_proteinfat_duration_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatStuckReadings, null, null, R.string.si_uam_proteinfat_stuck_readings_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold, profileUtil, sp, null, R.string.si_uam_proteinfat_threshold_title))
+                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamPfTakeover, R.string.si_uam_pf_takeover_summary, R.string.si_uam_pf_takeover_title))
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_isf_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDayStartHour, null, null, R.string.si_uam_proteinfat_day_start_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDayEndHour, null, null, R.string.si_uam_proteinfat_day_end_title))

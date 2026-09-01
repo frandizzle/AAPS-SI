@@ -161,6 +161,23 @@ class ModeIsfLearner @Inject constructor(
                 // Keeping the old one open would weaken twice for a single low.
                 clearWatch()
 
+                // A mode replaced mid-episode (a UAM window taking over from P/F, or a meal
+                // activated while a UAM runs) can never be judged on where BG lands — that tail
+                // belongs to whatever took over. But a low or an undershoot it had ALREADY
+                // caused is evidence about its own dose, and would otherwise be discarded along
+                // with the episode. episodeEarlyLow is deliberately not carried forward: the
+                // entry-fraction learner owns entry-window lows.
+                activeMode?.let { superseded ->
+                    when {
+                        episodeLow        ->
+                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained),
+                                         "low during ${superseded.label} before ${activeModeNow.label} took over — weakened")
+                        episodeUndershoot ->
+                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true),
+                                         "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step")
+                    }
+                }
+
                 // Base-change reset: the learned multiplier is a correction RELATIVE to the
                 // base ISF the user had set when it was learned. If the user changes the
                 // override (often in the same direction the learner was already pushing),

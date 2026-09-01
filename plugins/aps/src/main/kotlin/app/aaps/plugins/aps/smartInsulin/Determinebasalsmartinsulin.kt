@@ -259,7 +259,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val pkLabel = if (learnedProfile.sampleCount < PEAK_LEARNING_MIN_SAMPLES) "Peak" else "Learned pk"
         sb.append(" | ${pkLabel}=${learnedProfile.safePeakMinutes.toInt()}m DIA=${learnedProfile.safeDiaMinutes.toInt()}m")
         sb.append(" | aggr=${"%.2f".format(Locale.US, aggressiveness)}")
-        if (inDawnWindow) sb.append(" | dawn(-${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
+        // The pref is the fraction of SMB KEPT, not the amount removed — print it that way.
+        if (inDawnWindow) sb.append(" | dawn(smb ${"%.0f".format(Locale.US, dawnSmbReduction * 100)}%)")
         if (highTempTargetActive) sb.append(" | highTT=smbOff")
         if (inReboundWindow) {
             val reboundMinsLeft = (reboundWindowMins - reboundMins).coerceAtLeast(0.0)

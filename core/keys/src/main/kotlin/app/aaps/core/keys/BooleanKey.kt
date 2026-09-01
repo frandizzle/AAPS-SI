@@ -58,6 +58,9 @@ enum class BooleanKey(
     ApsSmartInsulinUamSnackEnabled("si_uam_snack_enabled", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamAfternoonEnabled("si_uam_afternoon_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
     ApsSmartInsulinUamProteinFatEnabled("si_uam_proteinfat_enabled", false, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
+    // Lets a UAM meal window supersede a running P/F. P/F is an auto-detected digestive tail
+    // dosed gently; real carbs eaten on top of it produce a rise that ISF was never sized for.
+    ApsSmartInsulinUamPfTakeover("si_uam_pf_takeover", true, defaultedBySM = true, dependency = ApsSmartInsulinUamProteinFatEnabled),
     ApsSmartInsulinUamWobbleTolerance("si_uam_wobble_tolerance", true, defaultedBySM = true, dependency = ApsSmartInsulinUamEnabled),
 
     // DURA_ISF (per meal mode) — strengthens ISF over time while BG sits stuck above target

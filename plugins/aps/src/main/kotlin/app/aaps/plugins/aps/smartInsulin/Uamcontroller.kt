@@ -51,6 +51,7 @@ class UamController @Inject constructor(
     private var currentlyInPostMealLockout = false
     private var currentlyPastNightCutoff   = false
     private var currentlyInMealMode        = false  // true when meal/UAM mode active — P/F blocked
+    private var currentlyPfTakeoverArmed   = false  // P/F running and a UAM window may supersede it
     private var currentlyCgmWarmup         = false  // true when CGM is in warmup — UAM/P/F blocked
     private var currentlyHighTempTarget    = false  // true when high temp target active — UAM/P/F blocked
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — tracked for display only; P/F no longer requires it
@@ -138,6 +139,7 @@ class UamController @Inject constructor(
         currentlyCgmWarmup         = cgmInWarmup && sp.getBoolean(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.key, BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.defaultValue)
         currentlyHighTempTarget    = highTempTarget
         justFiredThisCycle         = null
+        currentlyPfTakeoverArmed   = false
 
         if (lastMealEndedMs > 0L) {
             val isExpired = (System.currentTimeMillis() - lastMealEndedMs) > 10 * 60 * 60 * 1000L
@@ -165,9 +167,23 @@ class UamController @Inject constructor(
             return
         }
 
-        if (currentMealMode != MealMode.FASTING || highTempTarget) {
+        // A UAM meal window is allowed to supersede a running P/F. P/F is auto-detected from a
+        // stuck-high pattern and dosed for a slow digestive tail; carbs eaten on top of it spike
+        // through a ceiling that gentle ISF was never sized for, and P/F has no way to escalate
+        // itself — it only ever re-fires from FASTING. Only P/F is superseded: a mode the user
+        // activated deliberately, or a UAM entry already running, owns its window until it expires.
+        val pfTakeover = currentMealMode == MealMode.UAM_PROTEIN_FAT &&
+            sp.getBoolean(BooleanKey.ApsSmartInsulinUamPfTakeover.key, BooleanKey.ApsSmartInsulinUamPfTakeover.defaultValue)
+        currentlyPfTakeoverArmed = pfTakeover
+
+        if ((currentMealMode != MealMode.FASTING && !pfTakeover) || highTempTarget) {
             resetStreak(); stuckHighReadings = 0; return
         }
+
+        // Escalating out of P/F is judged on the same terms as a rise inside a post-meal lockout:
+        // P/F insulin is already working, so only a rise clearly bigger than P/F's own residual
+        // movement should promote the episode to a full meal mode.
+        val dirtyWindow = inPostMealLockout || pfTakeover
 
         if (cgmInWarmup && sp.getBoolean(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.key, BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.defaultValue)) {
             resetStreak(); stuckHighReadings = 0; return
@@ -221,7 +237,7 @@ class UamController @Inject constructor(
         lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol) currentBgMmol - burstPrevBgMmol else 0.0
 
         val uamMode = resolveUamMode(currentHour, currentMinute) ?: run {
-            lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, inPostMealLockout)
+            lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, dirtyWindow)
             burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs
             resetStreak(); return
         }
@@ -237,7 +253,9 @@ class UamController @Inject constructor(
         }
 
         val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        if (burstThresholdPref > 0.0 && burstAnchorBgMmol > 0.0 && freshCycle && lastBurstRiseMmol >= burstThresholdPref - 0.01) {
+        // Scaled for a takeover only — the post-meal-lockout burst threshold is left as it is.
+        val burstThreshold     = burstThresholdPref * (if (pfTakeover) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0)
+        if (burstThresholdPref > 0.0 && burstAnchorBgMmol > 0.0 && freshCycle && lastBurstRiseMmol >= burstThreshold - 0.01) {
             triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
             resetStreak()
             // Clear all burst state so we don't immediately re-fire on the next reading.
@@ -251,8 +269,8 @@ class UamController @Inject constructor(
 
         val riseMinDeltaBase   = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
         val riseReadingsNeeded = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-        val dirtyMultiplier    = if (inPostMealLockout) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
-        val unexpectedMultiplier = if (inPostMealLockout) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
+        val dirtyMultiplier    = if (dirtyWindow) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
+        val unexpectedMultiplier = if (dirtyWindow) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
         val unexpectedMin      = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * unexpectedMultiplier
@@ -280,7 +298,7 @@ class UamController @Inject constructor(
                 unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${fmtDelta(unexpectedShort)} < ${fmtThresh(unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
                 else                                  -> "threshold not met"
             }
-            lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, inPostMealLockout)
+            lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, dirtyWindow)
             val preserveBurst = bgAtStreakStart > 0.0 && currentBgMmol > bgAtStreakStart
             val savedStreakStart = bgAtStreakStart
             resetStreak()
@@ -345,13 +363,20 @@ class UamController @Inject constructor(
     }
 
     fun statusString(): String? {
-        val dirtyTag = if (currentlyInPostMealLockout) "[dirty] " else ""
+        // A takeover watch runs on the dirty-window thresholds too, and says so distinctly —
+        // "watching" while a mode is already active only makes sense once you can see why.
+        val dirtyWindow = currentlyInPostMealLockout || currentlyPfTakeoverArmed
+        val dirtyTag = when {
+            currentlyPfTakeoverArmed   -> "[over P/F] "
+            currentlyInPostMealLockout -> "[dirty] "
+            else                       -> ""
+        }
         val msSincePostRebound   = if (reboundExpiredMs > 0L) System.currentTimeMillis() - reboundExpiredMs else Long.MAX_VALUE
         val inPostReboundLockout = msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L
         val effectiveBypass      = inPostReboundLockout && lastEpisodeWasSoftLanding
 
         val uamLine = when {
-            currentlyInMealMode        -> null
+            currentlyInMealMode && !currentlyPfTakeoverArmed -> null
             currentlyHighTempTarget    -> "UAM: off (high temp target set)"
             currentlyCgmWarmup         -> "UAM: off (new sensor <24h)"
             currentlyPastNightCutoff   -> "UAM: off (outside hours)"
@@ -362,8 +387,9 @@ class UamController @Inject constructor(
             }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-                val threshNote = if (currentlyInPostMealLockout) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+                val threshNote = if (dirtyWindow) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold) *
+                    (if (currentlyPfTakeoverArmed) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0)
                 // Show burst breakdown once there's a prior accumulated rise (2+ readings)
                 val burstNote = if (burstThreshold > 0.0) {
                     val burstLast = lastBurstDeltaMmol
@@ -381,7 +407,7 @@ class UamController @Inject constructor(
             else -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
                 val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold)
-                val dirtyNote = if (currentlyInPostMealLockout) " [dirty]" else ""
+                val dirtyNote = if (dirtyWindow) " [dirty]" else ""
                 "UAM: ${dirtyTag}armed (0/$needed >=${fmtBg(triggerThresholdMmol)}$unitLabel$dirtyNote)"
             }
         }
@@ -395,6 +421,7 @@ class UamController @Inject constructor(
                 val leftMins = POST_REBOUND_LOCKOUT_MINS - msSincePostRebound / 60_000L
                 "P/F: off (rebound lockout — ${leftMins}min left)"
             }
+            currentlyPfTakeoverArmed -> "P/F: running (UAM window may take over)"
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
             else -> {
                 val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
