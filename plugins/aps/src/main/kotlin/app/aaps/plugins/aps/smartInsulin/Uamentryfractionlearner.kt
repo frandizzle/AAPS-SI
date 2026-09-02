@@ -20,8 +20,9 @@ import javax.inject.Singleton
  *
  *   - Low EARLY (within [ENTRY_ATTRIBUTION_MS] of entry, while the entry burst is peaking)
  *       → too front-loaded → fraction DOWN. [ModeIsfLearner] skips that episode entirely.
- *   - Big BG excursion after entry BUT the episode still ended on target
- *       → total insulin was right, it just arrived too late → fraction UP.
+ *   - Big BG excursion after entry, or a peak well above target, BUT the episode still ended
+ *       on target → total insulin was right, it just arrived too late → fraction UP, by a step
+ *       that scales with how far over it went.
  *   - Ended HIGH → that's a magnitude problem, not shape → fraction unchanged
  *       ([ModeIsfLearner] owns it).
  *   - Low LATE (in the settling tail) → magnitude problem → fraction unchanged.
@@ -41,7 +42,15 @@ class UamEntryFractionLearner @Inject constructor(
     private val aapsLogger: AAPSLogger
 ) {
 
-    private class ModeState(var offset: Double = 0.0, var episodes: Int = 0, var baseSig: Double = Double.NaN)
+    private class ModeState(
+        var offset:     Double = 0.0,
+        var episodes:   Int    = 0,
+        var baseSig:    Double = Double.NaN,
+        /** Why this mode last did (or didn't) move — a global "last outcome" can't answer
+         *  "why has Lunch sat at n=5 without budging", which is the question that actually
+         *  gets asked of a learner this slow. */
+        var lastReason: String = ""
+    )
 
     private val states = mutableMapOf<MealMode, ModeState>()
 
@@ -59,11 +68,17 @@ class UamEntryFractionLearner @Inject constructor(
     private var pendingEvalAtMs       = 0L
     private var pendingExcursion      = 0.0
     private var pendingPeakOffsetMs   = 0L
+    private var pendingPeakMgdl       = 0.0
+    private var pendingStartMs        = 0L
     private var pendingTailGrams      = 0.0
 
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
     var lastOutcome = ""
         private set
+
+    /** Set when a strengthen was warranted but the fraction is already railed at [FRACTION_MAX].
+     *  Read once by the caller via [consumeMagnitudeHandoff]. */
+    private var magnitudeHandoff: Pair<MealMode, Long>? = null
 
     init { restore() }
 
@@ -76,12 +91,45 @@ class UamEntryFractionLearner @Inject constructor(
         private const val OFFSET_MIN                 = -0.25
         private const val OFFSET_MAX                 = 0.25
         private const val STRENGTHEN_STEP            = 0.03   // +3% fraction — entry arrived too late
+        /**
+         * Ceiling on a graduated strengthen (see the step calculation at evaluation).
+         *
+         * Pinned to [WEAKEN_STEP] so the safety direction is never slower per episode than the
+         * direction that front-loads more insulin — the asymmetry that makes a flat +0.03 safe
+         * is preserved as a bound rather than as a fixed step.
+         */
+        private const val MAX_STRENGTHEN_STEP        = 0.06
         private const val WEAKEN_STEP                = 0.06   // -6% — asymmetric, safety-biased
         /** Fraction of the weaken step applied when the low came with a BG drop insulin can't
          *  explain (see [UnexplainedDropTracker]) — reduced rather than skipped, since this is
          *  the safety direction and the classifier can be wrong. */
         private const val UNEXPLAINED_STEP_FRACTION  = 0.4
         private const val EXCURSION_STRENGTHEN_MGDL  = 45.0   // ~2.5 mmol rise after entry = too slow off the mark
+
+        /**
+         * A peak this far above TARGET is a shape problem on its own terms, even when the rise
+         * measured from entry was modest.
+         *
+         * The excursion bar alone systematically under-reads the meal, and does so by exactly
+         * the amount the detector needed to see: UAM cannot fire until BG has been rising for
+         * ~15 min, so bgAtEntry is already partway up the spike and everything below it is
+         * invisible to a relative measure. An entry at 7.0 topping out at 9.0 books only
+         * 2.0 mmol of excursion — under the bar — while being precisely the episode the entry
+         * burst exists to prevent. Anchoring to target instead doesn't care how late the
+         * detector caught the rise.
+         */
+        private const val PEAK_STRENGTHEN_MARGIN_MGDL = 54.0  // ~3 mmol above target
+
+        /**
+         * ...but the entry burst must still have had something to blunt. A mode that fired with
+         * BG already high and then barely moved peaked above target through no fault of its
+         * front-loading — that is late detection, or a magnitude problem, and neither is fixed
+         * by giving the first SMBs a bigger share.
+         */
+        private const val MIN_EXCURSION_FOR_PEAK_MGDL = 27.0  // ~1.5 mmol
+
+        /** BG within this of the running max still counts as being AT the peak, for timing. */
+        private const val PEAK_PLATEAU_TOLERANCE_MGDL = 3.6   // ~0.2 mmol
 
         /**
          * A post-entry spike only counts as "the entry burst was too small" if the peak arrived
@@ -108,6 +156,7 @@ class UamEntryFractionLearner @Inject constructor(
         private const val K_OFFSET = "offset"
         private const val K_N      = "n"
         private const val K_BASE   = "baseSig"
+        private const val K_WHY    = "why"
 
         /** True for modes that actually use the UAM entry-burst mechanism. */
         fun isEntryMode(mode: MealMode?): Boolean =
@@ -124,6 +173,19 @@ class UamEntryFractionLearner @Inject constructor(
 
     /** How many episodes have been evaluated for this mode. */
     fun episodeCount(mode: MealMode): Int = states[mode]?.episodes ?: 0
+
+    /** Why this mode last moved, or didn't — for the SI tab. */
+    fun lastReason(mode: MealMode): String = states[mode]?.lastReason ?: ""
+
+    /**
+     * An episode that wanted MORE front-loading than this learner can deliver, because the
+     * configured fraction is already at [FRACTION_MAX] — mode and episode start, one shot.
+     *
+     * The caller forwards it to [ModeIsfLearner]. Handing it over here rather than acting on it
+     * internally keeps the arbitration between the two learners in one visible place.
+     */
+    fun consumeMagnitudeHandoff(): Pair<MealMode, Long>? =
+        magnitudeHandoff.also { magnitudeHandoff = null }
 
     /**
      * Call once per loop cycle. [baseSignature] is the user's configured fraction for the active
@@ -154,6 +216,7 @@ class UamEntryFractionLearner @Inject constructor(
                     (s.offset != 0.0 || s.episodes > 0)) {
                     s.offset = 0.0
                     s.episodes = 0
+                    s.lastReason = ""
                     lastOutcome = "${mode.label} entry fraction changed — learned offset reset"
                     aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
                 }
@@ -175,6 +238,13 @@ class UamEntryFractionLearner @Inject constructor(
                 if (bgMgdl > maxBgInEntryWindow) {
                     maxBgInEntryWindow = bgMgdl
                     maxBgOffsetMs      = elapsed
+                } else if (bgMgdl >= maxBgInEntryWindow - PEAK_PLATEAU_TOLERANCE_MGDL) {
+                    // Parked at the ceiling is not "the carbs beat the insulin" — it is the
+                    // insulin never catching up, which is a front-loading failure. Recording
+                    // only the first touch of the max would date a 40-minute plateau to its
+                    // start and hand it to the fast-carb branch. Only a real descent leaves
+                    // the peak time behind.
+                    maxBgOffsetMs = elapsed
                 }
                 if (lowActive) {
                     earlyLow = true
@@ -189,6 +259,7 @@ class UamEntryFractionLearner @Inject constructor(
             val ended        = activeMode!!
             val hadEarlyLow  = earlyLow
             val excursion    = maxBgInEntryWindow - bgAtEntry
+            val activeStartMsBeforeReset = activeStartMs
             activeMode    = null
             activeStartMs = 0L
             if (hadEarlyLow) {
@@ -203,6 +274,8 @@ class UamEntryFractionLearner @Inject constructor(
                 pendingEvalAtMs    = nowMs + TAIL_MS
                 pendingExcursion   = excursion
                 pendingPeakOffsetMs = maxBgOffsetMs
+                pendingPeakMgdl     = maxBgInEntryWindow
+                pendingStartMs      = activeStartMsBeforeReset
                 pendingTailGrams   = 0.0
             }
         }
@@ -220,30 +293,51 @@ class UamEntryFractionLearner @Inject constructor(
             return
         }
         if (nowMs >= pendingEvalAtMs) {
-            val endedOnTarget = bgMgdl <= targetMgdl + ON_TARGET_MARGIN_MGDL
-            val bigExcursion  = pendingExcursion >= EXCURSION_STRENGTHEN_MGDL
-            val peakWasLate   = pendingPeakOffsetMs >= MIN_PEAK_OFFSET_FOR_STRENGTHEN_MS
-            val peakMins      = pendingPeakOffsetMs / 60_000
+            val endedOnTarget   = bgMgdl <= targetMgdl + ON_TARGET_MARGIN_MGDL
+            val peakAboveTarget = pendingPeakMgdl - targetMgdl
+            // Two ways to be too slow off the mark: a big rise measured from entry, or a peak
+            // that got well above target at all. The second exists because the first is blind
+            // to however much of the spike happened before the detector could fire.
+            val bigExcursion    = pendingExcursion >= EXCURSION_STRENGTHEN_MGDL ||
+                (peakAboveTarget >= PEAK_STRENGTHEN_MARGIN_MGDL && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
+            val peakWasLate     = pendingPeakOffsetMs >= MIN_PEAK_OFFSET_FOR_STRENGTHEN_MS
+            val peakMins        = pendingPeakOffsetMs / 60_000
+            val excMmol         = "%.1f".format(pendingExcursion / 18.0)
+            val peakMmol        = "%.1f".format(pendingPeakMgdl / 18.0)
             when {
-                bigExcursion && endedOnTarget && peakWasLate ->
-                    applyOutcome(p, STRENGTHEN_STEP,
-                                 "${p.label} spiked ${"%.1f".format(pendingExcursion / 18.0)}mmol peaking ${peakMins}min after entry, ended on target — entry fraction raised")
-                bigExcursion && endedOnTarget -> {
+                bigExcursion && endedOnTarget && peakWasLate -> {
+                    // Graduated: a spike twice the size of the bar is twice the evidence, and a
+                    // flat step means a mode that overshoots at every single meal still needs
+                    // most of a week to move a tenth. Capped at WEAKEN_STEP, so however bad the
+                    // episode, front-loading never ratchets up faster than an early low pulls it
+                    // back down.
+                    val overshoot = maxOf(pendingExcursion / EXCURSION_STRENGTHEN_MGDL,
+                                          peakAboveTarget / PEAK_STRENGTHEN_MARGIN_MGDL)
+                    val step = (STRENGTHEN_STEP * overshoot).coerceIn(STRENGTHEN_STEP, MAX_STRENGTHEN_STEP)
+                    if (railedHigh(p)) {
+                        // Nowhere left to go: the first SMBs already carry the whole computed
+                        // requirement. Accumulating a positive offset here would be dead state —
+                        // adjustedFraction clamps it away — and would read on the tab as a
+                        // learner that moved when nothing changed. The evidence is real, so it
+                        // goes to the only actuator still holding travel.
+                        magnitudeHandoff = p to pendingStartMs
+                        note(p, "${p.label} reached ${peakMmol}mmol, ended on target, but entry fraction is already at max — handed to mode ISF")
+                    } else {
+                        applyOutcome(p, step,
+                                     "${p.label} reached ${peakMmol}mmol (+${excMmol} after entry) peaking ${peakMins}min in, ended on target — entry fraction raised")
+                    }
+                }
+                bigExcursion && endedOnTarget ->
                     // Fast-carb signature: the peak beat the entry insulin, so a bigger entry
                     // SMB could not have prevented it — only landed later and caused a low.
-                    val s = states.getOrPut(p) { ModeState() }
-                    s.episodes++
-                    persist()
-                    lastOutcome = "${p.label} spiked ${"%.1f".format(pendingExcursion / 18.0)}mmol but peaked only ${peakMins}min after entry — fast carbs, not a shape problem (n=${s.episodes})"
-                    aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
-                }
-                else -> {
-                    val s = states.getOrPut(p) { ModeState() }
-                    s.episodes++
-                    persist()
-                    lastOutcome = "${p.label} entry shape OK — no change (n=${s.episodes})"
-                    aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
-                }
+                    note(p, "${p.label} reached ${peakMmol}mmol but peaked only ${peakMins}min after entry — fast carbs, not a shape problem")
+                !endedOnTarget ->
+                    // Named separately from "shape OK": an episode that ended high is not
+                    // evidence the entry burst was right, it's evidence handed to ModeIsfLearner.
+                    // Reporting it as OK is how a mode sits at n=5 looking like it was judged fine.
+                    note(p, "${p.label} ended ${"%.1f".format(bgMgdl / 18.0)}mmol, above target — magnitude signal, left to mode ISF")
+                else ->
+                    note(p, "${p.label} peaked ${peakMmol}mmol, ended on target — entry shape OK")
             }
             pendingMode = null
         }
@@ -261,9 +355,29 @@ class UamEntryFractionLearner @Inject constructor(
         val s = states.getOrPut(mode) { ModeState() }
         s.offset = (s.offset + delta).coerceIn(OFFSET_MIN, OFFSET_MAX)
         s.episodes++
-        persist()
         val sign = if (s.offset >= 0) "+" else ""
-        lastOutcome = "$reason → $sign${"%.2f".format(s.offset)} (n=${s.episodes})"
+        s.lastReason = "$reason → $sign${"%.2f".format(s.offset)}"
+        persist()
+        lastOutcome = "${s.lastReason} (n=${s.episodes})"
+        aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
+    }
+
+    /** True when this mode's configured fraction plus its learned offset already sits at the
+     *  ceiling, so a further strengthen would be swallowed whole by [adjustedFraction]. */
+    private fun railedHigh(mode: MealMode): Boolean {
+        val s = states[mode] ?: return false
+        if (s.baseSig.isNaN()) return false
+        return s.baseSig + s.offset >= FRACTION_MAX - 1e-9
+    }
+
+    /** A completed evaluation that produced no change — still an episode, and still worth
+     *  saying why, since "no change" is the outcome that most needs explaining. */
+    private fun note(mode: MealMode, reason: String) {
+        val s = states.getOrPut(mode) { ModeState() }
+        s.episodes++
+        s.lastReason = reason
+        persist()
+        lastOutcome = "$reason (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
     }
 
@@ -277,7 +391,8 @@ class UamEntryFractionLearner @Inject constructor(
         states.clear()
         activeMode = null; activeStartMs = 0L; earlyLow = false; earlyLowUnexplained = false
         bgAtEntry = 0.0; maxBgInEntryWindow = 0.0; maxBgOffsetMs = 0L
-        pendingMode = null
+        pendingMode = null; pendingPeakMgdl = 0.0; pendingStartMs = 0L
+        magnitudeHandoff = null
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinUamEntryFractionLearnerState.key, "") }
         aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: reset")
@@ -287,7 +402,7 @@ class UamEntryFractionLearner @Inject constructor(
         try {
             val json = JSONObject()
             states.forEach { (mode, s) ->
-                val obj = JSONObject().put(K_OFFSET, s.offset).put(K_N, s.episodes)
+                val obj = JSONObject().put(K_OFFSET, s.offset).put(K_N, s.episodes).put(K_WHY, s.lastReason)
                 if (!s.baseSig.isNaN()) obj.put(K_BASE, s.baseSig)  // JSON rejects NaN
                 json.put(mode.name, obj)
             }
@@ -308,7 +423,8 @@ class UamEntryFractionLearner @Inject constructor(
                 states[mode] = ModeState(
                     offset   = obj.optDouble(K_OFFSET, 0.0).coerceIn(OFFSET_MIN, OFFSET_MAX),
                     episodes = obj.optInt(K_N, 0),
-                    baseSig  = obj.optDouble(K_BASE, Double.NaN)
+                    baseSig  = obj.optDouble(K_BASE, Double.NaN),
+                    lastReason = obj.optString(K_WHY, "")
                 )
             }
         } catch (e: Exception) {

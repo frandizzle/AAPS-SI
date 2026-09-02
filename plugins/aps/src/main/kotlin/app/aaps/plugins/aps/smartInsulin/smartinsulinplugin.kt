@@ -417,6 +417,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 val configured = entrySmbFractionForMode(mode)
                 val adjusted   = uamEntryFractionLearner.adjustedFraction(mode, configured)
                 appendLine("${mode.label.padEnd(18)} ${"%.2f".format(configured)}→${"%.2f".format(adjusted)}  n=$n")
+                // Per-mode, because the global "Last:" line only ever explains whichever mode
+                // happened to evaluate most recently — useless for "why hasn't Lunch moved?".
+                uamEntryFractionLearner.lastReason(mode).takeIf { it.isNotEmpty() }?.let { appendLine("  $it") }
             }
             if (isEmpty()) appendLine("No completed UAM entry episodes yet.")
             if (uamEntryFractionLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${uamEntryFractionLearner.lastOutcome}")
@@ -953,6 +956,14 @@ open class SmartInsulinPlugin @Inject constructor(
             baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0,
             exerciseSuspected = exerciseSuspected
         )
+
+        // Shape evidence with nowhere left to go: the entry burst already carries the whole
+        // computed requirement, so the only actuator still holding travel is the mode's ISF.
+        // Forwarded here rather than inside either learner so the arbitration between the two
+        // stays readable in one place.
+        uamEntryFractionLearner.consumeMagnitudeHandoff()?.let { (railedMode, episodeStartMs) ->
+            modeIsfLearner.noteShapeRailed(railedMode, episodeStartMs)
+        }
 
         // -- DURA strength learner (crash direction only) -----------------------
         // Learns DOWN when DURA engaged and the episode crashed. Never learns up: "DURA had to

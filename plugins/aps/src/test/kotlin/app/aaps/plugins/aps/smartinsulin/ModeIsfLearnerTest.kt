@@ -206,4 +206,40 @@ class ModeIsfLearnerTest {
         assertEquals(0.975, restored.multiplier(MealMode.DINNER), 1e-9)
         assertTrue(restored.episodeCount(MealMode.DINNER) > 0, "Episode count should survive the restore too")
     }
+
+    @Test
+    fun `a shape handoff strengthens an episode this learner would otherwise ignore`() {
+        // Big spike, clean landing: this learner's own test never fires (it only strengthens on
+        // ending HIGH), and the entry learner is railed. Without the handoff the mode is stuck.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0)
+        val end = runQuietTail(BASE_MS + CYCLE_MS, bg = 100.0)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+
+        learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(end > BASE_MS)
+    }
+
+    @Test
+    fun `a shape handoff for an episode already learned from is ignored`() {
+        // DURA had to rescue this episode, so the multiplier already moved once for it. The
+        // handoff must not take a second bite out of the same evidence.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0, dura = 1.2)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 100.0)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+
+        learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9,
+                     "One episode, one correction — the handoff is a fallback, not a second helping")
+    }
+
+    @Test
+    fun `a shape handoff for a later episode still lands`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0, dura = 1.2)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 100.0)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+
+        learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS + 6 * 60 * 60_000L)
+        assertEquals(0.975 * 0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
 }

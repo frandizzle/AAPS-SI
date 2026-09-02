@@ -59,6 +59,7 @@ class ModeIsfLearner @Inject constructor(
     private var pendingEvalAtMs  = 0L
     private var pendingMaxDura   = 1.0
     private var pendingTailGrams = 0.0
+    private var pendingStartMs   = 0L
 
     // Post-episode low/undershoot watch. Deliberately separate from the pending evaluation:
     // the evaluation asks "did this land well?" and is legitimately voided by contamination or
@@ -68,7 +69,13 @@ class ModeIsfLearner @Inject constructor(
     // ran to expiry, so the low it causes now routinely arrives after the mode is already gone.
     private var watchMode:     MealMode? = null
     private var watchUntilMs  = 0L
+    private var watchStartMs  = 0L
     private var watchReduced  = false  // evaluation was voided — still weaken, but at a smaller step
+
+    /** The episode this learner last actually MOVED the multiplier for. A shape handoff for an
+     *  episode already corrected here must not correct it a second time. */
+    private var lastMovedMode:    MealMode? = null
+    private var lastMovedStartMs = 0L
 
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
     var lastOutcome = ""
@@ -171,10 +178,12 @@ class ModeIsfLearner @Inject constructor(
                     when {
                         episodeLow        ->
                             applyOutcome(superseded, weakenStep(episodeLowWasUnexplained),
-                                         "low during ${superseded.label} before ${activeModeNow.label} took over — weakened")
+                                         "low during ${superseded.label} before ${activeModeNow.label} took over — weakened",
+                                         activeStartMs)
                         episodeUndershoot ->
                             applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true),
-                                         "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step")
+                                         "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step",
+                                         activeStartMs)
                     }
                 }
 
@@ -227,6 +236,7 @@ class ModeIsfLearner @Inject constructor(
             val hadUndershoot = episodeUndershoot
             val maxDura      = episodeMaxDura
             val unexplained  = episodeLowWasUnexplained
+            val endedStartMs = activeStartMs
             activeMode    = null
             activeStartMs = 0L
             if (hadLow) {
@@ -234,7 +244,8 @@ class ModeIsfLearner @Inject constructor(
                 // deliberately NOT skippable by later contamination: weaken signals must land.
                 applyOutcome(ended, weakenStep(unexplained),
                              if (unexplained) "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                             else "low during ${ended.label} episode — weakened")
+                             else "low during ${ended.label} episode — weakened",
+                             endedStartMs)
                 clearWatch()
             } else if (hadEarlyLow) {
                 // Only an early (entry-window) low: the entry-fraction learner is acting on it.
@@ -245,14 +256,16 @@ class ModeIsfLearner @Inject constructor(
                 // Never reached the low guard, so no other learner sees this at all — but the
                 // mode drove BG down near the low guard, which is over-dosing by any reading of it.
                 applyOutcome(ended, weakenStep(unexplained, undershoot = true),
-                             "${ended.label} undershot toward the low guard — weakened at reduced step")
+                             "${ended.label} undershot toward the low guard — weakened at reduced step",
+                             endedStartMs)
                 clearWatch()
             } else {
                 pendingMode      = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
                 pendingTailGrams = 0.0
-                openWatch(ended, nowMs)
+                pendingStartMs   = endedStartMs
+                openWatch(ended, nowMs, endedStartMs)
             }
         }
 
@@ -266,7 +279,8 @@ class ModeIsfLearner @Inject constructor(
                              (if (soft) "BG near the low guard after ${w.label} ended" else "low after ${w.label} ended") +
                                  (if (exerciseSuspected) ", but BG was falling faster than insulin explains (exercise?)" else "") +
                                  (if (watchReduced) ", episode no longer clean" else "") +
-                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced) " at reduced step" else ""))
+                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced) " at reduced step" else ""),
+                             watchStartMs)
                 clearWatch()
                 pendingMode = null
                 return
@@ -288,9 +302,9 @@ class ModeIsfLearner @Inject constructor(
         if (nowMs >= pendingEvalAtMs) {
             when {
                 bgMgdl > targetMgdl + STRENGTHEN_MARGIN_MGDL ->
-                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened")
+                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
                 pendingMaxDura >= DURA_INTERVENTION_MULT ->
-                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} needed DURA ×${"%.2f".format(pendingMaxDura)} — strengthened")
+                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} needed DURA ×${"%.2f".format(pendingMaxDura)} — strengthened", pendingStartMs)
                 else -> {
                     val s = states.getOrPut(p) { ModeState() }
                     s.episodes++
@@ -326,22 +340,53 @@ class ModeIsfLearner @Inject constructor(
         return 1.0 + (WEAKEN_STEP - 1.0) * fraction
     }
 
-    private fun openWatch(mode: MealMode, nowMs: Long) {
+    private fun openWatch(mode: MealMode, nowMs: Long, episodeStartMs: Long) {
         watchMode    = mode
         watchUntilMs = nowMs + WATCH_MS
+        watchStartMs = episodeStartMs
         watchReduced = false
     }
 
     private fun clearWatch() {
         watchMode    = null
         watchUntilMs = 0L
+        watchStartMs = 0L
         watchReduced = false
     }
 
-    private fun applyOutcome(mode: MealMode, step: Double, reason: String) {
+    /**
+     * The entry-fraction learner judged this episode under-front-loaded, but its knob is already
+     * railed at the maximum share — the first SMBs carry the whole computed requirement and there
+     * is no more shape to give.
+     *
+     * The two learners are kept apart so one mistake never gets corrected twice, and that holds
+     * for as long as the shape knob can actually move. A railed knob corrects nothing. Without
+     * this the pair has a blind spot exactly where it hurts: a meal that spikes hard and still
+     * lands on target fails this learner's own test (which only strengthens on ending HIGH) and
+     * fails the entry learner's actuator, so "big spike, good landing, front-loading maxed" is
+     * seen by neither and the mode never gets stronger.
+     *
+     * Strengthens at the normal step — half the weaken step, and every low or undershoot still
+     * pulls back twice as fast and cannot be skipped.
+     */
+    fun noteShapeRailed(mode: MealMode, episodeStartMs: Long) {
+        if (mode == lastMovedMode && episodeStartMs == lastMovedStartMs) {
+            // Already corrected for this same episode (a DURA strengthen, say). One episode,
+            // one move — the handoff is a fallback for a blind spot, not a second helping.
+            aapsLogger.debug(LTag.APS, "ModeIsfLearner: shape handoff for ${mode.label} ignored — episode already learned from")
+            return
+        }
+        applyOutcome(mode, STRENGTHEN_STEP,
+                     "${mode.label} spiked with entry front-loading already maxed out — strengthened",
+                     episodeStartMs)
+    }
+
+    private fun applyOutcome(mode: MealMode, step: Double, reason: String, episodeStartMs: Long = 0L) {
         val s = states.getOrPut(mode) { ModeState() }
         s.mult = (s.mult * step).coerceIn(MULT_MIN, MULT_MAX)
         s.episodes++
+        lastMovedMode    = mode
+        lastMovedStartMs = episodeStartMs
         persist()
         lastOutcome = "$reason → ×${"%.3f".format(s.mult)} (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
@@ -357,7 +402,8 @@ class ModeIsfLearner @Inject constructor(
         states.clear()
         activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
-        pendingMode = null
+        pendingMode = null; pendingStartMs = 0L
+        lastMovedMode = null; lastMovedStartMs = 0L
         clearWatch()
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, "") }
