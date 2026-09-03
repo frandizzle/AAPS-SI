@@ -20,7 +20,7 @@ import org.mockito.kotlin.*
  *  1. Burst accumulates correctly across 3+ readings (total = sum of deltas)
  *  2. Burst does NOT fire when total rise is enough but BG is still below trigger threshold
  *  3. Burst does NOT re-fire immediately after firing (state is cleared)
- *  4. Burst resets anchor on BG drop, then re-accumulates from new low
+ *  4. Burst measures from the lowest reading in the window, so noise costs only its own size
  *  5. Burst threshold of exactly 0 disables burst entirely
  *  6. Burst accumulates during below-threshold readings but only fires once above
  */
@@ -226,5 +226,60 @@ class UamControllerBurstTest {
         // One more reading crosses trigger threshold
         cycle(bgMmol = 6.2, tMs = 901_000L)   // total 2.2, BG > 6.0 → FIRE
         verifyFired()
+    }
+
+    // ── Wobble immunity ──────────────────────────────────────────────────────
+
+    // The rise used to be measured from an anchor that was discarded whenever a reading came in
+    // even 0.01 below the previous one. Two clean +0.5s fired; the same two with a blip between
+    // them did not, and BG had done the same thing in both cases.
+
+    @Test
+    fun `a 0-01 dip between two half-mmol rises does not stop the burst`() {
+        cycle(bgMmol = 7.0, tMs = 1_000L)            // trough
+        cycle(bgMmol = 7.50, tMs = 301_000L)         // +0.50 banked
+        cycle(bgMmol = 7.49, tMs = 601_000L)         // blip — costs 0.01, not everything
+        cycle(bgMmol = 8.00, tMs = 901_000L)         // 1.00 above the trough -> fires
+        verify(mealOverrideManager).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    @Test
+    fun `two consecutive half-mmol rises fire the burst`() {
+        cycle(bgMmol = 7.0, tMs = 1_000L)
+        cycle(bgMmol = 7.5, tMs = 301_000L)
+        cycle(bgMmol = 8.0, tMs = 601_000L)
+        verify(mealOverrideManager).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    @Test
+    fun `a real fall genuinely gives the rise back`() {
+        // Noise immunity is not amnesia: BG that actually drops 0.6 has to climb that 0.6 again.
+        cycle(bgMmol = 7.0, tMs = 1_000L)
+        cycle(bgMmol = 7.5, tMs = 301_000L)          // +0.5
+        cycle(bgMmol = 6.9, tMs = 601_000L)          // new trough
+        cycle(bgMmol = 7.6, tMs = 901_000L)          // only 0.7 above it — no fire
+        verify(mealOverrideManager, never()).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    @Test
+    fun `a rise spread beyond the window does not accumulate forever`() {
+        // 0.1 a reading is drift, not a meal. The window spans four steps, so the most that can
+        // ever be banked at this rate is 0.4 — as the early readings age out the trough moves up
+        // with them, and no amount of running time gets it to the bar.
+        var t = 1_000L
+        var bg = 7.0
+        repeat(12) {
+            cycle(bgMmol = bg, tMs = t)
+            bg += 0.1; t += 300_000L
+        }
+        verify(mealOverrideManager, never()).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
     }
 }

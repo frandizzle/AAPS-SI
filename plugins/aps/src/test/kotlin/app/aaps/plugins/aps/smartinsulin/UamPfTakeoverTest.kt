@@ -18,7 +18,7 @@ import org.mockito.kotlin.*
  * P/F is auto-detected from a stuck-high pattern and dosed for a slow digestive tail. Eating real
  * carbs on top of it produces a spike that gentle ISF was never sized for, and P/F cannot escalate
  * itself — it only ever fires from FASTING. So a rise inside a configured UAM meal window is
- * allowed to replace it, at the dirty-window thresholds (1.5x delta, 1.5x burst) so that P/F's own
+ * allowed to replace it. The sustained-rise path holds a 1.5x delta bar so that P/F's own
  * residual drift can't promote itself to a full meal mode.
  */
 class UamPfTakeoverTest {
@@ -102,9 +102,25 @@ class UamPfTakeoverTest {
 
     @Test
     fun `a burst while P over F runs hands the episode to the UAM meal window`() {
-        // Burst threshold 1.0 mmol scaled x1.5 = 1.5 mmol needed while P/F runs.
         cycle(bgMmol = 7.0, tMs = 1_000L)            // anchor
-        cycle(bgMmol = 8.6, tMs = 301_000L)          // +1.6 >= 1.5 -> takeover
+        cycle(bgMmol = 8.6, tMs = 301_000L)          // +1.6 >= 1.0 -> takeover
+        verifyTookOver()
+    }
+
+    @Test
+    fun `two consecutive half-mmol rises take over — the burst bar is not scaled for P over F`() {
+        // The real case: carbs land on top of a running P/F and BG climbs 0.5 a reading. That is a
+        // meal by any reading, and under the old 1.5x burst bar it never fired.
+        cycle(bgMmol = 7.0, tMs = 1_000L)            // anchor
+        cycle(bgMmol = 7.5, tMs = 301_000L)          // +0.5 banked, under the bar
+        cycle(bgMmol = 8.0, tMs = 601_000L)          // +1.0 total >= 1.0 -> takeover
+        verifyTookOver()
+    }
+
+    @Test
+    fun `the burst bar over P over F is the same one a fasting burst clears`() {
+        cycle(bgMmol = 7.0, tMs = 1_000L)
+        cycle(bgMmol = 8.2, tMs = 301_000L)          // +1.2, over the plain 1.0 bar
         verifyTookOver()
     }
 
@@ -120,10 +136,10 @@ class UamPfTakeoverTest {
     // ── Takeover is held to a higher bar than a fasting rise ──────────────────
 
     @Test
-    fun `P over F's own drift does not promote itself to a meal mode`() {
-        // +1.2 mmol clears the plain 1.0 burst threshold but not the 1.5 takeover bar.
+    fun `a rise short of the burst bar does not promote P over F to a meal mode`() {
+        // +0.8 mmol — under the 1.0 bar, and the sustained-rise path needs 3 readings at 0.3.
         cycle(bgMmol = 7.0, tMs = 1_000L)
-        cycle(bgMmol = 8.2, tMs = 301_000L)
+        cycle(bgMmol = 7.8, tMs = 301_000L)
         verifyNothingFired()
     }
 

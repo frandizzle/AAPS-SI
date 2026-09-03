@@ -57,10 +57,12 @@ class UamController @Inject constructor(
     private var lastMealEndedMs            = 0L     // timestamp of last meal/UAM mode expiry — tracked for display only; P/F no longer requires it
     private var lastStuckAvgDelta          = 0.0   // last shortAvgDelta seen by checkStuckHigh
     private var lastStuckBgMmol            = 0.0   // last BG seen by checkStuckHigh
-    // Burst detection uses a simple 2-reading sliding window, independent of streak state.
+    // Burst detection: recent (CGM timestamp, BG) inside BURST_WINDOW_MS, independent of streak
+    // state. The rise is measured from the LOWEST reading in that window, which is what makes a
+    // wobble cost nothing — see the rise calculation in onLoopCycle.
+    private val burstWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque()
     private var burstPrevBgMmol            = 0.0
     private var burstPrevBgTimestampMs     = 0L
-    private var burstAnchorBgMmol          = 0.0
     // Rebound window transition tracking
     private var wasInReboundWindow         = false
     private var reboundExpiredMs           = 0L
@@ -91,6 +93,16 @@ class UamController @Inject constructor(
         private const val LOW_BLOCK_MINS            = 90L
         private const val POST_REBOUND_LOCKOUT_MINS = 60L
         private const val BURST_MAX_CYCLE_GAP_MS    = 390_000L   // 6.5 min
+        /**
+         * How far back a burst may accumulate its rise.
+         *
+         * 20 min spans five readings and so four steps: at the default 1.0 mmol bar that admits
+         * two +0.5s, three +0.34s or four +0.25s — every one of them meal-shaped — while drift at
+         * 0.1 a reading tops out at 0.4 and never gets there however long it runs. It is the
+         * ceiling the old moving anchor never had, which would accumulate indefinitely as long as
+         * no reading happened to tick down.
+         */
+        private const val BURST_WINDOW_MS           = 20 * 60_000L
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
         private const val WOBBLE_TOLERANCE_MMOL       = 0.3
         private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5
@@ -227,13 +239,24 @@ class UamController @Inject constructor(
         val timeSinceLastBgMs  = bgTimestampMs - burstPrevBgTimestampMs
         val freshCycle         = timeSinceLastBgMs in 1L..BURST_MAX_CYCLE_GAP_MS
 
-        if (burstPrevBgMmol == 0.0 || !freshCycle || currentBgMmol < burstPrevBgMmol - 0.01) {
-            burstAnchorBgMmol = currentBgMmol
-        } else if (burstAnchorBgMmol == 0.0) {
-            burstAnchorBgMmol = burstPrevBgMmol
-        }
+        // Rise from the lowest reading inside a fixed [BURST_WINDOW_MS] lookback.
+        //
+        // This replaces a moving anchor that was discarded outright whenever a reading came in
+        // even 0.01 below the previous one. Two clean +0.5 readings banked 1.0 and fired; the same
+        // two with a single -0.01 blip between them threw the first +0.5 away and banked 0.5, and
+        // nothing about that is a real difference in what BG did. CGM noise of that size is
+        // constant, so in practice a burst had to land inside a perfectly monotone run to count.
+        //
+        // Measuring from the window's trough instead means a rise is only ever lost by BG actually
+        // going back down, and by as much as it went down — a 0.01 dip costs 0.01, not everything.
+        // The fixed window is what a moving anchor was standing in for: it bounds how long a rise
+        // may take to accumulate, but it does it on time rather than on the absence of noise.
+        while (burstWindow.isNotEmpty() && bgTimestampMs - burstWindow.first().first > BURST_WINDOW_MS)
+            burstWindow.removeFirst()
+        burstWindow.addLast(bgTimestampMs to currentBgMmol)
 
-        lastBurstRiseMmol = if (burstAnchorBgMmol > 0.0 && currentBgMmol > burstAnchorBgMmol) currentBgMmol - burstAnchorBgMmol else 0.0
+        val burstTroughMmol = burstWindow.minOf { it.second }
+        lastBurstRiseMmol  = (currentBgMmol - burstTroughMmol).coerceAtLeast(0.0)
         lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol) currentBgMmol - burstPrevBgMmol else 0.0
 
         val uamMode = resolveUamMode(currentHour, currentMinute) ?: run {
@@ -252,16 +275,30 @@ class UamController @Inject constructor(
             resetStreak(); burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs; return
         }
 
-        val burstThresholdPref = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
-        // Scaled for a takeover only — the post-meal-lockout burst threshold is left as it is.
-        val burstThreshold     = burstThresholdPref * (if (pfTakeover) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0)
-        if (burstThresholdPref > 0.0 && burstAnchorBgMmol > 0.0 && freshCycle && lastBurstRiseMmol >= burstThreshold - 0.01) {
+        // The burst bar is the same everywhere — fasting, post-meal lockout, or over a running P/F.
+        //
+        // It used to be scaled by DIRTY_WINDOW_DELTA_MULTIPLIER for a takeover, on the theory that
+        // P/F's own residual movement shouldn't be able to promote the episode. But that theory
+        // only fits the sustained-rise path, whose per-reading bar sits INSIDE the flat band P/F is
+        // detected in (see the note on DIRTY_WINDOW_DELTA_MULTIPLIER) and so genuinely can re-read
+        // P/F's own movement as a meal. The burst bar does not overlap that band the same way: it
+        // needs the FULL threshold banked inside BURST_WINDOW_MS, which at the default 1.0 mmol is
+        // 3 mmol/hour sustained — the very top of checkStuckHigh's band held for four readings
+        // straight, and a rise most people would call a meal rather than drift. Not impossible,
+        // then, but no longer the same claim. What the multiplier definitely did do was hold real
+        // carbs landing on top of P/F to a 1.5 mmol bar, where two clean +0.5 readings sat under it
+        // and the takeover never fired.
+        val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
+        // freshCycle is no longer part of this: the window bounds how old the trough can be, which
+        // is the thing a consecutive-reading requirement was really enforcing. Two readings are
+        // still required — a lone reading has nothing to have risen FROM.
+        if (burstThreshold > 0.0 && burstWindow.size >= 2 && lastBurstRiseMmol >= burstThreshold - 0.01) {
             triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
             resetStreak()
-            // Clear all burst state so we don't immediately re-fire on the next reading.
-            // Without this, burstAnchorBgMmol stays at the pre-burst value and the
-            // accumulated rise carries over — potentially re-triggering next cycle.
-            burstPrevBgMmol = 0.0; burstPrevBgTimestampMs = 0L; burstAnchorBgMmol = 0.0
+            // Clear the window so the same rise can't fire again next reading — the trough would
+            // otherwise still be sitting in it.
+            burstWindow.clear()
+            burstPrevBgMmol = 0.0; burstPrevBgTimestampMs = 0L
             lastBurstRiseMmol = 0.0; lastBurstDeltaMmol = 0.0
             return
         }
@@ -388,8 +425,7 @@ class UamController @Inject constructor(
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
                 val threshNote = if (dirtyWindow) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
-                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold) *
-                    (if (currentlyPfTakeoverArmed) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0)
+                val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
                 // Show burst breakdown once there's a prior accumulated rise (2+ readings)
                 val burstNote = if (burstThreshold > 0.0) {
                     val burstLast = lastBurstDeltaMmol
