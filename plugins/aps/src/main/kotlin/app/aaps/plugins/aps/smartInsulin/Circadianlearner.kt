@@ -43,6 +43,20 @@ class CircadianLearner @Inject constructor(
     // Rollercoaster detection — ring buffer of recent (timestamp, bg) pairs
     private val bgHistory: ArrayDeque<Pair<Long, Double>> = ArrayDeque(MAX_HISTORY)
 
+    /**
+     * When each (day, hour) bucket was last seen FASTING with insulin actually working — the
+     * evidence [retroAttributeHardLow] needs to charge a low back to the hours that dosed it.
+     *
+     * A last-seen timestamp rather than the raw cycles: the question asked of it is only "did this
+     * hour dose within the lookback", which one long per bucket answers exactly, and which is small
+     * enough to ride along in the state JSON. Persisted because the alternative is that a phone
+     * reboot silently disables the attribution for four hours — it fails closed (no record means no
+     * blame), so the cost is a missed correction that nothing would report.
+     */
+    private val lastFastingInsulinMs: MutableMap<Int, Long> = HashMap()
+    /** Set when [lastFastingInsulinMs] has moved enough to be worth an SP write. */
+    private var insulinPresenceDirty = false
+
     init { restore() }
 
     // Minute-of-hour for the cycle currently being processed. Set once at the top of update()
@@ -124,6 +138,10 @@ class CircadianLearner @Inject constructor(
     // Consolidated per-cycle diagnostic summary — shown in-app via Fragment debug
     // section instead of logcat, since logcat isn't practically viewable on-device.
     var lastCycleSummary: String = "No cycle data yet"
+        private set
+
+    /** What the last hard low charged back to earlier hours, for the SI tab. */
+    var lastRetroAttribution: String = "No low attributed yet"
         private set
 
     // Tracks when the last aggressiveness penalty fired (rollercoaster or soft-low).
@@ -238,6 +256,9 @@ class CircadianLearner @Inject constructor(
         inReboundWindow:          Boolean = false,
         aggressiveness:           Double  = 1.0,
         fastingPeakMins:          Double  = 90.0,   // learned fasting insulin peak — sets trim window
+        // Learned fasting DIA. Only used by the retroactive low attribution, which needs the full
+        // activity curve (peak alone can't say how much of a 3h-old dose is still working).
+        fastingDiaMins:           Double  = 300.0,
         // Time injection — defaults to wall clock. Override in tests to simulate specific
         // hours/days without waiting for real time to pass.
         hour:                     Int     = currentHour(),
@@ -253,6 +274,11 @@ class CircadianLearner @Inject constructor(
         val iob    = iobArray.firstOrNull()?.iob      ?: 0.0
         val activity = iobArray.firstOrNull()?.activity ?: 0.0
         val basalIob = iobArray.firstOrNull()?.basaliob ?: 0.0
+        // Recorded before the meal-mode skip below, not after: an hour only qualifies for
+        // retroactive blame if it was FASTING, and that distinction can only be drawn if
+        // meal-mode cycles are recorded too. Skipping them would leave holes in the ring that
+        // are indistinguishable from "no insulin was working then".
+        recordInsulinPresence(now, hour, dow, iob, mealMode == MealMode.FASTING)
         val rollercoaster = if (bgHistory.size >= MIN_HISTORY_FOR_ROLLER) detectRollercoaster(targetMgdl, lowGuardMgdl) else false
         // NOTE: computed BEFORE bgHistory.addLast — only valid for diagnostic logging.
         // updateAggrLearner re-computes post-addLast so the penalty sees the current reading.
@@ -305,7 +331,7 @@ class CircadianLearner @Inject constructor(
         }
 
         // Clear trim history if BG crosses below low guard
-        if (bg < lowGuardMgdl) {
+        if (bgBelowGuard(bg, lowGuardMgdl)) {
             if (trimBgHistory.isNotEmpty()) {
                 aapsLogger.debug(LTag.APS, "FuelTrim: clearing history — BG below low guard (${"%.1f".format(bg)} < ${"%.0f".format(lowGuardMgdl)})")
                 trimBgHistory.clear()
@@ -364,7 +390,8 @@ class CircadianLearner @Inject constructor(
         // -- 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) -
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
-        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING, inPostMealLockout)
+        updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING, inPostMealLockout,
+                          fastingPeakMins = fastingPeakMins, fastingDiaMins = fastingDiaMins)
 
         // -- 4. Short-term fuel trim + aggression nudge --------------------------
         // Update trim window to match learned insulin peak (minimum 60 min, maximum 120 min).
@@ -425,13 +452,16 @@ class CircadianLearner @Inject constructor(
                     "(notEnough=$aggrNotEnough)\n" +
                     "basalSignal: $lastBasalSignal\n" +
                     "aggrNudge: $lastAggrNudgeStatus\n" +
-                    "predTrim: $lastPredTrimDebug"
+                    "predTrim: $lastPredTrimDebug\n" +
+                    "retroLow: $lastRetroAttribution"
 
             aapsLogger.debug(LTag.APS, "CircadianLearner SUMMARY ${lastCycleSummary.replace("\n", " | ")}")
         }
 
         // Only persist if any EWMA state was actually updated this cycle
-        if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr) {
+        // insulinPresenceDirty is in the condition because the presence map changes on cycles where
+        // no learner wrote anything — without it the map would only ever reach disk by accident.
+        if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr || insulinPresenceDirty) {
             persist()
         }
     }
@@ -1433,7 +1463,7 @@ class CircadianLearner @Inject constructor(
         var subTargetFired = false
         val qualifyingCycle = !driftFired && !signal0Fired && !negIobFired && !predTrimFired &&
             !inPostMealLockout &&
-            bg >= lowGuardMgdl &&                           // not a hard low — that's handled elsewhere
+            !bgBelowGuard(bg, lowGuardMgdl) &&              // not a hard low — that's handled elsewhere
             bg < targetMgdl - SUB_TARGET_DEAD_BAND_MGDL && // meaningfully below target, not just touching it
             basalIob < SUB_TARGET_NEG_IOB_GATE &&           // loop is actively withholding basal
             totalIob < SUB_TARGET_TOTAL_IOB_GATE            // no active SMB tail explaining the sub-target BG
@@ -1562,7 +1592,9 @@ class CircadianLearner @Inject constructor(
         iobArray:         Array<IobTotal>,
         lowGuardMgdl:     Double,
         isFasting:        Boolean = true,
-        inPostMealLockout: Boolean = false
+        inPostMealLockout: Boolean = false,
+        fastingPeakMins:  Double  = 90.0,
+        fastingDiaMins:   Double  = 300.0
     ) {
         val currentCeil = aggrState.get(dow, hour)
 
@@ -1604,7 +1636,7 @@ class CircadianLearner @Inject constructor(
         // Only penalise the fasting learner if this is a genuine fasting low.
         // If in meal mode, UAM, P/F, or post-meal lockout, the low is food-driven —
         // penalising the fasting profile would corrupt clean fasting data.
-        if (bg < lowGuardMgdl && isFasting && !inPostMealLockout) {
+        if (bgBelowGuard(bg, lowGuardMgdl) && isFasting && !inPostMealLockout) {
             consecutiveStableCycles = 0
             // All hard low penalties fire ONCE per low event (30-min gate).
             // Fire once, observe, let the loop and rebound window handle delivery.
@@ -1656,6 +1688,9 @@ class CircadianLearner @Inject constructor(
                 val prevIsfVal   = isfState.days[d].get(hour)
                 val nudgedIsfMult = (prevIsfVal * AGGR_HARD_LOW_BASAL_NUDGE).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
                 writeIsfDayOnly(dow, hour, nudgedIsfMult, 1.0)
+                // ...and the same cut, scaled down, to the hours that actually delivered the
+                // insulin now bottoming out. See retroAttributeHardLow.
+                retroAttributeHardLow(dow, hour, fastingPeakMins, fastingDiaMins)
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour HARD_LOW (new event) bg=${"%.1f".format(bg)} < guard=${"%.1f".format(lowGuardMgdl)} " +
                                      "fasting=$isFasting ? ceil=%.3f basal %.4f?%.4f isf %.4f?%.4f"
@@ -1676,7 +1711,9 @@ class CircadianLearner @Inject constructor(
         // block above (gated on bg < lowGuardMgdl) already handles and returns for that case.
         // Correct condition here: within SOFT_LOW_APPROACH_MGDL above guard, not below it.
         val approachingLow = isFasting && !inPostMealLockout &&
-            bg >= lowGuardMgdl && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
+            // Complement of the hard-low test, so a BG level with the guard falls to this signal
+            // rather than through the gap between the two.
+            !bgBelowGuard(bg, lowGuardMgdl) && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&
             delta < SOFT_LOW_DELTA_MGDL && iob > SOFT_LOW_MIN_IOB
         if (approachingLow) {
             consecutiveStableCycles = 0
@@ -1719,6 +1756,116 @@ class CircadianLearner @Inject constructor(
         } else {
             consecutiveStableCycles = 0
         }
+    }
+
+    // -- Retroactive low attribution -------------------------------------------
+
+    /**
+     * Stamps this bucket if the cycle was fasting with insulin on board, and drops buckets that
+     * have aged out of [RETRO_LOOKBACK_MINS].
+     *
+     * Pruning here rather than at read time is what lets [hadFastingInsulin] be a plain lookup:
+     * the attribution only ever runs from a hard-low cycle, which has just recorded, so anything
+     * still in the map is inside the window by construction.
+     */
+    private fun recordInsulinPresence(nowMs: Long, hour: Int, dow: Int, iobU: Double, fasting: Boolean) {
+        if (fasting && iobU >= RETRO_MIN_IOB_U) {
+            val key = bucketKey(dow, hour)
+            if (nowMs - (lastFastingInsulinMs[key] ?: 0L) >= RETRO_PERSIST_INTERVAL_MS) insulinPresenceDirty = true
+            lastFastingInsulinMs[key] = nowMs
+        }
+        val cutoff = nowMs - RETRO_LOOKBACK_MINS * 60_000L
+        val expired = lastFastingInsulinMs.entries.filter { it.value < cutoff }.map { it.key }
+        if (expired.isNotEmpty()) {
+            expired.forEach { lastFastingInsulinMs.remove(it) }
+            insulinPresenceDirty = true
+        }
+    }
+
+    private fun bucketKey(dow: Int, hour: Int): Int = dow.coerceIn(0, 6) * 24 + hour.coerceIn(0, 23)
+
+    /** True if this bucket dosed while fasting inside the lookback window. */
+    private fun hadFastingInsulin(key: Int): Boolean = lastFastingInsulinMs.containsKey(key)
+
+    /**
+     * Charges a hard low back to the hours that DOSED the insulin, not just the hour it surfaced in.
+     *
+     * The hole this closes: the hard-low penalty writes to the hour the low is observed in. But
+     * insulin peaks around [LearnedInsulinProfile.FALLBACK_PEAK_MINS] after delivery and keeps
+     * working for hours after that — BG bottoming out at 07:30 is being driven mostly by insulin
+     * delivered between 05:00 and 06:30. Hour 7 gets cut, the hours that over-dosed are left
+     * exactly as aggressive as they were, and the same low happens again tomorrow. The 7AM bucket
+     * ends up carrying a correction for a mistake it did not make, which also makes it too weak
+     * for the highs it does cause.
+     *
+     * Attribution is the insulin activity curve itself, integrated minute by minute over the last
+     * [RETRO_LOOKBACK_MINS] and summed into whichever clock hour each minute fell in — so how the
+     * blame splits follows the learned peak/DIA rather than a fixed table, and respects where in
+     * the hour the low actually happened. Weights are normalised so the most-responsible earlier
+     * hour takes the SAME cut the observed hour just took, and hours below [RETRO_MIN_WEIGHT] of
+     * that take none: this is meant to move the two or three hours that dosed, not to smear a
+     * tenth of a penalty across the whole morning.
+     *
+     * Two gates keep it from blaming the clock instead of the insulin:
+     *  - an hour is only charged if [insulinPresence] has a FASTING cycle for it with real IOB.
+     *    An hour the loop spent zero-temping did not cause this low, whatever the kernel says
+     *    about its lag, and an hour spent in a meal mode was dosing for food — neither belongs in
+     *    the fasting profile. No record at all (fresh start) also means no blame.
+     *  - the observed hour is skipped here; it already took its full penalty at the call site.
+     *
+     * Writes are day-scoped and pinned to :30, since the kernel has already decided the split
+     * across hours and a minute-of-hour bleed on top would double-count it. The ceiling keeps the
+     * same slow global trickle as the primary penalty, scaled by weight, so a low that recurs at
+     * the same hours across days still generalises across weekdays.
+     */
+    private fun retroAttributeHardLow(dow: Int, hour: Int, peakMins: Double, diaMins: Double) {
+        val observed       = bucketKey(dow, hour)
+        val nowMinuteOfDay = hour.coerceIn(0, 23) * 60 + cycleMinute
+        // Activity mass per preceding clock hour. Derived from the injected hour/minute rather
+        // than wall-clock so it stays consistent with everything else this cycle wrote.
+        val mass = HashMap<Int, Double>()
+        for (lag in 1..RETRO_LOOKBACK_MINS) {
+            val a = InsulinActivityCurve.activityFraction(lag.toDouble(), peakMins, diaMins)
+            if (a <= 0.0) continue
+            val past     = nowMinuteOfDay - lag
+            val dayShift = Math.floorDiv(past, MINUTES_PER_DAY)
+            val h        = Math.floorMod(past, MINUTES_PER_DAY) / 60
+            val d        = Math.floorMod(dow + dayShift, 7)
+            val key      = bucketKey(d, h)
+            if (key == observed) continue
+            mass[key] = (mass[key] ?: 0.0) + a
+        }
+        val peakMass = mass.values.maxOrNull() ?: 0.0
+        if (peakMass <= 0.0) { lastRetroAttribution = "h=$hour low — nothing to attribute back"; return }
+
+        val applied = StringBuilder()
+        var skippedNoInsulin = 0
+        mass.entries.sortedByDescending { it.value }.forEach { (key, m) ->
+            val w = (m / peakMass).coerceIn(0.0, 1.0)
+            if (w < RETRO_MIN_WEIGHT) return@forEach
+            if (!hadFastingInsulin(key)) { skippedNoInsulin++; return@forEach }
+            val d = key / 24
+            val h = key % 24
+            val isfPrev = isfState.days[d].get(h)
+            val basPrev = basalState.days[d].get(h)
+            val ceilPrev = aggrState.days[d].get(h)
+            val isfNew  = (isfPrev  * (1.0 - (1.0 - AGGR_HARD_LOW_BASAL_NUDGE) * w)).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+            val basNew  = (basPrev  * (1.0 - (1.0 - AGGR_HARD_LOW_BASAL_NUDGE) * w)).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+            val ceilNew = (ceilPrev * (1.0 - (1.0 - AGGR_PENALTY_HARD_LOW)     * w)).coerceAtLeast(AGGR_CEIL_MIN)
+            isfState   = isfState.updatedSplit(d, h, RETRO_WRITE_MINUTE, isfNew, 1.0, 0.0)
+            basalState = basalState.updatedSplit(d, h, RETRO_WRITE_MINUTE, basNew, 1.0, 0.0)
+            aggrState  = aggrState.updatedSplit(d, h, RETRO_WRITE_MINUTE, ceilNew, 1.0, AGGR_HARD_LOW_GLOBAL_ALPHA * w)
+            applied.append(if (applied.isEmpty()) "" else ", ")
+                .append("h=$h(${DayOfWeekCircadianState.DAY_LABELS[d]}) w=${"%.2f".format(w)} ")
+                .append("isf ${"%.3f".format(isfPrev)}→${"%.3f".format(isfNew)} bas ${"%.3f".format(basPrev)}→${"%.3f".format(basNew)}")
+        }
+        lastRetroAttribution = when {
+            applied.isNotEmpty() -> "low at h=$hour charged back to $applied" +
+                (if (skippedNoInsulin > 0) " (${skippedNoInsulin} hour(s) skipped — no fasting insulin recorded)" else "")
+            skippedNoInsulin > 0 -> "low at h=$hour — no earlier hour had fasting insulin on board, nothing charged back"
+            else                 -> "low at h=$hour — nothing to attribute back"
+        }
+        aapsLogger.debug(LTag.APS, "CircadianLearner RETRO $lastRetroAttribution")
     }
 
     // -- Rollercoaster detection -----------------------------------------------
@@ -1819,12 +1966,16 @@ class CircadianLearner @Inject constructor(
 
     private fun persist() {
         try {
+            val presence = JSONObject()
+            lastFastingInsulinMs.forEach { (bucket, ms) -> presence.put(bucket.toString(), ms) }
             val json = JSONObject().apply {
                 put("isf",   isfState.toJson())
                 put("basal", basalState.toJson())
                 put("aggr",  aggrState.toJson())
+                put(K_PRESENCE, presence)
             }
             sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, json.toString()) }
+            insulinPresenceDirty = false
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner persist failed: ${e.message}")
         }
@@ -1840,7 +1991,18 @@ class CircadianLearner @Inject constructor(
             isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
             basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
             aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
-            aapsLogger.debug(LTag.APS, "CircadianLearner restored (day-of-week)")
+
+            // optJSONObject, not getJSONObject: state saved before the retro attribution existed
+            // has no such key, and that must load normally rather than throwing away the ISF,
+            // basal and aggr buckets that were read a line earlier.
+            json.optJSONObject(K_PRESENCE)?.let { presence ->
+                lastFastingInsulinMs.clear()
+                presence.keys().forEach { k ->
+                    k.toIntOrNull()?.let { bucket -> lastFastingInsulinMs[bucket] = presence.optLong(k, 0L) }
+                }
+            }
+            aapsLogger.debug(LTag.APS,
+                             "CircadianLearner restored (day-of-week), ${lastFastingInsulinMs.size} insulin-presence buckets")
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner restore failed: ${e.message}")
         }
@@ -1853,6 +2015,9 @@ class CircadianLearner @Inject constructor(
         basalState = DayOfWeekCircadianState()
         aggrState  = DayOfWeekCircadianState()
         bgHistory.clear()
+        lastFastingInsulinMs.clear()
+        insulinPresenceDirty = false
+        lastRetroAttribution = "No low attributed yet"
         sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, "") }
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
@@ -2088,5 +2253,24 @@ class CircadianLearner @Inject constructor(
         // General
         private const val COB_THRESHOLD_G = 5.0   // ignore cycles with active carbs
         private const val MAX_HISTORY     = 30     // ring buffer size
+
+        // -- Retroactive low attribution ------------------------------------
+        /** How far back a low can be charged. Beyond 4h the activity curve contributes
+         *  almost nothing, and the further back it reaches the more other causes it collects. */
+        private const val RETRO_LOOKBACK_MINS      = 240
+        /** Share of the most-responsible hour's cut below which an hour is left alone. Keeps this
+         *  to the two or three hours that actually dosed instead of smearing across the morning. */
+        private const val RETRO_MIN_WEIGHT         = 0.15
+        /** IOB that counts as "insulin was working in this hour". */
+        private const val RETRO_MIN_IOB_U          = 0.05
+        /** How stale a bucket's stamp must be before refreshing it is worth an SP write. Well under
+         *  [RETRO_LOOKBACK_MINS], so a restart can never land on a stamp old enough to have expired
+         *  when it should not have. */
+        private const val RETRO_PERSIST_INTERVAL_MS = 10 * 60_000L
+        private const val K_PRESENCE               = "insulinPresence"
+        /** Retro writes land at :30 — dead centre of the bucket, so [CircadianState.updatedSmoothed]
+         *  bleeds nothing into the neighbour. The kernel already decided the split across hours. */
+        private const val RETRO_WRITE_MINUTE       = 30
+        private const val MINUTES_PER_DAY          = 24 * 60
     }
 }

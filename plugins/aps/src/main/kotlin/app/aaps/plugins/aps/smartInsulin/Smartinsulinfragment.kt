@@ -822,6 +822,9 @@ class SmartInsulinFragment : DaggerFragment() {
             addRow(c, "Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
             addRow(c, "Last basal signal", d.lastBasalSignal.ifEmpty { "(no data)" })
             addRow(c, "Cycle summary (live)", d.lastCycleSummary.ifEmpty { "(no data)" })
+            // The hours a low was charged back to are otherwise invisible: they are hours the
+            // clock has already left, so nothing on the live line ever mentions them.
+            addRow(c, "Last low charged back to", d.lastRetroAttribution.ifEmpty { "(no data)" })
         }
     }
 

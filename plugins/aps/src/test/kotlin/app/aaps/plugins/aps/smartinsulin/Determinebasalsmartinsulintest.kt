@@ -420,4 +420,41 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(fakeResult.predictionsAsGv.all { it.value.isFinite() },
                    "Every predicted BG must be finite")
     }
+
+    // ── Low guard / SMB gate boundary ────────────────────────────────────────
+
+    /** Rising curve with negative IOB — the shape that produces insulinReq > 0 near the guard. */
+    private fun recoveringFromLow(bgMgdl: Double) {
+        whenever(glucoseStatus.glucose).thenReturn(bgMgdl)
+        whenever(glucoseStatus.delta).thenReturn(12.6)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(12.6)
+    }
+
+    @Test fun `a BG displayed level with the low guard unlocks SMBs`() {
+        // The real failure: guard 4.8 mmol is stored as 86.4 mg/dL, CGM reports a whole 86, and
+        // both print as "4.8". SMBs were held for a 0.4 mg/dL gap nothing on screen could show.
+        recoveringFromLow(86.0)
+        val r = invoke(iobArray = flatIobArray(iob = -2.0, activity = -0.02),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0, uamSmbFraction = 1.0)
+        assertFalse(r.reason.contains("trigger=blocked"), r.reason)
+        assertTrue(r.smb > 0.0, "SMB should be unlocked at the guard: ${r.reason}")
+    }
+
+    @Test fun `a BG genuinely below the low guard still blocks SMBs`() {
+        // 84 vs 86.4 is 2.4 mg/dL under — a full display step below, and still blocked.
+        recoveringFromLow(84.0)
+        val r = invoke(iobArray = flatIobArray(iob = -2.0, activity = -0.02),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0, uamSmbFraction = 1.0)
+        assertTrue(r.reason.contains("trigger=blocked"), r.reason)
+        assertEquals(0.0, r.smb, 0.001)
+    }
+
+    @Test fun `the tolerance does not reach the next reading down`() {
+        // 85 mg/dL displays as 4.7, a step below the guard — it must stay blocked, or the
+        // tolerance would be quietly lowering the guard rather than matching the display.
+        recoveringFromLow(85.0)
+        val r = invoke(iobArray = flatIobArray(iob = -2.0, activity = -0.02),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0, uamSmbFraction = 1.0)
+        assertTrue(r.reason.contains("trigger=blocked"), r.reason)
+    }
 }

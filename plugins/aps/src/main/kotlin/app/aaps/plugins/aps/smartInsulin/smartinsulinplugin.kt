@@ -317,6 +317,9 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
         val lastCycleSummary: String,
+        /** Which earlier hours the last hard low was charged back to — see
+         *  CircadianLearner.retroAttributeHardLow. */
+        val lastRetroAttribution: String,
         val lastRunError: String?,
         val mealAbsorptionLog: String,
         val mealAbsorptionInProgress: String,
@@ -462,6 +465,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
             lastCycleSummary = circadianLearner.lastCycleSummary,
+            lastRetroAttribution = circadianLearner.lastRetroAttribution,
             lastRunError = lastRunError,
             mealAbsorptionLog = mealAbsorptionRaw,
             mealAbsorptionInProgress = mealAbsorptionInProgressText,
@@ -774,6 +778,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 inReboundWindow          = inReboundWindow,
                 aggressiveness           = aggressionLearner.aggressiveness,
                 fastingPeakMins          = profileLearner.getProfile(MealMode.FASTING).peakMinutes,
+                // Peak and DIA together — the retroactive low attribution needs the whole curve
+                // to say how much of a 2h-old dose is still pulling BG down.
+                fastingDiaMins           = profileLearner.getProfile(MealMode.FASTING).safeDiaMinutes,
                 // Drive the learner from the loop's clock (dateUtil.now()), not its own
                 // Calendar.getInstance() defaults — otherwise the learner can be reading a
                 // different hour/minute than the cycle it is learning from, and nothing in a
@@ -913,7 +920,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // lands on target can never be read as having undershot.
         val lowGuardNowMgdl   = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         val undershootCeiling = undershootCeilingMgdl(lowGuardNowMgdl, profile.getTargetMgdl())
-        val lowActiveNow      = glucoseStatus.glucose < lowGuardNowMgdl || inReboundWindow
+        val lowActiveNow      = bgBelowGuard(glucoseStatus.glucose, lowGuardNowMgdl) || inReboundWindow
         val undershootNow     = !lowActiveNow && glucoseStatus.glucose < undershootCeiling
 
         // -- Per-mode ISF episode-outcome learner -------------------------------
@@ -1034,7 +1041,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val basalMultiplier = combinedBasalMultiplier(currentHour, currentDow, currentMinute)
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
-        if (glucoseStatus.glucose < REBOUND_LOW_THRESHOLD_MGDL) {
+        if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
             if (!bgWentLow) { iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
             else if (softLandingBypass && reboundWindowStartMs > 0L) { secondLowOccurred = true; softLandingBypass = false }
             if (glucoseStatus.glucose < minBgDuringLow) minBgDuringLow = glucoseStatus.glucose
@@ -1044,7 +1051,9 @@ open class SmartInsulinPlugin @Inject constructor(
             // Genuine window expiry is cleaned up by the line below (when msSinceLastSuspend >= reboundGuardMs).
             bgWentLow = true
         }
-        if (bgWentLow && reboundWindowStartMs == 0L && glucoseStatus.glucose >= REBOUND_LOW_THRESHOLD_MGDL) reboundWindowStartMs = now
+        // Exact complement of the low test above — the pair has to partition, or a BG in the gap
+        // would be neither low nor recovered and the window would never arm.
+        if (bgWentLow && reboundWindowStartMs == 0L && !bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) reboundWindowStartMs = now
         if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) { reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()

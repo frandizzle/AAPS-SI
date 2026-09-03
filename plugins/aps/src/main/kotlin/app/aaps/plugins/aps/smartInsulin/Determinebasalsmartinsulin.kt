@@ -238,6 +238,27 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val iobOk        = currentIob < oapsProfile.max_iob
         val bgAboveGuard = currentBg - lowGuardMgdl
 
+        /**
+         * Whether BG has cleared the low guard, for the SMB gate.
+         *
+         * Deliberately not `bgAboveGuard > 0.0`, for two reasons:
+         *
+         *  - Sitting AT the guard is not being BELOW it. The guard marks where dosing should stop;
+         *    a BG level with it has not gone under.
+         *  - The comparison ran at a finer resolution than anything on screen. The guard is entered
+         *    in mmol and stored as its mg/dL conversion (4.8 -> 86.4) while CGM values arrive as
+         *    whole mg/dL, so a log line reading "BG=4.8 lo=4.8" is really 86 vs 86.4 — and SMBs were
+         *    held for a 0.4 mg/dL gap smaller than the 0.1 mmol display step (1.8 mg/dL) and smaller
+         *    than the sensor resolves. Nothing in the reason string could show why.
+         *
+         * [bgBelowGuard] is the shared definition — the same one the rebound tracking, the learners'
+         * lowActive flag and the circadian hard-low penalty use, so a BG cannot clear the guard here
+         * and count as a low there. The guard itself does not move, and everything below it is
+         * untouched: the predictive SUSPEND, LGS and the caution zone all still fire on their own
+         * thresholds.
+         */
+        val bgClearsGuard = !bgBelowGuard(currentBg, lowGuardMgdl)
+
         // Stock OpenAPS-style insulinReq: how much insulin is needed to bring
         // predictedMin to target. predictedMin already has existing IOB baked in,
         // so this naturally self-limits — no iobSufficient gate needed.
@@ -340,7 +361,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // baked into predictedMin so there's no double-dosing risk.
                 val smbAllowed = microBolusAllowed &&
                     !highTempTargetActive &&
-                    bgAboveGuard > 0.0 &&
+                    bgClearsGuard &&
                     insulinReq > 0.0
 
                 val correctionUnits = if (smbAllowed) {
@@ -502,5 +523,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ~0.5 mmol/L per unit — an ISF this strong is outside any real profile; this exists
         // purely so a corrupt multiplier can never turn a division into an unbounded dose.
         private const val MIN_DOSING_ISF_MGDL         = 9.0
+
     }
 }
