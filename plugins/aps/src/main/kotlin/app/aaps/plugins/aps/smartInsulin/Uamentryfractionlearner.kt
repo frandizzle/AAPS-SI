@@ -362,8 +362,16 @@ class UamEntryFractionLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: $lastOutcome")
     }
 
-    /** True when this mode's configured fraction plus its learned offset already sits at the
-     *  ceiling, so a further strengthen would be swallowed whole by [adjustedFraction]. */
+    /**
+     * True when this mode's configured fraction plus its learned offset already sits at the
+     * ceiling, so a further strengthen would be swallowed whole by [adjustedFraction].
+     *
+     * Public because [ModeIsfLearner] needs it too: with no shape left to give, a spike followed
+     * by a soft landing is a timing failure it should stop reading as over-dosing. Answering it
+     * here keeps one definition of "the shape knob is out of travel".
+     */
+    fun isShapeRailed(mode: MealMode): Boolean = railedHigh(mode)
+
     private fun railedHigh(mode: MealMode): Boolean {
         val s = states[mode] ?: return false
         if (s.baseSig.isNaN()) return false

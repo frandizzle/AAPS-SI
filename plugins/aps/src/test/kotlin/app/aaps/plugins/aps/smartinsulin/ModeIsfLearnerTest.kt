@@ -34,12 +34,13 @@ class ModeIsfLearnerTest {
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, dura: Double = 1.0,
         delta: Double = 0.0, activity: Double = 0.0,
-        baseSig: Double = 0.0, exercise: Boolean = false
+        baseSig: Double = 0.0, exercise: Boolean = false,
+        undershoot: Boolean = false, railed: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
-        exerciseSuspected = exercise
+        exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -241,5 +242,77 @@ class ModeIsfLearnerTest {
 
         learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS + 6 * 60 * 60_000L)
         assertEquals(0.975 * 0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    // ── Late spike with the shape knob railed ────────────────────────────────
+
+    // This learner judges where BG LANDS, never how far it went first. A meal that runs 4.7→9.7
+    // and then settles just under target booked exactly the same weaken as one that never rose —
+    // which walks a mode steadily weaker while its spikes get worse. When the entry fraction is
+    // already at its ceiling there is no front-loading left to fix the timing with, so the spike
+    // stops being read as over-dosing.
+
+    /**
+     * Runs one episode: rises to [peak], then sits in the undershoot band (or goes low) well past
+     * both the entry-attribution window and the 25-min undershoot minimum, then ends.
+     */
+    private fun spikeThenLand(
+        peak: Double, railed: Boolean, low: Boolean = false, exercise: Boolean = false
+    ) {
+        val start = BASE_MS
+        var t = start
+        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = 100.0, railed = railed)
+        t += CYCLE_MS
+        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = peak, railed = railed)
+        // Past ENTRY_ATTRIBUTION_MS (75min) so a low counts as this learner's, and past the
+        // 25-min undershoot minimum.
+        repeat(18) { t += CYCLE_MS }
+        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t,
+              bg = if (low) 70.0 else 93.0, low = low, undershoot = !low,
+              railed = railed, exercise = exercise)
+        t += CYCLE_MS
+        cycle(mode = null, startMs = 0L, nowMs = t, bg = if (low) 70.0 else 93.0)
+    }
+
+    @Test
+    fun `a spike that settles just under target with the shape knob railed strengthens`() {
+        spikeThenLand(peak = 160.0, railed = true)   // +60 over target, past the ~3mmol bar
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("late, not too much"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `the same spike still weakens while the fraction has headroom left`() {
+        // Shape can still be fixed where it belongs, so this learner must not also act.
+        spikeThenLand(peak = 160.0, railed = false)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `an undershoot with no spike still weakens even when railed`() {
+        spikeThenLand(peak = 110.0, railed = true)   // +10 over target — nothing like a spike
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a hard low after a late spike still weakens, at half the step`() {
+        // Reaching the low guard means the total really was too much, whenever it arrived.
+        // Strengthening from there would deepen the next one — only the step softens.
+        spikeThenLand(peak = 160.0, railed = true, low = true)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("weakened"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a hard low with no spike still takes the full weaken`() {
+        spikeThenLand(peak = 110.0, railed = true, low = true)
+        assertEquals(1.05, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a suspected-exercise undershoot after a spike is not read as a timing failure`() {
+        // BG falling faster than insulin explains says nothing about front-loading.
+        spikeThenLand(peak = 160.0, railed = true, exercise = true)
+        assertEquals(1.01, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 }

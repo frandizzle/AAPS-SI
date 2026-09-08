@@ -53,6 +53,10 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
     // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
+    /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
+    private var episodePeakMgdl  = 0.0
+    /** True if the entry-fraction knob was already at its ceiling at any point in the episode. */
+    private var episodeShapeRailed = false
 
     // Pending post-episode evaluation (settling tail)
     private var pendingMode:      MealMode? = null
@@ -117,6 +121,15 @@ class ModeIsfLearner @Inject constructor(
         /** Step fraction once the evaluation has been voided — the low is still real, but the
          *  episode is no longer clean enough to credit it in full. */
         private const val VOIDED_STEP_FRACTION      = 0.5
+        /**
+         * Peak this far above target makes the episode a LATE one — the same ~3 mmol bar
+         * [UamEntryFractionLearner] uses to call a spike a front-loading failure, so the two
+         * learners agree on what counts as one.
+         */
+        private const val LATE_SPIKE_MARGIN_MGDL    = 54.0
+        /** Weaken-step fraction for a hard low that followed a late spike — half the fault was
+         *  timing, so only half the step is charged to dose. */
+        private const val LATE_SPIKE_STEP_FRACTION  = 0.5
         private const val MULT_MIN                = 0.6
         private const val MULT_MAX                = 1.4
         private const val STRENGTHEN_MARGIN_MGDL  = 18.0          // ~1 mmol above target at eval = under-dosed
@@ -155,8 +168,10 @@ class ModeIsfLearner @Inject constructor(
         // a change means the user re-based the mode, so the old learned correction is stale
         exerciseSuspected: Boolean = false,  // BG dropping faster than insulin explains — a low
         // right now is probably not an ISF problem
-        undershootActive: Boolean = false  // BG within the caller's undershoot band above the low
+        undershootActive: Boolean = false,  // BG within the caller's undershoot band above the low
         // guard — too far down to call the episode a success, not far enough to call it a hypo
+        entryShapeRailed: Boolean = false   // this mode's UAM entry fraction is already at its
+        // ceiling, so no amount of further front-loading is available to fix a late spike
     ) {
         if (activeModeNow != null) {
             if (activeMode == null || modeStartMs != activeStartMs) {
@@ -181,9 +196,16 @@ class ModeIsfLearner @Inject constructor(
                                          "low during ${superseded.label} before ${activeModeNow.label} took over — weakened",
                                          activeStartMs)
                         episodeUndershoot ->
-                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true),
-                                         "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step",
-                                         activeStartMs)
+                            // Same reading as the episode-end branch — a spike that settled just
+                            // under target with no front-loading left is late, not excessive.
+                            if (lateSpikeWithNoShapeLeft(targetMgdl) && !episodeLowWasUnexplained)
+                                applyOutcome(superseded, STRENGTHEN_STEP,
+                                             "${superseded.label} peaked ${"%.1f".format(episodePeakMgdl / 18.0)}mmol then settled just under target with entry front-loading maxed — strengthened",
+                                             activeStartMs)
+                            else
+                                applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true),
+                                             "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step",
+                                             activeStartMs)
                     }
                 }
 
@@ -209,7 +231,11 @@ class ModeIsfLearner @Inject constructor(
                 episodeUndershoot = false
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
+                episodePeakMgdl = 0.0
+                episodeShapeRailed = false
             }
+            if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
+            if (entryShapeRailed) episodeShapeRailed = true
             if (lowActive) {
                 // ARBITRATION with UamEntryFractionLearner: a low soon after a UAM entry is
                 // evidence the entry burst was too front-loaded (a SHAPE problem the entry
@@ -239,12 +265,22 @@ class ModeIsfLearner @Inject constructor(
             val endedStartMs = activeStartMs
             activeMode    = null
             activeStartMs = 0L
+            val lateSpike    = lateSpikeWithNoShapeLeft(targetMgdl)
+            val peakMmol     = "%.1f".format(episodePeakMgdl / 18.0)
             if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
-                applyOutcome(ended, weakenStep(unexplained),
-                             if (unexplained) "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                             else "low during ${ended.label} episode — weakened",
+                //
+                // A preceding spike does NOT flip this one. BG reaching the low guard means the
+                // total really was too much, whenever it arrived, and strengthening from there
+                // would deepen the next one. It only softens the step: half the episode's fault
+                // was timing, and the full step would price it all as dose.
+                applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike),
+                             when {
+                                 unexplained -> "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
+                                 lateSpike   -> "low during ${ended.label} episode after peaking ${peakMmol}mmol with entry front-loading maxed — weakened at reduced step"
+                                 else        -> "low during ${ended.label} episode — weakened"
+                             },
                              endedStartMs)
                 clearWatch()
             } else if (hadEarlyLow) {
@@ -255,9 +291,22 @@ class ModeIsfLearner @Inject constructor(
             } else if (hadUndershoot) {
                 // Never reached the low guard, so no other learner sees this at all — but the
                 // mode drove BG down near the low guard, which is over-dosing by any reading of it.
-                applyOutcome(ended, weakenStep(unexplained, undershoot = true),
-                             "${ended.label} undershot toward the low guard — weakened at reduced step",
-                             endedStartMs)
+                //
+                // Unless it spiked hard on the way there with the shape knob already railed. An
+                // episode that peaked 3mmol over target and then settled just UNDER it never went
+                // low at all; calling that over-dosing and weakening is what walks a mode steadily
+                // weaker meal after meal while the spikes get worse. Nothing here is unsafe to
+                // strengthen: BG stayed above the guard the whole way, and any episode that does
+                // reach it still weakens, at twice this step, in the branch above.
+                if (lateSpike && !unexplained) {
+                    applyOutcome(ended, STRENGTHEN_STEP,
+                                 "${ended.label} peaked ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
+                                 endedStartMs)
+                } else {
+                    applyOutcome(ended, weakenStep(unexplained, undershoot = true),
+                                 "${ended.label} undershot toward the low guard — weakened at reduced step",
+                                 endedStartMs)
+                }
                 clearWatch()
             } else {
                 pendingMode      = ended
@@ -332,11 +381,27 @@ class ModeIsfLearner @Inject constructor(
      * episode was no longer clean when the low landed. Reasons compound — always reduce, never
      * discard, since this is the safety direction.
      */
-    private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false): Double {
+    /**
+     * True when the episode's peak says the insulin arrived LATE rather than in the wrong amount,
+     * and there is no front-loading left to fix that with.
+     *
+     * The distinction this learner could not previously draw: it judges only where BG LANDS. A
+     * meal that runs 4.7 → 9.7 and then settles just under target books exactly the same weaken as
+     * one that never rose at all, because both ended below target. The first is not too much
+     * insulin — it is too little, too late, and weakening it makes tomorrow's spike worse. That is
+     * a shape problem, and it is normally the entry-fraction learner's to fix; this only applies
+     * once that knob is railed at its maximum and cannot fix anything.
+     */
+    private fun lateSpikeWithNoShapeLeft(targetMgdl: Double): Boolean =
+        episodeShapeRailed && (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL
+
+    private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
+                           lateSpike: Boolean = false): Double {
         var fraction = 1.0
         if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
         if (voided)      fraction *= VOIDED_STEP_FRACTION
+        if (lateSpike)   fraction *= LATE_SPIKE_STEP_FRACTION
         return 1.0 + (WEAKEN_STEP - 1.0) * fraction
     }
 
@@ -400,6 +465,7 @@ class ModeIsfLearner @Inject constructor(
 
     fun reset() {
         states.clear()
+        episodePeakMgdl = 0.0; episodeShapeRailed = false
         activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
         pendingMode = null; pendingStartMs = 0L

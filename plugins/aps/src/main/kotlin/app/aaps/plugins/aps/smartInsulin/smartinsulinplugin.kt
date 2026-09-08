@@ -1023,7 +1023,11 @@ open class SmartInsulinPlugin @Inject constructor(
             nowMs          = now,
             baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0,
             exerciseSuspected = exerciseSuspected,
-            undershootActive  = undershootNow
+            undershootActive  = undershootNow,
+            // Whether the shape knob still has travel. Asked of the entry-fraction learner rather
+            // than recomputed here, so both learners agree on when front-loading is exhausted.
+            entryShapeRailed  = mealOverrideManager.activeMealMode
+                ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
