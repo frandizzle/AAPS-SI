@@ -618,6 +618,11 @@ class SmartInsulinFragment : DaggerFragment() {
         // 5: currentIsfMult
         // 6: sessionBasMult
         // 7: currentBasMult
+        // 10: ISF_APPLIED | ISF_SKIPPED   — whether the nudge actually wrote ISF this cycle
+        // 11: BAS_APPLIED | BAS_SKIPPED   — same for basal
+        // NOTE 4-7 are RAW day-bucket multipliers and are no longer read here: the nudge card uses
+        // the bucket-centre pair from FragmentData instead, which includes the day/global blend and
+        // so matches the 24h table row for this hour.
 
         val profIsf = d.profileIsfMgdl
         val profBas = d.profileBasalU
@@ -701,22 +706,32 @@ class SmartInsulinFragment : DaggerFragment() {
             }
             nudgeActive -> {
                 val isHigh = nudgeState == "ACTIVE_HIGH"
-                val sIsfMult = nudgeParts.getOrNull(4)?.toDoubleOrNull() ?: 1.0
-                val cIsfMult = nudgeParts.getOrNull(5)?.toDoubleOrNull() ?: 1.0
-                val sBasMult = nudgeParts.getOrNull(6)?.toDoubleOrNull() ?: 1.0
-                // cBasMult previously came straight from the raw aggrNudge debug string, which
-                // only carries CircadianLearner's OWN per-hour multiplier — not the combined
-                // (flat BasalLearner × circadian) multiplier actually delivered. That caused the
-                // "now" basal U/h shown here to disagree with the per-hour table (which correctly
-                // uses combinedBasalMultiplier via d.basalMultiplier). Use d.basalMultiplier instead
-                // so this card matches what's actually delivered and what the table shows.
-                val cBasMult = d.basalMultiplier
+                // Both ends of both pairs are bucket-centre reads for THIS hour, so the only thing
+                // that can move them is the nudge.
+                //
+                // The basal pair used to mix two different quantities: a raw day-bucket "was" from
+                // nudgeParts[6] against a live, minute-interpolated "now" from d.basalMultiplier.
+                // Their difference was mostly the clock crossing an hour boundary — at :00 the live
+                // read is an exact 50/50 blend of the two hours — so an hour whose neighbour sat
+                // higher displayed basal RISING directly under "Removing insulin". ISF never showed
+                // it only because both its ends happened to come from the same place.
+                val sIsfMult = d.nudgeSessionIsfBucketMult.takeIf { it > 0 } ?: 1.0
+                val cIsfMult = d.bucketIsfMultiplier
+                val sBasMult = d.nudgeSessionBasBucketMult.takeIf { it > 0 } ?: 1.0
+                val cBasMult = d.bucketBasalMultiplier
+
+                // A nudge is skipped for the cycle when a physics learner or FuelTrim already wrote
+                // that quantity — same-cycle mutual exclusion in applyAggrNudge. Without saying so,
+                // a card that reports a was→now pair reads as though the nudge made the move.
+                val isfHeld = nudgeParts.getOrNull(10) == "ISF_SKIPPED"
+                val basHeld = nudgeParts.getOrNull(11) == "BAS_SKIPPED"
+                val heldNote = " — held this cycle, a direct measurement took precedence"
 
                 val nudgeAction = if (isHigh) "Adding insulin" else "Removing insulin"
                 stHeadline = if (isHigh) "⬆️ Pattern detected — $nudgeAction" else "⬇️ Pattern detected — $nudgeAction"
                 stDetail   = "Historical pattern shows you need ${if (isHigh) "more" else "less"} insulin at this hour.\n" +
-                    "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}\n" +
-                    "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}" +
+                    "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}${if (isfHeld) heldNote else ""}\n" +
+                    "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}${if (basHeld) heldNote else ""}" +
                     learningPauseNote
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }
@@ -908,30 +923,26 @@ class SmartInsulinFragment : DaggerFragment() {
         addDivider(c)
         addSectionHeader(c, "Learned Mode ISF (per meal / UAM mode)")
         addMonospaceBlock(c, d.modeIsfLearnerStatus)
-        addMonospaceBlock(c, "Each completed episode is judged after a ~75min settling tail:\n" +
-            "ended low → ISF weakens, ended high / DURA had to rescue → strengthens,\n" +
-            "ate again during tail → skipped. Changing a mode's ISF override resets it.",
-                          Color.parseColor("#FF999999"))
+        addNoteBlock(c, "Judged ~75min after each episode ends: ended low → ISF weakens, " +
+            "ended high or DURA had to rescue → strengthens, ate again during the tail → skipped. " +
+            "Changing a mode's ISF override resets it.")
 
         addDivider(c)
         addSectionHeader(c, "Learned DURA Strength (per mode)")
         addMonospaceBlock(c, d.duraStrengthStatus)
-        addMonospaceBlock(c, "Learns DOWN only: if DURA engaged and the episode crashed low,\n" +
-            "its strength is cut for that mode. It never learns up — \"needed DURA\"\n" +
-            "already tells the mode ISF learner to strengthen the baseline, and\n" +
-            "raising both would correct one problem twice.",
-                          Color.parseColor("#FF999999"))
+        addNoteBlock(c, "Learns DOWN only: DURA engaged and the episode still crashed low → " +
+            "strength cut for that mode. It never learns up, because \"needed DURA\" already tells " +
+            "the mode ISF learner to strengthen the baseline, and raising both would correct one " +
+            "problem twice.")
 
         addDivider(c)
         addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")
         addMonospaceBlock(c, d.uamEntryFractionStatus)
-        addMonospaceBlock(c, "Shape knob — how front-loaded the first SMBs after a UAM entry are.\n" +
-            "Low soon after entry → fraction lowered.\n" +
-            "Big spike peaking 40min+ after entry but ending on target → raised.\n" +
-            "Spike peaking sooner → fast carbs, left alone (insulin couldn't have\n" +
-            "beaten it). Ended high or late low → left alone (mode ISF's job).\n" +
-            "Entry SMB count stays manual.",
-                          Color.parseColor("#FF999999"))
+        addNoteBlock(c, "Shape knob — how front-loaded the first SMBs after a UAM entry are. " +
+            "Low soon after entry → lowered. Big spike peaking 40min+ after entry but still ending " +
+            "on target → raised. Peaked sooner than that → fast carbs, left alone, since no amount " +
+            "of front-loading could have beaten it. Ended high, or went low late → left alone, " +
+            "that is mode ISF's job. Entry SMB count stays manual.")
         val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
             addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
@@ -975,6 +986,24 @@ class SmartInsulinFragment : DaggerFragment() {
         container.addView(TextView(ctx).apply {
             this.text = text; textSize = 11f; setTextColor(color)
             typeface = android.graphics.Typeface.MONOSPACE
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .also { it.bottomMargin = (8 * dp).toInt() }
+        })
+    }
+
+    /**
+     * Dim prose under a table.
+     *
+     * Proportional, unlike [addMonospaceBlock], and that is the whole point: the blocks above are
+     * grids and these are sentences. Rendering both in the same monospace face, hard-wrapped to
+     * guessed widths, was most of why the three "Learned …" sections read as one undifferentiated
+     * wall. Letting prose wrap naturally also stops it fighting the device width.
+     */
+    private fun addNoteBlock(container: LinearLayout, text: String) {
+        val ctx = context ?: return
+        if (text.isBlank()) return
+        container.addView(TextView(ctx).apply {
+            this.text = text; textSize = 11f; setTextColor(Color.parseColor("#FF999999"))
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
                 .also { it.bottomMargin = (8 * dp).toInt() }
         })

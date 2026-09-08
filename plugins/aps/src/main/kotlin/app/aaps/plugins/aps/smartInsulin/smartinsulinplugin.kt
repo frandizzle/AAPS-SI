@@ -134,6 +134,23 @@ open class SmartInsulinPlugin @Inject constructor(
     var learningDirtyUntilMs: Long = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
+    /**
+     * The aggression nudge's own "was" snapshot, held at the hour bucket's CENTRE rather than at
+     * the live minute.
+     *
+     * Separate from [nudgeDisplaySessionIsfMgdl]/[nudgeDisplaySessionBasalU] (which the FuelTrim
+     * card uses) because the nudge card is hour-scoped — its copy says "at this hour" — and the
+     * live read is interpolated across the hour boundary. Comparing two live reads taken at
+     * different minutes reports the clock walking between buckets as if the nudge had done it: at
+     * :00 the blend is an exact 50/50 of the two hours, so an hour whose neighbour sits higher
+     * shows basal RISING under a headline that says insulin is being removed. Reading both ends at
+     * :30 takes the clock out of it, and makes these numbers agree with the 24h table, which is
+     * already drawn at TABLE_BUCKET_MINUTE.
+     */
+    private var nudgeDisplaySessionIsfBucketMult: Double = 1.0
+    private var nudgeDisplaySessionBasBucketMult: Double = 1.0
+    /** Hour the snapshot above belongs to — a new hour is a new bucket, so it needs a new baseline. */
+    private var nudgeDisplaySessionHour: Int = -1
     // Tracks the last nudge direction so we only capture session-start baseline once
     // per nudge episode (not on every cycle). Without this, "was ISF" keeps updating
     // mid-nudge and the "was ? now" comparison loses meaning.
@@ -184,6 +201,12 @@ open class SmartInsulinPlugin @Inject constructor(
         // Per-hour table rows are read at the bucket centre so the table shows each hour's own
         // learned value, not the boundary-interpolated value applying at the current minute.
         private const val TABLE_BUCKET_MINUTE  = 30
+        // Column widths for the learned-per-mode tables. 18 fits the longest mode label,
+        // "Protein/Fat (UAM)", with a space to spare.
+        private const val LEARNER_LABEL_W     = 18
+        private const val LEARNER_VALUE_W     = 11
+        private const val LEARNER_TRAIL_W     = 9
+        private const val UAM_LABEL_SUFFIX    = " (UAM)"
         private const val MIN_TOTAL_BASAL_MULT = 0.5
         private const val MAX_TOTAL_BASAL_MULT = 1.5
 
@@ -298,6 +321,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val hour: Int, val dayLabel: String, val mealMode: String, val modeRemMins: Int?,
         val aggressiveness: Double, val circCeil: Double, val isfMultiplier: Double,
         val nudgeSessionIsfMgdl: Double, val nudgeSessionBasalU: Double, val profileIsfMgdl: Double,
+        // Hour-scoped pair for the aggression-nudge card: session baseline and current value, both
+        // read at the bucket centre so neither carries hour-boundary interpolation.
+        val nudgeSessionIsfBucketMult: Double, val nudgeSessionBasBucketMult: Double,
+        val bucketIsfMultiplier: Double, val bucketBasalMultiplier: Double,
         val finalIsfMgdl: Double, val basalMultiplier: Double, val profileBasalU: Double, val finalBasalU: Double,
         val currentBgMgdl: Double, val profileTargetMgdl: Double, val lastBasalSignal: String,
         val lastAggrNudgeStatus: String, val lastAccelDebug: String, val lastPredTrimDebug: String,
@@ -384,10 +411,12 @@ open class SmartInsulinPlugin @Inject constructor(
         // override set show base→effective; modes running on profile ISF show the multiplier
         // alone (their base varies hour to hour with circadian learning).
         val modeIsfLearnerRaw = buildString {
+            var rows = 0
             MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
                 val mult = modeIsfLearner.multiplier(mode)
                 val n    = modeIsfLearner.episodeCount(mode)
                 if (n == 0 && mult == 1.0) return@forEach
+                if (rows++ == 0) appendLine(learnerHeader("ISF", "Learned"))
                 val baseMgdl = modeIsfMgdl(mode, hour)
                 val valueTxt = if (baseMgdl > 0.0) {
                     val b = if (isMmol) baseMgdl / 18.0 else baseMgdl
@@ -395,37 +424,55 @@ open class SmartInsulinPlugin @Inject constructor(
                     val f = if (isMmol) "%.2f" else "%.0f"
                     "${f.format(b)}→${f.format(e)}"
                 } else "profile"
-                appendLine("${mode.label.padEnd(18)} ${valueTxt.padEnd(12)} ×${"%.3f".format(mult)}  n=$n")
+                appendLine(learnerRow(mode.label, valueTxt, "×${"%.3f".format(mult)}", n))
             }
-            if (isEmpty()) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
-            if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${modeIsfLearner.lastOutcome}")
+            if (rows == 0) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
+            if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${modeIsfLearner.lastOutcome}")
         }.trimEnd()
 
         val duraStrengthRaw = buildString {
+            var rows = 0
             MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
                 val f = duraStrengthLearner.factor(mode)
                 val n = duraStrengthLearner.episodeCount(mode)
                 if (n == 0 && f == 1.0) return@forEach
-                appendLine("${mode.label.padEnd(18)} ×${"%.2f".format(f)}  n=$n")
+                if (rows++ == 0) appendLine(learnerHeader("Strength", null))
+                appendLine(learnerRow(mode.label, "×${"%.2f".format(f)}", null, n))
             }
-            if (isEmpty()) appendLine("No DURA interventions evaluated yet.")
-            if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${duraStrengthLearner.lastOutcome}")
+            if (rows == 0) appendLine("No DURA interventions evaluated yet.")
+            if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${duraStrengthLearner.lastOutcome}")
         }.trimEnd()
 
         val uamEntryFractionRaw = buildString {
+            // Reasons are collected and emitted as one block AFTER the rows rather than
+            // interleaved between them. Interleaved, a reason long enough to wrap put its
+            // continuation at column 0, indistinguishable from the next mode's row, and the grid
+            // stopped reading as a grid at all.
+            val reasons = StringBuilder()
+            var rows = 0
             MealMode.entries.filter { UamEntryFractionLearner.isEntryMode(it) }.forEach { mode ->
                 val offset = uamEntryFractionLearner.offset(mode)
                 val n      = uamEntryFractionLearner.episodeCount(mode)
                 if (n == 0 && offset == 0.0) return@forEach
+                if (rows++ == 0) appendLine(learnerHeader("Fraction", null))
                 val configured = entrySmbFractionForMode(mode)
                 val adjusted   = uamEntryFractionLearner.adjustedFraction(mode, configured)
-                appendLine("${mode.label.padEnd(18)} ${"%.2f".format(configured)}→${"%.2f".format(adjusted)}  n=$n")
+                // Every row here is a UAM mode — the section header says so — so the suffix is
+                // six characters of noise on every line.
+                val shortLabel = mode.label.removeSuffix(UAM_LABEL_SUFFIX)
+                appendLine(learnerRow(shortLabel, "${"%.2f".format(configured)}→${"%.2f".format(adjusted)}", null, n))
                 // Per-mode, because the global "Last:" line only ever explains whichever mode
                 // happened to evaluate most recently — useless for "why hasn't Lunch moved?".
-                uamEntryFractionLearner.lastReason(mode).takeIf { it.isNotEmpty() }?.let { appendLine("  $it") }
+                // The stored reason leads with the mode's own label, which is redundant against
+                // the label this line is already keyed by.
+                uamEntryFractionLearner.lastReason(mode).takeIf { it.isNotEmpty() }?.let {
+                    reasons.appendLine(shortLabel.padEnd(LEARNER_LABEL_W) + it.removePrefix("${mode.label} "))
+                }
             }
-            if (isEmpty()) appendLine("No completed UAM entry episodes yet.")
-            if (uamEntryFractionLearner.lastOutcome.isNotEmpty()) appendLine("Last: ${uamEntryFractionLearner.lastOutcome}")
+            if (rows == 0) appendLine("No completed UAM entry episodes yet.")
+            // No "Last:" line here: every mode carries its own reason above, so a global one only
+            // ever repeats whichever of them evaluated most recently, word for word.
+            if (reasons.isNotEmpty()) append("\n" + reasons.toString().trimEnd())
         }.trimEnd()
 
         return FragmentData(
@@ -434,6 +481,10 @@ open class SmartInsulinPlugin @Inject constructor(
             aggressiveness = aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(hour)),
             circCeil = circadianLearner.aggrCeiling(hour), isfMultiplier = isfMult,
             nudgeSessionIsfMgdl = nudgeDisplaySessionIsfMgdl, nudgeSessionBasalU = nudgeDisplaySessionBasalU,
+            nudgeSessionIsfBucketMult = nudgeDisplaySessionIsfBucketMult,
+            nudgeSessionBasBucketMult = nudgeDisplaySessionBasBucketMult,
+            bucketIsfMultiplier = circadianLearner.isfMultiplier(hour, dow, TABLE_BUCKET_MINUTE),
+            bucketBasalMultiplier = combinedBasalMultiplier(hour, dow, TABLE_BUCKET_MINUTE),
             profileIsfMgdl = profileIsf, finalIsfMgdl = if (isfMult > 0) profileIsf / isfMult else 0.0,
             basalMultiplier = basalMult, profileBasalU = profileBasal, finalBasalU = roundedFinalBasal,
             currentBgMgdl = glucoseStatusProvider.glucoseStatusData?.glucose ?: 0.0, profileTargetMgdl = cachedProfileTarget,
@@ -619,6 +670,22 @@ open class SmartInsulinPlugin @Inject constructor(
     // so they can be unit-tested without constructing the full plugin.
     private fun spMgdl(key: UnitDoubleKey): Double = spMgdl(sp, key)
 
+    /**
+     * Header and row for the three "Learned …" tables on the SI tab.
+     *
+     * They hold different quantities, but they sit one under another and are read as a group, so
+     * the label and value columns line up across all three and only the trailing column differs.
+     * Before this they each invented their own spacing and their own way of writing the episode
+     * count, which made three related tables look like three unrelated ones.
+     */
+    private fun learnerHeader(value: String, trailing: String?): String =
+        "Mode".padEnd(LEARNER_LABEL_W) + value.padEnd(LEARNER_VALUE_W) +
+            (trailing?.padEnd(LEARNER_TRAIL_W) ?: "") + "n"
+
+    private fun learnerRow(label: String, value: String, trailing: String?, n: Int): String =
+        label.padEnd(LEARNER_LABEL_W) + value.padEnd(LEARNER_VALUE_W) +
+            (trailing?.padEnd(LEARNER_TRAIL_W) ?: "") + n
+
     private fun pfIsfMgdl(hour: Int): Double {
         val dayStart      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)
         val dayEnd        = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayEndHour.key, IntKey.ApsSmartInsulinUamProteinFatDayEndHour.defaultValue)
@@ -757,6 +824,9 @@ open class SmartInsulinPlugin @Inject constructor(
             // loop was delivering before this cycle's nudge fires.
             val isfMultBefore        = circadianLearner.isfMultiplier(currentHour, currentDow, currentMinute)
             val totalBasalMultBefore = combinedBasalMultiplier(currentHour, currentDow, currentMinute)
+            // Bucket-centre twins of the two above — see nudgeDisplaySessionIsfBucketMult.
+            val isfBucketBefore      = circadianLearner.isfMultiplier(currentHour, currentDow, TABLE_BUCKET_MINUTE)
+            val basBucketBefore      = combinedBasalMultiplier(currentHour, currentDow, TABLE_BUCKET_MINUTE)
             val lastDirection = run {
                 val parts = lastSeenNudgeState.split("|")
                 val p = parts.getOrNull(0) ?: "INACTIVE"
@@ -802,12 +872,23 @@ open class SmartInsulinPlugin @Inject constructor(
                 else if (p == "ACTIVE_HIGH" || p == "ACTIVE_LOW") p
                 else null
             }
-            if (currentDirection != null && currentDirection != lastDirection) {
+            // Re-armed by a direction change OR an hour change. The nudge session is deliberately
+            // carried across hour boundaries by carryOverHourBoundary, but the DISPLAY must not be:
+            // hour 11's learned basal and hour 12's are independent buckets, so their difference is
+            // not something the nudge did. Learning is untouched by this — it is the baseline the
+            // card compares against that moves.
+            val newHour = currentHour != nudgeDisplaySessionHour
+            if (currentDirection != null && (currentDirection != lastDirection || newHour)) {
                 nudgeDisplaySessionIsfMgdl = if (isfMultBefore > 0) trueIsfMgdl / isfMultBefore else 0.0
                 nudgeDisplaySessionBasalU  = cachedProfileBasal * totalBasalMultBefore
+                nudgeDisplaySessionIsfBucketMult = isfBucketBefore
+                nudgeDisplaySessionBasBucketMult = basBucketBefore
+                nudgeDisplaySessionHour    = currentHour
                 aapsLogger.debug(LTag.APS,
-                                 "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection " +
-                                     "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)}")
+                                 "SmartInsulinPlugin: nudge baseline captured — dir=$currentDirection h=$currentHour " +
+                                     "(${if (newHour) "new hour" else "direction change"}) " +
+                                     "isf=${"%.1f".format(nudgeDisplaySessionIsfMgdl)} basal=${"%.3f".format(nudgeDisplaySessionBasalU)} " +
+                                     "bucket isf×${"%.4f".format(isfBucketBefore)} bas×${"%.4f".format(basBucketBefore)}")
             }
             lastSeenNudgeState = currentNudgeStatus
         }
