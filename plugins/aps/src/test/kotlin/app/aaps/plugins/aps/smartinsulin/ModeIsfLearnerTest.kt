@@ -253,17 +253,24 @@ class ModeIsfLearnerTest {
     // stops being read as over-dosing.
 
     /**
-     * Runs one episode: rises to [peak], then sits in the undershoot band (or goes low) well past
-     * both the entry-attribution window and the 25-min undershoot minimum, then ends.
+     * Runs one episode: rises to [peak], holds it there for [holdCycles] readings, then lands in
+     * the undershoot band (or goes low) well past both the entry-attribution window and the
+     * 25-min undershoot minimum, and ends.
+     *
+     * [holdCycles] is the knob that separates a spike the loop is handling from one it isn't:
+     * 1 is a peak passing through, 7 is BG parked up there for half an hour.
      */
     private fun spikeThenLand(
-        peak: Double, railed: Boolean, low: Boolean = false, exercise: Boolean = false
+        peak: Double, railed: Boolean, low: Boolean = false, exercise: Boolean = false,
+        holdCycles: Int = 7
     ) {
         val start = BASE_MS
         var t = start
         cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = 100.0, railed = railed)
-        t += CYCLE_MS
-        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = peak, railed = railed)
+        repeat(holdCycles) {
+            t += CYCLE_MS
+            cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = peak, railed = railed)
+        }
         // Past ENTRY_ATTRIBUTION_MS (75min) so a low counts as this learner's, and past the
         // 25-min undershoot minimum.
         repeat(18) { t += CYCLE_MS }
@@ -314,5 +321,29 @@ class ModeIsfLearnerTest {
         // BG falling faster than insulin explains says nothing about front-loading.
         spikeThenLand(peak = 160.0, railed = true, exercise = true)
         assertEquals(1.01, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a spike that turns straight back is the system working, not under-dosing`() {
+        // UAM cannot fire until BG is already climbing, so every episode spikes. One reading at
+        // the peak and then a fall is late-but-sufficient insulin — strengthening on that would
+        // ratchet the mode up meal after meal for doing its job.
+        spikeThenLand(peak = 160.0, railed = true, holdCycles = 1)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a spike held just under the sustained window does not qualify`() {
+        // 5 readings = 25min, under the 30min bar.
+        spikeThenLand(peak = 160.0, railed = true, holdCycles = 5)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a normal peak held a long time still does not qualify`() {
+        // 7.6mmol against a 5.6 target — the shape of a meal the loop is handling. It never
+        // reaches the bar, so how long it sits there is irrelevant.
+        spikeThenLand(peak = 137.0, railed = true, holdCycles = 12)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 }

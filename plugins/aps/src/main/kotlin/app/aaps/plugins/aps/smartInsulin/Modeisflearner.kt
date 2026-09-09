@@ -55,6 +55,9 @@ class ModeIsfLearner @Inject constructor(
     private var episodeMaxDura   = 1.0
     /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
     private var episodePeakMgdl  = 0.0
+    /** Longest unbroken stretch spent at or above the spike bar, and the run currently open. */
+    private var episodeSpikeMs   = 0L
+    private var spikeRunStartMs  = 0L
     /** True if the entry-fraction knob was already at its ceiling at any point in the episode. */
     private var episodeShapeRailed = false
 
@@ -127,6 +130,15 @@ class ModeIsfLearner @Inject constructor(
          * learners agree on what counts as one.
          */
         private const val LATE_SPIKE_MARGIN_MGDL    = 54.0
+        /**
+         * How long BG must stay at or above that bar before the episode counts as under-dosed
+         * rather than simply spiky.
+         *
+         * Six readings. Insulin that is late but sufficient has visibly turned the curve inside
+         * that window; insulin that is short leaves BG flat up there, which is the state this is
+         * actually trying to name.
+         */
+        private const val SPIKE_SUSTAINED_MS        = 30 * 60_000L
         /** Weaken-step fraction for a hard low that followed a late spike — half the fault was
          *  timing, so only half the step is charged to dose. */
         private const val LATE_SPIKE_STEP_FRACTION  = 0.5
@@ -232,10 +244,20 @@ class ModeIsfLearner @Inject constructor(
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
                 episodePeakMgdl = 0.0
+                episodeSpikeMs  = 0L
+                spikeRunStartMs = 0L
                 episodeShapeRailed = false
             }
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
             if (entryShapeRailed) episodeShapeRailed = true
+            // Time STUCK above the bar, not merely time touching it. A peak is a moment; what
+            // separates a meal the loop is handling from one it isn't is how long BG sits up
+            // there. Longest unbroken run, so a spike that crosses the bar twice on its way
+            // through doesn't add up to a stall it never had.
+            if (bgMgdl - targetMgdl >= LATE_SPIKE_MARGIN_MGDL) {
+                if (spikeRunStartMs == 0L) spikeRunStartMs = nowMs
+                episodeSpikeMs = maxOf(episodeSpikeMs, nowMs - spikeRunStartMs)
+            } else spikeRunStartMs = 0L
             if (lowActive) {
                 // ARBITRATION with UamEntryFractionLearner: a low soon after a UAM entry is
                 // evidence the entry burst was too front-loaded (a SHAPE problem the entry
@@ -278,7 +300,7 @@ class ModeIsfLearner @Inject constructor(
                 applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike),
                              when {
                                  unexplained -> "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                                 lateSpike   -> "low during ${ended.label} episode after peaking ${peakMmol}mmol with entry front-loading maxed — weakened at reduced step"
+                                 lateSpike   -> "low during ${ended.label} episode, but it sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol first with entry front-loading maxed — weakened at reduced step"
                                  else        -> "low during ${ended.label} episode — weakened"
                              },
                              endedStartMs)
@@ -300,7 +322,7 @@ class ModeIsfLearner @Inject constructor(
                 // reach it still weakens, at twice this step, in the branch above.
                 if (lateSpike && !unexplained) {
                     applyOutcome(ended, STRENGTHEN_STEP,
-                                 "${ended.label} peaked ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
+                                 "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
                                  endedStartMs)
                 } else {
                     applyOutcome(ended, weakenStep(unexplained, undershoot = true),
@@ -382,8 +404,8 @@ class ModeIsfLearner @Inject constructor(
      * discard, since this is the safety direction.
      */
     /**
-     * True when the episode's peak says the insulin arrived LATE rather than in the wrong amount,
-     * and there is no front-loading left to fix that with.
+     * True when the episode says the insulin arrived LATE rather than in the wrong amount, and
+     * there is no front-loading left to fix that with.
      *
      * The distinction this learner could not previously draw: it judges only where BG LANDS. A
      * meal that runs 4.7 → 9.7 and then settles just under target books exactly the same weaken as
@@ -391,9 +413,20 @@ class ModeIsfLearner @Inject constructor(
      * insulin — it is too little, too late, and weakening it makes tomorrow's spike worse. That is
      * a shape problem, and it is normally the entry-fraction learner's to fix; this only applies
      * once that knob is railed at its maximum and cannot fix anything.
+     *
+     * A spike ALONE is not that evidence, though, and this is the important half of the test. UAM
+     * cannot fire until BG is already climbing, so every UAM episode spikes by construction; a
+     * 7-8mmol peak that turns and comes back is the system working, and strengthening on it would
+     * ratchet the mode up meal after meal for doing its job. What separates the two is not how
+     * high BG got but how long it STAYED there: insulin that is merely late still bends the curve
+     * within a reading or two of the peak, while insulin that is genuinely short leaves BG parked
+     * above the bar. So both must hold — a peak past [LATE_SPIKE_MARGIN_MGDL] AND
+     * [SPIKE_SUSTAINED_MS] stuck at or above it.
      */
     private fun lateSpikeWithNoShapeLeft(targetMgdl: Double): Boolean =
-        episodeShapeRailed && (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL
+        episodeShapeRailed &&
+            (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
+            episodeSpikeMs >= SPIKE_SUSTAINED_MS
 
     private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
                            lateSpike: Boolean = false): Double {
@@ -465,7 +498,7 @@ class ModeIsfLearner @Inject constructor(
 
     fun reset() {
         states.clear()
-        episodePeakMgdl = 0.0; episodeShapeRailed = false
+        episodePeakMgdl = 0.0; episodeSpikeMs = 0L; spikeRunStartMs = 0L; episodeShapeRailed = false
         activeMode = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
         pendingMode = null; pendingStartMs = 0L
