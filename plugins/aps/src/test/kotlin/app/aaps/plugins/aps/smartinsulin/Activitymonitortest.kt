@@ -3,6 +3,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.SC
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.shared.tests.rx.TestAapsSchedulers
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -17,13 +18,14 @@ class ActivityMonitorTest {
 
     private val logger           = FakeAAPSLogger()
     private val persistenceLayer: PersistenceLayer = mock()
+    private val phoneStepCounter: PhoneStepCounter = mock()
 
     private lateinit var sut: ActivityMonitor
 
     private val NOW = 1_000_000L
 
     @BeforeEach fun setUp() {
-        sut = ActivityMonitor(logger, persistenceLayer)
+        sut = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
         whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
         whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
     }
@@ -347,5 +349,54 @@ class ActivityMonitorTest {
         assertEquals("Light",     ActivityMonitor.ActivityLevel.LIGHT.label)
         assertEquals("Moderate",  ActivityMonitor.ActivityLevel.MODERATE.label)
         assertEquals("Heavy",     ActivityMonitor.ActivityLevel.HEAVY.label)
+    }
+
+    // ── Record age / staleness ───────────────────────────────────────────────
+
+    // The stored timestamp comes from the WATCH while the query uses the PHONE's clock, so
+    // transport delay and clock skew both push records out of range. A 5-min window turned that
+    // into a silent zero; the age is now surfaced and the cutoff is separate from the lookup.
+
+    private fun stepsRecordAged(steps: Int, ageMs: Long) = SC(
+        timestamp  = NOW - ageMs,
+        duration   = ActivityMonitor.STEPS_DURATION_MS,
+        steps5min  = steps,
+        steps10min = 0, steps15min = 0, steps30min = 0, steps60min = 0, steps180min = 0,
+        device     = "test"
+    )
+
+    @Test fun `a record delivered late still counts`() {
+        // 7 min old — dropped outright by the old 5-min window, which is what made steps appear
+        // several loops after the walk.
+        whenever(persistenceLayer.getStepsCountFromTime(any()))
+            .thenReturn(listOf(stepsRecordAged(400, 7 * 60_000L)))
+        sut.recompute(NOW)
+        assertEquals(400, sut.lastSteps5min)
+        assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
+        assertEquals(7 * 60_000L, sut.lastStepsAgeMs)
+    }
+
+    @Test fun `a record past the staleness cutoff stops counting but still reports its age`() {
+        whenever(persistenceLayer.getStepsCountFromTime(any()))
+            .thenReturn(listOf(stepsRecordAged(400, 12 * 60_000L)))
+        sut.recompute(NOW)
+        assertEquals(0, sut.lastSteps5min)
+        assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
+        assertEquals(12 * 60_000L, sut.lastStepsAgeMs)
+    }
+
+    @Test fun `no record at all reports a null age, not a zero one`() {
+        whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
+        sut.recompute(NOW)
+        assertEquals(0, sut.lastSteps5min)
+        assertEquals(null, sut.lastStepsAgeMs)
+    }
+
+    @Test fun `a watch clock running ahead does not produce a negative age`() {
+        whenever(persistenceLayer.getStepsCountFromTime(any()))
+            .thenReturn(listOf(stepsRecordAged(400, -30_000L)))
+        sut.recompute(NOW)
+        assertEquals(400, sut.lastSteps5min)
+        assertEquals(0L, sut.lastStepsAgeMs)
     }
 }

@@ -99,7 +99,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
     private val unexplainedDropTracker:  UnexplainedDropTracker,
-    private val duraStrengthLearner:     DuraStrengthLearner
+    private val duraStrengthLearner:     DuraStrengthLearner,
+    private val phoneStepCounter:        PhoneStepCounter
 ) : PluginBase(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -333,6 +334,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val softLandingBypass: Boolean, val bgWentLow: Boolean, val secondLowOccurred: Boolean,
         val minBgDuringLow: Double, val iobAtLowTime: Double, val isMmol: Boolean,
         val learningState: String, val activityLevel: String, val avgHrBpm: Int, val steps5min: Int,
+        /** Age of the newest steps record from the watch, or null if there is none in range. */
+        val stepsAgeMs: Long?,
+        val phoneSteps5min: Int, val stepsFromPhone: Boolean,
+        val phoneStepState: PhoneStepCounter.State,
         val restingHrBpm: Double, val postMealLockoutMins: Long, val cgmWarmup: Boolean,
         val stftStatus: String?, val stftActive: Boolean, val uamStatusLine: String?, val uamDebug: String,
         val fuelTrimStrength: Double, val trimActive: Boolean, val trimMins: Long,
@@ -356,6 +361,10 @@ open class SmartInsulinPlugin @Inject constructor(
     )
 
     fun fragmentData(): FragmentData {
+        // The tab ticks every 10s while the loop recomputes every 5min, so without this the steps
+        // and activity level on screen could be a full cycle behind the watch. Non-blocking — this
+        // runs on the UI thread.
+        activityMonitor.requestRefresh(dateUtil.now(), sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
         val cal = java.util.Calendar.getInstance()
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val dow = cal.get(java.util.Calendar.DAY_OF_WEEK) - 1
@@ -514,6 +523,10 @@ open class SmartInsulinPlugin @Inject constructor(
             minBgDuringLow = minBgDuringLow, iobAtLowTime = iobAtLowTime, isMmol = isMmol,
             learningState = getLearningState(), activityLevel = activityMonitor.level.label,
             avgHrBpm = activityMonitor.avgHrBpm.toInt(), steps5min = activityMonitor.lastSteps5min,
+            stepsAgeMs = activityMonitor.lastStepsAgeMs,
+            phoneSteps5min = activityMonitor.phoneSteps5min,
+            stepsFromPhone = activityMonitor.stepsFromPhone,
+            phoneStepState = activityMonitor.phoneStepState,
             restingHrBpm = sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue),
             postMealLockoutMins = postMealLeft, cgmWarmup = getLearningState().contains("CGM"),
             stftStatus = stftController.statusString(cachedProfileTarget), stftActive = stftController.isActive,
@@ -561,6 +574,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // Avoids stale display between loop cycles (e.g. mode expired but state still shows P/F).
         val activeMode = mealOverrideManager.activeMealMode
         val now        = System.currentTimeMillis()
+        // Same reason: getLearningState() below reads suppressLearning, which is derived from the
+        // activity level. Non-blocking; the next read picks up the result.
+        activityMonitor.requestRefresh(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
 
         val liveModeLine = activeMode?.let { mode ->
             val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
@@ -679,7 +695,18 @@ open class SmartInsulinPlugin @Inject constructor(
     override fun onStart() {
         super.onStart()
         learningDirtyUntilMs = sp.getString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
+        // No-op when the permission is missing or the device has no pedometer; the SI tab reports
+        // which of those it is, and calling start() again after a grant is what picks it up.
+        phoneStepCounter.start()
     }
+
+    override fun onStop() {
+        phoneStepCounter.stop()
+        super.onStop()
+    }
+
+    /** Re-arm after the SI tab's permission request comes back granted. */
+    fun startPhoneStepCounter() = phoneStepCounter.start()
 
     // spMgdl and activityOffsetMmol live in SmartInsulinSpReader.kt (same package)
     // so they can be unit-tested without constructing the full plugin.
@@ -854,6 +881,12 @@ open class SmartInsulinPlugin @Inject constructor(
             } catch (_: Exception) {}
         }
         val cgmState = cgmWarmupGuard.evaluate(sp.getBoolean(BooleanKey.ApsSmartInsulinCgmWarmupEnabled.key, BooleanKey.ApsSmartInsulinCgmWarmupEnabled.defaultValue), cachedSensorInsertTimeMs, now, glucoseStatus.date, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, glucoseStatus.longAvgDelta/18.0, glucoseStatus.noise)
+
+        // Ahead of every consumer, which it was not: this used to run ~270 lines further down,
+        // after circadianLearner.update() had already read suppressLearning. So the learning gate
+        // ran on the PREVIOUS cycle's activity — start walking and the learner kept learning from
+        // one more cycle of exercise-contaminated data before noticing.
+        activityMonitor.recompute(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
 
         if (!highTempTarget) {
             // Capture multipliers BEFORE update() so "was" reflects the baseline the
@@ -1147,7 +1180,6 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val oapsProfile = OapsProfile(dia = profile.dia, min_5m_carbimpact = 0.0, max_iob = constraintsChecker.getMaxIOBAllowed().value(), max_daily_basal = profile.getMaxDailyBasal(), max_basal = constraintsChecker.getMaxBasalAllowed(profile).value(), min_bg = profile.getTargetLowMgdl(), max_bg = profile.getTargetHighMgdl(), target_bg = stftTargetMgdl, carb_ratio = profile.getIc(), sens = dosingIsfMgdl, autosens_adjust_targets = false, max_daily_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue), current_basal_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue), lgsThreshold = profileUtil.convertToMgdlDetect(sp.getDouble(UnitDoubleKey.ApsLgsThreshold.key, UnitDoubleKey.ApsLgsThreshold.defaultValue)).toInt(), high_temptarget_raises_sensitivity = false, low_temptarget_lowers_sensitivity = false, sensitivity_raises_target = sp.getBoolean(BooleanKey.ApsSensitivityRaisesTarget.key, BooleanKey.ApsSensitivityRaisesTarget.defaultValue), resistance_lowers_target = sp.getBoolean(BooleanKey.ApsResistanceLowersTarget.key, BooleanKey.ApsResistanceLowersTarget.defaultValue), adv_target_adjustments = SMBDefaults.adv_target_adjustments, exercise_mode = SMBDefaults.exercise_mode, half_basal_exercise_target = SMBDefaults.half_basal_exercise_target, maxCOB = SMBDefaults.maxCOB, skip_neutral_temps = activePlugin.activePump.setNeutralTempAtFullHour(), remainingCarbsCap = SMBDefaults.remainingCarbsCap, enableUAM = constraintsChecker.isUAMEnabled().value(), A52_risk_enable = SMBDefaults.A52_risk_enable, SMBInterval = sp.getInt(IntKey.ApsMaxSmbFrequency.key, IntKey.ApsMaxSmbFrequency.defaultValue), enableSMB_with_COB = sp.getBoolean(BooleanKey.ApsUseSmbWithCob.key, BooleanKey.ApsUseSmbWithCob.defaultValue), enableSMB_with_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithLowTt.key, BooleanKey.ApsUseSmbWithLowTt.defaultValue), allowSMB_with_high_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithHighTt.key, BooleanKey.ApsUseSmbWithHighTt.defaultValue), enableSMB_always = sp.getBoolean(BooleanKey.ApsUseSmbAlways.key, BooleanKey.ApsUseSmbAlways.defaultValue), enableSMB_after_carbs = sp.getBoolean(BooleanKey.ApsUseSmbAfterCarbs.key, BooleanKey.ApsUseSmbAfterCarbs.defaultValue), maxSMBBasalMinutes = Int.MAX_VALUE, maxUAMSMBBasalMinutes = Int.MAX_VALUE, bolus_increment = activePlugin.activePump.pumpDescription.bolusStep, carbsReqThreshold = sp.getInt(IntKey.ApsCarbsRequestThreshold.key, IntKey.ApsCarbsRequestThreshold.defaultValue), current_basal = activePlugin.activePump.baseBasalRate, temptargetSet = isTempTarget, autosens_max = sp.getDouble(DoubleKey.AutosensMax.key, DoubleKey.AutosensMax.defaultValue), out_units = if (isMmol) "mmol/L" else "mg/dl", variable_sens = 0.0, insulinDivisor = 0, TDD = 0.0)
 
-        activityMonitor.recompute(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
         aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout, now)
         val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute))
 

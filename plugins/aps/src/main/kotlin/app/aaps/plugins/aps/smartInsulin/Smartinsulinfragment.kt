@@ -3,8 +3,10 @@ package app.aaps.plugins.aps.smartInsulin
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.Manifest
 import android.os.Handler
 import android.os.Looper
+import androidx.activity.result.contract.ActivityResultContracts
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -31,6 +33,18 @@ class SmartInsulinFragment : DaggerFragment() {
     // Circadian day selector — defaults to today, resets when fragment resumes
     private var selectedCircadianDow: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
     private var showFfDebug = false
+
+    /**
+     * ACTIVITY_RECOGNITION is requested here rather than in the startup permission flow: the phone
+     * pedometer is opt-in and nothing else in the app needs it, so nagging every user at launch
+     * for a feature they may not use would be the wrong trade. Granting re-arms the listener
+     * immediately — no restart.
+     */
+    private val requestStepPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) smartInsulinPlugin.startPhoneStepCounter()
+            refreshStatus()
+        }
 
     private val handler = Handler(Looper.getMainLooper())
     private val updater = object : Runnable {
@@ -589,10 +603,37 @@ class SmartInsulinFragment : DaggerFragment() {
         val activityDetail = buildString {
             append("Activity: ${d.activityLevel}")
             if (d.avgHrBpm > 0)  append("  \u2665 ${d.avgHrBpm}bpm")
-            if (d.steps5min > 0) append("  \ud83d\udc63 ${d.steps5min}/5m")
-            if (d.avgHrBpm == 0 && d.steps5min == 0) append("  (no HR/steps data)")
+            if (d.steps5min > 0) append("  \ud83d\udc63 ${d.steps5min}/5m${if (d.stepsFromPhone) " (phone)" else " (watch)"}")
+            // Record age, not just the count. Without it a watch delivering late and a watch
+            // seeing no steps look identical — both just show nothing — and that is exactly the
+            // ambiguity that made the step lag impossible to place. Only shown when the watch is
+            // the number in use; the phone counter has no age, it is a live rolling window.
+            if (!d.stepsFromPhone) d.stepsAgeMs?.let { age ->
+                val mins = age / 60_000
+                if (mins >= 1) append("  (watch rec ${mins}m old)")
+            }
+            if (d.avgHrBpm == 0 && d.steps5min == 0) {
+                append(if (d.stepsAgeMs == null) "  (no HR/steps data)" else "  (no recent steps)")
+            }
+            when (d.phoneStepState) {
+                PhoneStepCounter.State.NO_SENSOR -> append("\nPhone pedometer: this device has no step sensor")
+                PhoneStepCounter.State.RUNNING   -> if (d.phoneSteps5min > 0 && !d.stepsFromPhone)
+                    append("\nPhone pedometer: ${d.phoneSteps5min}/5m")
+                else -> Unit
+            }
         }
         addRow(c, activityDetail, "High activity raises target and pauses learning.", actColor)
+
+        // Its own tappable row rather than text inside the one above, so the affordance is real.
+        if (d.phoneStepState == PhoneStepCounter.State.NEEDS_PERMISSION) context?.let { ctx ->
+            c.addView(TextView(ctx).apply {
+                text = "▶ Enable phone pedometer — steps with no watch delay"
+                textSize = 12f
+                setTextColor(Color.parseColor("#FF64B5F6"))
+                setPadding(0, 0, 0, (10 * dp).toInt())
+                setOnClickListener { requestStepPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION) }
+            })
+        }
 
         if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h", null, Color.parseColor("#FFFB8C00"))
 

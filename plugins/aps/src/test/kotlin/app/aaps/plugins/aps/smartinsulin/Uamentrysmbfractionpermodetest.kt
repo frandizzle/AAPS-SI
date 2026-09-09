@@ -85,7 +85,8 @@ class UamEntrySmbFractionPerModeTest {
             modeIsfLearner        = mock(),
             uamEntryFractionLearner = mock(),
             unexplainedDropTracker  = mock(),
-            duraStrengthLearner     = mock()
+            duraStrengthLearner     = mock(),
+            phoneStepCounter        = mock()
         )
     }
 

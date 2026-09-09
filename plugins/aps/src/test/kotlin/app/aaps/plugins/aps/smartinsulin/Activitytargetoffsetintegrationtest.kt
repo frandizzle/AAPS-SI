@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.data.model.HR
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.shared.tests.rx.TestAapsSchedulers
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,6 +32,7 @@ import org.mockito.kotlin.whenever
 class ActivityTargetOffsetIntegrationTest {
 
     private val persistenceLayer: PersistenceLayer = mock()
+    private val phoneStepCounter: PhoneStepCounter = mock()
     private val sp: app.aaps.core.interfaces.sharedPreferences.SP = mock()
     private val logger = FakeAAPSLogger()
 
@@ -39,7 +41,7 @@ class ActivityTargetOffsetIntegrationTest {
     private val NOW = 1_000_000L
 
     @BeforeEach fun setUp() {
-        sut = ActivityMonitor(logger, persistenceLayer)
+        sut = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
         whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
         whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
         // Default: SP returns whatever default is passed in

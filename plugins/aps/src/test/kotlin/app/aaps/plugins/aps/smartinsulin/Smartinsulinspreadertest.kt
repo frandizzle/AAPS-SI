@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.data.model.HR
 import app.aaps.core.interfaces.db.PersistenceLayer
+import app.aaps.shared.tests.rx.TestAapsSchedulers
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
@@ -28,6 +29,7 @@ class SmartInsulinSpReaderTest {
 
     private val sp: SP = mock()
     private val persistenceLayer: PersistenceLayer = mock()
+    private val phoneStepCounter: PhoneStepCounter = mock()
     private val logger = FakeAAPSLogger()
 
     private lateinit var monitor: ActivityMonitor
@@ -35,7 +37,7 @@ class SmartInsulinSpReaderTest {
     private val NOW = 1_000_000L
 
     @BeforeEach fun setUp() {
-        monitor = ActivityMonitor(logger, persistenceLayer)
+        monitor = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
         whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
         whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
         // Default: SP returns whatever default value is passed in
