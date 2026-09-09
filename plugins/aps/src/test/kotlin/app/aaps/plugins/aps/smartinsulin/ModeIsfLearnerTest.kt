@@ -35,12 +35,14 @@ class ModeIsfLearnerTest {
         low: Boolean = false, dura: Double = 1.0,
         delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.0, exercise: Boolean = false,
-        undershoot: Boolean = false, railed: Boolean = false
+        undershoot: Boolean = false, railed: Boolean = false,
+        pfWindow: PfWindow = PfWindow.NONE
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
-        exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed
+        exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
+        pfWindow = pfWindow
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -345,5 +347,56 @@ class ModeIsfLearnerTest {
         // reaches the bar, so how long it sits there is irrelevant.
         spikeThenLand(peak = 137.0, railed = true, holdCycles = 12)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    // ── P/F per-window learning ──────────────────────────────────────────────
+
+    // P/F is the one mode whose configured ISF is time-of-day dependent, and it is detected from a
+    // stuck-high plateau, which skews overnight. One shared multiplier meant a correction earned
+    // overnight was applied to daytime P/F too.
+
+    /** A P/F episode in [window] that ends high enough to strengthen. */
+    private fun pfEpisode(window: PfWindow, startMs: Long): Long {
+        var t = startMs
+        cycle(mode = MealMode.UAM_PROTEIN_FAT, startMs = startMs, nowMs = t, bg = 100.0, pfWindow = window)
+        t += CYCLE_MS
+        cycle(mode = null, startMs = 0L, nowMs = t, bg = 150.0)        // ends, tail opens
+        repeat(16) { t += CYCLE_MS; cycle(mode = null, startMs = 0L, nowMs = t, bg = 150.0) }
+        return t + CYCLE_MS
+    }
+
+    @Test
+    fun `P over F windows learn independently`() {
+        var t = BASE_MS
+        t = pfEpisode(PfWindow.OVERNIGHT, t)
+        t = pfEpisode(PfWindow.OVERNIGHT, t + 10 * CYCLE_MS)
+
+        assertEquals(0.975 * 0.975, learner.multiplier(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT), 1e-9)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_PROTEIN_FAT, PfWindow.NIGHT), 1e-9)
+        assertEquals(2, learner.episodeCount(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT))
+        assertEquals(0, learner.episodeCount(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY))
+    }
+
+    @Test
+    fun `a non-P over F mode is unaffected by the window split`() {
+        // Everything else keys to its plain enum name, exactly as before.
+        var t = BASE_MS
+        cycle(mode = MealMode.UAM_LUNCH, startMs = BASE_MS, nowMs = t, bg = 100.0)
+        t += CYCLE_MS
+        repeat(17) { cycle(mode = null, startMs = 0L, nowMs = t, bg = 150.0); t += CYCLE_MS }
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `pre-split P over F state seeds every window`() {
+        // A pooled multiplier learned before the split is the best starting estimate for each
+        // window — throwing it away and restarting at 1.0 would discard real history.
+        sp.edit { putString("si_mode_isf_learner_state", """{"UAM_PROTEIN_FAT":{"mult":1.164,"n":35}}""") }
+        val migrated = ModeIsfLearner(sp, FakeAAPSLogger(collect = false))
+        PfWindow.PF_WINDOWS.forEach { w ->
+            assertEquals(1.164, migrated.multiplier(MealMode.UAM_PROTEIN_FAT, w), 1e-9)
+            assertEquals(35, migrated.episodeCount(MealMode.UAM_PROTEIN_FAT, w))
+        }
     }
 }

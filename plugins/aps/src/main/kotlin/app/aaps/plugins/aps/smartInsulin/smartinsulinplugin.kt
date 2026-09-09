@@ -410,21 +410,36 @@ open class SmartInsulinPlugin @Inject constructor(
         // so the adjustment is legible rather than an abstract multiplier. Modes with an
         // override set show base→effective; modes running on profile ISF show the multiplier
         // alone (their base varies hour to hour with circadian learning).
+        // P/F expands into one row per ISF window; every other mode stays a single row.
+        //
+        // Only windows that are actually configured are listed. pfWindowFor sends an hour to BASE
+        // whenever its window has no override set, so an unconfigured window can never be written
+        // to again — and after the pre-split migration seeds every slot alike, listing them would
+        // leave dead rows frozen at the migrated value forever. BASE is always listed: it is where
+        // every unconfigured hour doses from.
+        val learnerScopes: List<Pair<MealMode, PfWindow>> =
+            MealMode.entries.filter { it != MealMode.FASTING }.flatMap { mode ->
+                if (mode == MealMode.UAM_PROTEIN_FAT)
+                    PfWindow.PF_WINDOWS.filter { it == PfWindow.BASE || pfIsfForWindow(it) > 0.0 }
+                        .map { mode to it }
+                else listOf(mode to PfWindow.NONE)
+            }
+
         val modeIsfLearnerRaw = buildString {
             var rows = 0
-            MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
-                val mult = modeIsfLearner.multiplier(mode)
-                val n    = modeIsfLearner.episodeCount(mode)
+            learnerScopes.forEach { (mode, window) ->
+                val mult = modeIsfLearner.multiplier(mode, window)
+                val n    = modeIsfLearner.episodeCount(mode, window)
                 if (n == 0 && mult == 1.0) return@forEach
                 if (rows++ == 0) appendLine(learnerHeader("ISF", "Learned"))
-                val baseMgdl = modeIsfMgdl(mode, hour)
+                val baseMgdl = if (window == PfWindow.NONE) modeIsfMgdl(mode, hour) else pfIsfForWindow(window)
                 val valueTxt = if (baseMgdl > 0.0) {
                     val b = if (isMmol) baseMgdl / 18.0 else baseMgdl
                     val e = b * mult
                     val f = if (isMmol) "%.2f" else "%.0f"
                     "${f.format(b)}→${f.format(e)}"
                 } else "profile"
-                appendLine(learnerRow(mode.label, valueTxt, "×${"%.3f".format(mult)}", n))
+                appendLine(learnerRow(PfWindow.label(mode, window), valueTxt, "×${"%.3f".format(mult)}", n))
             }
             if (rows == 0) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
             if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${modeIsfLearner.lastOutcome}")
@@ -432,12 +447,12 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val duraStrengthRaw = buildString {
             var rows = 0
-            MealMode.entries.filter { it != MealMode.FASTING }.forEach { mode ->
-                val f = duraStrengthLearner.factor(mode)
-                val n = duraStrengthLearner.episodeCount(mode)
+            learnerScopes.forEach { (mode, window) ->
+                val f = duraStrengthLearner.factor(mode, window)
+                val n = duraStrengthLearner.episodeCount(mode, window)
                 if (n == 0 && f == 1.0) return@forEach
                 if (rows++ == 0) appendLine(learnerHeader("Strength", null))
-                appendLine(learnerRow(mode.label, "×${"%.2f".format(f)}", null, n))
+                appendLine(learnerRow(PfWindow.label(mode, window), "×${"%.2f".format(f)}", null, n))
             }
             if (rows == 0) appendLine("No DURA interventions evaluated yet.")
             if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${duraStrengthLearner.lastOutcome}")
@@ -686,7 +701,7 @@ open class SmartInsulinPlugin @Inject constructor(
         label.padEnd(LEARNER_LABEL_W) + value.padEnd(LEARNER_VALUE_W) +
             (trailing?.padEnd(LEARNER_TRAIL_W) ?: "") + n
 
-    private fun pfIsfMgdl(hour: Int): Double {
+    private fun pfWindowFor(hour: Int): PfWindow {
         val dayStart      = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayStartHour.key, IntKey.ApsSmartInsulinUamProteinFatDayStartHour.defaultValue)
         val dayEnd        = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatDayEndHour.key, IntKey.ApsSmartInsulinUamProteinFatDayEndHour.defaultValue)
         val nightStart    = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatNightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatNightStartHour.defaultValue)
@@ -706,14 +721,35 @@ open class SmartInsulinPlugin @Inject constructor(
         val overnightIsf = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
         val fallback     = sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
 
-        // Overnight takes priority over night when both match (overnight is more specific)
+        // Overnight takes priority over night when both match (overnight is more specific).
+        // A window with no override set falls through — those hours dose from the base value and
+        // so belong to PfWindow.BASE.
         return when {
-            inOvernight && overnightIsf > 0.0 -> overnightIsf
-            inDay       && dayIsf       > 0.0 -> dayIsf
-            inNight     && nightIsf     > 0.0 -> nightIsf
-            else                              -> fallback
+            inOvernight && overnightIsf > 0.0 -> PfWindow.OVERNIGHT
+            inDay       && dayIsf       > 0.0 -> PfWindow.DAY
+            inNight     && nightIsf     > 0.0 -> PfWindow.NIGHT
+            else                              -> PfWindow.BASE
         }
     }
+
+    /** The configured P/F ISF for one window. */
+    private fun pfIsfForWindow(window: PfWindow): Double = when (window) {
+        PfWindow.OVERNIGHT -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
+        PfWindow.DAY       -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue)
+        PfWindow.NIGHT     -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue)
+        else               -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue)
+    }
+
+    private fun pfIsfMgdl(hour: Int): Double = pfIsfForWindow(pfWindowFor(hour))
+
+    /**
+     * The P/F ISF window for a mode at an hour — [PfWindow.NONE] for every mode but P/F, which is
+     * the only one whose configured ISF is time-of-day dependent. This is what splits the
+     * learners' state slots, so it has to be derived from the same decision [pfWindowFor] makes
+     * for dosing or a correction would be filed against a window it was never earned in.
+     */
+    private fun pfWindowForMode(mode: MealMode?, hour: Int): PfWindow =
+        if (mode == MealMode.UAM_PROTEIN_FAT) pfWindowFor(hour) else PfWindow.NONE
 
     private fun modeIsfMgdl(mode: MealMode, hour: Int): Double = when (mode) {
         MealMode.BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key, UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
@@ -731,17 +767,17 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     /**
-     * Fingerprint of a mode's user-set ISF override(s), for ModeIsfLearner's base-change reset.
-     * Must be stable across loop cycles while the settings are unchanged — so P/F uses a
-     * weighted combination of its four stored prefs rather than the hour-resolved pfIsfMgdl()
-     * (which legitimately changes value as the day/night/overnight windows roll over).
+     * Fingerprint of the user-set ISF a mode's learned correction is relative to, for
+     * ModeIsfLearner's base-change reset.
+     *
+     * P/F used to need a weighted blend of all four of its prefs here, because one shared state
+     * slot had to survive the windows rolling over. Now that each window keeps its own slot the
+     * signature is simply that window's own ISF — so editing the Day value resets the Day
+     * correction and leaves Night and Overnight alone, which is what a per-window base implies.
+     * Only read when an episode opens, and the window is fixed for that episode's whole life.
      */
-    private fun modeIsfOverrideSignature(mode: MealMode): Double = when (mode) {
-        MealMode.UAM_PROTEIN_FAT ->
-            sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf.defaultValue) +
-                2.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf.defaultValue) +
-                3.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf.defaultValue) +
-                5.0 * sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.key, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf.defaultValue)
+    private fun modeIsfOverrideSignature(mode: MealMode, hour: Int): Double = when (mode) {
+        MealMode.UAM_PROTEIN_FAT -> pfIsfMgdl(hour)
         else -> modeIsfMgdl(mode, 0)  // non-P/F overrides are hour-independent; 0.0 = "profile ISF"
     }
 
@@ -931,7 +967,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Applied to the mode's base ISF before DURA — DURA is the within-episode rescue,
         // this is the across-episodes correction learned from how past activations ended.
         if (mealMode != MealMode.FASTING) {
-            val learnedModeMult = modeIsfLearner.multiplier(mealMode)
+            val learnedModeMult = modeIsfLearner.multiplier(mealMode, pfWindowForMode(mealMode, currentHour))
             if (learnedModeMult != 1.0) {
                 dosingIsfMgdl *= learnedModeMult
                 aapsLogger.debug(LTag.APS,
@@ -949,7 +985,8 @@ open class SmartInsulinPlugin @Inject constructor(
         if (duraActive) {
             // Learned factor can only soften the configured strength (crash-direction learning).
             val effectiveDuraStrength = mealOverrideManager.activeDuraStrength *
-                duraStrengthLearner.factor(mealOverrideManager.activeMealMode)
+                duraStrengthLearner.factor(mealOverrideManager.activeMealMode,
+                                           pfWindowForMode(mealOverrideManager.activeMealMode, currentHour))
             val duraMult = duraIsfTracker.multiplier(targetBg, effectiveDuraStrength)
             duraMultThisCycle = duraMult
             if (duraMult > 1.0) {
@@ -1021,13 +1058,14 @@ open class SmartInsulinPlugin @Inject constructor(
             fastingIsfMgdl = trueIsfMgdl,
             carbRatio      = profile.getIc(),
             nowMs          = now,
-            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it) } ?: 0.0,
+            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it, currentHour) } ?: 0.0,
             exerciseSuspected = exerciseSuspected,
             undershootActive  = undershootNow,
             // Whether the shape knob still has travel. Asked of the entry-fraction learner rather
             // than recomputed here, so both learners agree on when front-loading is exhausted.
             entryShapeRailed  = mealOverrideManager.activeMealMode
-                ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false
+                ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
+            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -1069,7 +1107,8 @@ open class SmartInsulinPlugin @Inject constructor(
             exerciseSuspected = exerciseSuspected,
             nowMs             = now,
             baseSignature     = mealOverrideManager.activeDuraStrength,
-            undershootActive  = undershootNow
+            undershootActive  = undershootNow,
+            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
         // -- UAM entry SMB fraction --------------------------------------------

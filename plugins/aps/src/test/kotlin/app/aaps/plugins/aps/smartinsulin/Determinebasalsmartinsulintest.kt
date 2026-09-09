@@ -150,7 +150,15 @@ class DetermineBasalSmartInsulinTest {
         // Matches SmartInsulinPlugin.SMB_DELIVERY_FRACTION — the fraction the real plugin always
         // passes for FASTING mode. determine_basal's own default (1.0, i.e. full correction) only
         // applies if a caller omits this, which the real plugin never does.
-        uamSmbFraction:    Double               = 0.5
+        uamSmbFraction:    Double               = 0.5,
+        // 1.0 = keep the whole SMB, i.e. dawn reduction OFF.
+        //
+        // Not cosmetic. currentTime below is the real clock and inDawnWindow is derived from it,
+        // so a 0.0 reduction silently zeroed the SMB in every FASTING test with a rising delta —
+        // but only when the suite happened to run between 04:00 and 09:00 local. Tests that passed
+        // all afternoon failed the next morning with nothing changed. Nothing here exercises dawn
+        // behaviour, so the harness turns it off; a future dawn test can pass its own value.
+        dawnSmbReduction:  Double               = 1.0
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -177,7 +185,7 @@ class DetermineBasalSmartInsulinTest {
             profileTargetMgdl     = 100.0,
             dawnWindowStartHour   = 4,
             dawnWindowEndHour     = 9,
-            dawnSmbReduction      = 0.0,
+            dawnSmbReduction      = dawnSmbReduction,
             bgWentLow             = bgWentLow,
             activityLevel         = ActivityMonitor.ActivityLevel.SEDENTARY,
             activityTargetOffsetMmol = 0.0,
@@ -408,7 +416,7 @@ class DetermineBasalSmartInsulinTest {
             dosingIsfMgdl = 0.0,
             microBolusAllowed = true, inReboundWindow = false, msSinceLastSuspend = 3600_000L,
             currentTime = System.currentTimeMillis(), isTempTarget = false, profileTargetMgdl = 100.0,
-            dawnWindowStartHour = 4, dawnWindowEndHour = 9, dawnSmbReduction = 0.0,
+            dawnWindowStartHour = 4, dawnWindowEndHour = 9, dawnSmbReduction = 1.0,
             bgWentLow = false, activityLevel = ActivityMonitor.ActivityLevel.SEDENTARY,
             activityTargetOffsetMmol = 0.0, cgmSmbFraction = 1.0, cgmDeltaPlausible = true,
             cgmWarmupReason = "", uamSmbFraction = 0.5
