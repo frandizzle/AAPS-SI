@@ -112,6 +112,17 @@ class NotificationCollectorService : NotificationListenerService() {
     private fun readingTimeOf(sbn: StatusBarNotification): Long {
         val now = System.currentTimeMillis()
         val posted = sbn.postTime
+        // Diagnostic only — nothing below acts on `when`. Apps are supposed to set it to the time
+        // the event happened rather than the time it was posted, which would be a better reading
+        // time than postTime if this app populates it. Logged so that can be settled from data
+        // instead of assumed; changing the source and the dedup rule at once would make it
+        // impossible to tell which one mattered.
+        val whenMs = sbn.notification?.`when` ?: 0L
+        aapsLogger.debug(
+            LTag.BGSOURCE,
+            "Times for ${sbn.packageName}: when=${if (whenMs > 0) "${(now - whenMs) / 1000}s ago" else "unset"} " +
+                "postTime=${(now - posted) / 1000}s ago"
+        )
         return if (posted <= 0L || posted > now + MAX_CLOCK_SKEW_MS) now else posted
     }
 
@@ -132,7 +143,7 @@ class NotificationCollectorService : NotificationListenerService() {
         aapsLogger.debug(LTag.BGSOURCE, "Glucose: ${result.glucoseMgdl} mg/dL from $packageName (${result.sourceSensor})")
 
         val delayMs = System.currentTimeMillis() - readingTime
-        if (deduplicator?.process(packageName, readingTime) != true) {
+        if (deduplicator?.process(packageName, readingTime, result.glucoseMgdl) != true) {
             aapsLogger.debug(
                 LTag.BGSOURCE,
                 "Skipping duplicate notification from $packageName " +

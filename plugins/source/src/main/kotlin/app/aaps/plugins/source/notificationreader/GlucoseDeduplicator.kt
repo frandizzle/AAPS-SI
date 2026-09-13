@@ -35,6 +35,26 @@ import org.json.JSONObject
  *    permanently dropped dedup to 1-min mode.
  *
  * Known intervals: 1, 3, 5, 15 minutes (mapped via [snapGapToKnownIntervalMs]).
+ *
+ * ## Divergence from upstream: the repeat-value guard
+ *
+ * Upstream accepts any reading once the gap clears [REPOST_THRESHOLD_FRACTION] of the interval,
+ * explicitly "regardless of value". That holds only if the CGM app posts once per reading. A G7
+ * app keeps an ONGOING notification and re-posts it for reasons of its own — connectivity, alert
+ * state, a foreground-service tick — and every re-post looks like a fresh reading to a purely
+ * time-based rule.
+ *
+ * The failure that produces is specific and self-sustaining. With a 5-min interval the bar is
+ * 4:00. A re-post landing at 4:05 after the last accepted reading is taken, carrying the SAME
+ * value, and the window restarts from there. The genuine reading arriving at 5:00 is then only
+ * 55s later and gets rejected. Acceptance locks onto a ~4-minute beat set by the threshold rather
+ * than by the sensor, permanently out of phase with it, holding each value one cycle late.
+ *
+ * So an unchanged value now has to wait nearly the whole interval ([REPEAT_VALUE_FRACTION], 4:45
+ * of a 5-min cycle) rather than 4:00. A re-post of the same reading cannot clear that; a real
+ * reading can, and a reading whose value has MOVED is still admitted at the original 4:00 bar, so
+ * genuine early arrivals are unaffected. Flat glucose is the only case this can delay, and by at
+ * most the 45s between the two bars.
  */
 class GlucoseDeduplicator(
     private val packageConfig: PackageConfig,
@@ -52,7 +72,9 @@ class GlucoseDeduplicator(
         var lastAcceptedTimestamp: Long,
         var intervalMs: Long,
         var pendingLongerIntervalMs: Long,
-        var consecutiveLongGapCount: Int
+        var consecutiveLongGapCount: Int,
+        /** Last value accepted for this package — see the repeat-value guard in the class note. */
+        var lastAcceptedValue: Int = 0
     )
 
     private val states: MutableMap<String, State> = loadStates()
@@ -62,19 +84,30 @@ class GlucoseDeduplicator(
      * a detected duplicate. Caller must only invoke this after parsing a valid glucose value.
      */
     @Synchronized
-    fun process(packageName: String, now: Long): Boolean {
+    fun process(packageName: String, now: Long, glucoseMgdl: Int = 0): Boolean {
         val state = states[packageName]
         if (state == null) {
             val seed = packageConfig.intervalForPackage(packageName, defaultIntervalMs)
-            states[packageName] = State(now, seed, 0L, 0)
+            states[packageName] = State(now, seed, 0L, 0, glucoseMgdl)
             persist()
             return true
         }
 
         val gap = now - state.lastAcceptedTimestamp
-        val threshold = state.intervalMs - state.intervalMs / 5
+        val threshold = state.intervalMs - state.intervalMs / REPOST_THRESHOLD_FRACTION
 
         if (gap < threshold) return false
+
+        // Repeat-value guard — see the class note. An unchanged value has to clear nearly the
+        // whole interval, which a re-post of the same reading cannot do.
+        //
+        // Zero means "value not supplied" and disables the guard rather than matching every other
+        // zero: the parser's own range is 40..405, so a real reading can never be 0, and callers
+        // that only care about timing (upstream's tests among them) get upstream's rule unchanged.
+        if (glucoseMgdl != VALUE_UNKNOWN &&
+            glucoseMgdl == state.lastAcceptedValue &&
+            gap < state.intervalMs - state.intervalMs / REPEAT_VALUE_FRACTION
+        ) return false
 
         val snapped = snapGapToKnownIntervalMs(gap)
         when {
@@ -99,6 +132,7 @@ class GlucoseDeduplicator(
         }
 
         state.lastAcceptedTimestamp = now
+        state.lastAcceptedValue = glucoseMgdl
         persist()
         return true
     }
@@ -118,6 +152,7 @@ class GlucoseDeduplicator(
                     .put("i", s.intervalMs)
                     .put("pi", s.pendingLongerIntervalMs)
                     .put("c", s.consecutiveLongGapCount)
+                    .put("v", s.lastAcceptedValue)
             )
         }
         store.save(root.toString())
@@ -135,7 +170,8 @@ class GlucoseDeduplicator(
                     lastAcceptedTimestamp = o.getLong("t"),
                     intervalMs = o.getLong("i"),
                     pendingLongerIntervalMs = o.optLong("pi", 0L),
-                    consecutiveLongGapCount = o.optInt("c", 0)
+                    consecutiveLongGapCount = o.optInt("c", 0),
+                    lastAcceptedValue = o.optInt("v", 0)
                 )
             }
             map
@@ -148,6 +184,12 @@ class GlucoseDeduplicator(
 
         const val DEFAULT_INTERVAL_MS = 5 * 60_000L
         const val SNAP_UP_CONSECUTIVE = 3
+        /** Upstream's bar: a reading may arrive up to interval/5 early. 4:00 of a 5-min cycle. */
+        private const val REPOST_THRESHOLD_FRACTION = 5
+        /** The repeat-value bar: interval/20 early at most. 4:45 of a 5-min cycle. */
+        private const val REPEAT_VALUE_FRACTION = 20
+        /** Sentinel for "caller supplied no value"; outside NotificationParser.GLUCOSE_RANGE. */
+        private const val VALUE_UNKNOWN = 0
 
         /**
          * Snap a measured gap to the nearest known sensor interval using fixed thresholds.
