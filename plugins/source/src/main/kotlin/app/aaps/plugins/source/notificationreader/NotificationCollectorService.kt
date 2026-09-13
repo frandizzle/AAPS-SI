@@ -84,12 +84,38 @@ class NotificationCollectorService : NotificationListenerService() {
         }
 
         aapsLogger.debug(LTag.BGSOURCE, "Notification from: $packageName")
-        processNotification(sbn.notification, packageName)
+        processNotification(sbn.notification, packageName, readingTimeOf(sbn))
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) = Unit
 
-    private fun processNotification(notification: Notification?, packageName: String) {
+    /**
+     * When the reading actually happened, as far as we can tell.
+     *
+     * [StatusBarNotification.postTime] is stamped by the system when the CGM app posts, so it is
+     * the closest thing to the sensor's own timestamp that a notification carries — the broadcast
+     * sources get the real one in their bundle, we do not.
+     *
+     * Upstream used System.currentTimeMillis() at processing time for both this and the dedup
+     * window, which folds every source of delay — notification delivery, service wake-up, IO
+     * scheduling — into the reading's timestamp. Two things went wrong with that. The stored BG
+     * series drifted away from the sensor's real 5-minute grid, so deltas and loop cadence
+     * followed arrival jitter rather than glucose. And the dedup gap was measured between
+     * PROCESSING times against a threshold of 0.8 x interval — 4 min for a 5-min sensor — so a
+     * reading posted on time but processed ~70s late measured as a 3:50 gap and was rejected
+     * outright, leaving a 10-minute hole and putting the whole series a reading behind.
+     *
+     * Falls back to now only for a clock that cannot be trusted: a zero/absent post time, or one
+     * in the future by more than [MAX_CLOCK_SKEW_MS]. An OLD post time is kept as-is and is not an
+     * error — it is exactly what a reading posted while the phone was asleep looks like.
+     */
+    private fun readingTimeOf(sbn: StatusBarNotification): Long {
+        val now = System.currentTimeMillis()
+        val posted = sbn.postTime
+        return if (posted <= 0L || posted > now + MAX_CLOCK_SKEW_MS) now else posted
+    }
+
+    private fun processNotification(notification: Notification?, packageName: String, readingTime: Long) {
         if (notification == null) return
 
         val texts = extractTexts(notification)
@@ -105,14 +131,23 @@ class NotificationCollectorService : NotificationListenerService() {
 
         aapsLogger.debug(LTag.BGSOURCE, "Glucose: ${result.glucoseMgdl} mg/dL from $packageName (${result.sourceSensor})")
 
-        val now = System.currentTimeMillis()
-        if (deduplicator?.process(packageName, now) != true) {
-            aapsLogger.debug(LTag.BGSOURCE, "Skipping duplicate notification from $packageName")
+        val delayMs = System.currentTimeMillis() - readingTime
+        if (deduplicator?.process(packageName, readingTime) != true) {
+            aapsLogger.debug(
+                LTag.BGSOURCE,
+                "Skipping duplicate notification from $packageName " +
+                    "(posted ${delayMs / 1000}s ago, current interval ${(deduplicator?.currentIntervalMs(packageName) ?: 0L) / 60_000}min)"
+            )
             return
+        }
+        if (delayMs > LATE_DELIVERY_WARN_MS) {
+            // Not fatal — the reading is stamped with its post time, so the series stays straight.
+            // Worth seeing though: a consistently late listener means the loop runs late too.
+            aapsLogger.debug(LTag.BGSOURCE, "Notification from $packageName handled ${delayMs / 1000}s after it was posted")
         }
 
         val gv = GV(
-            timestamp = now,
+            timestamp = readingTime,
             value = result.glucoseMgdl.toDouble(),
             raw = null,
             noise = null,
@@ -125,7 +160,7 @@ class NotificationCollectorService : NotificationListenerService() {
         // tracked so an insert in flight cannot outlive the service.
         disposable += persistenceLayer.insertCgmSourceData(Sources.NotificationReader, listOf(gv), emptyList(), null)
             .subscribe(
-                { aapsLogger.debug(LTag.BGSOURCE, "Inserted ${result.glucoseMgdl} mg/dL from $packageName") },
+                { aapsLogger.debug(LTag.BGSOURCE, "Inserted ${result.glucoseMgdl} mg/dL from $packageName at $readingTime") },
                 { e -> aapsLogger.error(LTag.BGSOURCE, "Error inserting glucose data", e) }
             )
     }
@@ -161,6 +196,9 @@ class NotificationCollectorService : NotificationListenerService() {
         return emptyList()
     }
 }
+
+private const val MAX_CLOCK_SKEW_MS = 60_000L
+private const val LATE_DELIVERY_WARN_MS = 30_000L
 
 /**
  * Recursively collect text from all visible TextViews in a ViewGroup hierarchy.
