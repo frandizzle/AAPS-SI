@@ -37,6 +37,7 @@ enum class Sources {
     Glunovo,
     Intelligo,
     Xdrip,
+    NotificationReader,
     Ottai,              //From Ottai Plugin
     SyaiTag,
     SiBionic,

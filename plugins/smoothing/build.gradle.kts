@@ -15,6 +15,9 @@ android {
 dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:interfaces"))
+    // Added with the UKF update: it moved from raw SP to typed Ukf*NonKey preferences, which
+    // live behind core:keys.
+    implementation(project(":core:keys"))
     implementation(project(":core:ui"))
 
     ksp(libs.com.google.dagger.compiler)

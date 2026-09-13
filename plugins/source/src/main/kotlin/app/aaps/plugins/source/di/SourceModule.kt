@@ -17,6 +17,7 @@ import app.aaps.plugins.source.XdripSourcePlugin
 import app.aaps.plugins.source.activities.RequestDexcomPermissionActivity
 import dagger.Binds
 import dagger.Module
+import app.aaps.plugins.source.notificationreader.NotificationCollectorService
 import dagger.android.ContributesAndroidInjector
 
 @Module(
@@ -29,6 +30,7 @@ import dagger.android.ContributesAndroidInjector
 abstract class SourceModule {
 
     @ContributesAndroidInjector abstract fun contributesBGSourceFragment(): BGSourceFragment
+    @ContributesAndroidInjector abstract fun contributesNotificationCollectorService(): NotificationCollectorService
 
     @ContributesAndroidInjector abstract fun contributesXdripWorker(): XdripSourcePlugin.XdripSourceWorker
     @ContributesAndroidInjector abstract fun contributesDexcomWorker(): DexcomPlugin.DexcomWorker

@@ -27,6 +27,12 @@
     <string name="random_bg_short">BG</string>
 
     <string name="bgsource_settings">BG source settings</string>
+    <string name="notification_reader">Notification Reader</string>
+    <string name="notification_reader_short">NotifRead</string>
+    <string name="description_source_notification_reader">Read glucose values from notifications posted by official CGM apps (Dexcom G7, Medtronic, Eversense, etc.). Requires notification access.</string>
+    <string name="notification_reader_access_title">Notification access</string>
+    <string name="notification_reader_access_granted">Granted. Readings will be picked up from supported CGM apps.</string>
+    <string name="notification_reader_access_missing">Not granted — tap to open Android settings and enable AAPS.</string>
     <string name="bgsource_log_sensor_change_title">Accept sensor start</string>
     <string name="bgsource_log_sensor_change_summary">Create event \"CGM Sensor Insert\" in Careportal automatically on received sensor start from BG source local broadcast</string>
     <string name="direction">direction</string>

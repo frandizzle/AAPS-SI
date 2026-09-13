@@ -41,6 +41,7 @@ import app.aaps.plugins.smoothing.ExponentialSmoothingPlugin
 import app.aaps.plugins.smoothing.NoSmoothingPlugin
 import app.aaps.plugins.smoothing.UnscentedKalmanFilterPlugin
 import app.aaps.plugins.source.DexcomPlugin
+import app.aaps.plugins.source.NotificationReaderPlugin
 import app.aaps.plugins.source.GlimpPlugin
 import app.aaps.plugins.source.GlunovoPlugin
 import app.aaps.plugins.source.IntelligoPlugin
@@ -429,6 +430,14 @@ abstract class PluginsListModule {
     @IntoMap
     @IntKey(440)
     abstract fun bindDexcomPlugin(plugin: DexcomPlugin): PluginBase
+
+    // 445: between BYODA (440) and whatever follows, so the notification reader lists next to the
+    // other Dexcom-capable source rather than at the end.
+    @Binds
+    @AllConfigs
+    @IntoMap
+    @IntKey(445)
+    abstract fun bindNotificationReaderPlugin(plugin: NotificationReaderPlugin): PluginBase
 
     @Binds
     @AllConfigs
