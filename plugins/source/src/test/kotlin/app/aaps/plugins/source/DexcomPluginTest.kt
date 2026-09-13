@@ -1,9 +1,11 @@
 package app.aaps.plugins.source
 
+import app.aaps.core.keys.StringNonKey
 import app.aaps.shared.tests.TestBaseWithProfile
 import com.google.common.truth.Truth.assertThat
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.whenever
 
 class DexcomPluginTest : TestBaseWithProfile() {
 
@@ -11,7 +13,11 @@ class DexcomPluginTest : TestBaseWithProfile() {
 
     @BeforeEach
     fun setup() {
-        dexcomPlugin = DexcomPlugin(rh, aapsLogger, context, config)
+        // Preferences.get is declared non-null and the real store honours that by returning the
+        // key's defaultValue. A bare Mockito mock hands back null, so stub it rather than making
+        // production code defend against a contract only the mock breaks.
+        whenever(preferences.get(StringNonKey.DexcomEnabledSensorTypes)).thenReturn("")
+        dexcomPlugin = DexcomPlugin(rh, aapsLogger, context, config, preferences)
     }
 
     @Test

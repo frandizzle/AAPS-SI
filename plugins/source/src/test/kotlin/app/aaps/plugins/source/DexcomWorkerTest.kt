@@ -70,6 +70,9 @@ class DexcomWorkerTest : TestBaseWithProfile() {
         val timestamp = (now - 60000) / 1000L
         runBlocking {
             whenever(dexcomPlugin.isEnabled()).thenReturn(true)
+            // New alongside isEnabled: a mocked plugin returns false for it, which would reject
+            // every reading. Production default (no sensor type picked) accepts all of them.
+            whenever(dexcomPlugin.isSensorTypeEnabled(anyOrNull())).thenReturn(true)
             whenever(preferences.get(BooleanKey.BgSourceCreateSensorChange)).thenReturn(true)
             whenever(persistenceLayer.insertCgmSourceData(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(Single.just(PersistenceLayer.TransactionResult()))
             val bundle = BundleMock.mocked().apply {
@@ -116,6 +119,9 @@ class DexcomWorkerTest : TestBaseWithProfile() {
         val timestamp = (now - 60000) / 1000L
         runBlocking {
             whenever(dexcomPlugin.isEnabled()).thenReturn(true)
+            // New alongside isEnabled: a mocked plugin returns false for it, which would reject
+            // every reading. Production default (no sensor type picked) accepts all of them.
+            whenever(dexcomPlugin.isSensorTypeEnabled(anyOrNull())).thenReturn(true)
             whenever(preferences.get(BooleanKey.BgSourceCreateSensorChange)).thenReturn(true)
             whenever(persistenceLayer.insertCgmSourceData(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(Single.just(PersistenceLayer.TransactionResult()))
             val bundle = BundleMock.mocked().apply {
@@ -157,6 +163,9 @@ class DexcomWorkerTest : TestBaseWithProfile() {
         val timestamp = (now - 60000) / 1000L
         runBlocking {
             whenever(dexcomPlugin.isEnabled()).thenReturn(true)
+            // New alongside isEnabled: a mocked plugin returns false for it, which would reject
+            // every reading. Production default (no sensor type picked) accepts all of them.
+            whenever(dexcomPlugin.isSensorTypeEnabled(anyOrNull())).thenReturn(true)
             whenever(preferences.get(BooleanKey.BgSourceCreateSensorChange)).thenReturn(true)
             whenever(persistenceLayer.insertCgmSourceData(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())).thenReturn(Single.just(PersistenceLayer.TransactionResult()))
             val bundle = BundleMock.mocked().apply {
@@ -190,6 +199,9 @@ class DexcomWorkerTest : TestBaseWithProfile() {
     fun `When bundle is missing then return failure`() {
         runBlocking {
             whenever(dexcomPlugin.isEnabled()).thenReturn(true)
+            // New alongside isEnabled: a mocked plugin returns false for it, which would reject
+            // every reading. Production default (no sensor type picked) accepts all of them.
+            whenever(dexcomPlugin.isSensorTypeEnabled(anyOrNull())).thenReturn(true)
             whenever(dataWorkerStorage.pickupBundle(1L)).thenReturn(null)
 
             val result = worker.doWork()
@@ -202,6 +214,9 @@ class DexcomWorkerTest : TestBaseWithProfile() {
     fun `When glucoseValues are missing then return failure`() {
         runBlocking {
             whenever(dexcomPlugin.isEnabled()).thenReturn(true)
+            // New alongside isEnabled: a mocked plugin returns false for it, which would reject
+            // every reading. Production default (no sensor type picked) accepts all of them.
+            whenever(dexcomPlugin.isSensorTypeEnabled(anyOrNull())).thenReturn(true)
             val bundle = BundleMock.mocked().apply {
                 putString("sensorType", "G6")
             }

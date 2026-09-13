@@ -33,5 +33,9 @@ enum class StringNonKey(
     /** Comma-separated supported packages actually observed posting a notification. Populates the
      *  picker without needing package-visibility permissions — a NotificationListenerService is
      *  told the package name regardless of what PackageManager would let us query. */
-    NotificationReaderSeenPackages(key = "notification_reader_seen_packages", defaultValue = "")
+    NotificationReaderSeenPackages(key = "notification_reader_seen_packages", defaultValue = ""),
+
+    /** Comma-separated Dexcom sensor types BYODA readings are accepted from ("G6", "G7").
+     *  Empty means every type, which is the behaviour when only one app is broadcasting. */
+    DexcomEnabledSensorTypes(key = "dexcom_enabled_sensor_types", defaultValue = "")
 }

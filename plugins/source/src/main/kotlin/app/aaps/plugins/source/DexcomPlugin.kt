@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
+import androidx.preference.MultiSelectListPreference
+import androidx.preference.PreferenceManager
+import androidx.preference.PreferenceScreen
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import app.aaps.core.data.model.GV
@@ -24,6 +27,7 @@ import app.aaps.core.interfaces.source.BgSource
 import app.aaps.core.interfaces.source.DexcomBoyda
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.keys.BooleanKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.objects.workflow.LoggingWorker
 import app.aaps.core.utils.receivers.DataWorkerStorage
@@ -38,7 +42,10 @@ class DexcomPlugin @Inject constructor(
     rh: ResourceHelper,
     aapsLogger: AAPSLogger,
     private val context: Context,
-    config: Config
+    config: Config,
+    // Injected rather than inherited: this plugin's base is PluginBase, which carries no
+    // preference store, and the sensor-type filter needs one.
+    private val preferences: Preferences
 ) : AbstractBgSourceWithSensorInsertLogPlugin(
     PluginDescription()
         .mainType(PluginType.BGSOURCE)
@@ -56,6 +63,60 @@ class DexcomPlugin @Inject constructor(
         if (!config.AAPSCLIENT) {
             pluginDescription.setDefault()
         }
+    }
+
+    /**
+     * Sensor types whose broadcasts are accepted. Empty means all of them, which is right when a
+     * single Dexcom app is broadcasting — the case upstream assumes.
+     *
+     * Two BYODA builds can be installed at once (a G6 and a G7), and both broadcast into the same
+     * receiver. Nothing downstream separates them, so both sensors land in one BG stream. The
+     * bundle's "sensorType" is what tells them apart, and it is read a few lines into the worker
+     * already.
+     */
+    fun enabledSensorTypes(): Set<String> =
+        preferences.get(StringNonKey.DexcomEnabledSensorTypes)
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    fun isSensorTypeEnabled(sensorType: String?): Boolean {
+        val enabled = enabledSensorTypes()
+        return enabled.isEmpty() || (sensorType ?: "") in enabled
+    }
+
+    override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
+        super.addPreferenceScreen(preferenceManager, parent, context, requiredKey)
+        if (requiredKey != null) return
+        val category = androidx.preference.PreferenceCategory(context)
+        parent.addPreference(category)
+        category.apply {
+            key = "dexcom_sensor_type_settings"
+            title = rh.gs(R.string.dexcom_app_patched)
+            initialExpandedChildrenCount = 0
+            addPreference(MultiSelectListPreference(context).apply {
+                key = "dexcom_enabled_sensor_types_ui"
+                title = rh.gs(R.string.dexcom_sensor_types_title)
+                // Persistence is ours: the selection lives in the typed preference store, so the
+                // widget is non-persistent and writes through on change.
+                isPersistent = false
+                entries = SENSOR_TYPES.toTypedArray()
+                entryValues = SENSOR_TYPES.toTypedArray()
+                values = enabledSensorTypes()
+                summary = sensorTypeSummary()
+                setOnPreferenceChangeListener { pref, newValue ->
+                    @Suppress("UNCHECKED_CAST")
+                    val selected = (newValue as? Set<String>).orEmpty()
+                    preferences.put(StringNonKey.DexcomEnabledSensorTypes, selected.joinToString(","))
+                    pref.summary = sensorTypeSummary()
+                    true
+                }
+            })
+        }
+    }
+
+    private fun sensorTypeSummary(): String = when {
+        enabledSensorTypes().isEmpty() -> rh.gs(R.string.dexcom_sensor_types_all)
+        enabledSensorTypes().size > 1  -> rh.gs(R.string.dexcom_sensor_types_multiple, enabledSensorTypes().size)
+        else                           -> enabledSensorTypes().first()
     }
 
     override fun advancedFilteringSupported(): Boolean = true
@@ -86,7 +147,12 @@ class DexcomPlugin @Inject constructor(
             val bundle = dataWorkerStorage.pickupBundle(inputData.getLong(DataWorkerStorage.STORE_KEY, -1))
                 ?: return Result.failure(workDataOf("Error" to "missing input data"))
             try {
-                val sourceSensor = when (bundle.getString("sensorType") ?: "") {
+                val sensorType = bundle.getString("sensorType") ?: ""
+                if (!dexcomPlugin.isSensorTypeEnabled(sensorType)) {
+                    // Two BYODA builds broadcasting at once; the user has picked which one counts.
+                    return Result.success(workDataOf("Result" to "Sensor type $sensorType not selected"))
+                }
+                val sourceSensor = when (sensorType) {
                     "G6" -> SourceSensor.DEXCOM_G6_NATIVE
                     "G7" -> SourceSensor.DEXCOM_G7_NATIVE
                     else -> SourceSensor.DEXCOM_NATIVE_UNKNOWN
@@ -179,6 +245,9 @@ class DexcomPlugin @Inject constructor(
     override fun dexcomPackages() = PACKAGE_NAMES
 
     companion object {
+
+        /** The values Dexcom puts in the broadcast's "sensorType" extra. */
+        private val SENSOR_TYPES = listOf("G6", "G7")
 
         private val PACKAGE_NAMES = listOf(
             "com.dexcom.g6.region1.mmol", "com.dexcom.g6.region2.mgdl",
