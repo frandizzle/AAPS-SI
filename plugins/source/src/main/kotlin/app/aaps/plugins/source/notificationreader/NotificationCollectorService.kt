@@ -74,6 +74,14 @@ class NotificationCollectorService : NotificationListenerService() {
         val packageName = sbn.packageName
         if (!notificationReaderPlugin.packageConfig.isSupportedPackage(packageName)) return
         if (!notificationReaderPlugin.isEnabled()) return
+        // Remember it before the allow-list check, so a package the user has NOT ticked still
+        // shows up as an option rather than being invisible until they tick something they
+        // cannot see.
+        notificationReaderPlugin.recordSeenPackage(packageName)
+        if (!notificationReaderPlugin.isPackageEnabled(packageName)) {
+            aapsLogger.debug(LTag.BGSOURCE, "Ignoring $packageName — not selected as a reading source")
+            return
+        }
 
         aapsLogger.debug(LTag.BGSOURCE, "Notification from: $packageName")
         processNotification(sbn.notification, packageName)

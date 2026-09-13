@@ -33,6 +33,10 @@
     <string name="notification_reader_access_title">Notification access</string>
     <string name="notification_reader_access_granted">Granted. Readings will be picked up from supported CGM apps.</string>
     <string name="notification_reader_access_missing">Not granted — tap to open Android settings and enable AAPS.</string>
+    <string name="notification_reader_sources_title">Read readings from</string>
+    <string name="notification_reader_sources_none_seen">No CGM app notifications seen yet. Once a supported app posts a reading it will appear here.</string>
+    <string name="notification_reader_sources_all">All supported apps — tick one to read only that app.</string>
+    <string name="notification_reader_sources_multiple">WARNING: %1$d apps selected. Readings from different sensors will be mixed into one stream.</string>
     <string name="bgsource_log_sensor_change_title">Accept sensor start</string>
     <string name="bgsource_log_sensor_change_summary">Create event \"CGM Sensor Insert\" in Careportal automatically on received sensor start from BG source local broadcast</string>
     <string name="direction">direction</string>

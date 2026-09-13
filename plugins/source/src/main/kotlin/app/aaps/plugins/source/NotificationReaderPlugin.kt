@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
+import androidx.preference.MultiSelectListPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
@@ -82,6 +83,96 @@ class NotificationReaderPlugin @Inject constructor(
     fun notificationAccessGranted(): Boolean =
         NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
 
+    /**
+     * Packages the reader is allowed to take readings from. Empty means every supported package,
+     * which is upstream's behaviour and the right default for someone running a single CGM app.
+     */
+    fun enabledPackages(): Set<String> =
+        preferences.get(StringNonKey.NotificationReaderEnabledPackages)
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    /**
+     * Whether a reading from this package should be taken.
+     *
+     * This is the guard that was missing. Running a G6 and a G7 app side by side, both post
+     * reading notifications, both are in the supported list, and [app.aaps.plugins.source.notificationreader.GlucoseDeduplicator]
+     * keys its interval window PER PACKAGE — so the two never dedupe against each other and both
+     * sensors land in one BG stream seconds apart. That is not a variant of "duplicate
+     * notification", it is two different sensors, and no dedup heuristic should be asked to sort
+     * it out.
+     */
+    fun isPackageEnabled(packageName: String): Boolean {
+        val enabled = enabledPackages()
+        return enabled.isEmpty() || packageName in enabled
+    }
+
+    /** Records a supported package as having been seen, so it can be offered in the picker. */
+    fun recordSeenPackage(packageName: String) {
+        val seen = seenPackages()
+        if (packageName in seen) return
+        preferences.put(StringNonKey.NotificationReaderSeenPackages, (seen + packageName).joinToString(","))
+    }
+
+    private fun seenPackages(): Set<String> =
+        preferences.get(StringNonKey.NotificationReaderSeenPackages)
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+
+    /** Friendly label for a package — the app's own name where the system will tell us, otherwise
+     *  the sensor it maps to. The package is always appended, since two Dexcom apps read alike. */
+    private fun labelFor(packageName: String): String {
+        val appLabel = try {
+            context.packageManager.getApplicationLabel(
+                context.packageManager.getApplicationInfo(packageName, 0)
+            ).toString()
+        } catch (_: Exception) {
+            // Package-visibility rules can hide an installed app from PackageManager; the sensor
+            // mapping is always available because it comes from our own config.
+            packageConfig.sensorForPackage(packageName).text
+        }
+        return "$appLabel  ($packageName)"
+    }
+
+    /**
+     * Multi-select over the packages actually observed posting notifications.
+     *
+     * Deliberately not a list of every supported package: there are 47 of them and 45 are noise
+     * for any given user. Deliberately not a list of installed packages either — from API 30 the
+     * system may refuse to tell us what is installed, but a NotificationListenerService is handed
+     * the package name of everything it sees, so what has actually posted is both accurate and
+     * free to collect.
+     *
+     * Persistence is ours, not the widget's: the selection lives in the typed preference store
+     * alongside everything else this plugin keeps, so the widget is non-persistent and writes
+     * through on change.
+     */
+    private fun buildSourcePicker(context: Context): MultiSelectListPreference {
+        val choices = (seenPackages() + enabledPackages()).sorted()
+        return MultiSelectListPreference(context).apply {
+            key = "notification_reader_enabled_packages_ui"
+            title = rh.gs(R.string.notification_reader_sources_title)
+            isPersistent = false
+            entries = choices.map { labelFor(it) }.toTypedArray()
+            entryValues = choices.toTypedArray()
+            values = enabledPackages()
+            isEnabled = choices.isNotEmpty()
+            summary = sourceSummary(choices)
+            setOnPreferenceChangeListener { pref, newValue ->
+                @Suppress("UNCHECKED_CAST")
+                val selected = (newValue as? Set<String>).orEmpty()
+                preferences.put(StringNonKey.NotificationReaderEnabledPackages, selected.joinToString(","))
+                pref.summary = sourceSummary(choices)
+                true
+            }
+        }
+    }
+
+    private fun sourceSummary(choices: List<String>): String = when {
+        choices.isEmpty()           -> rh.gs(R.string.notification_reader_sources_none_seen)
+        enabledPackages().isEmpty() -> rh.gs(R.string.notification_reader_sources_all)
+        enabledPackages().size > 1  -> rh.gs(R.string.notification_reader_sources_multiple, enabledPackages().size)
+        else                        -> labelFor(enabledPackages().first())
+    }
+
     override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
         super.addPreferenceScreen(preferenceManager, parent, context, requiredKey)
         if (requiredKey != null) return
@@ -91,6 +182,7 @@ class NotificationReaderPlugin @Inject constructor(
             key = "notification_reader_settings"
             title = rh.gs(R.string.notification_reader)
             initialExpandedChildrenCount = 0
+            addPreference(buildSourcePicker(context))
             addPreference(Preference(context).apply {
                 title = rh.gs(R.string.notification_reader_access_title)
                 summary = rh.gs(

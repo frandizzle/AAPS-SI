@@ -24,5 +24,14 @@ enum class StringNonKey(
 
     /** Per-package dedup state for the notification reader (last accepted timestamp and learned
      *  interval). Survives restarts so a reboot cannot re-admit a reading already stored. */
-    NotificationReaderDedupState(key = "notification_reader_dedup_state", defaultValue = "")
+    NotificationReaderDedupState(key = "notification_reader_dedup_state", defaultValue = ""),
+
+    /** Comma-separated packages the notification reader is allowed to take readings from.
+     *  Empty means every supported package, which is upstream's behaviour. */
+    NotificationReaderEnabledPackages(key = "notification_reader_enabled_packages", defaultValue = ""),
+
+    /** Comma-separated supported packages actually observed posting a notification. Populates the
+     *  picker without needing package-visibility permissions — a NotificationListenerService is
+     *  told the package name regardless of what PackageManager would let us query. */
+    NotificationReaderSeenPackages(key = "notification_reader_seen_packages", defaultValue = "")
 }
