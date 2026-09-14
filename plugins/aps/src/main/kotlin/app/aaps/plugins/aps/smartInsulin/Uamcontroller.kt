@@ -61,6 +61,9 @@ class UamController @Inject constructor(
     // state. The rise is measured from the LOWEST reading in that window, which is what makes a
     // wobble cost nothing — see the rise calculation in onLoopCycle.
     private val burstWindow: ArrayDeque<Pair<Long, Double>> = ArrayDeque()
+    /** Readings before this are kept for context but excluded from the burst rise — set whenever
+     *  the low lockout blocks, so a rebound out of a low can never be measured as a meal. */
+    private var burstEligibleFromMs = 0L
     private var burstPrevBgMmol            = 0.0
     private var burstPrevBgTimestampMs     = 0L
     // Rebound window transition tracking
@@ -126,8 +129,12 @@ class UamController @Inject constructor(
         profileUtil.units == app.aaps.core.data.model.GlucoseUnit.MMOL
     private val unitLabel: String get() = if (isMmol) "mmol" else "mg/dL"
     private fun fmtBg(mmol: Double): String = if (isMmol) String.format("%.1f", mmol) else String.format("%.0f", mmol * 18.0)
-    private fun fmtDelta(mmol: Double): String = if (isMmol) String.format("%+.2f", mmol) else String.format("%+.1f", mmol * 18.0)
-    private fun fmtThresh(mmol: Double): String = if (isMmol) String.format("%.2f", mmol) else String.format("%.1f", mmol * 18.0)
+    // Three decimals in mmol, not two. The dirty-window bar is a base threshold times 1.5, so a
+    // 0.15 base becomes 0.225 — which rounds to "0.22" at two decimals, as does a delta of 0.224.
+    // The reject line then read "Δ +0.22 < 0.22", which looks like a bug in the comparison rather
+    // than a correct rejection a thousandth under the bar.
+    private fun fmtDelta(mmol: Double): String = if (isMmol) String.format("%+.3f", mmol) else String.format("%+.1f", mmol * 18.0)
+    private fun fmtThresh(mmol: Double): String = if (isMmol) String.format("%.3f", mmol) else String.format("%.1f", mmol * 18.0)
 
     fun onLoopCycle(
         currentMealMode:   MealMode,
@@ -172,6 +179,18 @@ class UamController @Inject constructor(
             reboundExpiredMs = System.currentTimeMillis()
         }
         wasInReboundWindow = inReboundWindow
+
+        // BG history is recorded BEFORE every gate below, because it is a record of what glucose
+        // did — which has nothing to do with whether UAM is currently allowed to act on it.
+        //
+        // It used to be maintained further down, after six early returns (UAM disabled, meal mode,
+        // CGM warmup, night cutoff, low lockout). Coming out of any of them the window was empty
+        // and needed a full BURST_WINDOW_MS to refill, so the burst could not measure a rise that
+        // had already started — it saw only the fragment since the gate lifted. A meal eaten
+        // shortly after a lockout ended was invisible to it for twenty minutes.
+        while (burstWindow.isNotEmpty() && bgTimestampMs - burstWindow.first().first > BURST_WINDOW_MS)
+            burstWindow.removeFirst()
+        burstWindow.addLast(bgTimestampMs to currentBgMmol)
 
         if (!sp.getBoolean(BooleanKey.ApsSmartInsulinUamEnabled.key, BooleanKey.ApsSmartInsulinUamEnabled.defaultValue)) {
             resetStreak()
@@ -231,6 +250,12 @@ class UamController @Inject constructor(
         else (bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || inPostReboundLockout)
 
         if (blockedByLow) {
+            // The one gate that also invalidates the history behind it. Everything else above is
+            // about whether we may ACT; this one says BG itself is not meal evidence — a rise out
+            // of a low is a rebound, and measuring a burst from that trough would read the
+            // recovery as a meal and dose into it. Keep collecting, but do not let the burst look
+            // back past this moment.
+            burstEligibleFromMs = bgTimestampMs
             resetStreak(); return
         }
 
@@ -251,11 +276,10 @@ class UamController @Inject constructor(
         // going back down, and by as much as it went down — a 0.01 dip costs 0.01, not everything.
         // The fixed window is what a moving anchor was standing in for: it bounds how long a rise
         // may take to accumulate, but it does it on time rather than on the absence of noise.
-        while (burstWindow.isNotEmpty() && bgTimestampMs - burstWindow.first().first > BURST_WINDOW_MS)
-            burstWindow.removeFirst()
-        burstWindow.addLast(bgTimestampMs to currentBgMmol)
-
-        val burstTroughMmol = burstWindow.minOf { it.second }
+        // Strictly after: the blocked reading itself is the low being recovered from, so it is the
+        // one value that must never become the floor a rise is measured against.
+        val eligible = burstWindow.filter { it.first > burstEligibleFromMs }
+        val burstTroughMmol = eligible.minOfOrNull { it.second } ?: currentBgMmol
         lastBurstRiseMmol  = (currentBgMmol - burstTroughMmol).coerceAtLeast(0.0)
         lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol) currentBgMmol - burstPrevBgMmol else 0.0
 
@@ -292,7 +316,7 @@ class UamController @Inject constructor(
         // freshCycle is no longer part of this: the window bounds how old the trough can be, which
         // is the thing a consecutive-reading requirement was really enforcing. Two readings are
         // still required — a lone reading has nothing to have risen FROM.
-        if (burstThreshold > 0.0 && burstWindow.size >= 2 && lastBurstRiseMmol >= burstThreshold - 0.01) {
+        if (burstThreshold > 0.0 && eligible.size >= 2 && lastBurstRiseMmol >= burstThreshold - 0.01) {
             triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
             resetStreak()
             // Clear the window so the same rise can't fire again next reading — the trough would

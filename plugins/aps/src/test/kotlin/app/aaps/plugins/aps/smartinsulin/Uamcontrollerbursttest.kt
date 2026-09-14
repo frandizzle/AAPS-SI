@@ -67,16 +67,22 @@ class UamControllerBurstTest {
         tMs: Long,
         hour: Int = 8,
         delta: Double = 0.0,
-        avgDelta: Double = 0.0
+        avgDelta: Double = 0.0,
+        mode: MealMode = MealMode.FASTING,
+        low: Boolean = false,
+        // Separate from [low] deliberately: letting inReboundWindow fall from true to false starts
+        // a 60-min post-rebound lockout measured on the real clock, which a test cannot advance
+        // past — every later cycle would be blocked for reasons unrelated to what is under test.
+        rebound: Boolean = false
     ) = sut.onLoopCycle(
-        currentMealMode   = MealMode.FASTING,
+        currentMealMode   = mode,
         currentBgMmol     = bgMmol,
         deltaMmol         = delta,
         shortAvgDeltaMmol = avgDelta,
         bgiMmol           = 0.0,
         currentHour       = hour,
-        bgWentLow         = false,
-        inReboundWindow   = false,
+        bgWentLow         = low,
+        inReboundWindow   = rebound,
         lastLowTimeMs     = 0L,
         highTempTarget    = false,
         cgmInWarmup       = false,
@@ -279,6 +285,44 @@ class UamControllerBurstTest {
             bg += 0.1; t += 300_000L
         }
         verify(mealOverrideManager, never()).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    // ── History across gates ─────────────────────────────────────────────────
+
+    @Test
+    fun `a rise that starts during a meal mode is measured in full once it ends`() {
+        // The starvation bug: BG history was only recorded after the meal-mode gate, so leaving a
+        // mode left the window empty and the burst could only see the fragment after it. A rise
+        // already underway was invisible for a full window.
+        cycle(bgMmol = 7.0, tMs = 1_000L,   mode = MealMode.LUNCH)
+        cycle(bgMmol = 7.5, tMs = 301_000L, mode = MealMode.LUNCH)
+        cycle(bgMmol = 8.0, tMs = 601_000L)   // mode ended; +1.0 above the 7.0 still in the window
+        verify(mealOverrideManager).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    @Test
+    fun `a rebound out of a low is not measured as a meal`() {
+        // The one gate that must also invalidate its history. Climbing out of a low is a recovery,
+        // and measuring a burst from that trough would dose into it.
+        cycle(bgMmol = 4.0, tMs = 1_000L,   low = true)
+        cycle(bgMmol = 5.5, tMs = 301_000L, low = true)
+        cycle(bgMmol = 7.0, tMs = 601_000L)   // +3.0 above the low, but that trough is excluded
+        verify(mealOverrideManager, never()).activateOverride(
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+    }
+
+    @Test
+    fun `a real rise after a low lockout still fires, measured from where the lockout lifted`() {
+        cycle(bgMmol = 4.0, tMs = 1_000L, low = true)
+        cycle(bgMmol = 6.0, tMs = 301_000L)    // lockout lifted here — this is the new floor
+        cycle(bgMmol = 6.5, tMs = 601_000L)
+        cycle(bgMmol = 7.0, tMs = 901_000L)    // +1.0 above 6.0
+        verify(mealOverrideManager).activateOverride(
             any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
         )
     }

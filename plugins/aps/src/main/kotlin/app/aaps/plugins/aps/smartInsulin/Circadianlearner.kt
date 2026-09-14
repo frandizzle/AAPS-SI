@@ -770,7 +770,27 @@ class CircadianLearner @Inject constructor(
                     (bg < targetMgdl - TRIM_DEAD_BAND_MGDL)
                 overshootThisCycle = overshootCrash
 
-                val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) && !isLowRecovery && !overshootCrash
+                // bg >= targetMgdl is the live-reading gate, and it is the one that was missing.
+                //
+                // aboveBand is decided on avgBg, a trailing mean over up to 120 min. The
+                // overshootCrash guard below already handles a mean that is high while the live
+                // reading has crashed a FULL dead band under target — but between target and
+                // target - dead band there was no guard at all. A BG that has come down to 5.2
+                // against a 5.5 target, flat, with negative IOB and a zero TBR, still read as
+                // "sustained high" and had insulin ADDED, because the mean behind it was 5.9.
+                //
+                // That is the engine of the rollercoaster: dose, undershoot through target,
+                // trailing mean stays high, dose again on the way down, undershoot further. The
+                // mean says where BG has BEEN; the live reading says where it IS, and nothing
+                // below target should be adding insulin on the strength of the former.
+                //
+                // Not folded into overshootCrash: that flips to the CUT branch, and the earlier
+                // attempt to widen it there fired during ordinary at-target running and blocked
+                // increase-learning entirely. Gating only the ADD branch leaves this zone neutral,
+                // which is the honest answer for "recently high, currently under target".
+                val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) &&
+                    bg >= targetMgdl &&
+                    !isLowRecovery && !overshootCrash
                 val belowBand = (avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL) || overshootCrash
 
                 // --- HUMAN "STEP AND WAIT" LOGIC ---
