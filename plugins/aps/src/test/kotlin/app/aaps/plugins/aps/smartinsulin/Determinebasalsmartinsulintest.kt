@@ -158,7 +158,8 @@ class DetermineBasalSmartInsulinTest {
         // but only when the suite happened to run between 04:00 and 09:00 local. Tests that passed
         // all afternoon failed the next morning with nothing changed. Nothing here exercises dawn
         // behaviour, so the harness turns it off; a future dawn test can pass its own value.
-        dawnSmbReduction:  Double               = 1.0
+        dawnSmbReduction:  Double               = 1.0,
+        msSinceLastSuspend: Long                = 3600_000L
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -179,7 +180,7 @@ class DetermineBasalSmartInsulinTest {
             dosingIsfMgdl         = 50.0,
             microBolusAllowed     = microBolusAllowed,
             inReboundWindow       = inReboundWindow,
-            msSinceLastSuspend    = 3600_000L,
+            msSinceLastSuspend    = msSinceLastSuspend,
             currentTime           = System.currentTimeMillis(),
             isTempTarget          = false,
             profileTargetMgdl     = 100.0,
@@ -464,5 +465,134 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(iobArray = flatIobArray(iob = -2.0, activity = -0.02),
                        lowGuardMmol = 4.8, warnGuardMmol = 5.0, uamSmbFraction = 1.0)
         assertTrue(r.reason.contains("trigger=blocked"), r.reason)
+    }
+
+    // ── Prediction with negative IOB ─────────────────────────────────────────
+
+    // After a suspend IOB goes negative. The curve clamps activity at zero, but BGI was computed
+    // from SIGNED activity — so negative IOB produced a positive BGI that was subtracted from the
+    // observed rise and never added back, flattening (or inverting) the forecast on a recovering BG.
+
+    @Test fun `negative IOB with a rising delta forecasts a rise, not a flat line`() {
+        // The reported frame: BG 5.2 rising +0.2/5min, IOB -1.46U after a low-guard suspend.
+        whenever(glucoseStatus.glucose).thenReturn(93.6)
+        whenever(glucoseStatus.delta).thenReturn(3.6)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(3.6)
+        val r = invoke(iobArray = flatIobArray(iob = -1.46, activity = -0.015),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        val pred = r.predictionsAsGv.map { it.value }
+        assertTrue(pred.size > 12, "expected a forecast, got ${pred.size} ticks")
+        assertTrue(pred[11] > 93.6 + 5.0, "forecast should climb over the hour: ${pred.take(13)}")
+    }
+
+    @Test fun `negative IOB with a small rise no longer forecasts a fall under the guard`() {
+        // BG 4.9 rising +0.1: previously BGI outweighed the rise, the curve fell to 4.5, and the
+        // loop stayed suspended below a 4.8 guard on a BG that was climbing.
+        whenever(glucoseStatus.glucose).thenReturn(88.2)
+        whenever(glucoseStatus.delta).thenReturn(1.8)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(1.8)
+        val r = invoke(iobArray = flatIobArray(iob = -1.43, activity = -0.015),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        val pred = r.predictionsAsGv.map { it.value }
+        assertTrue(pred.minOrNull()!! >= 88.0, "forecast must not dip below the current reading: ${pred.take(13)}")
+    }
+
+    @Test fun `withheld basal is not projected as an extra accelerating rise`() {
+        // Guards the conservative choice: the forecast follows the observed trend and lets it fade,
+        // rather than modelling negative IOB as a separate upward push stacked on top. ci decays to
+        // zero over 12 ticks, so the whole climb is bounded by the trend alone: 3.6 x 78/12 = 23.4.
+        whenever(glucoseStatus.glucose).thenReturn(93.6)
+        whenever(glucoseStatus.delta).thenReturn(3.6)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(3.6)
+        val r = invoke(iobArray = flatIobArray(iob = -1.46, activity = -0.015),
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        val pred = r.predictionsAsGv.map { it.value }
+        assertTrue(pred.last() <= 93.6 + 23.4 + 1.0, "rise exceeds the observed trend: last=${pred.last()}")
+    }
+
+    @Test fun `positive IOB still pulls the forecast down`() {
+        // Normal running is untouched: insulin acting on a flat BG forecasts a fall.
+        whenever(glucoseStatus.glucose).thenReturn(120.0)
+        whenever(glucoseStatus.delta).thenReturn(0.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
+        val r = invoke(iobArray = flatIobArray(iob = 2.0, activity = 0.02))
+        val pred = r.predictionsAsGv.map { it.value }
+        assertTrue(pred.last() < 120.0, "insulin on board should forecast a fall: last=${pred.last()}")
+    }
+
+    @Test fun `negative IOB forecasts exactly like IOB near zero`() {
+        // What was asked for, stated directly: after a zero-temp or suspend, the forecast should
+        // be the one you'd get with ~0 IOB, not a flattened version of it.
+        whenever(glucoseStatus.glucose).thenReturn(93.6)
+        whenever(glucoseStatus.delta).thenReturn(3.6)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(3.6)
+        // Exactly zero, not 0.05: 0.05U is real positive insulin and the curve correctly pulls the
+        // tail down by it (~2 mg/dL across the DIA). Zero is the like-for-like baseline.
+        val nearZero = invoke(iobArray = flatIobArray(iob = 0.0, activity = 0.0)).predictionsAsGv.map { it.value }
+
+        fakeResult = FakeAPSResult(); sut = DetermineBasalSmartInsulin { fakeResult }
+        val negative = invoke(iobArray = flatIobArray(iob = -1.46, activity = -0.015)).predictionsAsGv.map { it.value }
+
+        assertEquals(nearZero, negative, "negative IOB should forecast exactly like IOB ~0")
+    }
+
+    // ── SMB taper after a low ────────────────────────────────────────────────
+
+    // SMBs used to stay blocked until 75% of the rebound window and then jump straight to full
+    // size. They now ramp in from the gate to full size at the window's end. With the default
+    // 60-min window the taper is 0.3 + 0.7 x (mins/60), so the gate (0.825) is at 45 min.
+
+    /** Flat 10mmol, zero IOB — a steady SMB request of 1.60U against a 5.5 target and ISF 50. */
+    private fun reboundSmbAt(minutes: Double): Double {
+        freshSut()
+        whenever(glucoseStatus.glucose).thenReturn(180.0)
+        whenever(glucoseStatus.delta).thenReturn(0.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
+        return invoke(inReboundWindow = true, uamSmbFraction = 1.0,
+                      msSinceLastSuspend = (minutes * 60_000).toLong()).smb
+    }
+
+    private fun freshSut() { fakeResult = FakeAPSResult(); sut = DetermineBasalSmartInsulin { fakeResult } }
+
+    @Test fun `no SMBs before the gate, unchanged`() {
+        assertEquals(0.0, reboundSmbAt(30.0), 1e-9)
+        assertEquals(0.0, reboundSmbAt(45.0), 1e-9)   // exactly at the gate — ramp starts from zero
+    }
+
+    @Test fun `SMBs ramp in between the gate and the end of the window`() {
+        val quarter = reboundSmbAt(48.75)   // 25% of the way from gate to end
+        val half    = reboundSmbAt(52.5)    // 50%
+        val full    = reboundSmbAt(60.0)
+        assertTrue(quarter > 0.0, "should have started: $quarter")
+        assertTrue(quarter < half, "should grow: $quarter -> $half")
+        assertTrue(half < full, "should grow: $half -> $full")
+        assertEquals(0.80, half, 1e-9)      // half of 1.60, on the 0.05 step
+    }
+
+    @Test fun `the taper never gives more than the old gate did`() {
+        // The old rule gave the full SMB from the gate onward; tapered must stay at or under it.
+        val full = reboundSmbAt(60.0)
+        for (m in listOf(45.0, 47.0, 50.0, 53.0, 56.0, 59.0)) {
+            assertTrue(reboundSmbAt(m) <= full + 1e-9, "taper exceeded full SMB at ${m}min")
+        }
+    }
+
+    @Test fun `outside a rebound the SMB is untouched`() {
+        freshSut()
+        whenever(glucoseStatus.glucose).thenReturn(180.0)
+        whenever(glucoseStatus.delta).thenReturn(0.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
+        val normal = invoke(inReboundWindow = false, uamSmbFraction = 1.0).smb
+        assertEquals(reboundSmbAt(60.0), normal, 1e-9)
+    }
+
+    @Test fun `the reason string names the rebound taper, not the maxSMB cap`() {
+        freshSut()
+        whenever(glucoseStatus.glucose).thenReturn(180.0)
+        whenever(glucoseStatus.delta).thenReturn(0.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(0.0)
+        val r = invoke(inReboundWindow = true, uamSmbFraction = 1.0, msSinceLastSuspend = 3_150_000L)
+        assertTrue(r.reason.contains("rebound taper"), r.reason)
+        assertFalse(r.reason.contains("capped at"), r.reason)
     }
 }

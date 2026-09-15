@@ -170,7 +170,26 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
         // ── Build prediction curve ────────────────────────────────────────────
         // ci = observed delta minus expected BGI — positive means carbs/UAM pushing BG up
-        val bgi = -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0)
+        //
+        // BGI uses the same non-negative activity predictBgCurve does, and it has to. ci is
+        // "whatever the observed delta is NOT explained by insulin", on the understanding that the
+        // curve adds insulin's effect back tick by tick. But the curve clamps activity at zero —
+        // it deliberately does not project negative IOB forward as a rising force, since that IOB
+        // is basal withheld after a low rather than insulin acting — while this line used SIGNED
+        // activity. With IOB negative, activity is negative, BGI came out POSITIVE, and was
+        // subtracted from the observed rise; the curve then never gave it back.
+        //
+        // So after any suspend the observed rise was cancelled out of the forecast. BG climbing
+        // +0.2/5min with IOB -1.46U projected a dead-flat line — or, at +0.1, a FALLING one, which
+        // held pred_min under the low guard and kept the loop suspended on a recovering BG. Low
+        // guard itself never touched the prediction; it produced the negative IOB this mishandled.
+        //
+        // Clamping here rather than un-clamping the curve is the conservative choice: the forecast
+        // now follows the observed trend and lets it fade over the hour, instead of adding a
+        // separate, accelerating push from withheld basal on top — which would have dosed hard
+        // straight out of a low. Positive activity is untouched, so normal running is identical.
+        val activityNow = iobArray.firstOrNull()?.activity ?: 0.0
+        val bgi = -(max(0.0, activityNow) * dosingIsfMgdl * 5.0)
         // Upper clamp on carb impact. min(shortAvgDelta, delta) already blunts a single-reading
         // spike, but a sustained sensor artifact survives that and ci is fed into every tick of
         // the forward curve — so a bad sensor could inject well over 100 mg/dL of imaginary rise
@@ -405,8 +424,30 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 }
                 val tbrRate = tbrRateRaw * reboundTaperFraction
 
-                val reboundSmbAllowed = reboundTaperFraction >= REBOUND_SMB_GATE
-                val finalSmb = if (reboundSmbAllowed) constrainedSmb else 0.0
+                // SMBs taper back in after a low the way TBR does, rather than switching from nothing
+                // to full size the moment the gate opens.
+                //
+                // They used to stay blocked until the taper reached REBOUND_SMB_GATE (75% of the
+                // window) and then jump straight to 100%. That cliff lands exactly where it hurts:
+                // rescue carbs are still absorbing, the forecast now follows that rise instead of
+                // having negative IOB damp it, and the first SMB after the gate was sized off a full
+                // hour's projected climb. Now nothing is given before the gate — unchanged — and
+                // from there SMBs ramp linearly to full size at the end of the window. At every
+                // point in the window this delivers no more than the old gate did.
+                val smbTaperFraction = ((reboundTaperFraction - REBOUND_SMB_GATE) / (1.0 - REBOUND_SMB_GATE))
+                    .coerceIn(0.0, 1.0)
+                val reboundSmbAllowed = smbTaperFraction > 0.0
+                val finalSmb = when {
+                    // Outside a rebound the fraction is exactly 1: return the SMB untouched, so normal
+                    // running cannot be shifted by rounding.
+                    smbTaperFraction >= 1.0 -> constrainedSmb
+                    else -> {
+                        // Round DOWN to the pump step, so a taper can never round an SMB up past its
+                        // share. The epsilon absorbs binary-fraction error (0.15 / 0.05 = 2.9999…).
+                        val tapered = Math.floor(constrainedSmb * smbTaperFraction / bolusStep + 1e-6) * bolusStep
+                        if (tapered >= bolusStep) tapered else 0.0
+                    }
+                }
 
                 val trigger = when {
                     !iobOk      -> "maxIOB(${String.format(Locale.US, "%.2f", currentIob)}/${String.format(Locale.US, "%.2f", oapsProfile.max_iob)})"
@@ -417,7 +458,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val reboundStr = when {
                     inReboundWindow -> {
                         val minsLeft = (reboundWindowMins - reboundMins).coerceAtLeast(0.0)
-                        val smbState = if (!reboundSmbAllowed) "smbBlocked" else "smbAllowed"
+                        val smbState = when {
+                            !reboundSmbAllowed      -> "smbBlocked"
+                            smbTaperFraction < 1.0  -> "smb×${(smbTaperFraction * 100).toInt()}%"
+                            else                    -> "smbAllowed"
+                        }
                         " rebound(elapsed=%.0fmin left=%.0fmin taper=%.2f %s tbrRaw=%.3f->%.3f)".format(
                             Locale.US, reboundMins, minsLeft, reboundTaperFraction, smbState, tbrRateRaw, tbrRate)
                     }
@@ -437,10 +482,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 }
 
                 // Show unconstrained SMB if it was capped — helps user understand if maxSMB needs raising
-                val smbCapNote = if (rawSmb > finalSmb && finalSmb > 0.0)
-                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, capped at ${"%.2f".format(Locale.US, smbCap)}U)"
-                else if (rawSmb > 0.0 && finalSmb == 0.0 && !reboundSmbAllowed)
+                // Checked in this order so a rebound reduction is not mislabelled as the maxSMB cap.
+                val smbCapNote = if (rawSmb > 0.0 && finalSmb == 0.0 && !reboundSmbAllowed)
                     " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, blocked: rebound)"
+                else if (rawSmb > finalSmb && smbTaperFraction < 1.0)
+                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, rebound taper ${(smbTaperFraction * 100).toInt()}%)"
+                else if (rawSmb > finalSmb && finalSmb > 0.0)
+                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, capped at ${"%.2f".format(Locale.US, smbCap)}U)"
                 else ""
 
                 sb.append(" | NORMAL | targetBG=${fmt(targetBg, isMmol)} | microBolus=$microBolusAllowed | trigger=$trigger | SMB final: ${"%.2f".format(Locale.US, finalSmb)}U$smbCapNote | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
@@ -507,7 +555,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
     companion object {
         private const val MMOL_TO_MGDL           = 18.0
         private const val TBR_WINDOW_HOURS       = 0.5
-        private const val REBOUND_SMB_GATE       = 0.825 // SMBs unlock at 75% of window: taper=0.3+(0.7×0.75)=0.825
+        private const val REBOUND_SMB_GATE       = 0.825 // SMBs start ramping in at 75% of window (taper=0.3+0.7×0.75), full size by its end
         // delta is mg/dL per 5-min CGM cycle — threshold is 2.0 mmol in a single reading.
         private const val FALLING_FAST_MGDL_PER_5MIN = 2.0 * MMOL_TO_MGDL  // 36 mg/dL = 2.0 mmol per 5-min cycle
         private const val PEAK_LEARNING_MIN_SAMPLES  = 5
