@@ -171,14 +171,22 @@ class SmartInsulinFragment : DaggerFragment() {
                 "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
             addRow(c, headline, primaryColor = Color.parseColor("#FFFB8C00"))
 
-            // BG currently below low guard during an active window — show a clear note so the
-            // "X of Y" counter is not misread as everything-is-fine. The counter keeps ticking;
-            // rollercoaster detection will extend the total via consecutiveRollercoasters.
+            // BG a hair under the guard (inside the CGM match tolerance) — not far enough to count
+            // as a low, so the window keeps running. Say so, so the counter isn't misread.
             if (d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl) {
-                addRow(c, "⚠ BG currently below low guard — recovery counter still running",
-                       "The elapsed timer keeps ticking through brief re-dips. If this becomes a\n" +
-                           "rollercoaster, the total window will be extended automatically.",
+                addRow(c, "⚠ BG right on the low guard — recovery counter still running",
+                       "Within 1 mg/dL of the guard, so it isn't treated as a new low. A proper dip below\n" +
+                           "restarts the window, and doubles it if BG had genuinely recovered first.",
                        Color.parseColor("#FFE53935"))
+            }
+
+            // Re-low extension row
+            if (d.relowCount >= 1) {
+                val relowMins = (baseMins * d.relowCount).toInt()
+                addRow(c, "Went low again — recovery window ×${d.relowCount + 1}",
+                       "Base: ${baseMins.toInt()}min + ${relowMins}min for ${if (d.relowCount == 1) "the second low" else "${d.relowCount} re-lows"}.\n" +
+                           "Restarted from 30% when BG came back above the guard. Max ×${RecoveryRelowTracker.RELOW_MAX_EXTENSIONS + 1}.",
+                       Color.parseColor("#FFFB8C00"))
             }
 
             // TBR taper
@@ -199,14 +207,14 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // Rollercoaster extension rows
             if (d.consecutiveRollercoasters >= 1) {
-                val extMins = (windowMins - baseMins).toInt()
+                val extMins = (windowMins - baseMins * (1 + d.relowCount)).toInt()
                 val extLabel = when (d.consecutiveRollercoasters) {
                     1 -> "Rollercoaster 1 detected — extending recovery by ${extMins}min"
                     2 -> "Rollercoaster 2 detected — extending recovery by ${extMins}min"
                     else -> "Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min"
                 }
                 addRow(c, extLabel,
-                       "Base: ${baseMins.toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\n" +
+                       "Base: ${(baseMins * (1 + d.relowCount)).toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\n" +
                            "Extension grows with each consecutive rollercoaster (max +45min).\n" +
                            "Resets after 2h with no further rollercoasters.",
                        Color.parseColor("#FFFB8C00"))
@@ -234,7 +242,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
                 addRow(c, "Lowest BG: $lowBgStr",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U\n" +
-                           if (d.secondLowOccurred) "⚠ Second low occurred — full lockout, UAM blocked." else "")
+                           if (d.secondLowOccurred) "⚠ Second low occurred — recovery window extended." else "")
             }
 
         } else if (d.bgWentLow) {
@@ -245,8 +253,9 @@ class SmartInsulinFragment : DaggerFragment() {
             if (actuallyBelowGuard) {
                 addRow(c, "⚠ BG is below low guard — waiting for recovery",
                        "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
+                           (if (d.relowCount >= 1) "\nWent low again — window extended ×${d.relowCount + 1} (base ${d.reboundWindowMins}min)." else "") +
                            if (d.consecutiveRollercoasters >= 1) {
-                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins * (1 + d.relowCount)
                                "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                            } else "",
                        Color.parseColor("#FFE53935"))
@@ -254,7 +263,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 addRow(c, "⚡ BG recovering — rebound window starting",
                        "BG has crossed back above the low guard. The ${d.totalReboundWindowMins}-minute recovery window is activating." +
                            if (d.consecutiveRollercoasters >= 1) {
-                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins
+                               val extMins = d.totalReboundWindowMins - d.reboundWindowMins * (1 + d.relowCount)
                                "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                            } else "",
                        Color.parseColor("#FFFB8C00"))
@@ -311,6 +320,9 @@ class SmartInsulinFragment : DaggerFragment() {
             val tbrPct       = (taperFrac * 100).roundToInt()
             val smbGateMins  = (windowMins * 0.75).roundToInt()
             val smbUnlockIn  = (smbGateMins - elapsedMins).coerceAtLeast(0)
+            val relowNote    = if (d.relowCount >= 1)
+                "\nWent low again — window extended ×${d.relowCount + 1} to ${windowMins}min."
+            else ""
             val rollerNote   = if (d.consecutiveRollercoasters >= 1)
                 "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended to ${windowMins}min."
             else ""
@@ -325,7 +337,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 "⚠ Low recovery active — ${elapsedMins}min of ${windowMins}min elapsed ($minsLeft min left)\n" +
                 "Short term: TBR capped at ${tbrPct}% — holding back insulin during recovery\n" +
                 "SMBs: ${if (smbUnlockIn > 0) "blocked for ~${smbUnlockIn}min more" else "restored ✓"}" +
-                hardLowNote + longTermLine + rollerNote
+                hardLowNote + longTermLine + relowNote + rollerNote
         } else if (d.bgWentLow) {
             val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
             val hardLowNote  = if (d.hardLowPenaltyActive)

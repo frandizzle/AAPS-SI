@@ -168,19 +168,20 @@ open class SmartInsulinPlugin @Inject constructor(
     var previousMealModeForLockout: MealMode = MealMode.FASTING
     private var lockoutTrackerInitialized: Boolean = false
     var reboundWindowStartMs: Long = 0L
+    /** Tells a real second low apart from CGM flicker across the guard, and counts them. */
+    internal val relowTracker = RecoveryRelowTracker()
     // Recovery (rebound) window length. Base comes from the user preference
-    // (ApsSmartInsulinReboundWindowMins); each consecutive rollercoaster extends it by
-    // ROLLER_REBOUND_EXTENSION_MS, capped at ROLLER_REBOUND_EXTENSION_MAX_MS. Computed live so
-    // preference changes AND rollercoaster detection take effect immediately, and so the gate
-    // (inReboundWindow) always matches totalReboundWindowMins shown in the UI.
+    // (ApsSmartInsulinReboundWindowMins); each genuine re-low adds another base window (see
+    // RecoveryRelowTracker), and each consecutive rollercoaster adds ROLLER_REBOUND_EXTENSION_MS,
+    // capped at ROLLER_REBOUND_EXTENSION_MAX_MS. Computed live so preference changes AND
+    // extensions take effect immediately, and so the gate (inReboundWindow) always matches
+    // totalReboundWindowMins shown in the UI.
     val reboundGuardMs: Long
-        get() {
-            val baseMs = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue)
-                .coerceAtLeast(0) * 60_000L
-            val extMs  = (circadianLearner.consecutiveRollercoasters.coerceAtLeast(0) * ROLLER_REBOUND_EXTENSION_MS)
-                .coerceAtMost(ROLLER_REBOUND_EXTENSION_MAX_MS)
-            return baseMs + extMs
-        }
+        get() = reboundWindowMs(
+            baseMins = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue),
+            relowCount = relowTracker.relowCount,
+            rollercoasters = circadianLearner.consecutiveRollercoasters
+        )
 
     @Volatile private var cachedLearningEnabled: Boolean = false
     @Volatile private var cachedCgmSuppressLearning: Boolean = false
@@ -309,6 +310,7 @@ open class SmartInsulinPlugin @Inject constructor(
         previousMealModeForLockout = MealMode.FASTING; minBgDuringLow = Double.MAX_VALUE
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
+        relowTracker.reset()
     }
 
     fun resetAggression() { aggressionLearner.reset(); aggressionLearner.recalculate() }
@@ -332,6 +334,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val inReboundWindow: Boolean, val reboundMins: Long, val reboundWindowMins: Int,
         val totalReboundWindowMins: Int, val consecutiveRollercoasters: Int, val hardLowPenaltyActive: Boolean,
         val softLandingBypass: Boolean, val bgWentLow: Boolean, val secondLowOccurred: Boolean,
+        /** Genuine re-lows this episode — each one added another base window. */
+        val relowCount: Int,
         val minBgDuringLow: Double, val iobAtLowTime: Double, val isMmol: Boolean,
         val learningState: String, val activityLevel: String, val avgHrBpm: Int, val steps5min: Int,
         /** Age of the newest steps record from the watch, or null if there is none in range. */
@@ -520,6 +524,7 @@ open class SmartInsulinPlugin @Inject constructor(
             consecutiveRollercoasters = circadianLearner.consecutiveRollercoasters,
             hardLowPenaltyActive = circadianLearner.lastHardLowPenaltyMs > 0L && (System.currentTimeMillis() - circadianLearner.lastHardLowPenaltyMs) < 90 * 60_000L,
             softLandingBypass = softLandingBypass, bgWentLow = bgWentLow, secondLowOccurred = secondLowOccurred,
+            relowCount = relowTracker.relowCount,
             minBgDuringLow = minBgDuringLow, iobAtLowTime = iobAtLowTime, isMmol = isMmol,
             learningState = getLearningState(), activityLevel = activityMonitor.level.label,
             avgHrBpm = activityMonitor.avgHrBpm.toInt(), steps5min = activityMonitor.lastSteps5min,
@@ -1199,18 +1204,29 @@ open class SmartInsulinPlugin @Inject constructor(
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
             if (!bgWentLow) { iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
-            else if (softLandingBypass && reboundWindowStartMs > 0L) { secondLowOccurred = true; softLandingBypass = false }
+            else if (reboundWindowStartMs > 0L) {
+                // BG had come back above the guard and the recovery window was running — now it's
+                // below again. A real rebound in between (a decent rise, or held a while) makes this
+                // a second low and adds another base window; a reading or two of flicker doesn't.
+                // Either way the window stops here and restarts from 30% on the next crossing, so
+                // insulin comes back in from the bottom of the taper rather than where it had got to.
+                if (relowTracker.onDipBelowGuard(REBOUND_LOW_THRESHOLD_MGDL)) secondLowOccurred = true
+                reboundWindowStartMs = 0L
+                softLandingBypass = false
+            }
             if (glucoseStatus.glucose < minBgDuringLow) minBgDuringLow = glucoseStatus.glucose
-            // Preserve reboundWindowStartMs across re-lows so the elapsed counter keeps ticking.
-            // Re-lows during an active window are handled by secondLowOccurred (line above) and
-            // the rollercoaster mechanism, which extends reboundGuardMs via consecutiveRollercoasters.
-            // Genuine window expiry is cleaned up by the line below (when msSinceLastSuspend >= reboundGuardMs).
             bgWentLow = true
         }
         // Exact complement of the low test above — the pair has to partition, or a BG in the gap
         // would be neither low nor recovered and the window would never arm.
-        if (bgWentLow && reboundWindowStartMs == 0L && !bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) reboundWindowStartMs = now
-        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) { reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false }
+        if (bgWentLow && !bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
+            if (reboundWindowStartMs == 0L) reboundWindowStartMs = now
+            relowTracker.recordAboveGuard(glucoseStatus.glucose, glucoseStatus.date)
+        }
+        if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
+            reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false
+            relowTracker.reset()
+        }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
