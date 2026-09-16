@@ -24,6 +24,10 @@ import javax.inject.Singleton
  *   - BG still above target+margin at evaluation → mode ISF STRENGTHENS (small step)
  *   - DURA had to intervene hard mid-episode     → STRENGTHENS (a clean ending that only
  *     happened because DURA cranked ISF still means the base mode ISF is too weak)
+ *   - A low WITH DURA cranked                    → mostly charged to DURA, not here. The mode's
+ *     own dose took BG up and over safely; what took it too far was the tail correction, and
+ *     [DuraStrengthLearner] cuts that by 15% for the same episode. Weakening the mode ISF a
+ *     full step on top would fix the tail by under-dosing the meal.
  *   - Fresh absorption during the tail (ate again) or a new mode activation → episode SKIPPED,
  *     not learned from — contaminated evaluations must never move the multiplier
  *
@@ -89,6 +93,7 @@ class ModeIsfLearner @Inject constructor(
     private var watchUntilMs  = 0L
     private var watchStartMs  = 0L
     private var watchReduced  = false  // evaluation was voided — still weaken, but at a smaller step
+    private var watchMaxDura  = 1.0    // how hard DURA pushed in the episode being watched
 
     /** The episode this learner last actually MOVED the multiplier for. A shape handoff for an
      *  episode already corrected here must not correct it a second time. */
@@ -158,6 +163,17 @@ class ModeIsfLearner @Inject constructor(
         private const val STRENGTHEN_MARGIN_MGDL  = 18.0          // ~1 mmol above target at eval = under-dosed
         private const val TAIL_CONTAMINATION_G    = 8.0           // est. grams during tail that voids the evaluation
         private const val DURA_INTERVENTION_MULT  = 1.15          // DURA peak ≥ this counts as "ISF was too weak"
+        /**
+         * Weaken-step fraction for a low that landed with DURA at or past
+         * [DURA_INTERVENTION_MULT] — the tail, not the meal dose, drove BG down.
+         *
+         * Reduced rather than skipped for the usual reason: the episode's total insulin really was
+         * too much, and if the mode's base dose is the actual culprit the low will keep recurring.
+         * That case resolves itself — every such low cuts DURA's strength by 15%, so DURA engages
+         * less each time, and once it no longer reaches the bar these lows land here at the full
+         * step. Blame follows whichever knob is still doing the pushing.
+         */
+        private const val DURA_ATTRIBUTION_STEP_FRACTION = 0.35
 
         private const val K_MULT = "mult"
         private const val K_N    = "n"
@@ -220,8 +236,8 @@ class ModeIsfLearner @Inject constructor(
                 activeScope?.let { superseded ->
                     when {
                         episodeLow        ->
-                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained),
-                                         "low during ${superseded.label} before ${activeModeNow.label} took over — weakened",
+                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, duraDrove = duraDrove(episodeMaxDura)),
+                                         "low during ${superseded.label} before ${activeModeNow.label} took over${duraNote(episodeMaxDura)} — weakened",
                                          activeStartMs)
                         episodeUndershoot ->
                             // Same reading as the episode-end branch — a spike that settled just
@@ -231,8 +247,8 @@ class ModeIsfLearner @Inject constructor(
                                              "${superseded.label} peaked ${"%.1f".format(episodePeakMgdl / 18.0)}mmol then settled just under target with entry front-loading maxed — strengthened",
                                              activeStartMs)
                             else
-                                applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true),
-                                             "${superseded.label} undershot before ${activeModeNow.label} took over — weakened at reduced step",
+                                applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true, duraDrove = duraDrove(episodeMaxDura)),
+                                             "${superseded.label} undershot before ${activeModeNow.label} took over${duraNote(episodeMaxDura)} — weakened at reduced step",
                                              activeStartMs)
                     }
                 }
@@ -314,10 +330,11 @@ class ModeIsfLearner @Inject constructor(
                 // total really was too much, whenever it arrived, and strengthening from there
                 // would deepen the next one. It only softens the step: half the episode's fault
                 // was timing, and the full step would price it all as dose.
-                applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike),
+                applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike, duraDrove = duraDrove(maxDura)),
                              when {
                                  unexplained -> "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                                 lateSpike   -> "low during ${ended.label} episode, but it sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol first with entry front-loading maxed — weakened at reduced step"
+                                 lateSpike   -> "low during ${ended.label} episode, but it sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol first with entry front-loading maxed${duraNote(maxDura)} — weakened at reduced step"
+                                 duraDrove(maxDura) -> "low during ${ended.label} episode, peak ${peakMmol}mmol, DURA ×${"%.2f".format(maxDura)} drove the descent — DURA takes the correction, ${ended.label} ISF weakened at a small step"
                                  else        -> "low during ${ended.label} episode — weakened"
                              },
                              endedStartMs)
@@ -342,8 +359,8 @@ class ModeIsfLearner @Inject constructor(
                                  "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
                                  endedStartMs)
                 } else {
-                    applyOutcome(ended, weakenStep(unexplained, undershoot = true),
-                                 "${ended.label} undershot toward the low guard — weakened at reduced step",
+                    applyOutcome(ended, weakenStep(unexplained, undershoot = true, duraDrove = duraDrove(maxDura)),
+                                 "${ended.label} undershot toward the low guard${duraNote(maxDura)} — weakened at reduced step",
                                  endedStartMs)
                 }
                 clearWatch()
@@ -353,7 +370,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingMaxDura   = maxDura
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
-                openWatch(ended, nowMs, endedStartMs)
+                openWatch(ended, nowMs, endedStartMs, maxDura)
             }
         }
 
@@ -363,11 +380,12 @@ class ModeIsfLearner @Inject constructor(
         watchScope?.let { w ->
             if (lowActive || undershootActive) {
                 val soft = undershootActive && !lowActive
-                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced),
+                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura)),
                              (if (soft) "BG near the low guard after ${w.label} ended" else "low after ${w.label} ended") +
                                  (if (exerciseSuspected) ", but BG was falling faster than insulin explains (exercise?)" else "") +
                                  (if (watchReduced) ", episode no longer clean" else "") +
-                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced) " at reduced step" else ""),
+                                 duraNote(watchMaxDura) +
+                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced || duraDrove(watchMaxDura)) " at reduced step" else ""),
                              watchStartMs)
                 clearWatch()
                 pendingScope = null
@@ -446,20 +464,22 @@ class ModeIsfLearner @Inject constructor(
             episodeSpikeMs >= SPIKE_SUSTAINED_MS
 
     private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
-                           lateSpike: Boolean = false): Double {
+                           lateSpike: Boolean = false, duraDrove: Boolean = false): Double {
         var fraction = 1.0
         if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
         if (voided)      fraction *= VOIDED_STEP_FRACTION
         if (lateSpike)   fraction *= LATE_SPIKE_STEP_FRACTION
+        if (duraDrove)   fraction *= DURA_ATTRIBUTION_STEP_FRACTION
         return 1.0 + (WEAKEN_STEP - 1.0) * fraction
     }
 
-    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long) {
+    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double) {
         watchScope   = mode
         watchUntilMs = nowMs + WATCH_MS
         watchStartMs = episodeStartMs
         watchReduced = false
+        watchMaxDura = maxDura
     }
 
     private fun clearWatch() {
@@ -467,7 +487,15 @@ class ModeIsfLearner @Inject constructor(
         watchUntilMs = 0L
         watchStartMs = 0L
         watchReduced = false
+        watchMaxDura = 1.0
     }
+
+    /** True when DURA was pushing hard enough that the low is its bill, not the mode dose's. */
+    private fun duraDrove(maxDura: Double) = maxDura >= DURA_INTERVENTION_MULT
+
+    /** " with DURA ×1.23 pushing — mostly charged to DURA" for the outcome line, or "". */
+    private fun duraNote(maxDura: Double) =
+        if (duraDrove(maxDura)) " with DURA ×${"%.2f".format(maxDura)} pushing — mostly charged to DURA" else ""
 
     /**
      * The entry-fraction learner judged this episode under-front-loaded, but its knob is already

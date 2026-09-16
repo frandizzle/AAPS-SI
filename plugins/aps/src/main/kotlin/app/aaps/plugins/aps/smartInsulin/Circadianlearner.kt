@@ -318,6 +318,17 @@ class CircadianLearner @Inject constructor(
             // Not clean fasting this cycle (meal mode or COB on board) — end any in-progress
             // fuel-trim episode so the sustained-trim clock never spans the interruption.
             resetTrim()
+            // And drop the drift window. The mode-transition clear above misses the COB case
+            // (carbs logged without a meal mode), which leaves pre-meal samples sitting in the
+            // buffer for up to 90 min. Worse, driftCumExpectedMgdl does not accumulate on a
+            // skipped cycle, so insulin that acted during the skip is missing from the
+            // compensation — differencing across the gap reads the meal's rise as unexplained
+            // and pushes basal UP. The below-target/lockout guards and the 27 mg/dL/hr sanity
+            // gate caught most of it; this closes the hole instead.
+            if (basalDriftWindow.isNotEmpty()) {
+                aapsLogger.debug(LTag.APS, "CircadianLearner: $skipReason — clearing basalDriftWindow (${basalDriftWindow.size} samples)")
+                clearDriftWindow()
+            }
             // Still emit the summary line on skip cycles so the log has no gaps —
             // this is exactly the window (post-meal, P/F) where most contradictions
             // in mult direction turned out to originate from a PRIOR cycle's write
@@ -362,6 +373,7 @@ class CircadianLearner @Inject constructor(
 
         // -- 1. ISF learning — skip during CGM warmup (unreliable data) -----
         val isFasting = mealMode == MealMode.FASTING
+        pendingCrossBasal = null  // never carry an unapplied nudge into a later cycle
         val isfPhysicsFromIsf = if (!suppressAdaptiveLearning)
             updateIsfLearner(hour, dow, glucoseStatus, iobArray, profileIsfMgdl, inPostMealLockout, isFasting, bg, lowGuardMgdl, targetMgdl)
         else { aapsLogger.debug(LTag.APS, "CircadianLearner ISF: suppressed (CGM warmup)"); false }
@@ -377,15 +389,36 @@ class CircadianLearner @Inject constructor(
                                                                                   profileIsfMgdl = profileIsfMgdl,
                                                                                   isfLearningActive = isfPhysicsFromIsf,
                                                                                   totalIob = iob)
-        else { aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)"); false }
+        else {
+            aapsLogger.debug(LTag.APS, "CircadianLearner Basal: suppressed (CGM warmup)")
+            // Same gap argument as the skip path above — no basal cycle ran, so the drift
+            // accumulator has a hole in it and the window can no longer be differenced.
+            clearDriftWindow()
+            false
+        }
+
+        // The ISF learner's basal cross-nudge, applied only if no basal signal measured this hour
+        // itself this cycle. See the note where it is recorded.
+        val crossBasalApplied = pendingCrossBasal?.let { c ->
+            if (basalPhysicsFired) {
+                aapsLogger.debug(LTag.APS, "CircadianLearner ISF crossBasal dropped: a basal signal already wrote h=${c.hour} this cycle")
+                false
+            } else {
+                writeBasal(c.dow, c.hour, c.target, c.alpha)
+                true
+            }
+        } ?: false
+        pendingCrossBasal = null
+
         // Signal 4 (subTarget) writes isfState directly inside updateBasalLearner, and Signals
         // 0-3 now also write a smaller CROSS_NUDGE_FRACTION cross-nudge to isfState. Merge into
         // isfPhysicsFired so applyAggrNudge doesn't double-write ISF the same cycle.
         val isfPhysicsFired = isfPhysicsFromIsf || basalPhysicsFired
-        // Symmetric merge for basal: the main ISF learner now also writes a cross-nudge to
-        // basalState whenever it fires, so applyAggrNudge's basal-side mutual exclusion needs to
-        // see that too, not just updateBasalLearner's own signals.
-        val basalPhysicsFiredCombined = basalPhysicsFired || isfPhysicsFromIsf
+        // Symmetric merge for basal: the ISF learner's cross-nudge is a basalState write too, so
+        // applyAggrNudge's basal-side mutual exclusion has to see it as well as updateBasalLearner's
+        // own signals — but only when it actually landed, since it is dropped above whenever a
+        // basal signal measured the same hour.
+        val basalPhysicsFiredCombined = basalPhysicsFired || crossBasalApplied
 
         // -- 3. Aggressiveness ceiling — ALWAYS runs (rollercoaster protection) -
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
@@ -568,12 +601,22 @@ class CircadianLearner @Inject constructor(
         // that likely also affects basal — nudge basalState a smaller amount (CROSS_NUDGE_FRACTION)
         // in the same direction, as a lower-confidence co-movement prior rather than a direct
         // measurement (this cycle's data measured ISF, not basal).
-        val crossBasalTarget = (basalState.get(dow, hour) + normDeviation * ISF_NORM_GAIN * CROSS_NUDGE_FRACTION).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
-        writeBasal(dow, hour, crossBasalTarget, alpha)
+        //
+        // Recorded rather than written, because this learner runs BEFORE updateBasalLearner and
+        // cannot yet know whether a basal signal of its own is about to fire on this same hour.
+        // When one does, its measurement supersedes this prior and the nudge is dropped — two
+        // writes in one cycle stacked a direct measurement on top of a co-movement guess, which
+        // is the same double-pull already excluded between the basal signals themselves. The
+        // caller applies or drops it (see update()).
+        pendingCrossBasal = PendingCrossBasal(
+            dow, hour,
+            (basalState.get(dow, hour) + normDeviation * ISF_NORM_GAIN * CROSS_NUDGE_FRACTION).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX),
+            alpha
+        )
 
         aapsLogger.debug(LTag.APS,
-                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f w=%.2f target=%.3f a=%.3f ? mult=%.3f crossBasal=%.3f"
-                             .format(expectedDelta, actualDelta, deviation, normDeviation, signalWeight, multTarget, alpha, isfState.get(dow, hour), basalState.get(dow, hour)))
+                         "CircadianLearner ISF h=$hour expected?=%.1f actual?=%.1f dev=%.2f normDev=%.2f w=%.2f target=%.3f a=%.3f ? mult=%.3f crossBasal(pending)=%.3f"
+                             .format(expectedDelta, actualDelta, deviation, normDeviation, signalWeight, multTarget, alpha, isfState.get(dow, hour), pendingCrossBasal!!.target))
         return true
     }
 
@@ -1146,6 +1189,10 @@ class CircadianLearner @Inject constructor(
         basalDriftWindow.clear()
         driftCumExpectedMgdl = 0.0
     }
+
+    /** ISF learning's co-movement nudge to basal, held until updateBasalLearner has had its say. */
+    private data class PendingCrossBasal(val dow: Int, val hour: Int, val target: Double, val alpha: Double)
+    private var pendingCrossBasal: PendingCrossBasal? = null
 
     // Signal 4: sustained below-target + negative IOB window.
     // Stores (timestampMs, bg) pairs collected only when both conditions are met each cycle.

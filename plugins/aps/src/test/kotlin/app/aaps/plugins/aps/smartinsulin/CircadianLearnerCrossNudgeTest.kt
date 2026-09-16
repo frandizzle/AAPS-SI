@@ -181,4 +181,44 @@ class CircadianLearnerCrossNudgeTest {
         // (to the other quantity) is gated, not drift's own effect on its own quantity.
         assertTrue(basalAfter > 1.0, "Drift's own basal write should still fire even though its cross-nudge is gated, got $basalAfter")
     }
+
+    @Test
+    fun `the ISF learner's cross-nudge to basal is dropped when a basal signal wrote the same hour`() {
+        // Mirror image of the test above, from basal's side. The drift signal MEASURED this hour
+        // this cycle; the ISF learner's co-movement prior is a guess about the same hour. Applying
+        // both stacked a guess on top of a measurement — the same double-pull the basal signals
+        // already exclude between themselves.
+        var t = BASE_MS
+        for (i in 0..10) {
+            learner.update(
+                glucoseStatus  = glucoseStatus(glucose = 100.0 + i * 0.3, shortAvgDelta = 0.0),
+                iobArray       = iobArray(iob = 0.0, activity = 0.0),
+                mealMode       = MealMode.FASTING,
+                cobG           = 0.0,
+                profileIsfMgdl = 50.0,
+                targetMgdl     = 100.0,
+                aggressiveness = 1.0,
+                hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = t
+            )
+            t += CYCLE_MS
+        }
+        learner.update(
+            glucoseStatus  = glucoseStatus(glucose = 103.3, shortAvgDelta = -1.0),
+            iobArray       = iobArray(iob = 0.0, activity = 0.02),
+            mealMode       = MealMode.FASTING,
+            cobG           = 0.0,
+            profileIsfMgdl = 50.0,
+            targetMgdl     = 100.0,
+            aggressiveness = 1.0,
+            hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = t
+        )
+
+        // Drift's own write, alone: residual = (3.3 mg/dL risen + 5.0 mg/dL of insulin effect the
+        // trigger cycle's activity accounts for) / 0.9167h = 9.05 mg/dL/hr, so adjustment = 1.50
+        // which rails at BASAL_MULT_MAX, and alpha on a fresh bucket is BASAL_ALPHA * 1.5 = 0.09
+        // → 1.0 + 0.09 * (1.5 - 1.0) = 1.045. With the cross-nudge also landing this would be
+        // pulled back toward its own (staler, pre-drift) target instead.
+        assertEquals(1.045, learner.basalMultiplier(0, 0, BUCKET_CENTRE), 1e-9,
+                     "Basal should reflect ONLY the drift signal's own measurement this cycle")
+    }
 }

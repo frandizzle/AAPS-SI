@@ -399,4 +399,56 @@ class ModeIsfLearnerTest {
             assertEquals(35, migrated.episodeCount(MealMode.UAM_PROTEIN_FAT, w))
         }
     }
+
+    // -- DURA attribution ------------------------------------------------------
+    //
+    // A low that DURA drove is DURA's bill: DuraStrengthLearner cuts its strength 15% for the
+    // same episode, so charging the mode's base ISF a full 5% on top under-doses the meal to
+    // fix the tail.
+
+    @Test
+    fun `a low with DURA cranked is mostly charged to DURA`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true, dura = 1.25)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 75.0)
+        assertEquals(1.0175, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+        assertTrue(learner.lastOutcome.contains("DURA"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a low with DURA barely engaged still takes the full weaken`() {
+        // Below the intervention bar the tail was not what drove BG down.
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 160.0, dura = 1.10)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true, dura = 1.10)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 75.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a low in the tail after a DURA-driven episode is charged to DURA too`() {
+        // The shape of the screenshot case: mode handles the spike, ends, DURA's insulin is
+        // still working, BG bottoms out after the mode is gone.
+        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 165.0, dura = 1.30)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 120.0)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 68.0, low = true)
+        assertEquals(1.0175, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a DURA-driven undershoot compounds both reductions`() {
+        val start = BASE_MS
+        cycle(MealMode.LOW_CARB, start, start, bg = 160.0, dura = 1.25)
+        // Past UNDERSHOOT_MIN_ELAPSED_MS (25min) so the dip counts as evidence.
+        cycle(MealMode.LOW_CARB, start, start + 6 * CYCLE_MS, bg = 88.0, undershoot = true, dura = 1.25)
+        cycle(null, 0L, start + 7 * CYCLE_MS, bg = 92.0)
+        assertEquals(1.00875, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `DURA still strengthens the mode when the episode lands cleanly`() {
+        // Unchanged: needing DURA with no low means the base dose was too weak.
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25)
+        runQuietTail(BASE_MS, bg = 102.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
 }
