@@ -976,20 +976,23 @@ class SmartInsulinFragment : DaggerFragment() {
         addDivider(c)
         addSectionHeader(c, "Learned Mode ISF (per meal / UAM mode)")
         addMonospaceBlock(c, d.modeIsfLearnerStatus)
-        addNoteBlock(c, "Judged ~75min after each episode ends: ended low → ISF weakens, " +
-            "ended high or DURA had to rescue → strengthens, ate again during the tail → skipped. " +
-            "Changing a mode's ISF override resets it.")
+        addNoteBlock(c, "Judged ~75min after each episode ends: ended low → ISF weakens (mostly " +
+            "charged to DURA if DURA was pushing). Spike held ≥3mmol over target for 30min in the " +
+            "first 75min with no front-loading left, or ended high without DURA → strengthens. " +
+            "Ended high with DURA working the tail → no change, that stall is DURA's. Ate again " +
+            "during the tail → skipped. Changing a mode's ISF override resets it.")
 
         addDivider(c)
         addSectionHeader(c, "Learned DURA Strength (per mode)")
         addMonospaceBlock(c, d.duraStrengthStatus)
-        addNoteBlock(c, "Floor = the strongest ISF DURA may take this mode to, learned from lows " +
-            "(approximate — it's shown against the mode's learned ISF, which circadian moves through " +
-            "the day). Your configured floor still applies — the higher of the two is used. " +
-            "DURA engaged and the episode still went low → the floor is raised from where DURA " +
-            "actually got to, and strength trimmed 5%. Landed cleanly → 3% of strength given back, " +
-            "and the floor eased 3% if DURA was pressing against it. Strength sets how fast DURA " +
-            "climbs; the floor sets how far. Never exceeds what you configured.")
+        addNoteBlock(c, "Mode ISF handles the spike; DURA handles the stall after it. " +
+            "Floor = the strongest ISF DURA may take this mode to (approximate — shown against the " +
+            "mode's learned ISF, which circadian moves through the day). Your floor in settings is " +
+            "the hard limit. Went low with DURA engaged → floor raised from where DURA actually got " +
+            "to, strength trimmed 5%. Stuck ≥1mmol over target and flat for an unbroken hour, " +
+            "nothing low after → DURA wasn't enough: if it was held at the learned floor that " +
+            "floor is lowered, if it was still climbing strength goes up 3%. Held at your settings " +
+            "floor, or already at full strength → no change, and it says so here. A low always wins.")
 
         addDivider(c)
         addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")

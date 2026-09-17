@@ -4,15 +4,16 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for [DuraStrengthLearner] — strongly asymmetric learning of DURA strength and ceiling.
- * On a low with DURA engaged (≥1.10×): ceiling cut to 1 + excess×0.85 from the peak reached,
- * strength ×0.95; ×0.98 strength when that low came with an unexplained drop (exercise). Creeps
- * back ×1.03 when a DURA episode lands cleanly — the ceiling only if DURA pressed against it.
- * Never strengthens past the configured value. Strength railed 0.3–1.0, ceiling ≥ 1.05.
+ * Tests for [DuraStrengthLearner] — DURA's strength (how fast it climbs) and ceiling (how far).
+ * Low with DURA engaged (≥1.10×): ceiling cut to 1 + excess×0.85 from the peak reached, strength
+ * ×0.95. Stuck ≥1mmol over target for an unbroken hour with nothing low after: held at the
+ * configured floor → no change; held at the ceiling → ceiling loosened; still climbing → strength
+ * ×1.03, up to the configured strength. Anything else → no change. A low always wins.
  */
 class DuraStrengthLearnerTest {
 
@@ -64,8 +65,7 @@ class DuraStrengthLearnerTest {
     }
 
     @Test
-    fun `staying stuck high never raises the strength`() {
-        // DURA engaged hard, no low at all — ModeIsfLearner owns the "too weak" direction.
+    fun `DURA engaged with no low and no long stall changes nothing`() {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.50)
         var t = BASE_MS
         repeat(17) {
@@ -73,7 +73,7 @@ class DuraStrengthLearnerTest {
             cycle(null, 0L, t)
         }
         assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9,
-                     "This learner must never increase DURA strength")
+                     "No stall evidence, so no strengthening")
         assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_LUNCH),
                      "No low, so no ceiling")
     }
@@ -159,23 +159,14 @@ class DuraStrengthLearnerTest {
     }
 
     @Test
-    fun `a clean DURA episode gives some strength back`() {
+    fun `a clean landing no longer gives strength back blindly`() {
+        // About right is about right. Creeping stronger on every good meal walked DURA back into
+        // the next low, with lows as the only brake.
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        cleanDuraEpisode(MealMode.UAM_DINNER, BASE_MS + 10 * CYCLE_MS)
         assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
-
-        val next = BASE_MS + 10 * CYCLE_MS
-        cleanDuraEpisode(MealMode.UAM_DINNER, next)
-        assertEquals(0.9785, learner.factor(MealMode.UAM_DINNER), 1e-9)   // 0.95 × 1.03
     }
-
-    @Test
-    fun `recovery never exceeds the configured strength`() {
-        var t = BASE_MS
-        repeat(4) { t = cleanDuraEpisode(MealMode.UAM_LUNCH, t + 10 * CYCLE_MS) }
-        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
-    }
-
 
     @Test
     fun `an episode where DURA never engaged gives nothing back`() {
@@ -262,18 +253,7 @@ class DuraStrengthLearnerTest {
     }
 
     @Test
-    fun `a clean landing that pressed the ceiling eases it`() {
-        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
-        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
-        val ceiling = learner.ceiling(MealMode.UAM_LUNCH)                    // 1.374
-
-        cleanDuraEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, dura = ceiling)
-        assertEquals(1.0 + 0.374 * 1.03, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
-    }
-
-    @Test
-    fun `a clean landing well under the ceiling leaves it alone`() {
-        // DURA stopping at ×1.15 says nothing about whether ×1.374 is too low.
+    fun `a clean landing leaves the ceiling alone`() {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
         cleanDuraEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, dura = 1.15)
@@ -288,5 +268,187 @@ class DuraStrengthLearnerTest {
         val restored = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
         assertEquals(0.64, restored.factor(MealMode.UAM_LUNCH), 1e-9)
         assertEquals(DuraStrengthLearner.NO_CEILING, restored.ceiling(MealMode.UAM_LUNCH))
+    }
+
+    // ── Stuck elevated: DURA wasn't enough ──────────────────────────────────
+
+    private val TARGET = 110.0
+
+    /**
+     * BG parked over target for [stuckMin] minutes with DURA's stuck timer running, then the mode
+     * ends and the 105-min tail runs — low at the end if [lowAfter]. [bgAt] and [duraAt] take the
+     * minute into the run, for shapes that aren't a flat line.
+     */
+    private fun stuckEpisode(
+        mode: MealMode, startMs: Long, stuckMin: Int, dura: Double = 1.25,
+        atCeiling: Boolean = false, atFloor: Boolean = false, lowAfter: Boolean = false,
+        lowDuring: Boolean = false,
+        bgAt: (Int) -> Double = { TARGET + 36.0 },
+        duraAt: (Int) -> Double = { dura }
+    ): Long {
+        var t = startMs
+        var m = 0
+        while (m <= stuckMin) {
+            learner.onCycle(
+                activeModeNow = mode, modeStartMs = startMs, lowActive = false, duraMult = duraAt(m),
+                exerciseSuspected = false, nowMs = t, baseSignature = 2.0,
+                // The tracker has already been stuck its 10-minute minimum when the run opens.
+                bgMgdl = bgAt(m), targetMgdl = TARGET, duraStuckMinutes = m + 10.0,
+                duraAtCeiling = atCeiling, duraAtFloor = atFloor
+            )
+            t += CYCLE_MS; m += 5
+        }
+        if (lowDuring) {
+            learner.onCycle(mode, startMs, lowActive = true, duraMult = dura, exerciseSuspected = false,
+                            nowMs = t, baseSignature = 2.0, bgMgdl = 65.0, targetMgdl = TARGET)
+            t += CYCLE_MS
+        }
+        cycle(null, 0L, t)                                   // mode ends
+        t += if (lowAfter) 30 * 60_000L else 106 * 60_000L
+        cycle(null, 0L, t, low = lowAfter)
+        return t + CYCLE_MS
+    }
+
+    @Test
+    fun `stuck an hour while DURA was still climbing raises strength`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)                 // an old cut first
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60)
+        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("still climbing"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `stuck just under an hour is not enough evidence`() {
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 55)
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `stuck an hour held at the ceiling loosens the ceiling, not the strength`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)   // ceiling 1.374
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, dura = 1.374, atCeiling = true)
+        assertEquals(1.0 + 0.374 * 1.10, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a ceiling cut near the bottom still loosens by a useful amount`() {
+        // DURA held at ×1.09 is under the engaged bar — the stall alone must still open the watch.
+        sp.edit { putString("si_dura_strength_learner_state", """{"UAM_LUNCH":{"factor":0.9,"n":9,"baseSig":2.0,"ceiling":1.09}}""") }
+        learner = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, dura = 1.09, atCeiling = true)
+        assertEquals(1.11, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)    // +0.02 minimum beats +10% of 0.09
+    }
+
+    @Test
+    fun `stuck an hour held at the configured floor changes nothing and says so`() {
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, dura = 1.40, atFloor = true)
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_LUNCH))
+        assertTrue(learner.lastOutcome.contains("configured floor"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `stuck at full configured strength changes nothing and says so`() {
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60)
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("full configured strength"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a low after a long stall never strengthens — it cuts`() {
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, dura = 1.40, lowAfter = true)
+        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(1.34, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a low during the mode stops a long stall from strengthening later`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        val factorAfterCut = learner.factor(MealMode.UAM_LUNCH)
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, dura = 1.20, lowDuring = true)
+        assertTrue(learner.factor(MealMode.UAM_LUNCH) <= factorAfterCut, "went low — must not have strengthened")
+    }
+
+    // ── What counts as a stall ───────────────────────────────────────────────
+
+    @Test
+    fun `an hour stuck with DURA barely nudging ISF is not evidence DURA wasn't enough`() {
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, dura = 1.05)
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("engaged only"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `DURA engaged for only the last part of the hour does not count`() {
+        // Ramping up the whole time, engaged for the final 20 minutes.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60,
+                     duraAt = { m -> if (m >= 40) 1.15 else 1.05 })
+        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `DURA engaged for half a longer stall does count`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 80,
+                     duraAt = { m -> if (m >= 45) 1.15 else 1.05 })
+        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a slow bleed down that never trips the tracker reset is not a stall`() {
+        // −1 mg/dL per 5 min: well under the tracker's −3.6 single-cycle reset, and inside its
+        // ±5% band the whole way, so it reads as stuck. −12 mg/dL over the hour — 10 between the
+        // start and end 3-reading means — says it was already resolving.
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, bgAt = { m -> TARGET + 40.0 - m / 5.0 })
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("drifting down"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a small net drift down within noise still counts as stuck`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        // −6 mg/dL across the hour — under the 0.5mmol allowance.
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, bgAt = { m -> TARGET + 36.0 - m / 10.0 })
+        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `rising through the hour still counts — that is a stall getting worse`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, bgAt = { m -> TARGET + 30.0 + m / 5.0 })
+        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `two shorter stalls do not add up to an hour`() {
+        val start = BASE_MS
+        var t = start
+        fun run(minutes: Int) {
+            var m = 0
+            while (m <= minutes) {
+                learner.onCycle(MealMode.UAM_LUNCH, start, lowActive = false, duraMult = 1.25, exerciseSuspected = false,
+                                nowMs = t, baseSignature = 2.0, bgMgdl = TARGET + 36.0, targetMgdl = TARGET,
+                                duraStuckMinutes = m + 10.0)
+                t += CYCLE_MS; m += 5
+            }
+        }
+        run(40)
+        // Tracker resets — BG moved out of its band for a reading.
+        learner.onCycle(MealMode.UAM_LUNCH, start, lowActive = false, duraMult = 1.25, exerciseSuspected = false,
+                        nowMs = t, baseSignature = 2.0, bgMgdl = TARGET + 60.0, targetMgdl = TARGET, duraStuckMinutes = 0.0)
+        t += CYCLE_MS
+        run(40)
+        cycle(null, 0L, t)
+        cycle(null, 0L, t + 106 * 60_000L)
+        assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 }

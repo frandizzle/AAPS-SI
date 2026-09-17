@@ -1035,24 +1035,34 @@ open class SmartInsulinPlugin @Inject constructor(
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         var duraMultThisCycle = 1.0  // exposed to ModeIsfLearner — big DURA interventions count as "mode ISF too weak"
         var duraAtCeilingThisCycle = false  // DURA wanted more than its learned ceiling allowed
+        var duraAtFloorThisCycle   = false  // DURA's ISF was held at the configured floor
         if (duraActive) {
             val duraWindow = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
             // Learned factor can only soften the configured strength (crash-direction learning).
             val effectiveDuraStrength = mealOverrideManager.activeDuraStrength *
                 duraStrengthLearner.factor(mealOverrideManager.activeMealMode, duraWindow)
             val duraRaw     = duraIsfTracker.multiplier(targetBg, effectiveDuraStrength)
-            // The strength only sets how fast DURA climbs; the ceiling is how far. Applied here, on
-            // the multiplier, so the learners below see the value that was actually dosed from.
-            val duraCeiling = duraStrengthLearner.ceiling(mealOverrideManager.activeMealMode, duraWindow)
-            val duraMult    = minOf(duraRaw, duraCeiling)
-            duraAtCeilingThisCycle = duraRaw > duraCeiling
-            duraMultThisCycle = duraMult
-            if (duraMult > 1.0) {
-                val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
-                val duraIsfMgdl = dosingIsfMgdl / duraMult
-                dosingIsfMgdl = if (duraFloorMgdl > 0.0) duraIsfMgdl.coerceAtLeast(duraFloorMgdl) else duraIsfMgdl
+            // Strength sets how fast DURA climbs; the learned ceiling and your floor set how far.
+            // See applyDuraLimits for exactly when each counts as having held DURA back.
+            val limited = applyDuraLimits(
+                preDuraIsfMgdl = dosingIsfMgdl,
+                rawMult        = duraRaw,
+                ceiling        = duraStrengthLearner.ceiling(mealOverrideManager.activeMealMode, duraWindow),
+                floorMgdl      = mealOverrideManager.activeDuraFloorMgdl
+            )
+            val duraMult = limited.effectiveMult
+            duraAtCeilingThisCycle = limited.atCeiling
+            duraAtFloorThisCycle   = limited.atFloor
+            duraMultThisCycle      = duraMult
+            if (duraRaw > 1.0) {
+                dosingIsfMgdl = limited.isfMgdl
                 val duraStuckMins = duraIsfTracker.stuckMinutesForDisplay
-                duraStatusText = "DURA=${"%.2f".format(duraMult)}x${if (duraAtCeilingThisCycle) " (ceiling)" else ""} stuck=${"%.0f".format(duraStuckMins)}m"
+                duraStatusText = "DURA=${"%.2f".format(duraMult)}x${when {
+                    duraAtFloorThisCycle   -> " (floor)"
+                    duraAtCeilingThisCycle -> " (ceiling)"
+                    duraMult <= 1.0        -> " (ISF already at floor)"
+                    else                   -> ""
+                }} stuck=${"%.0f".format(duraStuckMins)}m"
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin DURA: mult=${"%.2f".format(duraMult)} " +
                                      "stuck=${"%.0f".format(duraStuckMins)}min isf->${"%.1f".format(dosingIsfMgdl)}")
@@ -1123,7 +1133,6 @@ open class SmartInsulinPlugin @Inject constructor(
             // than recomputed here, so both learners agree on when front-loading is exhausted.
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
-            duraAtCeiling     = duraAtCeilingThisCycle,
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
@@ -1167,7 +1176,12 @@ open class SmartInsulinPlugin @Inject constructor(
             nowMs             = now,
             baseSignature     = mealOverrideManager.activeDuraStrength,
             undershootActive  = undershootNow,
-            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
+            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour),
+            bgMgdl            = glucoseStatus.glucose,
+            targetMgdl        = targetBg,
+            duraStuckMinutes  = if (duraActive) duraIsfTracker.stuckMinutesForDisplay else 0.0,
+            duraAtCeiling     = duraAtCeilingThisCycle,
+            duraAtFloor       = duraAtFloorThisCycle
         )
 
         // -- UAM entry SMB fraction --------------------------------------------

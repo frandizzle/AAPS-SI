@@ -36,13 +36,13 @@ class ModeIsfLearnerTest {
         delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
-        pfWindow: PfWindow = PfWindow.NONE, atCeiling: Boolean = false
+        pfWindow: PfWindow = PfWindow.NONE
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        duraAtCeiling = atCeiling, pfWindow = pfWindow
+        pfWindow = pfWindow
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -129,10 +129,12 @@ class ModeIsfLearnerTest {
     }
 
     @Test
-    fun `DURA intervention strengthens even when BG ends on target`() {
+    fun `needing DURA no longer strengthens the mode ISF`() {
+        // The stall after the spike is DURA's to fix; strengthening the spike knob for it stacked
+        // a stronger meal response on top of DURA and caused lows.
         cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25)
-        runQuietTail(BASE_MS, bg = 102.0)  // clean ending — but only because DURA rescued it
-        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+        runQuietTail(BASE_MS, bg = 102.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
     }
 
     @Test
@@ -225,10 +227,10 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `a shape handoff for an episode already learned from is ignored`() {
-        // DURA had to rescue this episode, so the multiplier already moved once for it. The
-        // handoff must not take a second bite out of the same evidence.
-        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0, dura = 1.2)
-        runQuietTail(BASE_MS + CYCLE_MS, bg = 100.0)
+        // This episode ended high, so the multiplier already moved once for it. The handoff must
+        // not take a second bite out of the same evidence.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
 
         learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS)
@@ -238,8 +240,8 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `a shape handoff for a later episode still lands`() {
-        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0, dura = 1.2)
-        runQuietTail(BASE_MS + CYCLE_MS, bg = 100.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 160.0)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
 
         learner.noteShapeRailed(MealMode.UAM_LUNCH, BASE_MS + 6 * 60 * 60_000L)
@@ -444,29 +446,65 @@ class ModeIsfLearnerTest {
         assertEquals(1.00875, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 
-    @Test
-    fun `DURA still strengthens the mode when the episode lands cleanly`() {
-        // Unchanged: needing DURA with no low means the base dose was too weak.
-        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25)
-        runQuietTail(BASE_MS, bg = 102.0)
-        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
-    }
+    // -- Spike phase vs stalled tail --------------------------------------------
 
     @Test
-    fun `a clean landing with DURA held at its learned ceiling does not strengthen`() {
-        // The ceiling was learned to take insulin away; reading "needed DURA" off an episode it
-        // held would give that insulin straight back through the mode ISF.
-        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25, atCeiling = true)
-        runQuietTail(BASE_MS, bg = 102.0)
+    fun `ending high with DURA working the tail is left to DURA`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25)
+        runQuietTail(BASE_MS, bg = 130.0)
         assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
-        assertTrue(learner.lastOutcome.contains("ceiling"), learner.lastOutcome)
+        assertTrue(learner.lastOutcome.contains("DURA's to fix"), learner.lastOutcome)
     }
 
     @Test
-    fun `a DURA-held episode that still ends high does strengthen`() {
-        // The ceiling was NOT enough — that is genuine under-dosing, and the mode ISF owns it.
-        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25, atCeiling = true)
+    fun `ending high without DURA still strengthens`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.0)
         runQuietTail(BASE_MS, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    /** Holds [bg] for [cycles] readings starting [offsetMin] minutes into a manual Lunch, then
+     *  lands on target and runs the tail. */
+    private fun heldPeak(bg: Double, cycles: Int, offsetMin: Int, mode: MealMode = MealMode.LUNCH, railed: Boolean = false) {
+        val start = BASE_MS
+        var t = start
+        cycle(mode, start, t, bg = 110.0, railed = railed)
+        t = start + offsetMin * 60_000L
+        repeat(cycles) { cycle(mode, start, t, bg = bg, railed = railed); t += CYCLE_MS }
+        cycle(mode, start, t, bg = 102.0, railed = railed)
+        runQuietTail(t, bg = 102.0)
+    }
+
+    @Test
+    fun `a spike held high early in a manual mode strengthens even on a clean landing`() {
+        // 160 is +3.3mmol over a 100 target; 8 readings is 35 minutes held.
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `the same held level late in the episode is a stall, not a spike`() {
+        // Starts 80 minutes in — past the spike phase. That is the fat/protein stall DURA is for.
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 80)
+        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a UAM spike waits for the entry fraction while it has headroom`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = false)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a UAM spike with the entry fraction railed charges the ISF`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = true)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `P over F never strengthens on a held level — that is DURA's stall`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_PROTEIN_FAT)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_PROTEIN_FAT), 1e-9)
     }
 }

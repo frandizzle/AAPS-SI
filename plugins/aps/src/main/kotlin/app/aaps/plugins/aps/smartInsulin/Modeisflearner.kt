@@ -21,12 +21,17 @@ import javax.inject.Singleton
  *     Scoring only frank hypos left a blind spot big enough to drive through: a mode that hands
  *     BG back just above the guard never tripped it, so it was recorded as a clean success. The
  *     caller decides how close counts, anchored to the same low guard.
- *   - BG still above target+margin at evaluation → mode ISF STRENGTHENS (small step)
- *   - DURA had to intervene hard mid-episode     → STRENGTHENS (a clean ending that only
- *     happened because DURA cranked ISF still means the base mode ISF is too weak)
+ *   - Spike too high: peak ≥3mmol over target, held there 30min inside the first 75min, with no
+ *     front-loading left to fix it (UAM entry fraction railed; manual modes have none)
+ *                                                 → STRENGTHENS. This is the phase mode ISF owns.
+ *   - BG still above target+margin at evaluation, DURA not engaged → STRENGTHENS (small step)
+ *   - BG still above target+margin at evaluation, DURA engaged → NO CHANGE. A stalled tail is
+ *     [DuraStrengthLearner]'s to fix. Charging it here strengthened the spike response for a
+ *     fat/protein stall, which then stacked with DURA and caused the lows. "Needed DURA" no
+ *     longer strengthens here either, for the same reason.
  *   - A low WITH DURA cranked                    → mostly charged to DURA, not here. The mode's
  *     own dose took BG up and over safely; what took it too far was the tail correction, and
- *     [DuraStrengthLearner] cuts that by 15% for the same episode. Weakening the mode ISF a
+ *     [DuraStrengthLearner] cuts its ceiling for the same episode. Weakening the mode ISF a
  *     full step on top would fix the tail by under-dosing the meal.
  *   - Fresh absorption during the tail (ate again) or a new mode activation → episode SKIPPED,
  *     not learned from — contaminated evaluations must never move the multiplier
@@ -68,8 +73,6 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
     // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
-    /** DURA ran into its learned ceiling at some point this episode. */
-    private var episodeDuraAtCeiling = false
     /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
     private var episodePeakMgdl  = 0.0
     /** Longest unbroken stretch spent at or above the spike bar, and the run currently open. */
@@ -82,7 +85,9 @@ class ModeIsfLearner @Inject constructor(
     private var pendingScope:     Scope? = null
     private var pendingEvalAtMs  = 0L
     private var pendingMaxDura   = 1.0
-    private var pendingDuraAtCeiling = false
+    /** The ended episode's spike was too high for its dose — captured at episode end, before a
+     *  new activation can reset the spike tracking it was read from. */
+    private var pendingSpikeTooHigh = false
     private var pendingTailGrams = 0.0
     private var pendingStartMs   = 0L
 
@@ -158,6 +163,12 @@ class ModeIsfLearner @Inject constructor(
          * actually trying to name.
          */
         private const val SPIKE_SUSTAINED_MS        = 30 * 60_000L
+        /** The spike phase: how long after activation a held peak still belongs to the mode's
+         *  own dose rather than to a stalled tail. */
+        private const val SPIKE_PHASE_MS            = 75 * 60_000L
+        /** DURA at or above this during the episode means DURA was working the tail. Same bar
+         *  [DuraStrengthLearner] uses to call DURA engaged. */
+        private const val DURA_ENGAGED_MULT         = 1.10
         /** Weaken-step fraction for a hard low that followed a late spike — half the fault was
          *  timing, so only half the step is charged to dose. */
         private const val LATE_SPIKE_STEP_FRACTION  = 0.5
@@ -165,7 +176,7 @@ class ModeIsfLearner @Inject constructor(
         private const val MULT_MAX                = 1.4
         private const val STRENGTHEN_MARGIN_MGDL  = 18.0          // ~1 mmol above target at eval = under-dosed
         private const val TAIL_CONTAMINATION_G    = 8.0           // est. grams during tail that voids the evaluation
-        private const val DURA_INTERVENTION_MULT  = 1.15          // DURA peak ≥ this counts as "ISF was too weak"
+        private const val DURA_INTERVENTION_MULT  = 1.15          // DURA peak ≥ this: a low is mostly DURA's doing
         /**
          * Weaken-step fraction for a low that landed with DURA at or past
          * [DURA_INTERVENTION_MULT] — the tail, not the meal dose, drove BG down.
@@ -216,8 +227,6 @@ class ModeIsfLearner @Inject constructor(
         // guard — too far down to call the episode a success, not far enough to call it a hypo
         entryShapeRailed: Boolean = false,  // this mode's UAM entry fraction is already at its
         // ceiling, so no amount of further front-loading is available to fix a late spike
-        duraAtCeiling: Boolean = false,  // DURA wanted more than DuraStrengthLearner's learned
-        // ceiling allowed this cycle
         pfWindow: PfWindow = PfWindow.NONE  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
@@ -281,7 +290,6 @@ class ModeIsfLearner @Inject constructor(
                 episodeUndershoot = false
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
-                episodeDuraAtCeiling = false
                 episodePeakMgdl = 0.0
                 episodeSpikeMs  = 0L
                 spikeRunStartMs = 0L
@@ -293,7 +301,9 @@ class ModeIsfLearner @Inject constructor(
             // separates a meal the loop is handling from one it isn't is how long BG sits up
             // there. Longest unbroken run, so a spike that crosses the bar twice on its way
             // through doesn't add up to a stall it never had.
-            if (bgMgdl - targetMgdl >= LATE_SPIKE_MARGIN_MGDL) {
+            // Only inside the spike phase. Past it, BG parked high is a fat/protein stall — DURA's
+            // problem — and counting it here would charge the spike knob for it.
+            if (bgMgdl - targetMgdl >= LATE_SPIKE_MARGIN_MGDL && nowMs - activeStartMs <= SPIKE_PHASE_MS) {
                 if (spikeRunStartMs == 0L) spikeRunStartMs = nowMs
                 episodeSpikeMs = maxOf(episodeSpikeMs, nowMs - spikeRunStartMs)
             } else spikeRunStartMs = 0L
@@ -312,7 +322,6 @@ class ModeIsfLearner @Inject constructor(
                 if (exerciseSuspected) episodeLowWasUnexplained = true
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
-            if (duraAtCeiling) episodeDuraAtCeiling = true
             return
         }
 
@@ -375,7 +384,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingScope     = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
-                pendingDuraAtCeiling = episodeDuraAtCeiling
+                pendingSpikeTooHigh = spikeTooHigh(ended.mode, targetMgdl)
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
                 openWatch(ended, nowMs, endedStartMs, maxDura)
@@ -414,29 +423,14 @@ class ModeIsfLearner @Inject constructor(
             return
         }
         if (nowMs >= pendingEvalAtMs) {
+            val endedHigh = bgMgdl > targetMgdl + STRENGTHEN_MARGIN_MGDL
             when {
-                bgMgdl > targetMgdl + STRENGTHEN_MARGIN_MGDL ->
+                pendingSpikeTooHigh ->
+                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
                     applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
-                // DURA held at a ceiling it learned from a previous low, and BG still landed on
-                // target: the ceiling was enough. Reading that as "the base dose is too weak"
-                // would hand straight back, through the mode ISF, the insulin the ceiling was
-                // learned to take away — the two learners pulling against each other.
-                pendingMaxDura >= DURA_INTERVENTION_MULT && pendingDuraAtCeiling -> {
-                    val s = states.getOrPut(p.key) { ModeState() }
-                    s.episodes++
-                    persist()
-                    lastOutcome = "${p.label} landed on target with DURA held at its learned ceiling (×${"%.2f".format(pendingMaxDura)}) — no change (n=${s.episodes})"
-                    aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
-                }
-                pendingMaxDura >= DURA_INTERVENTION_MULT ->
-                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} needed DURA ×${"%.2f".format(pendingMaxDura)} — strengthened", pendingStartMs)
-                else -> {
-                    val s = states.getOrPut(p.key) { ModeState() }
-                    s.episodes++
-                    persist()
-                    lastOutcome = "${p.label} on target — no change (n=${s.episodes})"
-                    aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
-                }
+                endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)}) — stalled tail is DURA's to fix, no change")
+                else      -> noChange(p, "${p.label} on target — no change")
             }
             pendingScope = null
         }
@@ -477,6 +471,29 @@ class ModeIsfLearner @Inject constructor(
      * above the bar. So both must hold — a peak past [LATE_SPIKE_MARGIN_MGDL] AND
      * [SPIKE_SUSTAINED_MS] stuck at or above it.
      */
+    /**
+     * The spike itself was too high for the dose — the one outcome this learner strengthens on
+     * without a tail. Same held-peak test as [lateSpikeWithNoShapeLeft]; the difference is who else
+     * could fix it. A UAM entry mode has the entry fraction to front-load first, so this waits for
+     * that to rail. A manual mode has no such knob, so the ISF is the only lever. P/F is excluded:
+     * it is a tail mode, and BG held high in it is the stall DURA exists for.
+     */
+    private fun spikeTooHigh(mode: MealMode, targetMgdl: Double): Boolean {
+        if (mode == MealMode.UAM_PROTEIN_FAT) return false
+        val noShapeLeft = if (UamEntryFractionLearner.isEntryMode(mode)) episodeShapeRailed else true
+        return noShapeLeft &&
+            (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
+            episodeSpikeMs >= SPIKE_SUSTAINED_MS
+    }
+
+    private fun noChange(scope: Scope, outcome: String) {
+        val s = states.getOrPut(scope.key) { ModeState() }
+        s.episodes++
+        persist()
+        lastOutcome = "$outcome (n=${s.episodes})"
+        aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+    }
+
     private fun lateSpikeWithNoShapeLeft(targetMgdl: Double): Boolean =
         episodeShapeRailed &&
             (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
