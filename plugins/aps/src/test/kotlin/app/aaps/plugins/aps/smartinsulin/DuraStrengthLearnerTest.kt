@@ -8,10 +8,11 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Tests for [DuraStrengthLearner] — strongly asymmetric learning of DURA strength.
- * Reduces ×0.85 when DURA engaged (≥1.10×) and the episode went low; ×0.94 when that low
- * came with an unexplained drop (exercise); creeps back ×1.03 when a DURA episode lands
- * cleanly. Never strengthens past the configured value. Railed 0.3–1.0.
+ * Tests for [DuraStrengthLearner] — strongly asymmetric learning of DURA strength and ceiling.
+ * On a low with DURA engaged (≥1.10×): ceiling cut to 1 + excess×0.85 from the peak reached,
+ * strength ×0.95; ×0.98 strength when that low came with an unexplained drop (exercise). Creeps
+ * back ×1.03 when a DURA episode lands cleanly — the ceiling only if DURA pressed against it.
+ * Never strengthens past the configured value. Strength railed 0.3–1.0, ceiling ≥ 1.05.
  */
 class DuraStrengthLearnerTest {
 
@@ -41,7 +42,7 @@ class DuraStrengthLearnerTest {
     fun `a crash while DURA was engaged reduces its strength`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        assertEquals(0.85, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
@@ -50,6 +51,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.05)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.05)
         assertEquals(1.0, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_DINNER))
     }
 
     @Test
@@ -57,7 +59,8 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS, dura = 1.40)
         cycle(null, 0L, BASE_MS + CYCLE_MS)                        // mode ends, watch window opens
         cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, low = true)         // crash lands in the tail
-        assertEquals(0.85, learner.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        assertEquals(1.34, learner.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)   // 1 + 0.40×0.85
     }
 
     @Test
@@ -71,40 +74,60 @@ class DuraStrengthLearnerTest {
         }
         assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9,
                      "This learner must never increase DURA strength")
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_LUNCH),
+                     "No low, so no ceiling")
     }
 
     @Test
     fun `an exercise-flagged crash reduces at a smaller step`() {
-        // 1.0 - (1.0-0.85)*0.4 = 0.94
+        // strength 1.0 - (1.0-0.95)*0.4 = 0.98; ceiling step 1.0 - (1.0-0.85)*0.4 = 0.94
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30, exercise = true)
-        assertEquals(0.94, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.98, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.0 + 0.30 * 0.94, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
-    fun `reduction is railed at the minimum factor`() {
+    fun `repeated lows walk the ceiling down until DURA stops being the one pushing`() {
+        // Each low cuts the excess 15%, from what was actually dosed. Once the ceiling holds DURA
+        // under the 1.10 engaged bar, DURA is no longer doing enough to be blamed — later lows
+        // stop landing here at all and fall to the mode ISF learner at its full step instead.
+        // 0.40 × 0.85^9 = 0.0927: the ninth cut is the last one that started from ≥ 1.10.
         var t = BASE_MS
-        repeat(15) {
+        repeat(30) {
             val start = t
-            cycle(MealMode.UAM_DINNER, start, t, dura = 1.40)
+            // What the plugin actually hands over: DURA's own ×1.40 held down to the ceiling.
+            val dosed = minOf(1.40, learner.ceiling(MealMode.UAM_DINNER))
+            cycle(MealMode.UAM_DINNER, start, t, dura = dosed)
             t += CYCLE_MS
-            cycle(MealMode.UAM_DINNER, start, t, low = true, dura = 1.40)
+            cycle(MealMode.UAM_DINNER, start, t, low = true, dura = dosed)
             t += CYCLE_MS
             cycle(null, 0L, t)
             t += CYCLE_MS
         }
-        assertEquals(0.3, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.0 + 0.40 * Math.pow(0.85, 9.0), learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(Math.pow(0.95, 9.0), learner.factor(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `the ceiling never goes below its minimum`() {
+        // Only reachable from a restored or hand-edited value — the engaged bar stops the walk
+        // above it in normal use — but the floor on the floor still has to hold.
+        sp.edit { putString("si_dura_strength_learner_state", """{"UAM_DINNER":{"factor":0.5,"n":3,"ceiling":1.01}}""") }
+        val restored = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
+        assertEquals(1.05, restored.ceiling(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
     fun `changing the configured DURA strength resets the learned factor`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30, baseSig = 2.0)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30, baseSig = 2.0)
-        assertEquals(0.85, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
 
         val newStart = BASE_MS + 6 * 60 * 60_000L
         cycle(MealMode.UAM_DINNER, newStart, newStart, baseSig = 3.0)
         assertEquals(1.0, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_DINNER))
     }
 
     @Test
@@ -113,7 +136,8 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
 
         val restored = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
-        assertEquals(0.85, restored.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, restored.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.255, restored.ceiling(MealMode.UAM_DINNER), 1e-9)
         assertEquals(1, restored.episodeCount(MealMode.UAM_DINNER))
     }
 
@@ -138,11 +162,11 @@ class DuraStrengthLearnerTest {
     fun `a clean DURA episode gives some strength back`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        assertEquals(0.85, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
 
         val next = BASE_MS + 10 * CYCLE_MS
         cleanDuraEpisode(MealMode.UAM_DINNER, next)
-        assertEquals(0.8755, learner.factor(MealMode.UAM_DINNER), 1e-9)   // 0.85 × 1.03
+        assertEquals(0.9785, learner.factor(MealMode.UAM_DINNER), 1e-9)   // 0.95 × 1.03
     }
 
     @Test
@@ -152,27 +176,18 @@ class DuraStrengthLearnerTest {
         assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
-    @Test
-    fun `five clean episodes unwind one crash`() {
-        // The asymmetry that keeps the safety direction ahead: -15% a crash, +3% a clean landing.
-        cycle(MealMode.UAM_SNACK, BASE_MS, BASE_MS, dura = 1.30)
-        cycle(MealMode.UAM_SNACK, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        var t = BASE_MS + 10 * CYCLE_MS
-        repeat(5) { t = cleanDuraEpisode(MealMode.UAM_SNACK, t + 10 * CYCLE_MS) }
-        assertEquals(0.985, learner.factor(MealMode.UAM_SNACK), 1e-3)     // 0.85 × 1.03^5 ≈ 0.985
-    }
 
     @Test
     fun `an episode where DURA never engaged gives nothing back`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        assertEquals(0.85, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
 
         // DURA below the 1.10 bar — this episode says nothing about DURA's strength either way,
         // so no watch window opens and the factor stays put.
         val next = BASE_MS + 10 * CYCLE_MS
         cleanDuraEpisode(MealMode.UAM_DINNER, next, dura = 1.02)
-        assertEquals(0.85, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     // ── P/F per-window learning ──────────────────────────────────────────────
@@ -182,8 +197,9 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS, dura = 1.30, pfWindow = PfWindow.OVERNIGHT)
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30,
               pfWindow = PfWindow.OVERNIGHT)
-        assertEquals(0.85, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT), 1e-9)
+        assertEquals(0.95, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT), 1e-9)
         assertEquals(1.0, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY))
     }
 
     @Test
@@ -193,5 +209,84 @@ class DuraStrengthLearnerTest {
         PfWindow.PF_WINDOWS.forEach { w ->
             assertEquals(0.53, migrated.factor(MealMode.UAM_PROTEIN_FAT, w), 1e-9)
         }
+    }
+
+    // ── Ceiling ──────────────────────────────────────────────────────────────
+
+    @Test
+    fun `a low sets a ceiling below the peak DURA reached`() {
+        // The lunch that prompted this: DURA got to ×1.44 and that was too much.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
+        assertEquals(1.374, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)      // 1 + 0.44×0.85
+    }
+
+    @Test
+    fun `a dip toward the guard cuts the ceiling at half the step`() {
+        val start = BASE_MS
+        cycle(MealMode.UAM_PROTEIN_FAT, start, start, dura = 1.31, pfWindow = PfWindow.DAY)
+        learner.onCycle(
+            activeModeNow = MealMode.UAM_PROTEIN_FAT, modeStartMs = start, lowActive = false, duraMult = 1.31,
+            exerciseSuspected = false, nowMs = start + 30 * 60_000L, baseSignature = 2.0,
+            undershootActive = true, pfWindow = PfWindow.DAY
+        )
+        // step = 1 - 0.15×0.5 = 0.925 → 1 + 0.31×0.925
+        assertEquals(1.0 + 0.31 * 0.925, learner.ceiling(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
+    }
+
+    @Test
+    fun `a later low that never reached the ceiling cuts from its own peak`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.50)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.50)
+        assertEquals(1.425, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+
+        // Next dinner DURA only got to ×1.20 and it still went low — ×1.20 was the problem.
+        val next = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.UAM_DINNER, next, next, dura = 1.20)
+        cycle(MealMode.UAM_DINNER, next, next + CYCLE_MS, low = true, dura = 1.20)
+        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)       // 1 + 0.20×0.85
+    }
+
+    @Test
+    fun `a ceiling that is already tighter is kept`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.20)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.20)
+        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+
+        // A later reading of ×1.40 can only come from before the ceiling existed (or a restore) —
+        // it must never loosen the ceiling.
+        val next = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.UAM_DINNER, next, next, dura = 1.40)
+        cycle(MealMode.UAM_DINNER, next, next + CYCLE_MS, low = true, dura = 1.40)
+        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a clean landing that pressed the ceiling eases it`() {
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
+        val ceiling = learner.ceiling(MealMode.UAM_LUNCH)                    // 1.374
+
+        cleanDuraEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, dura = ceiling)
+        assertEquals(1.0 + 0.374 * 1.03, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a clean landing well under the ceiling leaves it alone`() {
+        // DURA stopping at ×1.15 says nothing about whether ×1.374 is too low.
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
+        cleanDuraEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, dura = 1.15)
+        assertEquals(1.374, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `existing state without a ceiling restores with none`() {
+        // Upgrade path: strength factors learned before the ceiling existed keep their values and
+        // start with no ceiling — the first low after the update sets one.
+        sp.edit { putString("si_dura_strength_learner_state", """{"UAM_LUNCH":{"factor":0.64,"n":8}}""") }
+        val restored = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
+        assertEquals(0.64, restored.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, restored.ceiling(MealMode.UAM_LUNCH))
     }
 }

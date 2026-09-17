@@ -983,12 +983,13 @@ class SmartInsulinFragment : DaggerFragment() {
         addDivider(c)
         addSectionHeader(c, "Learned DURA Strength (per mode)")
         addMonospaceBlock(c, d.duraStrengthStatus)
-        addNoteBlock(c, "DURA engaged and the episode still crashed low → strength cut for that " +
-            "mode, 15% a time. DURA engaged and it landed cleanly → 3% given back, so an old cut " +
-            "that is no longer earning its keep unwinds over about five good episodes instead of " +
-            "being permanent. It still never strengthens on \"needed DURA\" — that already tells " +
-            "the mode ISF learner to raise the baseline, and acting on it here too would correct " +
-            "one problem twice. Capped at the strength you configured; it can only ever soften it.")
+        addNoteBlock(c, "Floor = the strongest ISF DURA may take this mode to, learned from lows " +
+            "(approximate — it's shown against the mode's learned ISF, which circadian moves through " +
+            "the day). Your configured floor still applies — the higher of the two is used. " +
+            "DURA engaged and the episode still went low → the floor is raised from where DURA " +
+            "actually got to, and strength trimmed 5%. Landed cleanly → 3% of strength given back, " +
+            "and the floor eased 3% if DURA was pressing against it. Strength sets how fast DURA " +
+            "climbs; the floor sets how far. Never exceeds what you configured.")
 
         addDivider(c)
         addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")

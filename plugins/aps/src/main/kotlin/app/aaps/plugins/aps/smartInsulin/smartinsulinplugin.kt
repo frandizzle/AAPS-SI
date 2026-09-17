@@ -463,9 +463,23 @@ open class SmartInsulinPlugin @Inject constructor(
             learnerScopes.forEach { (mode, window) ->
                 val f = duraStrengthLearner.factor(mode, window)
                 val n = duraStrengthLearner.episodeCount(mode, window)
-                if (n == 0 && f == 1.0) return@forEach
-                if (rows++ == 0) appendLine(learnerHeader("Strength", null))
-                appendLine(learnerRow(PfWindow.label(mode, window), "×${"%.2f".format(f)}", null, n))
+                val ceiling = duraStrengthLearner.ceiling(mode, window)
+                if (n == 0 && f == 1.0 && ceiling == DuraStrengthLearner.NO_CEILING) return@forEach
+                if (rows++ == 0) appendLine(learnerHeader("Strength", "Floor"))
+                // The ceiling shown the way the user sets DURA's limit: as the strongest ISF it can
+                // reach, from this mode's learned ISF. Approximate — circadian ISF moves the live
+                // value through the day; the note under the table says so.
+                val floorTxt = when {
+                    ceiling == DuraStrengthLearner.NO_CEILING -> "—"
+                    else -> {
+                        val baseMgdl = if (window == PfWindow.NONE) modeIsfMgdl(mode, hour) else pfIsfForWindow(window)
+                        if (baseMgdl > 0.0) {
+                            val floorMgdl = baseMgdl * modeIsfLearner.multiplier(mode, window) / ceiling
+                            if (isMmol) "%.2f".format(floorMgdl / 18.0) else "%.0f".format(floorMgdl)
+                        } else "×${"%.2f".format(ceiling)}"
+                    }
+                }
+                appendLine(learnerRow(PfWindow.label(mode, window), "×${"%.2f".format(f)}", floorTxt, n))
             }
             if (rows == 0) appendLine("No DURA interventions evaluated yet.")
             if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${duraStrengthLearner.lastOutcome}")
@@ -1020,19 +1034,25 @@ open class SmartInsulinPlugin @Inject constructor(
         duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive, glucoseStatus.delta)
         var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
         var duraMultThisCycle = 1.0  // exposed to ModeIsfLearner — big DURA interventions count as "mode ISF too weak"
+        var duraAtCeilingThisCycle = false  // DURA wanted more than its learned ceiling allowed
         if (duraActive) {
+            val duraWindow = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
             // Learned factor can only soften the configured strength (crash-direction learning).
             val effectiveDuraStrength = mealOverrideManager.activeDuraStrength *
-                duraStrengthLearner.factor(mealOverrideManager.activeMealMode,
-                                           pfWindowForMode(mealOverrideManager.activeMealMode, currentHour))
-            val duraMult = duraIsfTracker.multiplier(targetBg, effectiveDuraStrength)
+                duraStrengthLearner.factor(mealOverrideManager.activeMealMode, duraWindow)
+            val duraRaw     = duraIsfTracker.multiplier(targetBg, effectiveDuraStrength)
+            // The strength only sets how fast DURA climbs; the ceiling is how far. Applied here, on
+            // the multiplier, so the learners below see the value that was actually dosed from.
+            val duraCeiling = duraStrengthLearner.ceiling(mealOverrideManager.activeMealMode, duraWindow)
+            val duraMult    = minOf(duraRaw, duraCeiling)
+            duraAtCeilingThisCycle = duraRaw > duraCeiling
             duraMultThisCycle = duraMult
             if (duraMult > 1.0) {
                 val duraFloorMgdl = mealOverrideManager.activeDuraFloorMgdl
                 val duraIsfMgdl = dosingIsfMgdl / duraMult
                 dosingIsfMgdl = if (duraFloorMgdl > 0.0) duraIsfMgdl.coerceAtLeast(duraFloorMgdl) else duraIsfMgdl
                 val duraStuckMins = duraIsfTracker.stuckMinutesForDisplay
-                duraStatusText = "DURA=${"%.2f".format(duraMult)}x stuck=${"%.0f".format(duraStuckMins)}m"
+                duraStatusText = "DURA=${"%.2f".format(duraMult)}x${if (duraAtCeilingThisCycle) " (ceiling)" else ""} stuck=${"%.0f".format(duraStuckMins)}m"
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin DURA: mult=${"%.2f".format(duraMult)} " +
                                      "stuck=${"%.0f".format(duraStuckMins)}min isf->${"%.1f".format(dosingIsfMgdl)}")
@@ -1103,6 +1123,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // than recomputed here, so both learners agree on when front-loading is exhausted.
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
+            duraAtCeiling     = duraAtCeilingThisCycle,
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 

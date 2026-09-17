@@ -68,6 +68,8 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
     // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
+    /** DURA ran into its learned ceiling at some point this episode. */
+    private var episodeDuraAtCeiling = false
     /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
     private var episodePeakMgdl  = 0.0
     /** Longest unbroken stretch spent at or above the spike bar, and the run currently open. */
@@ -80,6 +82,7 @@ class ModeIsfLearner @Inject constructor(
     private var pendingScope:     Scope? = null
     private var pendingEvalAtMs  = 0L
     private var pendingMaxDura   = 1.0
+    private var pendingDuraAtCeiling = false
     private var pendingTailGrams = 0.0
     private var pendingStartMs   = 0L
 
@@ -213,6 +216,8 @@ class ModeIsfLearner @Inject constructor(
         // guard — too far down to call the episode a success, not far enough to call it a hypo
         entryShapeRailed: Boolean = false,  // this mode's UAM entry fraction is already at its
         // ceiling, so no amount of further front-loading is available to fix a late spike
+        duraAtCeiling: Boolean = false,  // DURA wanted more than DuraStrengthLearner's learned
+        // ceiling allowed this cycle
         pfWindow: PfWindow = PfWindow.NONE  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
@@ -276,6 +281,7 @@ class ModeIsfLearner @Inject constructor(
                 episodeUndershoot = false
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
+                episodeDuraAtCeiling = false
                 episodePeakMgdl = 0.0
                 episodeSpikeMs  = 0L
                 spikeRunStartMs = 0L
@@ -306,6 +312,7 @@ class ModeIsfLearner @Inject constructor(
                 if (exerciseSuspected) episodeLowWasUnexplained = true
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
+            if (duraAtCeiling) episodeDuraAtCeiling = true
             return
         }
 
@@ -368,6 +375,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingScope     = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
+                pendingDuraAtCeiling = episodeDuraAtCeiling
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
                 openWatch(ended, nowMs, endedStartMs, maxDura)
@@ -409,6 +417,17 @@ class ModeIsfLearner @Inject constructor(
             when {
                 bgMgdl > targetMgdl + STRENGTHEN_MARGIN_MGDL ->
                     applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
+                // DURA held at a ceiling it learned from a previous low, and BG still landed on
+                // target: the ceiling was enough. Reading that as "the base dose is too weak"
+                // would hand straight back, through the mode ISF, the insulin the ceiling was
+                // learned to take away — the two learners pulling against each other.
+                pendingMaxDura >= DURA_INTERVENTION_MULT && pendingDuraAtCeiling -> {
+                    val s = states.getOrPut(p.key) { ModeState() }
+                    s.episodes++
+                    persist()
+                    lastOutcome = "${p.label} landed on target with DURA held at its learned ceiling (×${"%.2f".format(pendingMaxDura)}) — no change (n=${s.episodes})"
+                    aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+                }
                 pendingMaxDura >= DURA_INTERVENTION_MULT ->
                     applyOutcome(p, STRENGTHEN_STEP, "${p.label} needed DURA ×${"%.2f".format(pendingMaxDura)} — strengthened", pendingStartMs)
                 else -> {

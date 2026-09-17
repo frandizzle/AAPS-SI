@@ -36,13 +36,13 @@ class ModeIsfLearnerTest {
         delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
-        pfWindow: PfWindow = PfWindow.NONE
+        pfWindow: PfWindow = PfWindow.NONE, atCeiling: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        pfWindow = pfWindow
+        duraAtCeiling = atCeiling, pfWindow = pfWindow
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -449,6 +449,24 @@ class ModeIsfLearnerTest {
         // Unchanged: needing DURA with no low means the base dose was too weak.
         cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25)
         runQuietTail(BASE_MS, bg = 102.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a clean landing with DURA held at its learned ceiling does not strengthen`() {
+        // The ceiling was learned to take insulin away; reading "needed DURA" off an episode it
+        // held would give that insulin straight back through the mode ISF.
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0, dura = 1.25, atCeiling = true)
+        runQuietTail(BASE_MS, bg = 102.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.contains("ceiling"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a DURA-held episode that still ends high does strengthen`() {
+        // The ceiling was NOT enough — that is genuine under-dosing, and the mode ISF owns it.
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25, atCeiling = true)
+        runQuietTail(BASE_MS, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
     }
 }
