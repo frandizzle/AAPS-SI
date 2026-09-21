@@ -78,9 +78,19 @@ class SmartInsulinFragment : DaggerFragment() {
                 smartInsulinPlugin.resetModeLearners(); refreshStatus()
             }
         }
+        binding.btnSessionGolf.setOnClickListener { toggleSession(SessionLabel.GOLF) }
+        binding.btnSessionGym.setOnClickListener  { toggleSession(SessionLabel.GYM) }
         binding.btnResetAll.setOnClickListener {
             confirmReset("Reset ALL learners? This cannot be undone.") { smartInsulinPlugin.resetAllLearners(); refreshStatus() }
         }
+    }
+
+    private fun toggleSession(label: SessionLabel) {
+        val running = smartInsulinPlugin.toggleActivitySession(label)
+        val msg = if (running) "${label.label} session started — UAM and P/F are off until it ends"
+                  else "${label.label} session ended — judged in an hour, once its tail is clear"
+        context?.let { android.widget.Toast.makeText(it, msg, android.widget.Toast.LENGTH_LONG).show() }
+        refreshStatus()
     }
 
     override fun onResume() {
@@ -96,6 +106,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val d = smartInsulinPlugin.fragmentData()
         binding.tvStatus.text = smartInsulinPlugin.statusSummary()
         updateGeneralCard(d)
+        updateSessionCard()
         updateReboundCard(d)
         updateTirBars(d)
         updateLearningCard(d)
@@ -139,6 +150,39 @@ class SmartInsulinFragment : DaggerFragment() {
     }
 
     // -- Rebound / recovery card -----------------------------------------------
+
+    private fun updateSessionCard() {
+        val c = _binding?.sessionRows ?: return; c.removeAllViews()
+        val running = smartInsulinPlugin.activitySessionLabel()
+        binding.btnSessionGolf.text = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
+        binding.btnSessionGym.text  = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
+
+        smartInsulinPlugin.activitySessionStatus()?.let {
+            addRow(c, it, "UAM and P/F blocked — a flat high here is hormones, not food.",
+                   Color.parseColor("#FFFB8C00"))
+        } ?: addRow(c, "No session running",
+                    "Start one for a round of golf or a gym session: no food, hormones running the show.",
+                    Color.parseColor("#FFCCCCCC"))
+
+        val learned = smartInsulinPlugin.activitySessionLearned()
+        if (learned.isEmpty()) {
+            addRow(c, "Nothing learned yet",
+                   "Each finished session teaches it two things: how much extra insulin the\n" +
+                       "resistant phase needs, and how early to back off before the late low.")
+        } else {
+            learned.forEach { (label, values, n) ->
+                val (isfMult, washout) = values
+                val isfTxt = if (isfMult < 1.0) "ISF ×${"%.2f".format(isfMult)} (stronger)"
+                             else if (isfMult > 1.0) "ISF ×${"%.2f".format(isfMult)} (easier)"
+                             else "ISF unchanged"
+                addRow(c, "${label.label}: $isfTxt, washout ${washout}min before the end",
+                       "Learned from $n session${if (n == 1) "" else "s"}.")
+            }
+        }
+        smartInsulinPlugin.activitySessionLastOutcome().takeIf { it.isNotEmpty() }?.let {
+            addRow(c, "Last: $it", null, Color.parseColor("#FFCCCCCC"))
+        }
+    }
 
     private fun updateReboundCard(d: SmartInsulinPlugin.FragmentData) {
         val b = _binding ?: return

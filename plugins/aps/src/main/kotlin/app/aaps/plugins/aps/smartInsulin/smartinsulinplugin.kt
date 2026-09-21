@@ -99,6 +99,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
     private val unexplainedDropTracker:  UnexplainedDropTracker,
+    private val activitySessionManager: ActivitySessionManager,
+    private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
     private val phoneStepCounter:        PhoneStepCounter
 ) : PluginBase(
@@ -319,6 +321,30 @@ open class SmartInsulinPlugin @Inject constructor(
     fun resetCircadian() { circadianLearner.reset() }
     fun resetProfiles() { profileLearner.resetProfiles() }
     fun resetModeLearners() { modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset() }
+
+    // -- Activity/stress sessions (golf, gym) ---------------------------------
+
+    /** Starts [label] if nothing is running, stops it if that label is. Returns true if now running. */
+    fun toggleActivitySession(label: SessionLabel): Boolean {
+        val now = dateUtil.now()
+        val running = activitySessionManager.active
+        return when {
+            running?.label == label -> { activitySessionManager.stop(now); false }
+            running != null         -> { activitySessionManager.stop(now); activitySessionManager.start(label, now); true }
+            else                    -> {
+                // A P/F or UAM mode already running was started on the assumption there was food.
+                // Declaring a session says there wasn't, so it goes.
+                if (mealOverrideManager.activeMealMode?.isUam == true) mealOverrideManager.cancelOverride()
+                activitySessionManager.start(label, now); true
+            }
+        }
+    }
+
+    fun activitySessionLabel(): SessionLabel? = activitySessionManager.active?.label
+    fun activitySessionStatus(): String? = activitySessionManager.statusLine(dateUtil.now())
+    /** label, learned ISF multiplier, learned washout minutes, sessions learned from. */
+    fun activitySessionLearned(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> = activitySessionLearner.rows()
+    fun activitySessionLastOutcome(): String = activitySessionLearner.lastOutcome
 
     data class FragmentData(
         val hour: Int, val dayLabel: String, val mealMode: String, val modeRemMins: Int?,
@@ -1005,7 +1031,15 @@ open class SmartInsulinPlugin @Inject constructor(
             mealOverrideManager.cancelOverride()
         }
 
-        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date)
+        // -- Declared activity/stress session (golf, gym) ------------------------
+        // A user-declared no-food window: hormones, not carbs. It blocks the meal modes from
+        // reading a hormonal plateau as food, strengthens the resistant phase by what it has
+        // learned, and tapers insulin off before the hormones clear.
+        val sessionDose   = activitySessionManager.dosing(now)
+        val sessionActive = activitySessionManager.active != null
+        val sessionStatus = if (sessionActive) activitySessionManager.statusLine(now) ?: "" else ""
+
+        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date, noFoodSession = sessionActive)
 
         val justFiredMode = uamController.justFiredThisCycle
         val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
@@ -1025,6 +1059,16 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.debug(LTag.APS,
                                  "SmartInsulin modeISF: ${mealMode.label} learned ×${"%.3f".format(learnedModeMult)} → isf=${"%.1f".format(dosingIsfMgdl)}")
             }
+        }
+
+        // The session's learned resistant-phase multiplier. Below 1.0 strengthens, exactly like a
+        // mode's learned ISF; it relaxes back toward 1.0 as the washout comes in, so the taper
+        // below is never fighting a "you are resistant" correction that has already stopped being
+        // true.
+        if (sessionActive && sessionDose.isfMultiplier != 1.0) {
+            dosingIsfMgdl *= sessionDose.isfMultiplier
+            aapsLogger.debug(LTag.APS,
+                             "SmartInsulin session: ISF ×${"%.2f".format(sessionDose.isfMultiplier)} → ${"%.1f".format(dosingIsfMgdl)}")
         }
 
         // -- DURA_ISF: strengthen ISF the longer BG sits stuck above target during a
@@ -1107,6 +1151,10 @@ open class SmartInsulinPlugin @Inject constructor(
         val lowGuardNowMgdl   = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         val undershootCeiling = undershootCeilingMgdl(lowGuardNowMgdl, profile.getTargetMgdl())
         val lowActiveNow      = bgBelowGuard(glucoseStatus.glucose, lowGuardNowMgdl) || inReboundWindow
+
+        // The session's own evidence gathering needs the low state, so it lands here rather than
+        // with the dosing read above.
+        activitySessionManager.onCycle(now, glucoseStatus.glucose, targetBg, lowActiveNow)
         val undershootNow     = !lowActiveNow && glucoseStatus.glucose < undershootCeiling
 
         // -- Per-mode ISF episode-outcome learner -------------------------------
@@ -1152,7 +1200,11 @@ open class SmartInsulinPlugin @Inject constructor(
             carbRatio      = profile.getIc(),
             nowMs          = now,
             baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0,
-            exerciseSuspected = exerciseSuspected
+            exerciseSuspected = exerciseSuspected,
+            // The learner holds its verdict until the entry insulin has actually peaked. Learned
+            // per mode by ProfileLearner, so a short mode isn't judged on its own clock.
+            insulinPeakMins   = mealOverrideManager.activeMealMode
+                ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole
@@ -1306,7 +1358,9 @@ open class SmartInsulinPlugin @Inject constructor(
             circCeil                 = circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute),
             fuelTrimStrength         = circadianLearner.trimStrength,
             isMmol                   = isMmol,
-            duraStatusText           = duraStatusText
+            duraStatusText           = duraStatusText,
+            sessionInsulinFraction   = sessionDose.insulinFraction,
+            sessionStatusText        = sessionStatus
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)

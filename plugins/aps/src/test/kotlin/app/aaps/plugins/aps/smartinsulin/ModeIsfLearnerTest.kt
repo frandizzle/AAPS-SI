@@ -46,11 +46,11 @@ class ModeIsfLearnerTest {
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
-    private fun runQuietTail(fromMs: Long, bg: Double, target: Double = 100.0): Long {
+    private fun runQuietTail(fromMs: Long, bg: Double, target: Double = 100.0, delta: Double = 0.0): Long {
         var t = fromMs
         repeat(16) {  // 16 × 5min = 80min > 75min tail
             t += CYCLE_MS
-            cycle(mode = null, startMs = 0L, nowMs = t, bg = bg, target = target)
+            cycle(mode = null, startMs = 0L, nowMs = t, bg = bg, target = target, delta = delta)
         }
         return t
     }
@@ -506,5 +506,70 @@ class ModeIsfLearnerTest {
     fun `P over F never strengthens on a held level — that is DURA's stall`() {
         heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_PROTEIN_FAT)
         assertEquals(1.0, learner.multiplier(MealMode.UAM_PROTEIN_FAT), 1e-9)
+    }
+
+
+    // -- Modes that start high ---------------------------------------------------
+    //
+    // Judge what the mode did, not the altitude it happened to be handed. The exemption is bounded
+    // by physics: while BG is still coming down, no charge; the moment it flattens above target,
+    // whoever is running takes it — so an under-treated high can't be passed along the chain.
+
+    @Test
+    fun `a mode fired at 9mmol that never rose is not charged for a spike`() {
+        // 162 with a 110 target already clears the 3mmol spike bar standing still.
+        val start = BASE_MS
+        var t = start
+        cycle(MealMode.LUNCH, start, t, bg = 162.0, railed = true)
+        repeat(8) { t += CYCLE_MS; cycle(MealMode.LUNCH, start, t, bg = 163.0, railed = true) }
+        t += CYCLE_MS
+        cycle(MealMode.LUNCH, start, t, bg = 105.0, railed = true)
+        runQuietTail(t, bg = 105.0)
+        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9,
+                     "no rise happened — this is someone else's high, not this mode's spike")
+    }
+
+    @Test
+    fun `the same altitude reached by an actual rise is still charged`() {
+        val start = BASE_MS
+        var t = start
+        cycle(MealMode.LUNCH, start, t, bg = 110.0, railed = true)
+        repeat(8) { t += CYCLE_MS; cycle(MealMode.LUNCH, start, t, bg = 163.0, railed = true) }
+        t += CYCLE_MS
+        cycle(MealMode.LUNCH, start, t, bg = 105.0, railed = true)
+        runQuietTail(t, bg = 105.0)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `ending high while still working down an inherited high is not charged`() {
+        val start = BASE_MS
+        cycle(MealMode.LUNCH, start, start, bg = 165.0)          // opened at ~9.2mmol
+        cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 160.0)
+        // Ends at 130: over target, but 35 below where it started and still falling.
+        runQuietTail(start + CYCLE_MS, bg = 130.0, delta = -2.5)
+        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("inherited high"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `an inherited high that stalls above target IS charged`() {
+        // The bound that stops it being passed down the chain: stop coming down, and the mode
+        // running at that moment owns it.
+        val start = BASE_MS
+        cycle(MealMode.LUNCH, start, start, bg = 165.0)
+        cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 160.0)
+        runQuietTail(start + CYCLE_MS, bg = 130.0, delta = 0.0)   // flat at 7.2mmol
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `falling but not below where it started is still charged`() {
+        // Drifting down inside its own excursion is not "working through an inherited high".
+        val start = BASE_MS
+        cycle(MealMode.LUNCH, start, start, bg = 130.0)
+        cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 175.0)
+        runQuietTail(start + CYCLE_MS, bg = 140.0, delta = -2.5)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
     }
 }

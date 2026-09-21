@@ -185,6 +185,24 @@ enum class StringKey(
         showInPumpControlMode = false,
         exportable            = true
     ),
+    // SmartInsulin — the activity/stress session running right now, if any (JSON)
+    ApsSmartInsulinActivitySessionState(
+        "si_activity_session_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
+    // SmartInsulin — per-label learned shape of those sessions: resistance and washout (JSON)
+    ApsSmartInsulinActivitySessionLearnerState(
+        "si_activity_session_learner_state",
+        defaultValue          = "",
+        showInApsMode         = false,
+        showInNsClientMode    = false,
+        showInPumpControlMode = false,
+        exportable            = true
+    ),
     // SmartInsulin — UamEntryFractionLearner per-mode learned entry-fraction offsets (JSON)
     ApsSmartInsulinUamEntryFractionLearnerState(
         "si_uam_entry_fraction_learner_state",

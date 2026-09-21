@@ -152,7 +152,10 @@ class UamController @Inject constructor(
         inPostMealLockout:  Boolean,
         profileTargetMmol:  Double,
         softLandingBypass:  Boolean = false,
-        bgTimestampMs:      Long    = 0L
+        bgTimestampMs:      Long    = 0L,
+        /** A declared activity/stress session is running — no food in this window by definition,
+         *  so nothing meal-shaped may fire however flat and high BG goes. */
+        noFoodSession:      Boolean = false
     ) {
         currentlyInPostMealLockout = inPostMealLockout
         currentlyCgmWarmup         = cgmInWarmup && sp.getBoolean(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.key, BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.defaultValue)
@@ -207,7 +210,8 @@ class UamController @Inject constructor(
             sp.getBoolean(BooleanKey.ApsSmartInsulinUamPfTakeover.key, BooleanKey.ApsSmartInsulinUamPfTakeover.defaultValue)
         currentlyPfTakeoverArmed = pfTakeover
 
-        if ((currentMealMode != MealMode.FASTING && !pfTakeover) || highTempTarget) {
+        if ((currentMealMode != MealMode.FASTING && !pfTakeover) || highTempTarget || noFoodSession) {
+            if (noFoodSession) lastReject = RejectInfo("activity/stress session running — no food declared", 0.0, 0.0, 0.0, 0.0, false)
             resetStreak(); stuckHighReadings = 0; return
         }
 

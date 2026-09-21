@@ -26,6 +26,36 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- Activity / stress session card (golf, gym) -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="16dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="Activity / Stress Session" android:textSize="20sp" android:textStyle="bold"
+                    android:layout_marginBottom="4dp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="No food in this window — hormones, not carbs. Blocks UAM and P/F, doses the learned shape."
+                    android:textSize="11sp" android:textColor="#FF888888" android:layout_marginBottom="12dp" />
+                <LinearLayout android:id="@+id/session_rows" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical"
+                    android:layout_marginBottom="12dp" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_session_golf"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp" android:textSize="16sp" android:text="Golf" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/btn_session_gym"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                        android:textSize="16sp" android:text="Gym" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <!-- Rebound / recovery card — visibility controlled programmatically -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/rebound_card"

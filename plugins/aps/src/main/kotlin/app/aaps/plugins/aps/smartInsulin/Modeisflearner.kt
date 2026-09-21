@@ -21,10 +21,19 @@ import javax.inject.Singleton
  *     Scoring only frank hypos left a blind spot big enough to drive through: a mode that hands
  *     BG back just above the guard never tripped it, so it was recorded as a clean success. The
  *     caller decides how close counts, anchored to the same low guard.
- *   - Spike too high: peak ≥3mmol over target, held there 30min inside the first 75min, with no
- *     front-loading left to fix it (UAM entry fraction railed; manual modes have none)
- *                                                 → STRENGTHENS. This is the phase mode ISF owns.
- *   - BG still above target+margin at evaluation, DURA not engaged → STRENGTHENS (small step)
+ *   - Spike too high: peak ≥3mmol over target AND ≥1.5mmol above where the mode STARTED, held
+ *     there 30min inside the first 75min, with no front-loading left to fix it (UAM entry
+ *     fraction railed; manual modes have none) → STRENGTHENS. This is the phase mode ISF owns.
+ *     The rise requirement matters as much as the height: a mode fired at 9mmol clears a
+ *     "3mmol over target" bar standing still, and charging it for a spike it never had is how a
+ *     mode gets strengthened for arriving after someone else's high.
+ *   - BG still above target+margin at evaluation, DURA not engaged, and BG has FLATTENED
+ *                                                 → STRENGTHENS (small step)
+ *   - BG still above target+margin but STILL FALLING and below where the mode started → NO
+ *     CHANGE. It is working through a high it inherited. This exemption is deliberately bounded
+ *     by physics rather than by blame: the moment BG stops coming down while still over target,
+ *     whichever mode is running takes the correction. A genuinely under-treated stretch cannot be
+ *     passed along the chain forever, because it always flattens eventually.
  *   - BG still above target+margin at evaluation, DURA engaged → NO CHANGE. A stalled tail is
  *     [DuraStrengthLearner]'s to fix. Charging it here strengthened the spike response for a
  *     fat/protein stall, which then stacked with DURA and caused the lows. "Needed DURA" no
@@ -75,6 +84,10 @@ class ModeIsfLearner @Inject constructor(
     private var episodeMaxDura   = 1.0
     /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
     private var episodePeakMgdl  = 0.0
+    /** BG when the mode opened, so a spike is measured as a RISE rather than as an altitude. */
+    private var episodeStartBgMgdl = 0.0
+    /** Recent deltas (newest first) at the evaluation, for the still-falling test. */
+    private val tailDeltas       = ArrayDeque<Double>()
     /** Longest unbroken stretch spent at or above the spike bar, and the run currently open. */
     private var episodeSpikeMs   = 0L
     private var spikeRunStartMs  = 0L
@@ -88,6 +101,7 @@ class ModeIsfLearner @Inject constructor(
     /** The ended episode's spike was too high for its dose — captured at episode end, before a
      *  new activation can reset the spike tracking it was read from. */
     private var pendingSpikeTooHigh = false
+    private var pendingStartBgMgdl  = 0.0
     private var pendingTailGrams = 0.0
     private var pendingStartMs   = 0L
 
@@ -166,6 +180,11 @@ class ModeIsfLearner @Inject constructor(
         /** The spike phase: how long after activation a held peak still belongs to the mode's
          *  own dose rather than to a stalled tail. */
         private const val SPIKE_PHASE_MS            = 75 * 60_000L
+        /** A peak must be at least this far above where the mode STARTED to count as its spike. */
+        private const val MIN_RISE_FOR_SPIKE_MGDL   = 27.0   // ~1.5 mmol, same bar the entry learner uses
+        /** Falling at least this fast still counts as working through it, not stalled. */
+        private const val STILL_FALLING_MGDL_PER_5MIN = 1.8
+        private const val TREND_READINGS            = 3
         /** DURA at or above this during the episode means DURA was working the tail. Same bar
          *  [DuraStrengthLearner] uses to call DURA engaged. */
         private const val DURA_ENGAGED_MULT         = 1.10
@@ -293,6 +312,8 @@ class ModeIsfLearner @Inject constructor(
                 episodePeakMgdl = 0.0
                 episodeSpikeMs  = 0L
                 spikeRunStartMs = 0L
+                episodeStartBgMgdl = bgMgdl
+                tailDeltas.clear()
                 episodeShapeRailed = false
             }
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
@@ -385,6 +406,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
                 pendingSpikeTooHigh = spikeTooHigh(ended.mode, targetMgdl)
+                pendingStartBgMgdl  = episodeStartBgMgdl
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
                 openWatch(ended, nowMs, endedStartMs, maxDura)
@@ -412,6 +434,8 @@ class ModeIsfLearner @Inject constructor(
         }
 
         val p = pendingScope ?: return
+        tailDeltas.addFirst(deltaMgdl)
+        while (tailDeltas.size > TREND_READINGS) tailDeltas.removeLast()
         pendingTailGrams += tailGramsThisCycle(deltaMgdl, activityPerMin, fastingIsfMgdl, carbRatio)
         if (pendingTailGrams > TAIL_CONTAMINATION_G) {
             // Voids the *evaluation* only. The low watch stays open at a reduced step: BG that
@@ -427,12 +451,17 @@ class ModeIsfLearner @Inject constructor(
             when {
                 pendingSpikeTooHigh ->
                     applyOutcome(p, STRENGTHEN_STEP, "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                // Working through a high it inherited: below where it started and still coming
+                // down. Charging this reads someone else's high as this mode's under-dosing.
+                endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
+                    noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling — working through an inherited high, no change")
                 endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
                     applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
                 endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)}) — stalled tail is DURA's to fix, no change")
                 else      -> noChange(p, "${p.label} on target — no change")
             }
             pendingScope = null
+            tailDeltas.clear()
         }
     }
 
@@ -483,8 +512,12 @@ class ModeIsfLearner @Inject constructor(
         val noShapeLeft = if (UamEntryFractionLearner.isEntryMode(mode)) episodeShapeRailed else true
         return noShapeLeft &&
             (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
+            (episodePeakMgdl - episodeStartBgMgdl) >= MIN_RISE_FOR_SPIKE_MGDL &&
             episodeSpikeMs >= SPIKE_SUSTAINED_MS
     }
+
+    private fun stillFalling(): Boolean =
+        tailDeltas.size >= TREND_READINGS && tailDeltas.average() <= -STILL_FALLING_MGDL_PER_5MIN
 
     private fun noChange(scope: Scope, outcome: String) {
         val s = states.getOrPut(scope.key) { ModeState() }

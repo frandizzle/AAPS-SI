@@ -109,7 +109,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         circCeil:                 Double = 1.0,
         fuelTrimStrength:         Double = 0.0,
         isMmol:                   Boolean = true,
-        duraStatusText:           String = ""  // "" when DURA_ISF isn't currently strengthening ISF
+        duraStatusText:           String = "",  // "" when DURA_ISF isn't currently strengthening ISF
+        /** Washout taper from a declared activity/stress session: 1.0 = untouched, 0.3 = floor.
+         *  Compounds with the rebound taper — two independent reasons to hold insulin back both
+         *  apply, and the smaller one wins by construction. */
+        sessionInsulinFraction:   Double = 1.0,
+        sessionStatusText:        String = ""
     ): APSResult {
 
         val result = apsResultProvider.get()
@@ -308,6 +313,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         } else if (bgWentLow) {
             sb.append(" | rebound=watching")
         }
+        if (sessionStatusText.isNotEmpty()) sb.append(" | $sessionStatusText")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
@@ -422,7 +428,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     }
                     else             -> profileBasal
                 }
-                val tbrRate = tbrRateRaw * reboundTaperFraction
+                val sessionFrac = sessionInsulinFraction.coerceIn(0.0, 1.0)
+                val tbrRate = tbrRateRaw * reboundTaperFraction * sessionFrac
 
                 // SMBs taper back in after a low the way TBR does, rather than switching from nothing
                 // to full size the moment the gate opens.
@@ -437,14 +444,17 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 val smbTaperFraction = ((reboundTaperFraction - REBOUND_SMB_GATE) / (1.0 - REBOUND_SMB_GATE))
                     .coerceIn(0.0, 1.0)
                 val reboundSmbAllowed = smbTaperFraction > 0.0
+                // A session washout scales SMBs by the same fraction it scales the TBR, so the two
+                // tapers can't disagree about how much insulin this cycle is allowed to deliver.
+                val smbScaleFraction = smbTaperFraction * sessionFrac
                 val finalSmb = when {
-                    // Outside a rebound the fraction is exactly 1: return the SMB untouched, so normal
-                    // running cannot be shifted by rounding.
-                    smbTaperFraction >= 1.0 -> constrainedSmb
+                    // Outside a rebound and outside a washout the fraction is exactly 1: return the
+                    // SMB untouched, so normal running cannot be shifted by rounding.
+                    smbScaleFraction >= 1.0 -> constrainedSmb
                     else -> {
                         // Round DOWN to the pump step, so a taper can never round an SMB up past its
                         // share. The epsilon absorbs binary-fraction error (0.15 / 0.05 = 2.9999…).
-                        val tapered = Math.floor(constrainedSmb * smbTaperFraction / bolusStep + 1e-6) * bolusStep
+                        val tapered = Math.floor(constrainedSmb * smbScaleFraction / bolusStep + 1e-6) * bolusStep
                         if (tapered >= bolusStep) tapered else 0.0
                     }
                 }
@@ -485,6 +495,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // Checked in this order so a rebound reduction is not mislabelled as the maxSMB cap.
                 val smbCapNote = if (rawSmb > 0.0 && finalSmb == 0.0 && !reboundSmbAllowed)
                     " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, blocked: rebound)"
+                else if (rawSmb > finalSmb && sessionFrac < 1.0 && smbTaperFraction >= 1.0)
+                    " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, session washout ${(sessionFrac * 100).toInt()}%)"
                 else if (rawSmb > finalSmb && smbTaperFraction < 1.0)
                     " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, rebound taper ${(smbTaperFraction * 100).toInt()}%)"
                 else if (rawSmb > finalSmb && finalSmb > 0.0)

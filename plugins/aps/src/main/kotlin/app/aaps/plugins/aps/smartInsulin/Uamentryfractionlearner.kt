@@ -23,15 +23,27 @@ import javax.inject.Singleton
  *   - Big BG excursion after entry, or a peak well above target, BUT the episode still ended
  *       on target → total insulin was right, it just arrived too late → fraction UP, by a step
  *       that scales with how far over it went.
- *   - Ended HIGH → that's a magnitude problem, not shape → fraction unchanged
- *       ([ModeIsfLearner] owns it).
+ *   - Ended HIGH and BG has FLATTENED OFF → nothing is still bringing it down, so the upfront
+ *       dose fell short → fraction UP, scaled by how far over target it stalled. Judged at the
+ *       tail deadline or the moment a P/F takeover starts, whichever comes first — a takeover is
+ *       itself the statement that this mode didn't finish the job. Never before the entry insulin
+ *       has had its peak effect though (see [VERDICT_PEAK_MARGIN_MS]): BG still flat while the
+ *       dose is only half-way into its action says nothing about the dose.
+ *   - Ended HIGH but BG is STILL COMING DOWN at a real rate → something (a fat/protein tail, or
+ *       just insulin still working) is resolving it → fraction unchanged. This gate is the whole
+ *       reason the rule above is safe: "still high at 75min" is true both for a meal the entry
+ *       dose under-covered AND for every meal with a fat/protein tail, and most meals have one.
+ *       Without it the fraction would ratchet up on the majority case and eventually over-dose
+ *       the mornings that had nothing to fight. Flat means the holding-up is over.
  *   - Low LATE (in the settling tail) → magnitude problem → fraction unchanged.
  *
  * Only the UAM entry modes are learned — P/F is a tail correction, not a meal-entry event, and
  * the manually-activated modes don't use the entry-burst mechanism at all.
  *
- * The learned value is an ADDITIVE offset to the user's configured per-mode fraction, railed to
- * [OFFSET_MIN]..[OFFSET_MAX] so it can refine the setting but never wander far from it. The
+ * The learned value is an ADDITIVE offset to the user's configured per-mode fraction. The offset
+ * rails are wide ([OFFSET_MIN]..[OFFSET_MAX]); what actually bounds the result is
+ * [FRACTION_MIN]..[FRACTION_MAX], so a mode can be learned anywhere in 0.1..1.0 whatever it was
+ * configured at. The
  * entry SMB *count* stays manual by design: it's a coarse integer whose effects overlap heavily
  * with the fraction, and learning both would re-create the double-actuation problem this
  * arbitration exists to avoid.
@@ -49,7 +61,9 @@ class UamEntryFractionLearner @Inject constructor(
         /** Why this mode last did (or didn't) move — a global "last outcome" can't answer
          *  "why has Lunch sat at n=5 without budging", which is the question that actually
          *  gets asked of a learner this slow. */
-        var lastReason: String = ""
+        var lastReason: String = "",
+        /** Consecutive slow-return raises with no low since — reported once it gets long. */
+        var slowReturnStreak: Int = 0
     )
 
     private val states = mutableMapOf<MealMode, ModeState>()
@@ -71,6 +85,14 @@ class UamEntryFractionLearner @Inject constructor(
     private var pendingPeakMgdl       = 0.0
     private var pendingStartMs        = 0L
     private var pendingTailGrams      = 0.0
+    /** Recent deltas (newest first) for the flat/still-falling test at the check. */
+    private val tailDeltas            = ArrayDeque<Double>()
+    /** Learned insulin peak (minutes) seen while the episode was running. */
+    private var activePeakMins        = 0.0
+    /** Earliest this episode may be judged — entry + learned peak + margin. */
+    private var pendingVerdictFromMs  = 0L
+    /** A P/F mode has taken over and is waiting on that time. */
+    private var pendingHandover       = false
 
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
     var lastOutcome = ""
@@ -88,8 +110,10 @@ class UamEntryFractionLearner @Inject constructor(
         const val ENTRY_ATTRIBUTION_MS = 75 * 60_000L
 
         private const val TAIL_MS                    = 75 * 60_000L
-        private const val OFFSET_MIN                 = -0.25
-        private const val OFFSET_MAX                 = 0.25
+        // Wide enough to reach either rail of [FRACTION_MIN]..[FRACTION_MAX] from any configured
+        // value — the fraction, not the distance travelled, is what is actually bounded.
+        private const val OFFSET_MIN                 = -0.9
+        private const val OFFSET_MAX                 = 0.9
         private const val STRENGTHEN_STEP            = 0.03   // +3% fraction — entry arrived too late
         /**
          * Ceiling on a graduated strengthen (see the step calculation at evaluation).
@@ -153,10 +177,44 @@ class UamEntryFractionLearner @Inject constructor(
         private const val FRACTION_MIN               = 0.1
         private const val FRACTION_MAX               = 1.0
 
+        /**
+         * A mode still this far over target at the check counts as not having come back.
+         * Same bar as [ON_TARGET_MARGIN_MGDL], read from the other side.
+         */
+        private const val SLOW_RETURN_MARGIN_MGDL    = ON_TARGET_MARGIN_MGDL
+        /**
+         * Falling at least this fast (0.1 mmol/5min = 1.2 mmol/hr) counts as still resolving on
+         * its own, so the entry dose is not charged for where BG happens to be right now. Averaged
+         * over [TREND_READINGS] readings so one flat reading in a descent doesn't trip it.
+         */
+        private const val STILL_FALLING_MGDL_PER_5MIN = 1.8
+        private const val TREND_READINGS              = 3
+        /** Per-episode raise for a stalled return, scaled by how far over target it stalled. */
+        private const val SLOW_RETURN_STEP            = 0.03
+        /**
+         * A low after this trigger has been raising the fraction pulls back harder than the raise
+         * that got there — the asymmetry that stops a one-directional signal from ratcheting.
+         */
+        private const val SLOW_RETURN_REVERSAL_MULT   = 1.5
+        /** Consecutive slow-return raises with no low before the SI tab asks you to sanity-check. */
+        private const val SLOW_RETURN_STREAK_NOTE     = 3
+        /**
+         * No verdict until this long past the learned insulin peak for the mode. A short mode
+         * (a 45-min breakfast) hands over to P/F while its own entry SMBs are still climbing
+         * toward peak activity; calling that "flat, so the dose fell short" reads the insulin's
+         * own lag as a shortfall. The tail-deadline path is already clear of this — it sits 75min
+         * after the mode ENDS — but the takeover path fires as soon as the trend window fills.
+         */
+        private const val VERDICT_PEAK_MARGIN_MS      = 15 * 60_000L
+        /** Floor and ceiling for that wait, measured from entry, whatever the learned peak says. */
+        private const val VERDICT_MIN_AFTER_ENTRY_MS  = 75 * 60_000L
+        private const val VERDICT_MAX_AFTER_ENTRY_MS  = 105 * 60_000L
+
         private const val K_OFFSET = "offset"
         private const val K_N      = "n"
         private const val K_BASE   = "baseSig"
         private const val K_WHY    = "why"
+        private const val K_STREAK = "slowReturns"
 
         /** True for modes that actually use the UAM entry-burst mechanism. */
         fun isEntryMode(mode: MealMode?): Boolean =
@@ -204,7 +262,8 @@ class UamEntryFractionLearner @Inject constructor(
         carbRatio:      Double,
         nowMs:          Long,
         baseSignature:  Double = 0.0,
-        exerciseSuspected: Boolean = false
+        exerciseSuspected: Boolean = false,
+        insulinPeakMins: Double = 0.0   // learned activity peak for this mode
     ) {
         if (isEntryMode(activeModeNow)) {
             val mode = activeModeNow!!
@@ -230,7 +289,9 @@ class UamEntryFractionLearner @Inject constructor(
                 maxBgOffsetMs       = 0L
                 earlyLow            = false
                 earlyLowUnexplained = false
+                activePeakMins      = 0.0
             }
+            if (insulinPeakMins > 0.0) activePeakMins = insulinPeakMins
             // Only the entry window shapes this learner's evidence — later movement is the
             // ISF learner's territory.
             val elapsed = nowMs - activeStartMs
@@ -265,10 +326,16 @@ class UamEntryFractionLearner @Inject constructor(
             if (hadEarlyLow) {
                 // Definitive shape evidence — lands immediately, not skippable by later noise.
                 val unexplained = earlyLowUnexplained
-                val step = if (unexplained) WEAKEN_STEP * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+                // Undoing a slow-return run takes a bigger step than the raises that built it, so
+                // a trigger that only ever pushes one way can't out-run its own correction.
+                val reversing = (states[ended]?.slowReturnStreak ?: 0) > 0
+                var step = if (unexplained) WEAKEN_STEP * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+                if (reversing) step *= SLOW_RETURN_REVERSAL_MULT
+                clearSlowReturnStreak(ended)
                 applyOutcome(ended, -step,
                              if (unexplained) "low soon after ${ended.label} entry, but BG was falling faster than insulin explains (exercise?) — reduced at a smaller step"
-                             else "low soon after ${ended.label} entry — entry fraction reduced")
+                             else "low soon after ${ended.label} entry — entry fraction reduced" +
+                                 (if (reversing) " at a bigger step, undoing the slow-return raises" else ""))
             } else {
                 pendingMode        = ended
                 pendingEvalAtMs    = nowMs + TAIL_MS
@@ -277,14 +344,33 @@ class UamEntryFractionLearner @Inject constructor(
                 pendingPeakMgdl     = maxBgInEntryWindow
                 pendingStartMs      = activeStartMsBeforeReset
                 pendingTailGrams   = 0.0
+                tailDeltas.clear()
+                pendingHandover    = false
+                val peakLagMs = (activePeakMins * 60_000L).toLong() + VERDICT_PEAK_MARGIN_MS
+                pendingVerdictFromMs = activeStartMsBeforeReset +
+                    peakLagMs.coerceIn(VERDICT_MIN_AFTER_ENTRY_MS, VERDICT_MAX_AFTER_ENTRY_MS)
             }
         }
 
         val p = pendingMode ?: return
         if (lowActive) {
             // A low this late is a magnitude problem — ModeIsfLearner weakens for it. Entry
-            // shape gets no evidence from it, so abandon the evaluation unchanged.
+            // shape gets no evidence from it, so abandon the evaluation unchanged. The streak
+            // still clears: a low is a low, and the run of raises no longer stands unchallenged.
+            clearSlowReturnStreak(p)
             skipPending("late low in ${p.label} tail — magnitude signal, left to mode ISF")
+            return
+        }
+        tailDeltas.addFirst(deltaMgdl)
+        while (tailDeltas.size > TREND_READINGS) tailDeltas.removeLast()
+
+        // A P/F takeover is the verdict arriving early: this mode handed a still-high BG to the
+        // tail machinery, which is exactly the question the check below answers. Waiting out the
+        // rest of the tail would judge P/F's work instead of this mode's. It still waits for the
+        // entry insulin to have peaked — a 45-min mode hands over well before that.
+        if (activeModeNow == MealMode.UAM_PROTEIN_FAT) pendingHandover = true
+        if (pendingHandover && tailDeltas.size >= TREND_READINGS && nowMs >= pendingVerdictFromMs) {
+            evaluate(p, bgMgdl, targetMgdl, handover = true)
             return
         }
         pendingTailGrams += tailGramsThisCycle(deltaMgdl, activityPerMin, fastingIsfMgdl, carbRatio)
@@ -292,7 +378,16 @@ class UamEntryFractionLearner @Inject constructor(
             skipPending("fresh absorption (~${"%.0f".format(pendingTailGrams)}g) in ${p.label} tail")
             return
         }
-        if (nowMs >= pendingEvalAtMs) {
+        if (nowMs >= pendingEvalAtMs) evaluate(p, bgMgdl, targetMgdl, handover = false)
+    }
+
+    /**
+     * Judges the finished episode. [handover] means a P/F mode has just taken over rather than the
+     * tail deadline arriving — same question, answered at the moment the handover says it.
+     */
+    private fun evaluate(p: MealMode, bgMgdl: Double, targetMgdl: Double, handover: Boolean) {
+        run {
+            val whenTxt         = if (handover) "handed over to P/F at" else "ended"
             val endedOnTarget   = bgMgdl <= targetMgdl + ON_TARGET_MARGIN_MGDL
             val peakAboveTarget = pendingPeakMgdl - targetMgdl
             // Two ways to be too slow off the mark: a big rise measured from entry, or a peak
@@ -331,16 +426,50 @@ class UamEntryFractionLearner @Inject constructor(
                     // Fast-carb signature: the peak beat the entry insulin, so a bigger entry
                     // SMB could not have prevented it — only landed later and caused a low.
                     note(p, "${p.label} reached ${peakMmol}mmol but peaked only ${peakMins}min after entry — fast carbs, not a shape problem")
+                !endedOnTarget && stillFalling() ->
+                    // Still coming down under its own steam. Where BG happens to be right now says
+                    // nothing about the entry dose — and this is the branch every fat/protein meal
+                    // lands in, which is what keeps the one below from ratcheting on the majority
+                    // of real meals.
+                    note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol but still falling ${"%.1f".format(-meanTailDelta() / 18.0)}mmol/5min — resolving on its own, entry shape not charged")
+                !endedOnTarget && (pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL) -> {
+                    // Flat, still over target, and it did rise after entry: nothing is holding BG
+                    // up any more, so the front-loading fell short. Scaled by how far over it
+                    // stalled, capped like every other raise.
+                    val overTarget = (bgMgdl - targetMgdl) / SLOW_RETURN_MARGIN_MGDL
+                    val step = (SLOW_RETURN_STEP * overTarget).coerceIn(SLOW_RETURN_STEP, MAX_STRENGTHEN_STEP)
+                    if (railedHigh(p)) {
+                        magnitudeHandoff = p to pendingStartMs
+                        clearSlowReturnStreak(p)
+                        note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol and flat, but entry fraction is already at max — handed to mode ISF")
+                    } else {
+                        val streak = (states[p]?.slowReturnStreak ?: 0) + 1
+                        applyOutcome(p, step,
+                                     "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol and flat — nothing still bringing it down, entry fraction raised" +
+                                         (if (streak >= SLOW_RETURN_STREAK_NOTE) " (${streak}th in a row with no low since — worth a sanity-check)" else ""))
+                        states[p]?.let { it.slowReturnStreak = streak; persist() }
+                    }
+                }
                 !endedOnTarget ->
-                    // Named separately from "shape OK": an episode that ended high is not
-                    // evidence the entry burst was right, it's evidence handed to ModeIsfLearner.
-                    // Reporting it as OK is how a mode sits at n=5 looking like it was judged fine.
-                    note(p, "${p.label} ended ${"%.1f".format(bgMgdl / 18.0)}mmol, above target — magnitude signal, left to mode ISF")
+                    note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol but barely rose after entry — not the entry burst's doing, left to mode ISF")
                 else ->
                     note(p, "${p.label} peaked ${peakMmol}mmol, ended on target — entry shape OK")
             }
             pendingMode = null
+            pendingHandover = false
+            tailDeltas.clear()
         }
+    }
+
+    /** Mean of the last few tail deltas (mg/dL per 5 min); 0.0 until there are enough. */
+    private fun meanTailDelta(): Double =
+        if (tailDeltas.size < TREND_READINGS) 0.0 else tailDeltas.average()
+
+    /** BG is coming down fast enough that something is still resolving it. */
+    private fun stillFalling(): Boolean = meanTailDelta() <= -STILL_FALLING_MGDL_PER_5MIN
+
+    private fun clearSlowReturnStreak(mode: MealMode) {
+        states[mode]?.takeIf { it.slowReturnStreak != 0 }?.let { it.slowReturnStreak = 0; persist() }
     }
 
     /** Insulin-pull-only residual — conservative fasting-rules "is something still absorbing". */
@@ -399,7 +528,8 @@ class UamEntryFractionLearner @Inject constructor(
         states.clear()
         activeMode = null; activeStartMs = 0L; earlyLow = false; earlyLowUnexplained = false
         bgAtEntry = 0.0; maxBgInEntryWindow = 0.0; maxBgOffsetMs = 0L
-        pendingMode = null; pendingPeakMgdl = 0.0; pendingStartMs = 0L
+        pendingMode = null; pendingPeakMgdl = 0.0; pendingStartMs = 0L; tailDeltas.clear()
+        activePeakMins = 0.0; pendingVerdictFromMs = 0L; pendingHandover = false
         magnitudeHandoff = null
         lastOutcome = ""
         sp.edit { putString(StringKey.ApsSmartInsulinUamEntryFractionLearnerState.key, "") }
@@ -411,6 +541,7 @@ class UamEntryFractionLearner @Inject constructor(
             val json = JSONObject()
             states.forEach { (mode, s) ->
                 val obj = JSONObject().put(K_OFFSET, s.offset).put(K_N, s.episodes).put(K_WHY, s.lastReason)
+                    .put(K_STREAK, s.slowReturnStreak)
                 if (!s.baseSig.isNaN()) obj.put(K_BASE, s.baseSig)  // JSON rejects NaN
                 json.put(mode.name, obj)
             }
@@ -432,7 +563,8 @@ class UamEntryFractionLearner @Inject constructor(
                     offset   = obj.optDouble(K_OFFSET, 0.0).coerceIn(OFFSET_MIN, OFFSET_MAX),
                     episodes = obj.optInt(K_N, 0),
                     baseSig  = obj.optDouble(K_BASE, Double.NaN),
-                    lastReason = obj.optString(K_WHY, "")
+                    lastReason = obj.optString(K_WHY, ""),
+                    slowReturnStreak = obj.optInt(K_STREAK, 0)
                 )
             }
         } catch (e: Exception) {

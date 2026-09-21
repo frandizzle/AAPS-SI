@@ -14,9 +14,12 @@ import org.junit.jupiter.api.Test
  * Tests for [UamEntryFractionLearner] — the SHAPE knob (how front-loaded the UAM entry burst is),
  * as distinct from [ModeIsfLearner]'s MAGNITUDE knob.
  *
- * Steps: −0.06 on an early low; up when a big post-entry spike, or a peak well above target,
- * still ended on target — graduated with the overshoot from +0.03 to +0.06. No change when the
- * episode ended high or the low came late. Offsets railed ±0.25.
+ * Steps: −0.06 on an early low (×1.5 when it reverses a run of slow-return raises); up when a big
+ * post-entry spike, or a peak well above target, still ended on target — graduated with the
+ * overshoot from +0.03 to +0.06; up again when the episode ended over target and FLAT, which means
+ * nothing was still bringing BG down. Still falling at the check → no change, which is where a
+ * fat/protein tail lands. No change on a late low. Offsets railed ±0.9; the fraction itself rails
+ * at 0.1..1.0.
  * Entry attribution window and settling tail are both 75 min → 16 five-minute cycles.
  */
 class UamEntryFractionLearnerTest {
@@ -37,20 +40,21 @@ class UamEntryFractionLearnerTest {
         mode: MealMode?, startMs: Long, nowMs: Long,
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, delta: Double = 0.0, activity: Double = 0.0,
-        baseSig: Double = 0.8, exercise: Boolean = false
+        baseSig: Double = 0.8, exercise: Boolean = false, peakMins: Double = 55.0
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
-        exerciseSuspected = exercise
+        exerciseSuspected = exercise, insulinPeakMins = peakMins
     )
 
-    /** Ends the episode and runs the full 75-min settling tail quietly at [bg]. */
-    private fun runQuietTail(fromMs: Long, bg: Double, target: Double = 100.0): Long {
+    /** Ends the episode and runs the full 75-min settling tail quietly at [bg] — flat by default,
+     *  or falling at [delta] mg/dL per 5 min. */
+    private fun runQuietTail(fromMs: Long, bg: Double, target: Double = 100.0, delta: Double = 0.0): Long {
         var t = fromMs
         repeat(16) {  // 16 × 5min = 80min > 75min tail
             t += CYCLE_MS
-            cycle(mode = null, startMs = 0L, nowMs = t, bg = bg, target = target)
+            cycle(mode = null, startMs = 0L, nowMs = t, bg = bg, target = target, delta = delta)
         }
         return t
     }
@@ -100,13 +104,16 @@ class UamEntryFractionLearnerTest {
     }
 
     @Test
-    fun `big spike that ends HIGH is a magnitude problem — entry fraction unchanged`() {
-        val peakMs = BASE_MS + 45 * 60_000L  // late peak, so only the ended-high gate can block
+    fun `ending high while still coming down leaves the entry fraction alone`() {
+        // The fat/protein shape: over target at the check, but resolving on its own. Where BG
+        // happens to be right now says nothing about the entry burst.
+        val peakMs = BASE_MS + 45 * 60_000L
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 100.0)
         cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 160.0)
-        runQuietTail(peakMs, bg = 145.0)  // well above target+margin
-        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9,
-                     "Ending high is ModeIsfLearner's signal — entry shape must not also move")
+        runQuietTail(peakMs, bg = 145.0, delta = -2.0)   // 0.11 mmol/5min, past the still-falling bar
+        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+        assertTrue(learner.lastReason(MealMode.UAM_LUNCH).contains("still falling"),
+                   learner.lastReason(MealMode.UAM_LUNCH))
     }
 
     @Test
@@ -160,7 +167,24 @@ class UamEntryFractionLearnerTest {
             cycle(null, 0L, t, bg = 80.0)
             t += CYCLE_MS
         }
-        assertEquals(-0.25, learner.offset(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(-0.6, learner.offset(MealMode.UAM_DINNER), 1e-9)   // 10 × −0.06
+        // What actually bounds it is the fraction: 0.8 configured − 0.6 = 0.2, still over the rail.
+        assertEquals(0.2, learner.adjustedFraction(MealMode.UAM_DINNER, 0.8), 1e-9)
+    }
+
+    @Test
+    fun `the fraction can now be learned all the way down to its floor`() {
+        var t = BASE_MS
+        repeat(20) {
+            val start = t
+            cycle(MealMode.UAM_DINNER, start, t, bg = 130.0)
+            t += CYCLE_MS
+            cycle(MealMode.UAM_DINNER, start, t, bg = 70.0, low = true)
+            t += CYCLE_MS
+            cycle(null, 0L, t, bg = 80.0)
+            t += CYCLE_MS
+        }
+        assertEquals(0.1, learner.adjustedFraction(MealMode.UAM_DINNER, 0.8), 1e-9)
     }
 
     @Test
@@ -256,14 +280,13 @@ class UamEntryFractionLearnerTest {
     }
 
     @Test
-    fun `ending high is reported as a magnitude signal, not as shape OK`() {
+    fun `ending high and flat is never reported as a clean entry shape`() {
         val peakMs = BASE_MS + 45 * 60_000L
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 100.0)
         cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 160.0)
         runQuietTail(peakMs, bg = 145.0)
-        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
-        assertTrue(learner.lastReason(MealMode.UAM_LUNCH).contains("left to mode ISF"),
-                   "An ended-high episode must not be reported as a clean entry shape")
+        assertTrue(learner.lastReason(MealMode.UAM_LUNCH).contains("nothing still bringing it down"),
+                   learner.lastReason(MealMode.UAM_LUNCH))
     }
 
     @Test
@@ -320,11 +343,11 @@ class UamEntryFractionLearnerTest {
 
     @Test
     fun `a railed fraction still hands nothing over when the episode was not a shape problem`() {
-        // Ended high — magnitude owns it through its own test, not through the handoff.
+        // Ended high but still coming down — nothing is proven about either knob.
         val peakMs = BASE_MS + 45 * 60_000L
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 100.0, baseSig = 1.0)
         cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 160.0, baseSig = 1.0)
-        runQuietTail(peakMs, bg = 145.0)
+        runQuietTail(peakMs, bg = 145.0, delta = -2.0)
         assertNull(learner.consumeMagnitudeHandoff())
     }
 
@@ -336,5 +359,151 @@ class UamEntryFractionLearnerTest {
         cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 80.0, baseSig = 1.0)
         assertEquals(-0.06, learner.offset(MealMode.UAM_LUNCH), 1e-9)
         assertEquals(0.94, learner.adjustedFraction(MealMode.UAM_LUNCH, 1.0), 1e-9)
+    }
+
+
+    // ── Slow return: still over target with nothing bringing it down ─────────
+
+    /** Entry, a rise to [peak], then the mode ends and the tail runs at [endBg] with [delta]. */
+    private fun episode(mode: MealMode, peak: Double, endBg: Double, delta: Double = 0.0,
+                        baseSig: Double = 0.8, start: Long = BASE_MS): Long {
+        cycle(mode, start, start, bg = 100.0, baseSig = baseSig)
+        cycle(mode, start, start + 45 * 60_000L, bg = peak, baseSig = baseSig)
+        return runQuietTail(start + 45 * 60_000L, bg = endBg, delta = delta)
+    }
+
+    @Test
+    fun `ending over target and flat raises the entry fraction`() {
+        // The coffee morning: rose after entry, stalled above target, nothing still working on it.
+        episode(MealMode.UAM_BREAKFAST, peak = 155.0, endBg = 125.0)
+        assertEquals(0.03 * 25.0 / 18.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+    }
+
+    @Test
+    fun `the slow-return raise is capped however far over target it stalled`() {
+        episode(MealMode.UAM_BREAKFAST, peak = 220.0, endBg = 200.0)
+        assertEquals(0.06, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+    }
+
+    @Test
+    fun `a mode that barely rose after entry is not charged for ending high`() {
+        // BG was already up and stayed there: nothing about the entry burst is proven.
+        cycle(MealMode.UAM_BREAKFAST, BASE_MS, BASE_MS, bg = 130.0)
+        cycle(MealMode.UAM_BREAKFAST, BASE_MS, BASE_MS + 45 * 60_000L, bg = 140.0)
+        runQuietTail(BASE_MS + 45 * 60_000L, bg = 135.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+        assertTrue(learner.lastReason(MealMode.UAM_BREAKFAST).contains("barely rose"),
+                   learner.lastReason(MealMode.UAM_BREAKFAST))
+    }
+
+    @Test
+    fun `a P over F takeover is judged during P over F, not after its whole tail`() {
+        // The verdict lands while P/F is still running — well before the mode-end + 75min
+        // deadline — but only once the entry insulin has peaked.
+        val start = BASE_MS
+        cycle(MealMode.UAM_BREAKFAST, start, start, bg = 100.0)
+        cycle(MealMode.UAM_BREAKFAST, start, start + 45 * 60_000L, bg = 155.0)
+        var t = start + 45 * 60_000L
+        // Mode ends, three flat readings, then P/F takes over at 8.0mmol-ish (144).
+        repeat(3) { t += CYCLE_MS; cycle(null, 0L, t, bg = 144.0) }
+        repeat(6) { t += CYCLE_MS; cycle(MealMode.UAM_PROTEIN_FAT, t, t, bg = 144.0) }
+        assertTrue(t - start < 45 * 60_000L + 75 * 60_000L, "must land before the tail deadline")
+        assertEquals(0.06, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)   // 0.03 × 44/18, capped
+        assertTrue(learner.lastReason(MealMode.UAM_BREAKFAST).contains("handed over to P/F"),
+                   learner.lastReason(MealMode.UAM_BREAKFAST))
+    }
+
+    @Test
+    fun `a P over F takeover while BG is still falling changes nothing`() {
+        val start = BASE_MS
+        cycle(MealMode.UAM_BREAKFAST, start, start, bg = 100.0)
+        cycle(MealMode.UAM_BREAKFAST, start, start + 45 * 60_000L, bg = 155.0)
+        var t = start + 45 * 60_000L
+        repeat(3) { t += CYCLE_MS; cycle(null, 0L, t, bg = 144.0, delta = -3.0) }
+        t += CYCLE_MS
+        cycle(MealMode.UAM_PROTEIN_FAT, t, t, bg = 144.0, delta = -3.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+    }
+
+    @Test
+    fun `a railed fraction hands a slow return to the ISF learner`() {
+        episode(MealMode.UAM_LUNCH, peak = 155.0, endBg = 125.0, baseSig = 1.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+        assertNotNull(learner.consumeMagnitudeHandoff())
+    }
+
+    @Test
+    fun `repeated slow-return raises say so once the run gets long`() {
+        var t = BASE_MS
+        repeat(3) { t = episode(MealMode.UAM_BREAKFAST, peak = 155.0, endBg = 125.0, start = t + CYCLE_MS) }
+        assertTrue(learner.lastReason(MealMode.UAM_BREAKFAST).contains("in a row with no low"),
+                   learner.lastReason(MealMode.UAM_BREAKFAST))
+    }
+
+    @Test
+    fun `a low reverses a run of slow-return raises at a bigger step`() {
+        var t = BASE_MS
+        repeat(2) { t = episode(MealMode.UAM_BREAKFAST, peak = 155.0, endBg = 125.0, start = t + CYCLE_MS) }
+        val raised = learner.offset(MealMode.UAM_BREAKFAST)
+        val start = t + CYCLE_MS
+        cycle(MealMode.UAM_BREAKFAST, start, start, bg = 130.0)
+        cycle(MealMode.UAM_BREAKFAST, start, start + CYCLE_MS, bg = 70.0, low = true)
+        cycle(null, 0L, start + 2 * CYCLE_MS, bg = 80.0)
+        assertEquals(raised - 0.09, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)  // 0.06 × 1.5
+    }
+
+    @Test
+    fun `a low with no slow-return run behind it uses the normal step`() {
+        val start = BASE_MS
+        cycle(MealMode.UAM_BREAKFAST, start, start, bg = 130.0)
+        cycle(MealMode.UAM_BREAKFAST, start, start + CYCLE_MS, bg = 70.0, low = true)
+        cycle(null, 0L, start + 2 * CYCLE_MS, bg = 80.0)
+        assertEquals(-0.06, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+    }
+
+
+    // ── When the verdict may be delivered ────────────────────────────────────
+
+    /**
+     * A 45-minute breakfast that hands over to P/F the moment it ends. [handoverGapMin] is how
+     * long P/F runs before the check is attempted.
+     */
+    private fun shortModeHandingOver(peakMins: Double, handoverMin: Int): Long {
+        val start = BASE_MS
+        cycle(MealMode.UAM_BREAKFAST, start, start, bg = 100.0, peakMins = peakMins)
+        cycle(MealMode.UAM_BREAKFAST, start, start + 30 * 60_000L, bg = 155.0, peakMins = peakMins)
+        var t = start + 45 * 60_000L
+        cycle(null, 0L, t, bg = 144.0)                         // mode ends at 45min
+        repeat(handoverMin / 5) {
+            t += CYCLE_MS
+            cycle(MealMode.UAM_PROTEIN_FAT, t, t, bg = 144.0)  // P/F running, BG flat and high
+        }
+        return t
+    }
+
+    @Test
+    fun `a short mode is not judged while its entry insulin is still climbing`() {
+        // 45-min mode, peak 55min: at 60min past entry the dose is nowhere near done acting.
+        shortModeHandingOver(peakMins = 55.0, handoverMin = 15)
+        assertEquals(0.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9,
+                     "Flat BG before the insulin has peaked says nothing about the dose")
+    }
+
+    @Test
+    fun `the verdict lands once the entry insulin has had its peak effect`() {
+        // Same episode carried past entry + peak(55) + margin(15) = 70min.
+        shortModeHandingOver(peakMins = 55.0, handoverMin = 45)
+        assertEquals(0.06, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)   // 0.03 × 44/18, capped
+        assertTrue(learner.lastReason(MealMode.UAM_BREAKFAST).contains("handed over to P/F"),
+                   learner.lastReason(MealMode.UAM_BREAKFAST))
+    }
+
+    @Test
+    fun `a faster learned peak brings the verdict forward, but never inside 75 minutes`() {
+        // Peak 30min + 15 margin = 45min, floored at the 75-minute minimum after entry.
+        shortModeHandingOver(peakMins = 30.0, handoverMin = 20)   // 65min after entry
+        assertEquals(0.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
+        shortModeHandingOver(peakMins = 30.0, handoverMin = 35)   // 80min after entry
+        assertTrue(learner.offset(MealMode.UAM_BREAKFAST) > 0.0)
     }
 }
