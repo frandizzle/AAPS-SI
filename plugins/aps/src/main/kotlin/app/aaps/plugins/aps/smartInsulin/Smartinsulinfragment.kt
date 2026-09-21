@@ -157,6 +157,12 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.btnSessionGolf.text = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
         binding.btnSessionGym.text  = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
 
+        smartInsulinPlugin.secondWaveNote()?.let {
+            addRow(c, "⚠ Second wave detected — episode not scored", it +
+                ".\nMore food went in during the mode's own window, so nothing after it says\n" +
+                "anything about the dose this mode was given. Lows are still learned from.",
+                   Color.parseColor("#FFFB8C00"))
+        }
         smartInsulinPlugin.activitySessionStatus()?.let {
             addRow(c, it, "UAM and P/F blocked — a flat high here is hormones, not food.",
                    Color.parseColor("#FFFB8C00"))

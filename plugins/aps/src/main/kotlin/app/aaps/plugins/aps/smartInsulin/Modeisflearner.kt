@@ -246,6 +246,9 @@ class ModeIsfLearner @Inject constructor(
         // guard — too far down to call the episode a success, not far enough to call it a hypo
         entryShapeRailed: Boolean = false,  // this mode's UAM entry fraction is already at its
         // ceiling, so no amount of further front-loading is available to fix a late spike
+        secondWave: Boolean = false,  // a second lot of food was eaten inside this episode's own
+        // window — see SecondWaveDetector. The episode can no longer say anything about the dose
+        // it was given, so it is not scored; lows still land, they are a safety signal either way.
         pfWindow: PfWindow = PfWindow.NONE  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
@@ -401,6 +404,13 @@ class ModeIsfLearner @Inject constructor(
                                  endedStartMs)
                 }
                 clearWatch()
+            } else if (secondWave) {
+                // No pending evaluation at all: whatever BG did from here reflects food this mode
+                // was never dosed for. The low watch below still opens — if the stack of both
+                // meals drives BG down, that is real and this learner must see it.
+                lastOutcome = "${ended.label} not scored — more food during the episode"
+                aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+                openWatch(ended, nowMs, endedStartMs, maxDura)
             } else {
                 pendingScope     = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS

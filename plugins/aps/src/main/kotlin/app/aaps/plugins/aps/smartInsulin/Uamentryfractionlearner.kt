@@ -263,7 +263,10 @@ class UamEntryFractionLearner @Inject constructor(
         nowMs:          Long,
         baseSignature:  Double = 0.0,
         exerciseSuspected: Boolean = false,
-        insulinPeakMins: Double = 0.0   // learned activity peak for this mode
+        insulinPeakMins: Double = 0.0,  // learned activity peak for this mode
+        secondWave: Boolean = false     // more food went in during this episode — see
+        // SecondWaveDetector. Nothing after that says anything about how the ENTRY burst was
+        // shaped, so the episode is dropped rather than scored.
     ) {
         if (isEntryMode(activeModeNow)) {
             val mode = activeModeNow!!
@@ -336,6 +339,8 @@ class UamEntryFractionLearner @Inject constructor(
                              if (unexplained) "low soon after ${ended.label} entry, but BG was falling faster than insulin explains (exercise?) — reduced at a smaller step"
                              else "low soon after ${ended.label} entry — entry fraction reduced" +
                                  (if (reversing) " at a bigger step, undoing the slow-return raises" else ""))
+            } else if (secondWave) {
+                note(ended, "${ended.label} not scored — more food during the episode")
             } else {
                 pendingMode        = ended
                 pendingEvalAtMs    = nowMs + TAIL_MS

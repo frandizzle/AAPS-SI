@@ -99,6 +99,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
     private val unexplainedDropTracker:  UnexplainedDropTracker,
+    private val secondWaveDetector:      SecondWaveDetector,
     private val activitySessionManager: ActivitySessionManager,
     private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
@@ -135,6 +136,8 @@ open class SmartInsulinPlugin @Inject constructor(
     var uamEntrySmbsDelivered: Int = 0
     var uamEntryModeStartMs: Long = 0L
     var learningDirtyUntilMs: Long = 0L
+    /** Mode activation the second-wave detector is currently following. */
+    private var secondWaveModeStartMs: Long = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
     /**
@@ -345,6 +348,10 @@ open class SmartInsulinPlugin @Inject constructor(
     /** label, learned ISF multiplier, learned washout minutes, sessions learned from. */
     fun activitySessionLearned(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> = activitySessionLearner.rows()
     fun activitySessionLastOutcome(): String = activitySessionLearner.lastOutcome
+
+    /** Set while a second wave has been detected in the running episode — surfaced on the SI tab
+     *  so this detector can be eyeballed on real data before it is trusted quietly. */
+    fun secondWaveNote(): String? = secondWaveDetector.description.takeIf { it.isNotEmpty() }
 
     data class FragmentData(
         val hour: Int, val dayLabel: String, val mealMode: String, val modeRemMins: Int?,
@@ -1162,6 +1169,22 @@ open class SmartInsulinPlugin @Inject constructor(
         // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
         // FASTING ISF for its tail contamination check — the mode ISF no longer applies
         // once the mode has ended.
+        // Second helping inside a mode's own window: detected from the shape of absorption plus a
+        // second BG peak, and it stops the episode being scored either way.
+        val activeModeForWave = mealOverrideManager.activeMealMode
+        if (activeModeForWave == null || mealOverrideManager.modeStartMs != secondWaveModeStartMs) {
+            secondWaveDetector.reset()
+            secondWaveModeStartMs = mealOverrideManager.modeStartMs
+        }
+        if (activeModeForWave != null) {
+            secondWaveDetector.onCycle(
+                bgMgdl = glucoseStatus.glucose, deltaMgdl = glucoseStatus.delta,
+                activityPerMin = iobArray.firstOrNull()?.activity ?: 0.0,
+                isfMgdl = trueIsfMgdl, carbRatio = profile.getIc()
+            )
+        }
+        val secondWaveNow = secondWaveDetector.detected
+
         modeIsfLearner.onCycle(
             activeModeNow  = mealOverrideManager.activeMealMode,
             modeStartMs    = mealOverrideManager.modeStartMs,
@@ -1181,6 +1204,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // than recomputed here, so both learners agree on when front-loading is exhausted.
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
+            secondWave        = secondWaveNow,
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
@@ -1204,7 +1228,8 @@ open class SmartInsulinPlugin @Inject constructor(
             // The learner holds its verdict until the entry insulin has actually peaked. Learned
             // per mode by ProfileLearner, so a short mode isn't judged on its own clock.
             insulinPeakMins   = mealOverrideManager.activeMealMode
-                ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0
+                ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
+            secondWave        = secondWaveNow
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole
