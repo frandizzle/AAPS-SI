@@ -294,7 +294,7 @@ class ModeIsfLearner @Inject constructor(
                             // Same reading as the episode-end branch — a spike that settled just
                             // under target with no front-loading left is late, not excessive.
                             if (lateSpikeWithNoShapeLeft(targetMgdl) && !episodeLowWasUnexplained)
-                                applyOutcome(superseded, STRENGTHEN_STEP,
+                                applyOutcome(superseded, strengthenStep(),
                                              "${superseded.label} peaked ${"%.1f".format(episodePeakMgdl / 18.0)}mmol then settled just under target with entry front-loading maxed — strengthened",
                                              activeStartMs)
                             else
@@ -342,7 +342,7 @@ class ModeIsfLearner @Inject constructor(
             // through doesn't add up to a stall it never had.
             // Only inside the spike phase. Past it, BG parked high is a fat/protein stall — DURA's
             // problem — and counting it here would charge the spike knob for it.
-            if (bgMgdl - targetMgdl >= LATE_SPIKE_MARGIN_MGDL && nowMs - activeStartMs <= SPIKE_PHASE_MS) {
+            if (bgMgdl - targetMgdl >= spikeMarginMgdl() && nowMs - activeStartMs <= SPIKE_PHASE_MS) {
                 if (spikeRunStartMs == 0L) spikeRunStartMs = nowMs
                 episodeSpikeMs = maxOf(episodeSpikeMs, nowMs - spikeRunStartMs)
             } else spikeRunStartMs = 0L
@@ -410,7 +410,7 @@ class ModeIsfLearner @Inject constructor(
                 // strengthen: BG stayed above the guard the whole way, and any episode that does
                 // reach it still weakens, at twice this step, in the branch above.
                 if (lateSpike && !unexplained) {
-                    applyOutcome(ended, STRENGTHEN_STEP,
+                    applyOutcome(ended, strengthenStep(),
                                  "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
                                  endedStartMs)
                 } else {
@@ -472,16 +472,16 @@ class ModeIsfLearner @Inject constructor(
             return
         }
         if (nowMs >= pendingEvalAtMs) {
-            val endedHigh = bgMgdl > targetMgdl + STRENGTHEN_MARGIN_MGDL
+            val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
             when {
                 pendingSpikeTooHigh ->
-                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                    applyOutcome(p, strengthenStep(), "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
                 // Working through a high it inherited: below where it started and still coming
                 // down. Charging this reads someone else's high as this mode's under-dosing.
                 endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
                     noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling — working through an inherited high, no change")
                 endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
-                    applyOutcome(p, STRENGTHEN_STEP, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
+                    applyOutcome(p, strengthenStep(), "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
                 endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)}) — stalled tail is DURA's to fix, no change")
                 else      -> noChange(p, "${p.label} on target — no change")
             }
@@ -536,9 +536,9 @@ class ModeIsfLearner @Inject constructor(
         if (mode == MealMode.UAM_PROTEIN_FAT) return false
         val noShapeLeft = if (UamEntryFractionLearner.isEntryMode(mode)) episodeShapeRailed else true
         return noShapeLeft &&
-            (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
+            (episodePeakMgdl - targetMgdl) >= spikeMarginMgdl() &&
             (episodePeakMgdl - episodeStartBgMgdl) >= MIN_RISE_FOR_SPIKE_MGDL &&
-            episodeSpikeMs >= SPIKE_SUSTAINED_MS
+            episodeSpikeMs >= spikeSustainedMs()
     }
 
     private fun stillFalling(): Boolean =
@@ -554,12 +554,22 @@ class ModeIsfLearner @Inject constructor(
 
     private fun lateSpikeWithNoShapeLeft(targetMgdl: Double): Boolean =
         episodeShapeRailed &&
-            (episodePeakMgdl - targetMgdl) >= LATE_SPIKE_MARGIN_MGDL &&
-            episodeSpikeMs >= SPIKE_SUSTAINED_MS
+            (episodePeakMgdl - targetMgdl) >= spikeMarginMgdl() &&
+            episodeSpikeMs >= spikeSustainedMs()
+
+    // -- User bias ------------------------------------------------------------
+    // One dial, read fresh each time so a change takes effect on the next episode rather than at
+    // the next restart. Steps that add insulin scale up toward reactive; steps that remove it only
+    // ever scale up toward conservative (see LearningBias).
+    private fun bias() = LearningBias.from(sp)
+    private fun strengthenStep() = scaleStrengthenStep(STRENGTHEN_STEP, bias())
+    private fun spikeMarginMgdl() = LATE_SPIKE_MARGIN_MGDL * bias().barScale
+    private fun spikeSustainedMs() = (SPIKE_SUSTAINED_MS * bias().barScale).toLong()
+    private fun strengthenMarginMgdl() = STRENGTHEN_MARGIN_MGDL * bias().barScale
 
     private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
                            lateSpike: Boolean = false, duraDrove: Boolean = false): Double {
-        var fraction = 1.0
+        var fraction = bias().safetyScale
         if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
         if (voided)      fraction *= VOIDED_STEP_FRACTION

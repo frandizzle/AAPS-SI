@@ -61,6 +61,7 @@ import app.aaps.core.validators.preferences.*
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
 import org.json.JSONObject
 import javax.inject.Inject
+import kotlin.math.roundToInt
 import javax.inject.Singleton
 import kotlin.math.floor
 
@@ -349,6 +350,19 @@ open class SmartInsulinPlugin @Inject constructor(
     fun activitySessionLearned(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> = activitySessionLearner.rows()
     fun activitySessionLastOutcome(): String = activitySessionLearner.lastOutcome
 
+    /** Plain-English version of what the bias dial is currently doing, for the SI tab. */
+    private fun learningBiasSummary(): String {
+        val b = LearningBias.from(sp)
+        val addPct  = ((b.strengthenScale - 1.0) * 100).roundToInt()
+        val barPct  = ((1.0 - b.barScale) * 100).roundToInt()
+        val safePct = ((b.safetyScale - 1.0) * 100).roundToInt()
+        return buildString {
+            append(if (addPct >= 0) "insulin-adding steps +$addPct%" else "insulin-adding steps $addPct%")
+            append(if (barPct >= 0) ", spike/stall bars ${barPct}% lower" else ", spike/stall bars ${-barPct}% higher")
+            if (safePct > 0) append(", corrections after a low +$safePct%")
+        }
+    }
+
     /** User switch for the per-meal/UAM ISF learner. Off freezes it; what it learned is still dosed from. */
     fun modeIsfLearningEnabled(): Boolean =
         sp.getBoolean(BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.key, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.defaultValue)
@@ -494,6 +508,8 @@ open class SmartInsulinPlugin @Inject constructor(
             if (rows == 0) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
             if (!modeIsfLearningEnabled())
                 appendLine("\nLearning OFF — these values are still dosed from, nothing new is learned.")
+            else if (LearningBias.from(sp) != LearningBias.NEUTRAL)
+                appendLine("\nBias: ${LearningBias.from(sp).label} — ${learningBiasSummary()}")
             else if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${modeIsfLearner.lastOutcome}")
         }.trimEnd()
 
@@ -1571,6 +1587,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinRestingHrBpm, null, R.string.si_resting_hr_bpm_title))
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinBasalLearningEnabled, null, R.string.si_basal_learning_title))
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled, R.string.si_mode_isf_learning_summary, R.string.si_mode_isf_learning_title))
+                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinLearningBias, R.string.si_learning_bias_summary, null, R.string.si_learning_bias_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowStartHour, R.string.si_dawn_start_hour_summary, null, R.string.si_dawn_start_hour_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowEndHour, R.string.si_dawn_end_hour_summary, null, R.string.si_dawn_end_hour_title))
                 addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinDawnSmbReduction, R.string.si_dawn_smb_reduction_summary, R.string.si_dawn_smb_reduction_title))

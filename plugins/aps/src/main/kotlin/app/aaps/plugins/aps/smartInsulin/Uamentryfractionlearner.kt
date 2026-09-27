@@ -332,7 +332,7 @@ class UamEntryFractionLearner @Inject constructor(
                 // Undoing a slow-return run takes a bigger step than the raises that built it, so
                 // a trigger that only ever pushes one way can't out-run its own correction.
                 val reversing = (states[ended]?.slowReturnStreak ?: 0) > 0
-                var step = if (unexplained) WEAKEN_STEP * UNEXPLAINED_STEP_FRACTION else WEAKEN_STEP
+                var step = if (unexplained) weakenStep() * UNEXPLAINED_STEP_FRACTION else weakenStep()
                 if (reversing) step *= SLOW_RETURN_REVERSAL_MULT
                 clearSlowReturnStreak(ended)
                 applyOutcome(ended, -step,
@@ -393,13 +393,13 @@ class UamEntryFractionLearner @Inject constructor(
     private fun evaluate(p: MealMode, bgMgdl: Double, targetMgdl: Double, handover: Boolean) {
         run {
             val whenTxt         = if (handover) "handed over to P/F at" else "ended"
-            val endedOnTarget   = bgMgdl <= targetMgdl + ON_TARGET_MARGIN_MGDL
+            val endedOnTarget   = bgMgdl <= targetMgdl + onTargetMarginMgdl()
             val peakAboveTarget = pendingPeakMgdl - targetMgdl
             // Two ways to be too slow off the mark: a big rise measured from entry, or a peak
             // that got well above target at all. The second exists because the first is blind
             // to however much of the spike happened before the detector could fire.
-            val bigExcursion    = pendingExcursion >= EXCURSION_STRENGTHEN_MGDL ||
-                (peakAboveTarget >= PEAK_STRENGTHEN_MARGIN_MGDL && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
+            val bigExcursion    = pendingExcursion >= excursionBarMgdl() ||
+                (peakAboveTarget >= peakBarMgdl() && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
             val peakWasLate     = pendingPeakOffsetMs >= MIN_PEAK_OFFSET_FOR_STRENGTHEN_MS
             val peakMins        = pendingPeakOffsetMs / 60_000
             val excMmol         = "%.1f".format(pendingExcursion / 18.0)
@@ -411,9 +411,9 @@ class UamEntryFractionLearner @Inject constructor(
                     // most of a week to move a tenth. Capped at WEAKEN_STEP, so however bad the
                     // episode, front-loading never ratchets up faster than an early low pulls it
                     // back down.
-                    val overshoot = maxOf(pendingExcursion / EXCURSION_STRENGTHEN_MGDL,
-                                          peakAboveTarget / PEAK_STRENGTHEN_MARGIN_MGDL)
-                    val step = (STRENGTHEN_STEP * overshoot).coerceIn(STRENGTHEN_STEP, MAX_STRENGTHEN_STEP)
+                    val overshoot = maxOf(pendingExcursion / excursionBarMgdl(),
+                                          peakAboveTarget / peakBarMgdl())
+                    val step = (strengthenStep() * overshoot).coerceIn(strengthenStep(), maxStrengthenStep())
                     if (railedHigh(p)) {
                         // Nowhere left to go: the first SMBs already carry the whole computed
                         // requirement. Accumulating a positive offset here would be dead state —
@@ -442,7 +442,7 @@ class UamEntryFractionLearner @Inject constructor(
                     // up any more, so the front-loading fell short. Scaled by how far over it
                     // stalled, capped like every other raise.
                     val overTarget = (bgMgdl - targetMgdl) / SLOW_RETURN_MARGIN_MGDL
-                    val step = (SLOW_RETURN_STEP * overTarget).coerceIn(SLOW_RETURN_STEP, MAX_STRENGTHEN_STEP)
+                    val step = (slowReturnStep() * overTarget).coerceIn(slowReturnStep(), maxStrengthenStep())
                     if (railedHigh(p)) {
                         magnitudeHandoff = p to pendingStartMs
                         clearSlowReturnStreak(p)
@@ -476,6 +476,16 @@ class UamEntryFractionLearner @Inject constructor(
     private fun clearSlowReturnStreak(mode: MealMode) {
         states[mode]?.takeIf { it.slowReturnStreak != 0 }?.let { it.slowReturnStreak = 0; persist() }
     }
+
+    // -- User bias ------------------------------------------------------------
+    private fun bias() = LearningBias.from(sp)
+    private fun strengthenStep()   = scaleStrengthenAmount(STRENGTHEN_STEP, bias())
+    private fun maxStrengthenStep()= scaleStrengthenAmount(MAX_STRENGTHEN_STEP, bias())
+    private fun slowReturnStep()   = scaleStrengthenAmount(SLOW_RETURN_STEP, bias())
+    private fun weakenStep()       = scaleSafetyAmount(WEAKEN_STEP, bias())
+    private fun excursionBarMgdl() = EXCURSION_STRENGTHEN_MGDL * bias().barScale
+    private fun peakBarMgdl()      = PEAK_STRENGTHEN_MARGIN_MGDL * bias().barScale
+    private fun onTargetMarginMgdl() = ON_TARGET_MARGIN_MGDL * bias().barScale
 
     /** Insulin-pull-only residual — conservative fasting-rules "is something still absorbing". */
     private fun tailGramsThisCycle(deltaMgdl: Double, activityPerMin: Double, isfMgdl: Double, carbRatio: Double): Double {

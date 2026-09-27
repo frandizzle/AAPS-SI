@@ -41,6 +41,8 @@ enum class IntKey(
     ApsSmartInsulinPreBolus2DefaultDelayMins("si_prebolus2_default_delay_mins", 25, 5, 120, defaultedBySM = true),
     ApsSmartInsulinPostModeLockoutMins("si_post_mode_lockout_mins", 90, 0, 180, defaultedBySM = true),
     ApsSmartInsulinReboundWindowMins  ("si_rebound_window_mins",   60, 20, 90, defaultedBySM = true),
+    // 0 = very conservative … 2 = neutral … 4 = very reactive. See LearningBias.
+    ApsSmartInsulinLearningBias       ("si_learning_bias",          2,  0,  4, defaultedBySM = true),
     OverviewSageWarning("statuslights_sage_warning", 216, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSageCritical("statuslights_sage_critical", 240, 24, 720, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),
     OverviewSbatWarning("statuslights_sbat_warning", 25, 0, 100, defaultedBySM = true, dependency = BooleanKey.OverviewShowStatusLights),

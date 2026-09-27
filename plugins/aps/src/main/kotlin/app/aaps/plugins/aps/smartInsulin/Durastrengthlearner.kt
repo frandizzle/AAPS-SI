@@ -224,7 +224,7 @@ class DuraStrengthLearner @Inject constructor(
                 episodeWentLow     = false
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
-            val elevatedAndStuck = targetMgdl > 0.0 && bgMgdl >= targetMgdl + STUCK_MARGIN_MGDL && duraStuckMinutes > 0.0
+            val elevatedAndStuck = targetMgdl > 0.0 && bgMgdl >= targetMgdl + stuckMarginMgdl() && duraStuckMinutes > 0.0
             if (!elevatedAndStuck) closeRun()
             else {
                 if (runStartMs == 0L) { runStartMs = nowMs; runLastMs = nowMs }
@@ -293,7 +293,7 @@ class DuraStrengthLearner @Inject constructor(
             s.episodes++
             val stuckMins = pendingStuckMs / 60_000
             lastOutcome = when {
-                pendingStuckMs < STUCK_LONG_MS ->
+                pendingStuckMs < stuckLongMs() ->
                     "${p.label} DURA ×${"%.2f".format(pendingMaxDura)} landed without a low or a qualifying stall" +
                         (pendingStallNote?.let { " ($it)" } ?: "") + " — no change"
                 pendingAtFloorMs >= HELD_AT_LIMIT_MS ->
@@ -301,7 +301,7 @@ class DuraStrengthLearner @Inject constructor(
                 s.ceiling != NO_CEILING && pendingAtCeilingMs >= HELD_AT_LIMIT_MS -> {
                     val before = s.ceiling
                     val excess = s.ceiling - 1.0
-                    val raised = 1.0 + maxOf(excess * CAP_LOOSEN_STEP, excess + CAP_LOOSEN_MIN)
+                    val raised = 1.0 + maxOf(excess * capLoosenStep(), excess + CAP_LOOSEN_MIN)
                     s.ceiling = if (raised > CAP_CLEAR_ABOVE) NO_CEILING else raised
                     "${p.label} stuck ${stuckMins}min with DURA held at its ceiling — ceiling ${fmtCeiling(before)} → ${fmtCeiling(s.ceiling)}"
                 }
@@ -309,7 +309,7 @@ class DuraStrengthLearner @Inject constructor(
                     "${p.label} stuck ${stuckMins}min with DURA at full configured strength — raise DURA strength in settings if this keeps happening"
                 else -> {
                     val before = s.factor
-                    s.factor = (s.factor * STRENGTHEN_STEP).coerceIn(FACTOR_MIN, FACTOR_MAX)
+                    s.factor = (s.factor * strengthenStep()).coerceIn(FACTOR_MIN, FACTOR_MAX)
                     "${p.label} stuck ${stuckMins}min while DURA was still climbing — strength ×${"%.2f".format(before)} → ×${"%.2f".format(s.factor)}"
                 }
             } + " (n=${s.episodes})"
@@ -321,7 +321,7 @@ class DuraStrengthLearner @Inject constructor(
 
     private fun reduce(mode: Scope, exerciseSuspected: Boolean, maxDura: Double, whenTxt: String, undershoot: Boolean = false) {
         val s = states.getOrPut(mode.key) { ModeState() }
-        var fraction = 1.0
+        var fraction = bias().safetyScale
         if (exerciseSuspected) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)        fraction *= UNDERSHOOT_STEP_FRACTION
         val step = 1.0 - (1.0 - REDUCE_STEP) * fraction
@@ -351,11 +351,11 @@ class DuraStrengthLearner @Inject constructor(
     private fun closeRun() {
         if (runStartMs == 0L) return
         val lenMs = runLastMs - runStartMs
-        if (lenMs >= STUCK_LONG_MS) {
+        if (lenMs >= stuckLongMs()) {
             val n = NET_DELTA_READINGS.coerceAtMost(runBgs.size)
             val netDrop = runBgs.take(n).average() - runBgs.takeLast(n).average()
             val reject = when {
-                runEngagedMs < ENGAGED_MIN_MS ->
+                runEngagedMs < engagedMinMs() ->
                     "stuck ${lenMs / 60_000}min but DURA engaged only ${runEngagedMs / 60_000}min of it"
                 netDrop > MAX_NET_DROP_MGDL ->
                     "stuck ${lenMs / 60_000}min but already drifting down ${"%.1f".format(netDrop / 18.0)}mmol"
@@ -380,6 +380,14 @@ class DuraStrengthLearner @Inject constructor(
         runEngagedMs = 0L; runAtCeilingMs = 0L; runAtFloorMs = 0L
         runBgs.clear()
     }
+
+    // -- User bias ------------------------------------------------------------
+    private fun bias() = LearningBias.from(sp)
+    private fun strengthenStep()  = scaleStrengthenAmount(STRENGTHEN_STEP - 1.0, bias()) + 1.0
+    private fun capLoosenStep()   = scaleStrengthenAmount(CAP_LOOSEN_STEP - 1.0, bias()) + 1.0
+    private fun stuckLongMs()     = (STUCK_LONG_MS * bias().barScale).toLong()
+    private fun stuckMarginMgdl() = STUCK_MARGIN_MGDL * bias().barScale
+    private fun engagedMinMs()    = (ENGAGED_MIN_MS * bias().barScale).toLong()
 
     private fun fmtCeiling(c: Double) = if (c == NO_CEILING) "none" else "×${"%.2f".format(c)}"
 
