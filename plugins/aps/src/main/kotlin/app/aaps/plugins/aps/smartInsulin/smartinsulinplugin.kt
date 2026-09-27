@@ -139,6 +139,15 @@ open class SmartInsulinPlugin @Inject constructor(
     var learningDirtyUntilMs: Long = 0L
     /** Mode activation the second-wave detector is currently following. */
     private var secondWaveModeStartMs: Long = 0L
+
+    // -- Post-mode insulin attribution ---------------------------------------
+    // What the last mode left on board when it ended, and what the loop has delivered since. A low
+    // after a mode is charged in proportion (see ModeInsulinShare) rather than by the clock.
+    private var modeIobAtEndU        = 0.0
+    private var postModeDeliveredU   = 0.0
+    private var postModeSinceMs      = 0L
+    private var lastModeStartSeenMs  = 0L
+    private var lastIobSampleMs      = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
     /**
@@ -361,6 +370,14 @@ open class SmartInsulinPlugin @Inject constructor(
             append(if (barPct >= 0) ", spike/stall bars ${barPct}% lower" else ", spike/stall bars ${-barPct}% higher")
             if (safePct > 0) append(", corrections after a low +$safePct%")
         }
+    }
+
+    /** How long after a mode ends its insulin can still be blamed for a low — the learned DIA for
+     *  the mode that just ran, railed so a wild learned value can't make it silly either way. */
+    private fun postModeWatchMs(): Long {
+        val mode = mealOverrideManager.activeMealMode ?: previousMealModeForLockout
+        val diaMins = profileLearner.getProfile(mode).diaMinutes
+        return (diaMins.coerceIn(105.0, 240.0) * 60_000L).toLong()
     }
 
     /** User switch for the per-meal/UAM ISF learner. Off freezes it; what it learned is still dosed from. */
@@ -1191,6 +1208,36 @@ open class SmartInsulinPlugin @Inject constructor(
         // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
         // FASTING ISF for its tail contamination check — the mode ISF no longer applies
         // once the mode has ended.
+        // -- Whose insulin is behind a post-mode low ---------------------------
+        // While a mode runs, keep a live reading of what it has working; once it ends, add up what
+        // the loop gives afterwards. Boluses come from the database (SMBs are boluses); the basal
+        // side is the temp rate's difference from profile over the cycle.
+        val modeRunning = mealOverrideManager.activeMealMode != null
+        if (modeRunning) {
+            if (mealOverrideManager.modeStartMs != lastModeStartSeenMs) {
+                lastModeStartSeenMs = mealOverrideManager.modeStartMs
+                postModeDeliveredU  = 0.0
+                postModeSinceMs     = 0L
+            }
+            // Refreshed every cycle, so whenever the mode ends this holds its parting IOB.
+            modeIobAtEndU  = (iobArray.firstOrNull()?.iob ?: 0.0).coerceAtLeast(0.0)
+            postModeSinceMs = now
+        } else if (postModeSinceMs > 0L) {
+            val boluses = try {
+                persistenceLayer.getBolusesFromTimeToTime(postModeSinceMs, now, true).sumOf { it.amount }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SmartInsulin share: bolus read failed: ${e.message}"); 0.0
+            }
+            val basalExtraU = previousAPSResult?.let { prev ->
+                val hours = (now - lastIobSampleMs).coerceIn(0L, 10 * 60_000L) / 3_600_000.0
+                ((prev.rate - profile.getBasal()) * hours).coerceAtLeast(0.0)
+            } ?: 0.0
+            postModeDeliveredU += boluses + basalExtraU
+            postModeSinceMs = now
+        }
+        lastIobSampleMs = now
+        val modeInsulinShare = ModeInsulinShare.share(modeIobAtEndU, postModeDeliveredU)
+
         // Second helping inside a mode's own window: detected from the shape of absorption plus a
         // second BG peak, and it stops the episode being scored either way.
         val activeModeForWave = mealOverrideManager.activeMealMode
@@ -1228,6 +1275,10 @@ open class SmartInsulinPlugin @Inject constructor(
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
             secondWave        = secondWaveNow,
             learningEnabled   = modeIsfLearningEnabled(),
+            modeInsulinShare  = modeInsulinShare,
+            // Watch the mode's own insulin out rather than a fixed window — the share decides how
+            // much of a late low is actually its, so a longer watch can't mis-charge one.
+            watchMs           = postModeWatchMs(),
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
@@ -1281,7 +1332,9 @@ open class SmartInsulinPlugin @Inject constructor(
             targetMgdl        = targetBg,
             duraStuckMinutes  = if (duraActive) duraIsfTracker.stuckMinutesForDisplay else 0.0,
             duraAtCeiling     = duraAtCeilingThisCycle,
-            duraAtFloor       = duraAtFloorThisCycle
+            duraAtFloor       = duraAtFloorThisCycle,
+            modeInsulinShare  = modeInsulinShare,
+            watchMs           = postModeWatchMs()
         )
 
         // -- UAM entry SMB fraction --------------------------------------------

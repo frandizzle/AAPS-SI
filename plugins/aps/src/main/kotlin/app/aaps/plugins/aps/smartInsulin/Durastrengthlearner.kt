@@ -194,7 +194,10 @@ class DuraStrengthLearner @Inject constructor(
         targetMgdl:        Double = 0.0,
         duraStuckMinutes:  Double = 0.0,     // DURA's own unbroken stuck timer this cycle
         duraAtCeiling:     Boolean = false,  // DURA wanted more than the learned ceiling allowed
-        duraAtFloor:       Boolean = false   // DURA's ISF was held at the configured floor
+        duraAtFloor:       Boolean = false,  // DURA's ISF was held at the configured floor
+        modeInsulinShare:  Double = 1.0,     // share of the insulin behind a post-mode low that was
+        // this mode's rather than the loop's own corrections since (see ModeInsulinShare)
+        watchMs:           Long = TAIL_MS    // how long after the mode ends its insulin is watched
     ) {
         if (activeModeNow != null) {
             if (activeScope == null || modeStartMs != activeStartMs) {
@@ -266,7 +269,7 @@ class DuraStrengthLearner @Inject constructor(
             // why an hour stuck high changed nothing.
             if (!episodeWentLow && (maxDura >= ENGAGED_THRESHOLD || episodeStuckMs >= STUCK_LONG_MS || episodeStallNote != null)) {
                 pendingScope   = ended
-                pendingUntilMs = nowMs + TAIL_MS
+                pendingUntilMs = nowMs + watchMs
                 pendingMaxDura = maxDura
                 pendingStuckMs     = episodeStuckMs
                 pendingAtCeilingMs = episodeAtCeilingMs
@@ -279,8 +282,12 @@ class DuraStrengthLearner @Inject constructor(
         if (lowActive || undershootActive) {
             // Opened only for being stuck, with DURA never engaged: the low isn't DURA's. Close the
             // watch without strengthening — a low always wins — and without cutting either.
-            if (pendingMaxDura >= ENGAGED_THRESHOLD)
-                reduce(p, exerciseSuspected, pendingMaxDura, "in the tail after", undershoot = !lowActive)
+            if (!ModeInsulinShare.chargeable(modeInsulinShare)) {
+                lastOutcome = "${p.label} went low afterwards, but only ${ModeInsulinShare.describe(modeInsulinShare, p.label)} — the loop's own insulin since, not DURA's"
+                aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
+            } else if (pendingMaxDura >= ENGAGED_THRESHOLD)
+                reduce(p, exerciseSuspected, pendingMaxDura, "in the tail after", undershoot = !lowActive,
+                       share = modeInsulinShare)
             else {
                 lastOutcome = "${p.label} was stuck but went ${if (lowActive) "low" else "near the low guard"} afterwards with DURA barely engaged — no change"
                 aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
@@ -319,11 +326,13 @@ class DuraStrengthLearner @Inject constructor(
         }
     }
 
-    private fun reduce(mode: Scope, exerciseSuspected: Boolean, maxDura: Double, whenTxt: String, undershoot: Boolean = false) {
+    private fun reduce(mode: Scope, exerciseSuspected: Boolean, maxDura: Double, whenTxt: String, undershoot: Boolean = false,
+                       share: Double = 1.0) {
         val s = states.getOrPut(mode.key) { ModeState() }
         var fraction = bias().safetyScale
         if (exerciseSuspected) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)        fraction *= UNDERSHOOT_STEP_FRACTION
+        fraction *= share.coerceIn(0.0, 1.0)
         val step = 1.0 - (1.0 - REDUCE_STEP) * fraction
         s.factor = (s.factor * step).coerceIn(FACTOR_MIN, FACTOR_MAX)
         // Cut from the peak this episode actually reached, not from the old ceiling: DURA stopping

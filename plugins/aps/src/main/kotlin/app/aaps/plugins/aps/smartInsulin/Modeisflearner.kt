@@ -246,6 +246,9 @@ class ModeIsfLearner @Inject constructor(
         // guard — too far down to call the episode a success, not far enough to call it a hypo
         entryShapeRailed: Boolean = false,  // this mode's UAM entry fraction is already at its
         // ceiling, so no amount of further front-loading is available to fix a late spike
+        modeInsulinShare: Double = 1.0,  // how much of the insulin behind a post-mode low was this
+        // mode's, rather than the loop's own corrections since it ended (see ModeInsulinShare)
+        watchMs: Long = WATCH_MS,        // how long the low watch stays open after a mode ends
         learningEnabled: Boolean = true,  // user switch. Off FREEZES this learner: episodes stop
         // being scored and anything in flight is dropped, but the multipliers already learned keep
         // being dosed from. Clearing them is a separate, deliberate act (the reset button).
@@ -425,7 +428,7 @@ class ModeIsfLearner @Inject constructor(
                 // meals drives BG down, that is real and this learner must see it.
                 lastOutcome = "${ended.label} not scored — more food during the episode"
                 aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
-                openWatch(ended, nowMs, endedStartMs, maxDura)
+                openWatch(ended, nowMs, endedStartMs, maxDura, watchMs)
             } else {
                 pendingScope     = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
@@ -434,7 +437,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingStartBgMgdl  = episodeStartBgMgdl
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
-                openWatch(ended, nowMs, endedStartMs, maxDura)
+                openWatch(ended, nowMs, endedStartMs, maxDura, watchMs)
             }
         }
 
@@ -444,12 +447,22 @@ class ModeIsfLearner @Inject constructor(
         watchScope?.let { w ->
             if (lowActive || undershootActive) {
                 val soft = undershootActive && !lowActive
-                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura)),
+                // Charged by whose insulin it was, not by how long ago the mode ended. Below the
+                // bar the loop's own corrections own this low, and the circadian hard-low penalty
+                // is already charging the hour for it.
+                if (!ModeInsulinShare.chargeable(modeInsulinShare)) {
+                    noChange(w, "low after ${w.label} ended, but only ${ModeInsulinShare.describe(modeInsulinShare, w.label)} — the loop's own insulin since, not this mode's")
+                    clearWatch()
+                    pendingScope = null
+                    return
+                }
+                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura), share = modeInsulinShare),
                              (if (soft) "BG near the low guard after ${w.label} ended" else "low after ${w.label} ended") +
                                  (if (exerciseSuspected) ", but BG was falling faster than insulin explains (exercise?)" else "") +
                                  (if (watchReduced) ", episode no longer clean" else "") +
                                  duraNote(watchMaxDura) +
-                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced || duraDrove(watchMaxDura)) " at reduced step" else ""),
+                                 ", ${ModeInsulinShare.describe(modeInsulinShare, w.label)}" +
+                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced || duraDrove(watchMaxDura) || modeInsulinShare < 1.0) " at reduced step" else ""),
                              watchStartMs)
                 clearWatch()
                 pendingScope = null
@@ -568,19 +581,21 @@ class ModeIsfLearner @Inject constructor(
     private fun strengthenMarginMgdl() = STRENGTHEN_MARGIN_MGDL * bias().barScale
 
     private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
-                           lateSpike: Boolean = false, duraDrove: Boolean = false): Double {
+                           lateSpike: Boolean = false, duraDrove: Boolean = false,
+                           share: Double = 1.0): Double {
         var fraction = bias().safetyScale
         if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
         if (voided)      fraction *= VOIDED_STEP_FRACTION
         if (lateSpike)   fraction *= LATE_SPIKE_STEP_FRACTION
         if (duraDrove)   fraction *= DURA_ATTRIBUTION_STEP_FRACTION
+        fraction *= share.coerceIn(0.0, 1.0)
         return 1.0 + (WEAKEN_STEP - 1.0) * fraction
     }
 
-    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double) {
+    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double, watchMs: Long = WATCH_MS) {
         watchScope   = mode
-        watchUntilMs = nowMs + WATCH_MS
+        watchUntilMs = nowMs + watchMs
         watchStartMs = episodeStartMs
         watchReduced = false
         watchMaxDura = maxDura
