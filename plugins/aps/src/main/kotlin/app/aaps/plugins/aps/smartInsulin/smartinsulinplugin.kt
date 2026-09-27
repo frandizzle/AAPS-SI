@@ -349,6 +349,10 @@ open class SmartInsulinPlugin @Inject constructor(
     fun activitySessionLearned(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> = activitySessionLearner.rows()
     fun activitySessionLastOutcome(): String = activitySessionLearner.lastOutcome
 
+    /** User switch for the per-meal/UAM ISF learner. Off freezes it; what it learned is still dosed from. */
+    fun modeIsfLearningEnabled(): Boolean =
+        sp.getBoolean(BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.key, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.defaultValue)
+
     /** Set while a second wave has been detected in the running episode — surfaced on the SI tab
      *  so this detector can be eyeballed on real data before it is trusted quietly. */
     fun secondWaveNote(): String? = secondWaveDetector.description.takeIf { it.isNotEmpty() }
@@ -488,7 +492,9 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine(learnerRow(PfWindow.label(mode, window), valueTxt, "×${"%.3f".format(mult)}", n))
             }
             if (rows == 0) appendLine("No completed episodes yet — learns after each meal/UAM mode ends.")
-            if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${modeIsfLearner.lastOutcome}")
+            if (!modeIsfLearningEnabled())
+                appendLine("\nLearning OFF — these values are still dosed from, nothing new is learned.")
+            else if (modeIsfLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${modeIsfLearner.lastOutcome}")
         }.trimEnd()
 
         val duraStrengthRaw = buildString {
@@ -1205,6 +1211,7 @@ open class SmartInsulinPlugin @Inject constructor(
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
             secondWave        = secondWaveNow,
+            learningEnabled   = modeIsfLearningEnabled(),
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
         )
 
@@ -1563,6 +1570,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget, profileUtil, sp, null, R.string.si_activity_heavy_target_title))
                 addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinRestingHrBpm, null, R.string.si_resting_hr_bpm_title))
                 addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinBasalLearningEnabled, null, R.string.si_basal_learning_title))
+                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled, R.string.si_mode_isf_learning_summary, R.string.si_mode_isf_learning_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowStartHour, R.string.si_dawn_start_hour_summary, null, R.string.si_dawn_start_hour_title))
                 addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowEndHour, R.string.si_dawn_end_hour_summary, null, R.string.si_dawn_end_hour_title))
                 addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinDawnSmbReduction, R.string.si_dawn_smb_reduction_summary, R.string.si_dawn_smb_reduction_title))

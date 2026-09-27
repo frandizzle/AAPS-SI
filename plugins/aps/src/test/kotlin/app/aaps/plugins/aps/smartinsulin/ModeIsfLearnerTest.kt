@@ -36,13 +36,13 @@ class ModeIsfLearnerTest {
         delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
-        pfWindow: PfWindow = PfWindow.NONE
+        pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        pfWindow = pfWindow
+        pfWindow = pfWindow, learningEnabled = learning
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -571,5 +571,51 @@ class ModeIsfLearnerTest {
         cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 175.0)
         runQuietTail(start + CYCLE_MS, bg = 140.0, delta = -2.5)
         assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+
+    // -- The on/off switch -------------------------------------------------------
+
+    @Test
+    fun `with learning off an episode that would have moved the multiplier does not`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, learning = false)
+        var t = BASE_MS
+        repeat(16) { t += CYCLE_MS; cycle(null, 0L, t, bg = 130.0, learning = false) }
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertEquals(0, learner.episodeCount(MealMode.DINNER))
+    }
+
+    @Test
+    fun `what was already learned survives the switch being off`() {
+        // Off freezes; it does not clear. The multiplier is still there to be dosed from.
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0)
+        runQuietTail(BASE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+
+        val t = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.DINNER, t, t, bg = 160.0, learning = false)
+        cycle(null, 0L, t + CYCLE_MS, bg = 130.0, learning = false)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `an episode in flight when the switch goes off is dropped, not judged later`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0)          // episode running
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 150.0, learning = false)   // switched off mid-tail
+        assertTrue(learner.lastOutcome.contains("switched off"), learner.lastOutcome)
+        // Switched back on, the old episode must not resurface and be scored.
+        var t = BASE_MS + 2 * CYCLE_MS
+        repeat(16) { t += CYCLE_MS; cycle(null, 0L, t, bg = 130.0) }
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `learning resumes on the next episode after the switch comes back on`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, learning = false)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 130.0, learning = false)
+        val t = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.DINNER, t, t, bg = 160.0)
+        runQuietTail(t, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
     }
 }

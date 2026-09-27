@@ -141,6 +141,8 @@
     <string name="si_max_tbr_title">SmartInsulin Max TBR (U/h) — inner cap (set equal to Max Basal Rate above)</string>
     <string name="si_aggression_max_title">Aggressiveness ceiling (1.0=off, 1.5=moderate, 2.0=aggressive)</string>
     <string name="si_basal_learning_title">Enable overnight basal learning</string>
+    <string name="si_mode_isf_learning_title">Enable per-meal/UAM ISF learning</string>
+    <string name="si_mode_isf_learning_summary">Learns a per-mode ISF correction from how each meal or UAM episode lands. Off freezes what has been learned — the multipliers keep being dosed from, nothing new is learned. Use the reset button on the SmartInsulin tab to clear them instead.</string>
     <!-- ActionSmartMeal -->
     <string name="smart_meal_action_name">SmartInsulin: Set Meal Mode</string>
     <string name="smart_meal_action_short">Meal: %1$s</string>

@@ -246,6 +246,9 @@ class ModeIsfLearner @Inject constructor(
         // guard — too far down to call the episode a success, not far enough to call it a hypo
         entryShapeRailed: Boolean = false,  // this mode's UAM entry fraction is already at its
         // ceiling, so no amount of further front-loading is available to fix a late spike
+        learningEnabled: Boolean = true,  // user switch. Off FREEZES this learner: episodes stop
+        // being scored and anything in flight is dropped, but the multipliers already learned keep
+        // being dosed from. Clearing them is a separate, deliberate act (the reset button).
         secondWave: Boolean = false,  // a second lot of food was eaten inside this episode's own
         // window — see SecondWaveDetector. The episode can no longer say anything about the dose
         // it was given, so it is not scored; lows still land, they are a safety signal either way.
@@ -253,6 +256,18 @@ class ModeIsfLearner @Inject constructor(
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
     ) {
+        if (!learningEnabled) {
+            // Drop anything in flight rather than leaving it to be judged whenever the switch comes
+            // back on — that verdict would be about an episode from another era.
+            if (activeScope != null || pendingScope != null || watchScope != null) {
+                activeScope = null; activeStartMs = 0L
+                pendingScope = null
+                clearWatch()
+                lastOutcome = "mode ISF learning is switched off — episode dropped"
+                aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+            }
+            return
+        }
         if (activeModeNow != null) {
             if (activeScope == null || modeStartMs != activeStartMs) {
                 // A new activation while an evaluation is still pending contaminates it —

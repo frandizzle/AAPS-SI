@@ -44,6 +44,7 @@ enum class BooleanKey(
     // SmartInsulin plugin
     ApsSmartInsulinEnableLearning("si_enable_learning", true, defaultedBySM = true),
     ApsSmartInsulinCgmWarmupEnabled("si_cgm_warmup_enabled", true, defaultedBySM = true),
+    ApsSmartInsulinModeIsfLearningEnabled("si_mode_isf_learning_enabled", true, defaultedBySM = true),
     ApsSmartInsulinLowCarbMode("si_low_carb_mode", false, defaultedBySM = true),
     ApsSmartInsulinActivityTargetEnabled("si_activity_target_enabled", true, defaultedBySM = true),
     ApsSmartInsulinTargetRespectEnabled("si_target_respect_enabled", false, defaultedBySM = true),
