@@ -101,6 +101,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val uamEntryFractionLearner: UamEntryFractionLearner,
     private val unexplainedDropTracker:  UnexplainedDropTracker,
     private val secondWaveDetector:      SecondWaveDetector,
+    private val carbEpisodeManager:      CarbEpisodeManager,
     private val activitySessionManager: ActivitySessionManager,
     private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
@@ -383,6 +384,10 @@ open class SmartInsulinPlugin @Inject constructor(
     /** User switch for the per-meal/UAM ISF learner. Off freezes it; what it learned is still dosed from. */
     fun modeIsfLearningEnabled(): Boolean =
         sp.getBoolean(BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.key, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.defaultValue)
+
+    /** Carb episode line for the SI tab, or null when no carbs are on board. */
+    fun carbEpisodeStatus(): String? =
+        carbEpisodeManager.statusLine(iobCobCalculator.getMealDataWithWaitingForCalculationFinish().mealCOB, dateUtil.now())
 
     /** Set while a second wave has been detected in the running episode — surfaced on the SI tab
      *  so this detector can be eyeballed on real data before it is trusted quietly. */
@@ -1077,6 +1082,22 @@ open class SmartInsulinPlugin @Inject constructor(
             mealOverrideManager.cancelOverride()
         }
 
+        // -- Entered carbs: the stock oref path -----------------------------------
+        // Carbs on board means the loop was told what is coming, so the COB curve doses it and UAM
+        // stands down — otherwise the rise gets dosed twice, once predicted and once observed.
+        // The episode is filed under the meal window the clock was in when the carbs went in, and
+        // closing it starts the post-meal lockout the same way a UAM mode ending does.
+        val cobNowG = mealData.mealCOB
+        carbEpisodeManager.onCycle(cobNowG, now, uamController.mealWindowAt(currentHour, currentMinute))?.let { ended ->
+            val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
+            if (lockoutMins > 0) {
+                learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
+                sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) }
+            }
+            aapsLogger.debug(LTag.APS, "SmartInsulin: carbs finished (${ended.label}) — post-meal lockout ${lockoutMins}min")
+        }
+        val carbEpisodeActive = carbEpisodeManager.active
+
         // -- Declared activity/stress session (golf, gym) ------------------------
         // A user-declared no-food window: hormones, not carbs. It blocks the meal modes from
         // reading a hormonal plateau as food, strengthens the resistant phase by what it has
@@ -1085,7 +1106,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val sessionActive = activitySessionManager.active != null
         val sessionStatus = if (sessionActive) activitySessionManager.statusLine(now) ?: "" else ""
 
-        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date, noFoodSession = sessionActive)
+        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date, noFoodSession = sessionActive || carbEpisodeActive)
 
         val justFiredMode = uamController.justFiredThisCycle
         val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
@@ -1274,7 +1295,9 @@ open class SmartInsulinPlugin @Inject constructor(
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
             secondWave        = secondWaveNow,
-            learningEnabled   = modeIsfLearningEnabled(),
+            // Entered carbs are not a dose this loop chose, so the dose-judging learners sit them
+            // out. Only the insulin-curve learner (DIA/peak) runs against a carb episode.
+            learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive,
             modeInsulinShare  = modeInsulinShare,
             // Watch the mode's own insulin out rather than a fixed window — the share decides how
             // much of a late low is actually its, so a longer watch can't mis-charge one.
@@ -1303,7 +1326,7 @@ open class SmartInsulinPlugin @Inject constructor(
             // per mode by ProfileLearner, so a short mode isn't judged on its own clock.
             insulinPeakMins   = mealOverrideManager.activeMealMode
                 ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
-            secondWave        = secondWaveNow
+            secondWave        = secondWaveNow || carbEpisodeActive
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole
@@ -1428,6 +1451,8 @@ open class SmartInsulinPlugin @Inject constructor(
             iobArray                 = iobArray,
             oapsProfile              = oapsProfile,
             mealData                 = mealData,
+            profileIsfMgdl           = trueIsfMgdl,
+            carbRatioGPerU           = profile.getIc(),
             profile                  = profile,
             learnedProfile           = profileLearner.getProfile(if (mealMode.isUam) MealMode.entries.find { it.label == mealMode.label.removePrefix("UAM ") } ?: mealMode else mealMode),
             mealMode                 = mealMode,

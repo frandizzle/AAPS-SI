@@ -545,6 +545,11 @@ class UamController @Inject constructor(
         return hour * 60 + minute
     }
 
+    /** The meal window this clock time falls in, or null outside them all. Public because a carb
+     *  episode is filed under the same windows — carbs entered at 12:30 are lunch's, whether the
+     *  loop found that meal itself or was told about it. */
+    fun mealWindowAt(currentHour: Int, currentMinute: Int): MealMode? = resolveUamMode(currentHour, currentMinute)
+
     private fun resolveUamMode(currentHour: Int, currentMinute: Int): MealMode? {
         val nowMins = currentHour * 60 + currentMinute
         val candidates = listOf(

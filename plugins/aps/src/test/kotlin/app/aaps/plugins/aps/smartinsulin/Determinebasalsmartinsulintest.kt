@@ -167,6 +167,8 @@ class DetermineBasalSmartInsulinTest {
             iobArray              = iobArray,
             oapsProfile           = oapsProfile,
             mealData              = mealData,
+            profileIsfMgdl        = 50.0,
+            carbRatioGPerU        = 10.0,
             profile               = profile,
             learnedProfile        = learnedProfile,
             mealMode              = MealMode.FASTING,
@@ -411,6 +413,7 @@ class DetermineBasalSmartInsulinTest {
         sut.determine_basal(
             glucoseStatus = glucoseStatus, currentTemp = currentTemp,
             iobArray = flatIobArray(0.0, 0.0), oapsProfile = oapsProfile, mealData = mealData,
+            profileIsfMgdl = 50.0, carbRatioGPerU = 10.0,
             profile = profile, learnedProfile = defaultLearned(), mealMode = MealMode.FASTING,
             lowGuardMmol = 3.9, warnGuardMmol = 4.5, maxSmbU = 2.0, maxTbrU = 5.0,
             aggressiveness = 1.0, tirSummary = "100%", basalMultiplier = 1.0,

@@ -157,6 +157,11 @@ class SmartInsulinFragment : DaggerFragment() {
         binding.btnSessionGolf.text = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
         binding.btnSessionGym.text  = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
 
+        smartInsulinPlugin.carbEpisodeStatus()?.let {
+            addRow(c, it, "Carbs were entered, so the COB curve doses this meal (profile ISF ÷ CR) and\n" +
+                "UAM/P-F stand down. When COB reaches zero the post-meal lockout starts.",
+                   Color.parseColor("#FF64B5F6"))
+        }
         smartInsulinPlugin.secondWaveNote()?.let {
             addRow(c, "⚠ Second wave detected — episode not scored", it +
                 ".\nMore food went in during the mode's own window, so nothing after it says\n" +
