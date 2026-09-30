@@ -3,8 +3,9 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * A stretch of entered carbs, treated as a meal episode in its own right.
@@ -25,7 +26,7 @@ import javax.inject.Singleton
  *     out: their whole basis is judging a dose the LOOP chose, and here the dose came from carbs
  *     the user counted.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class CarbEpisodeManager @Inject constructor(
     private val aapsLogger: AAPSLogger
 ) {

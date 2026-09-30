@@ -8,8 +8,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Appends one CSV row per completed meal/UAM episode, for the user to retrieve and paste back
@@ -18,7 +19,7 @@ import javax.inject.Singleton
  * Documents/AAPS root FileListProviderImpl already uses for its plain-File "results" location
  * (resultPath), so it doesn't depend on the SAF export-directory permission being set up.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class MealAbsorptionCsvLogger @Inject constructor(
     private val context:    Context,
     private val aapsLogger: AAPSLogger

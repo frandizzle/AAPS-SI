@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -9,13 +11,14 @@ import app.aaps.core.keys.StringKey
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Adaptive aggressiveness learner.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class AggressionLearner @Inject constructor(
     private val sp:          SP,
     private val aapsLogger:  AAPSLogger
@@ -213,7 +216,7 @@ class AggressionLearner @Inject constructor(
         for (i in 0..6) { dayScores[i] = 1.0; daySampleCount[i] = 0 }
         globalScore  = 1.0
         lastUpdateMs = 0L
-        sp.edit { putString(StringKey.ApsSmartInsulinAggressionState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinAggressionState.key, "") }
         aapsLogger.debug(LTag.APS, "AggressionLearner: reset to 1.0")
     }
 
@@ -228,7 +231,7 @@ class AggressionLearner @Inject constructor(
             for (i in 0..6) dayArr.put(JSONObject().put("score", dayScores[i]).put("n", daySampleCount[i]))
             sp.edit {
                 putString(
-                    StringKey.ApsSmartInsulinAggressionState.key,
+                    StringNonKey.ApsSmartInsulinAggressionState.key,
                     JSONObject().put(K_SCORE, globalScore).put(K_LAST_UPDATE, lastUpdateMs)
                         .put(K_SAMPLES, arr).put("dayScores", dayArr).toString()
                 )
@@ -240,7 +243,7 @@ class AggressionLearner @Inject constructor(
 
     private fun restoreState() {
         try {
-            val raw = sp.getString(StringKey.ApsSmartInsulinAggressionState.key, StringKey.ApsSmartInsulinAggressionState.defaultValue)
+            val raw = sp.getString(StringNonKey.ApsSmartInsulinAggressionState.key, StringNonKey.ApsSmartInsulinAggressionState.defaultValue)
             if (raw.isNullOrBlank()) return
             val json     = JSONObject(raw)
             globalScore  = json.optDouble(K_SCORE, 1.0)

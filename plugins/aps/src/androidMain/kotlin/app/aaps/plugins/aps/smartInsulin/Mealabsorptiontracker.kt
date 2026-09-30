@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
@@ -7,8 +9,9 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONArray
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.min
 
 /**
@@ -49,7 +52,7 @@ data class InProgressEpisode(
     val estimatedGramsSoFar: Double
 )
 
-@Singleton
+@SingleIn(AppScope::class)
 class MealAbsorptionTracker @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger
@@ -246,14 +249,14 @@ class MealAbsorptionTracker @Inject constructor(
                         .put(K_TAIL_G, e.tailGrams)
                 )
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinMealAbsorptionLog.key, arr.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinMealAbsorptionLog.key, arr.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "MealAbsorptionTracker: persist failed: ${e.message}")
         }
     }
 
     private fun restoreHistory() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinMealAbsorptionLog.key, StringKey.ApsSmartInsulinMealAbsorptionLog.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinMealAbsorptionLog.key, StringNonKey.ApsSmartInsulinMealAbsorptionLog.defaultValue)
         if (raw.isBlank()) return
         try {
             val arr = JSONArray(raw)

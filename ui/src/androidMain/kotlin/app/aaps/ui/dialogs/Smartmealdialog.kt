@@ -1,5 +1,9 @@
 package app.aaps.ui.dialogs
 
+import app.aaps.core.keys.BooleanNonKey
+
+import app.aaps.core.keys.DoubleNonKey
+
 import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -93,31 +97,31 @@ class SmartMealDialog : DialogFragmentWithDate() {
 
     /** Returns the BooleanKey for DURA-enabled of the given mode (null for non-manual modes) */
     private fun duraEnabledKeyFor(mode: MealMode): BooleanKey? = when (mode) {
-        MealMode.BREAKFAST -> BooleanKey.ApsSmartInsulinBreakfastDuraEnabled
-        MealMode.LUNCH     -> BooleanKey.ApsSmartInsulinLunchDuraEnabled
-        MealMode.DINNER    -> BooleanKey.ApsSmartInsulinDinnerDuraEnabled
-        MealMode.LOW_CARB  -> BooleanKey.ApsSmartInsulinLowCarbDuraEnabled
-        MealMode.EXTENDED  -> BooleanKey.ApsSmartInsulinExtendedDuraEnabled
+        MealMode.BREAKFAST -> BooleanNonKey.ApsSmartInsulinBreakfastDuraEnabled
+        MealMode.LUNCH     -> BooleanNonKey.ApsSmartInsulinLunchDuraEnabled
+        MealMode.DINNER    -> BooleanNonKey.ApsSmartInsulinDinnerDuraEnabled
+        MealMode.LOW_CARB  -> BooleanNonKey.ApsSmartInsulinLowCarbDuraEnabled
+        MealMode.EXTENDED  -> BooleanNonKey.ApsSmartInsulinExtendedDuraEnabled
         else               -> null
     }
 
     /** Returns the UnitDoubleKey for the DURA floor of the given mode (null for non-manual modes) */
     private fun duraFloorKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
-        MealMode.BREAKFAST -> UnitDoubleKey.ApsSmartInsulinBreakfastDuraFloor
-        MealMode.LUNCH     -> UnitDoubleKey.ApsSmartInsulinLunchDuraFloor
-        MealMode.DINNER    -> UnitDoubleKey.ApsSmartInsulinDinnerDuraFloor
-        MealMode.LOW_CARB  -> UnitDoubleKey.ApsSmartInsulinLowCarbDuraFloor
-        MealMode.EXTENDED  -> UnitDoubleKey.ApsSmartInsulinExtendedDuraFloor
+        MealMode.BREAKFAST -> DoubleNonKey.ApsSmartInsulinBreakfastDuraFloor
+        MealMode.LUNCH     -> DoubleNonKey.ApsSmartInsulinLunchDuraFloor
+        MealMode.DINNER    -> DoubleNonKey.ApsSmartInsulinDinnerDuraFloor
+        MealMode.LOW_CARB  -> DoubleNonKey.ApsSmartInsulinLowCarbDuraFloor
+        MealMode.EXTENDED  -> DoubleNonKey.ApsSmartInsulinExtendedDuraFloor
         else               -> null
     }
 
     /** Returns the DoubleKey for the DURA strength (ramp weight) of the given mode (null for non-manual modes) */
     private fun duraStrengthKeyFor(mode: MealMode): DoubleKey? = when (mode) {
-        MealMode.BREAKFAST -> DoubleKey.ApsSmartInsulinBreakfastDuraStrength
-        MealMode.LUNCH     -> DoubleKey.ApsSmartInsulinLunchDuraStrength
-        MealMode.DINNER    -> DoubleKey.ApsSmartInsulinDinnerDuraStrength
-        MealMode.LOW_CARB  -> DoubleKey.ApsSmartInsulinLowCarbDuraStrength
-        MealMode.EXTENDED  -> DoubleKey.ApsSmartInsulinExtendedDuraStrength
+        MealMode.BREAKFAST -> DoubleNonKey.ApsSmartInsulinBreakfastDuraStrength
+        MealMode.LUNCH     -> DoubleNonKey.ApsSmartInsulinLunchDuraStrength
+        MealMode.DINNER    -> DoubleNonKey.ApsSmartInsulinDinnerDuraStrength
+        MealMode.LOW_CARB  -> DoubleNonKey.ApsSmartInsulinLowCarbDuraStrength
+        MealMode.EXTENDED  -> DoubleNonKey.ApsSmartInsulinExtendedDuraStrength
         else               -> null
     }
 
@@ -209,7 +213,7 @@ class SmartMealDialog : DialogFragmentWithDate() {
             isfFmt, false, binding.okcancel.ok, null
         )
         binding.duraStrengthAmount.setParams(
-            savedInstanceState?.getDouble("duraStrengthAmount") ?: DoubleKey.ApsSmartInsulinDinnerDuraStrength.defaultValue,
+            savedInstanceState?.getDouble("duraStrengthAmount") ?: DoubleNonKey.ApsSmartInsulinDinnerDuraStrength.defaultValue,
             0.0, 5.0, 0.1,
             DecimalFormat("0.0"), false, binding.okcancel.ok, null
         )

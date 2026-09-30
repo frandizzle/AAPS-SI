@@ -115,4 +115,263 @@
     <string name="autoISF_settings_title">AutoISF settings</string>
     <string name="smb_delivery_settings_title">SMB delivery settings</string>
 
+
+    <!-- SmartInsulin -->
+    <string name="dynisf_adjust_sensitivity">Enable TDD based sensitivity ratio for basal and glucose target modification</string>
+    <string name="dynisf_adjust_sensitivity_summary">Uses the last 24h TDD/7D TDD to calculate sensitivity ratio used for increasing or decreasing basal rate, and also adjust glucose target if these options are enabled, in the same way Autosens does. It is recommended to start with this option turned off</string>
+    <string name="dyn_isf_adjust_summary" formatted="false">Adjustment factor for DynamicISF. Set more than 100% for more aggressive correction doses, and less than 100% for less aggressive corrections.</string>
+    <string name="high_temptarget_raises_sensitivity_title">High temptarget raises sensitivity</string>
+    <string name="high_temptarget_raises_sensitivity_summary"><![CDATA[Raise sensitivity for temptargets >= 100]]></string>
+    <string name="low_temptarget_lowers_sensitivity_title">Low temptarget lowers sensitivity</string>
+    <string name="low_temptarget_lowers_sensitivity_summary"><![CDATA[Lower sensitivity for temptargets < 100]]></string>
+    <string name="smb_interval_summary">How frequently SMBs will be given in min</string>
+    <string name="resistance_lowers_target_title">Resistance lowers target</string>
+    <string name="resistance_lowers_target_summary">When resistance is detected, lower the target glucose</string>
+    <string name="sensitivity_raises_target_title">Sensitivity raises target</string>
+    <string name="sensitivity_raises_target_summary">When sensitivity is detected, raise the target glucose</string>
+    <string name="smart_insulin">SmartInsulin</string>
+    <string name="smart_insulin_short">SI</string>
+    <string name="smart_insulin_description">Adaptive insulin model with BG prediction and anti-rebound dosing</string>
+    <string name="si_activity_target_enabled_title">Enable activity target raise (HR/steps)</string>
+    <string name="si_target_respect_enabled_title">Enable target assist (ISF-based basal reduction)</string>
+    <string name="si_prebolus2_default_u_title">Pre-bolus 2: default amount (U)</string>
+    <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>
+    <string name="smart_insulin_low_carb_mode">Low carb mode</string>
+    <string name="smart_insulin_low_carb_mode_summary">Treat meals below threshold as low-carb for cleaner insulin learning</string>
+    <string name="smart_insulin_low_carb_threshold">Low carb threshold (g)</string>
+    <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
+    <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
+    <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
+    <string name="smart_insulin_learning_rate">Learning rate</string>
+    <string name="smart_insulin_learning_rate_summary">How quickly the model adapts. Lower = more stable, higher = faster adaptation (0.05–0.5)</string>
+    <string name="si_breakfast_isf_mult_title">Breakfast ISF multiplier</string>
+    <string name="si_lunch_isf_mult_title">Lunch ISF multiplier</string>
+    <string name="si_dinner_isf_mult_title">Dinner ISF multiplier</string>
+    <string name="si_lowcarb_isf_mult_title">Low Carb ISF multiplier</string>
+    <string name="si_extended_isf_mult_title">Extended meal ISF multiplier</string>
+    <string name="si_breakfast_carbs_g_title">Breakfast default carbs (g)</string>
+    <string name="si_lunch_carbs_g_title">Lunch default carbs (g)</string>
+    <string name="si_dinner_carbs_g_title">Dinner default carbs (g)</string>
+    <string name="si_mode_window_mins_title">Meal mode window (minutes)</string>
+    <string name="si_max_prebolus_title">Max pre-bolus (U)</string>
+    <string name="si_activity_light_target_title">Activity: Light target raise</string>
+    <string name="si_activity_moderate_target_title">Activity: Moderate target raise</string>
+    <string name="si_activity_heavy_target_title">Activity: Heavy target raise</string>
+    <string name="si_resting_hr_bpm_title">Resting heart rate (bpm, 0 = use absolute thresholds)</string>
+    <string name="si_cgm_warmup_enabled_title">CGM warmup guard (skip SMBs on new sensor)</string>
+    <string name="smart_insulin_prediction_horizon">Prediction horizon (min)</string>
+    <string name="smart_insulin_prediction_horizon_summary">How far ahead to predict BG when evaluating SMB safety</string>
+    <string name="smart_insulin_low_guard">Low guard threshold</string>
+    <string name="smart_insulin_low_guard_summary">Predicted BG below this blocks SMB delivery entirely</string>
+    <string name="smart_insulin_warn_guard">Warning guard threshold</string>
+    <string name="smart_insulin_warn_guard_summary">Predicted BG below this reduces SMB delivery proportionally</string>
+    <string name="executing">Executing</string>
+    <string name="openapsama_bolus_snooze_dia_divisor">Bolus snooze dia divisor</string>
+    <string name="openapsma_run">Run now</string>
+    <string name="openapsama_use_autosens">Use Autosens feature</string>
+    <string name="openapsma_max_basal_title">Max Basal Rate (U/h) — hard AAPS ceiling</string>
+    <string name="openapsma_max_basal_summary">Hard outer limit enforced by AAPS. No TBR will ever exceed this. Recommended: set equal to SmartInsulin Max TBR below.</string>
+    <string name="openapsma_max_iob_title">Maximum basal IOB OpenAPS can deliver [U]</string>
+    <string name="openapsma_max_iob_summary">This value is called Max IOB in OpenAPS context\nThis is maximal insulin in [U] APS can deliver at once.</string>
+    <string name="openapsama_autosens_adjust_targets_summary">Default value: true\nThis is used to allow autosens to adjust BG targets, in addition to ISF and basals.</string>
+    <string name="openapsama_autosens_adjust_targets">Autosens adjust targets, too</string>
+    <string name="openapsama_min_5m_carb_impact" translatable="false">min_5m_carbimpact</string>
+    <string name="openapsama_min_5m_carb_impact_summary">Default value: 3.0 (AMA) or 8.0 (SMB). This is a setting for default carb absorption impact per 5 minutes. The default is an expected 3mg/dl/5min. This affects how fast COB are decayed, and how much carb absorption is assumed in calculating future predicted BG, when BG is falling more than expected, or not rising as much as expected.</string>
+    <string name="openapsama_max_daily_safety_multiplier_summary">Default value: 3 This is a key OpenAPS safety cap. What this does is limit your basals to be 3x (in this people) your biggest basal rate. You likely will not need to change this, but you should be aware that’s what is discussed about “3x max daily; 4x current” for safety caps.</string>
+    <string name="openapsama_current_basal_safety_multiplier_summary">Default value: 4 This is the other half of the key OpenAPS safety caps, and the other half of “3x max daily; 4x current” of the safety caps. This means your basal, regardless of max basal set on your pump, cannot be any higher than this number times the current level of your basal. This is to prevent people from getting into dangerous territory by setting excessively high max basals before understanding how the algorithm works. Again, the default is 4x; most people will never need to adjust this and are instead more likely to need to adjust other settings if they feel like they are “running into” this safety cap.</string>
+    <string name="openapsama_bolus_snooze_dia_divisor_summary">Default value: 2\nBolus snooze is enacted after you do a meal bolus, so the loop won’t counteract with low temps when you’ve just eaten. The example here and default is 2; so a 3 hour DIA means that bolus snooze will be gradually phased out over 1.5 hours (3DIA/2).</string>
+    <string name="always_use_short_avg">Always use short average delta instead of simple delta</string>
+    <string name="always_use_short_avg_summary">Useful when data from unfiltered sources like xDrip+ gets noisy.</string>
+    <string name="openapsama_max_daily_safety_multiplier">Max daily safety multiplier</string>
+    <string name="openapsama_current_basal_safety_multiplier">Current basal safety multiplier</string>
+    <string name="openapssmb_max_iob_title">Maximum total IOB OpenAPS can\'t go over [U]</string>
+    <string name="openapssmb_max_iob_summary">This value is called Max IOB in OpenAPS context\nOpenAPS will not add more insulin if current IOB is greater than this value</string>
+    <string name="enable_uam">Enable UAM</string>
+    <string name="enable_smb">Enable SMB</string>
+    <string name="enable_smb_summary">Use Super Micro Boluses instead of temp basal for faster action</string>
+    <string name="enable_uam_summary">Detection of Unannounced meals</string>
+    <string name="enable_smb_always">Enable SMB always</string>
+    <string name="enable_smb_always_summary">Enable SMB always independently to COB, temp targets or boluses. Possible only with BG sources with advanced filtering of data</string>
+    <string name="enable_smb_after_carbs">Enable SMB after carbs</string>
+    <string name="enable_smb_after_carbs_summary">Enable SMB for 6h after carbs, even with 0 COB. Possible only with BG sources with advanced filtering of data</string>
+    <string name="enable_smb_with_cob">Enable SMB with COB</string>
+    <string name="enable_smb_with_cob_summary">Enable SMB when there is COB active.</string>
+    <string name="enable_smb_with_temp_target">Enable SMB with temp targets</string>
+    <string name="enable_smb_with_temp_target_summary">Enable SMB when there is temp target active (eating soon, exercise)</string>
+    <string name="enable_smb_with_high_temp_target">Enable SMB with high temp targets</string>
+    <string name="enable_smb_with_high_temp_target_summary">Enable SMB when there is high temp target active (exercise, above 100 mg/dl or 5.5 mmol/l)</string>
+    <string name="smb_max_minutes_summary">Max minutes of basal to limit SMB to</string>
+    <string name="uam_smb_max_minutes">UAM SMB max minutes</string>
+    <string name="uam_smb_max_minutes_summary">Max minutes of basal to limit SMB to for UAM</string>
+    <string name="carbs_req_threshold">Minimum Carbs Required For Suggestion</string>
+    <string name="carbs_req_threshold_summary">Minimum grams of carbs to display a carbs suggestion alert. Carbs suggestions below this number will not trigger a notification.</string>
+    <string name="lgs_threshold_summary">BG value below which insulin is suspended. Default value uses standard target model. User can set value between 60mg/dl (3.3mmol/l) and 100mg/dl(5.5mmol/l). Values below 65/3.6 result in use of default model</string>
+    <string name="lgs_threshold_title">BG level below which low glucose suspend occurs</string>
+    <string name="si_max_tbr_title">SmartInsulin Max TBR (U/h) — inner cap (set equal to Max Basal Rate above)</string>
+    <string name="si_aggression_max_title">Aggressiveness ceiling (1.0=off, 1.5=moderate, 2.0=aggressive)</string>
+    <string name="si_basal_learning_title">Enable overnight basal learning</string>
+    <string name="si_mode_isf_learning_title">Enable per-meal/UAM ISF learning</string>
+    <string name="si_learning_bias_title">Learning bias (0 = very conservative, 2 = neutral, 4 = very reactive)</string>
+    <string name="si_learning_bias_summary">How hard the meal/UAM learners chase highs. Reactive makes every insulin-adding step bigger and lowers the bars for what counts as a spike, a high finish or a stall — quicker to add insulin, quicker to act on smaller excursions. Conservative does the opposite and also makes corrections after a low bigger. Steps that REMOVE insulin never shrink, whatever this is set to.</string>
+    <string name="si_mode_isf_learning_summary">Learns a per-mode ISF correction from how each meal or UAM episode lands. Off freezes what has been learned — the multipliers keep being dosed from, nothing new is learned. Use the reset button on the SmartInsulin tab to clear them instead.</string>
+    <string name="smart_meal_action_name">SmartInsulin: Set Meal Mode</string>
+    <string name="smart_meal_action_short">Meal: %1$s</string>
+    <string name="smart_meal_select_mode">Meal type</string>
+    <string name="smart_meal_prebolus">Pre-bolus now (when safe)</string>
+    <string name="si_lowcarb_carbs_g_title">Low Carb default carbs (g)</string>
+    <string name="si_extended_carbs_g_title">Extended meal default carbs (g)</string>
+    <string name="si_mode_window_mins_summary">How long the selected meal mode stays active</string>
+    <string name="si_max_prebolus_summary">Safety cap on automatic pre-bolus dose</string>
+    <string name="si_breakfast_isf_title">Breakfast ISF override (0 = use profile)</string>
+    <string name="si_lunch_isf_title">Lunch ISF override (0 = use profile)</string>
+    <string name="si_dinner_isf_title">Dinner ISF override (0 = use profile)</string>
+    <string name="si_lowcarb_isf_title">Low Carb ISF override (0 = use profile)</string>
+    <string name="si_extended_isf_title">Extended meal ISF override (0 = use profile)</string>
+    <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol to dose as if ISF is 1.0 mmol for this meal mode.</string>
+    <string name="si_max_smb_title">Max SMB (U)</string>
+    <string name="si_dawn_start_hour_title">Dawn window start hour (0-23)</string>
+    <string name="si_dawn_start_hour_summary">SMB reduction starts from this hour (default 3 = 3:00 AM)</string>
+    <string name="si_dawn_end_hour_title">Dawn window end hour (0-23)</string>
+    <string name="si_dawn_end_hour_summary">SMB reduction ends at this hour (default 9 = 9:00 AM)</string>
+    <string name="si_dawn_smb_reduction_title">Dawn window SMB reduction (0.1-1.0)</string>
+    <string name="si_dawn_smb_reduction_summary">Fraction of normal SMB size during fasting rise window. 0.5 = 50% of normal. 1.0 = no reduction.</string>
+    <string name="si_dialog_title">Smart Meal</string>
+    <string name="si_mode_label">Meal mode</string>
+    <string name="si_duration_label">Duration (mins)</string>
+    <string name="si_prebolus_label">Pre-bolus</string>
+    <string name="si_cancel_mode_label">Cancel %1$s mode</string>
+    <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
+    <string name="si_mode_cancelled">Meal mode cancelled</string>
+    <string name="si_mode_activated">%1$s mode active for %2$d mins</string>
+    <string name="use_dynamic_sensitivity_title">Enable dynamic sensitivity</string>
+    <string name="use_dynamic_sensitivity_summary">Adjust algorithm to use dynamic sensitivity instead of profile value</string>
+    <string name="insulin_peak">Peak</string>
+    <string name="run_now">Run now</string>
+    <string name="loop_open_mode_min_change">Minimal request change [%]</string>
+    <string name="loop_open_mode_min_change_summary" formatted="false">Open Loop will popup new change request only if change is bigger than this value in %. Default value is 20%</string>
+    <string name="autotune_settings">Autotune settings</string>
+    <string name="autotune_auto_title">Automation Switch Profile</string>
+    <string name="autotune_auto_summary">If enabled, Autotune will automatically update and switch to input profile after calculation from an automation rule.</string>
+    <string name="autotune_categorize_uam_as_basal_title">Categorize UAM as basal</string>
+    <string name="autotune_categorize_uam_as_basal_summary">Enable only if you have reliably entered all carbs eaten, with this option sudden rises seen by Autotune will be used to recommend changes to the basal rate.</string>
+    <string name="autotune_tune_insulin_curve_title">Tune insulin curve</string>
+    <string name="autotune_tune_insulin_curve_summary">Enable only if you use free peak. This option will tune peak and DIA durations</string>
+    <string name="autotune_circadian_ic_isf_title">Apply average result in circadian IC/ISF</string>
+    <string name="autotune_circadian_ic_isf_summary">Autotune will not tune circadian variations, this option only apply the average tuning of IC and ISF to your circadian input profile</string>
+    <string name="autotune_additional_log_title">Include more log information for debugging</string>
+    <string name="autotune_additional_log_summary">Switch on only if requested by dev to send more log information to help debugging Autotune plugin</string>
+    <string name="autotune_default_tune_days_summary">Default number of days of data to be processed by Autotune (up to 30)</string>
+    <string name="not_available_full">Not available</string>
+    <string name="half_basal_exercise_target_title">Half basal exercise target</string>
+    <string name="half_basal_exercise_target_summary">Set to a number, e.g. 160, which means when temp target is 160 mg/dL and High temptarget raises sensitivity=true, run 50%% basal at this level (120 = 75%%; 140 = 60%%).</string>
+    <string name="autoISF_settings_summary">AutoISF allows to adapt the insulin sensitivity factor (ISF) in various scenarios of glucose behaviour\n\nIt can also adapt SMB delivery settings</string>
+    <string name="smb_delivery_settings_summary">Set of options to increase the actual SMB size which can be delivered in situations where ISF was strengthened, i.e. fairly low ISF figure.\n\nUSE WITH CAUTION</string>
+    <string name="openapsama_enable_autoISF">Enable ISF adaptation by glucose behaviour</string>
+    <string name="openapsama_autoISF_max_summary">Similar to autosens_max this defines how strong ISF can become.\n\nThe default value 1.0 effectively shuts off this effect.\n\nWARNING: Be extremely careful when using values above 2.5</string>
+    <string name="openapsama_autoISF_min_summary">Similar to autosens_min this defines how weak ISF can become.\n\nThe default value 1.0 effectively shuts off this effect.</string>
+    <string name="openapsama_dura_ISF_weight_summary">This is the weight applied during longer lasting, elevated glucose plateaus and which strengthens ISF thereby potentially increasing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_lower_ISFrange_weight_summary">This is the weight applied while glucose is below target and which weakens ISF thereby potentially reducing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_higher_ISFrange_weight_summary">This is the weight applied while glucose is above target and which strengthens ISF thereby potentially increasing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_pp_ISF_weight_summary">This is the weight applied while glucose is rising and which strengthens ISF thereby potentially increasing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_bgAccel_ISF_weight_summary">This is the weight applied while glucose accelerates and which strengthens ISF thereby potentially increasing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_bgBrake_ISF_weight_summary">This is the weight applied while glucose decelerates and which weakens ISF thereby potentially reducing insulin delivery.\n\nThe default value 0.0 effectively shuts off this effect.</string>
+    <string name="openapsama_autoISF_max">Max autoISF ratio\n(autoISF_max)</string>
+    <string name="openapsama_autoISF_min">Min autoISF ratio\n(autoISF_min)</string>
+    <string name="openapsama_lower_ISFrange_weight">lower ISF-range weight\n(lower_ISFrange_weight)</string>
+    <string name="openapsama_higher_ISFrange_weight">higher ISF-range weight\n(higher_ISFrange_weight)</string>
+    <string name="openapsama_pp_ISF_weight">postprandial ISF weight\n(pp_ISF_weight)</string>
+    <string name="openapsama_bgAccel_ISF_weight">Weight while BG accelerates\n(bgAccel_ISF_weight)</string>
+    <string name="openapsama_bgBrake_ISF_weight">Weight while BG decelerates\n(bgBrake_ISF_weight)</string>
+    <string name="openapsama_dura_ISF_weight">dura_ISF weight\n(dura_ISF_weight)</string>
+    <string name="openapsama_smb_delivery_ratio">fixed SMB delivery ratio\n(smb_delivery_ratio)</string>
+    <string name="openapsama_smb_delivery_ratio_min">variable SMB delivery ratio, lower end\n(smb_delivery_ratio_min)</string>
+    <string name="openapsama_smb_delivery_ratio_max">variable SMB delivery ratio, upper end\n(smb_delivery_ratio_max)</string>
+    <string name="openapsama_smb_delivery_ratio_bg_range">variable SMB delivery ratio, mapped glucose range\n(smb_delivery_ratio_bg_range)</string>
+    <string name="openapsama_smb_max_range_extension">SMB/UAM max range extension\n(smb_max_range_extension)</string>
+    <string name="openapsama_smb_delivery_ratio_summary">Default value: 0.5 This is another key OpenAPS safety cap, and specifies what share of the total insulin required can be delivered as SMB. This is to prevent people from getting into dangerous territory by setting SMB requests from the caregivers phone at the same time. Increase this experimental value slowly and with caution.</string>
+    <string name="openapsama_smb_delivery_ratio_min_summary">Default value: 0.5 This is the lower end of a linearly increasing ratio rather than the fix value above.</string>
+    <string name="openapsama_smb_delivery_ratio_max_summary">Default value: 0.5 This is the upper end of a linearly increasing ratio rather than the fix value above.</string>
+    <string name="openapsama_smb_delivery_ratio_bg_range_summary">Default value: 0. The linearly increasing SMB delivery ratio is mapped to the glucose range [target_bg, target_bg+bg_range].\nAt target_bg the SMB ratio is smb_delivery_ratio_min, at target_bg+bg_range it is smb_delivery_ratio_max\nWith 0 the linearly increasing SMB ratio is disabled and the fixed smb_delivery_ratio is used.</string>
+    <string name="openapsama_smb_max_range_extension_summary">Default value: 1 This is another key OpenAPS safety cap, and specifies by what factor you can exceed the regular 120 maxSMB/maxUAM minutes. Increase this experimental value slowly and with caution.</string>
+    <string name="enableSMB_EvenOn_OddOff_always">Enable alternative activation of SMB depending on active target being even number</string>
+    <string name="enableSMB_EvenOn_OddOff_always_summary">\nenabled ...\nif active target(mmol/L) has even decimal\nor active target(mg/dL) is even number\n\ndisabled otherwise</string>
+    <string name="openapsama_iob_threshold_percent_summary" formatted="false">Percentage of maxIOB above which SMBs are disabled.\nDefault value: 100%\nWith 100% this feature is effectively disabled.</string>
+    <string name="openapsama_iob_threshold_percent">maxIOB threshold percent for SMB\n(iob_threshold_percent)</string>
+    <string name="si_post_mode_lockout_mins_title">Post-meal learning lockout (min, 0=off)</string>
+    <string name="si_rebound_window_mins_title">Low recovery window (min, default 60)</string>
+    <string name="si_rebound_window_mins_summary">How long after a low BG event the loop runs in recovery mode — tapering basal from 30% back to 100% and blocking SMBs for the first 75% of the window. Shorter = faster return to normal dosing. Range: 20–90 min.</string>
+    <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
+    <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
+    <string name="si_first_day_cgm_smoothing_title">First-day CGM smoothing (UKF, G6)</string>
+    <string name="si_first_day_cgm_smoothing_summary">Apply Unscented Kalman Filter smoothing during the first 24 h of a new sensor session. Reduces phantom spikes from sensor settling. Auto-expires after 24 h — no action needed. G6 users: enable this. G7 users: select UKF from the AAPS smoothing menu instead.</string>
+    <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
+    <string name="si_uam_wobble_tolerance_title">Wobble tolerance</string>
+    <string name="si_uam_wobble_tolerance_summary">When ON: if the 15-minute average delta confirms a genuine rise (≥ your Rise Min Delta), a single weaker reading only needs to meet 50% of the threshold to keep the streak alive. Example: Rise Min Delta = 0.2 mmol (3.6 mg/dL) — with wobble ON, a +0.1 mmol (+1.8 mg/dL) reading mid-streak still counts if the 15-min average is ≥ 0.2 mmol (3.6 mg/dL). When OFF: every reading must independently meet the full Rise Min Delta. Simpler and more predictable — if you want +0.2 mmol (3.6 mg/dL) to always count and +0.1 mmol (1.8 mg/dL) to never count, turn this OFF.</string>
+    <string name="si_uam_trigger_threshold_title">UAM trigger threshold</string>
+    <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading</string>
+    <string name="si_uam_burst_threshold_title">UAM burst trigger threshold (total rise, 0=off)</string>
+    <string name="si_uam_entry_smb_fraction_title">UAM entry SMB fraction — default (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_count_title">UAM entry SMB count (apply fraction to first N SMBs)</string>
+    <string name="si_uam_entry_smb_fraction_breakfast_title">Breakfast entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_fraction_lunch_title">Lunch entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_fraction_dinner_title">Dinner entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_fraction_snack_title">Snack entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_entry_smb_fraction_afternoon_title">Afternoon entry SMB fraction (0.1-1.0)</string>
+    <string name="si_uam_rise_readings_title">UAM consecutive rise readings required</string>
+    <string name="si_uam_day_start_title">UAM day start hour (0-23)</string>
+    <string name="si_uam_night_cutoff_title">UAM night cutoff hour (0-23)</string>
+    <string name="si_uam_breakfast_enabled_title">UAM Breakfast enabled</string>
+    <string name="si_uam_breakfast_start_title">UAM Breakfast window start hour</string>
+    <string name="si_uam_breakfast_end_title">UAM Breakfast window end hour</string>
+    <string name="si_uam_breakfast_duration_title">UAM Breakfast mode duration (min)</string>
+    <string name="si_uam_breakfast_isf_title">UAM Breakfast ISF (0 = profile)</string>
+    <string name="si_uam_lunch_enabled_title">UAM Lunch enabled</string>
+    <string name="si_uam_lunch_start_title">UAM Lunch window start hour</string>
+    <string name="si_uam_lunch_end_title">UAM Lunch window end hour</string>
+    <string name="si_uam_lunch_duration_title">UAM Lunch mode duration (min)</string>
+    <string name="si_uam_lunch_isf_title">UAM Lunch ISF (0 = profile)</string>
+    <string name="si_uam_dinner_enabled_title">UAM Dinner enabled</string>
+    <string name="si_uam_dinner_start_title">UAM Dinner window start hour</string>
+    <string name="si_uam_dinner_start_minute_title">UAM Dinner window start minute (+ hour)</string>
+    <string name="si_uam_dinner_end_title">UAM Dinner window end hour</string>
+    <string name="si_uam_dinner_end_minute_title">UAM Dinner window end minute (+ hour)</string>
+    <string name="si_uam_dinner_duration_title">UAM Dinner mode duration (min)</string>
+    <string name="si_uam_dinner_isf_title">UAM Dinner ISF (0 = profile)</string>
+    <string name="si_uam_afternoon_enabled_title">UAM Afternoon enabled</string>
+    <string name="si_uam_afternoon_start_title">UAM Afternoon window start hour</string>
+    <string name="si_uam_afternoon_start_minute_title">UAM Afternoon window start minute (+ hour)</string>
+    <string name="si_uam_afternoon_end_title">UAM Afternoon window end hour</string>
+    <string name="si_uam_afternoon_end_minute_title">UAM Afternoon window end minute (+ hour)</string>
+    <string name="si_uam_afternoon_duration_title">UAM Afternoon mode duration (min)</string>
+    <string name="si_uam_afternoon_isf_title">UAM Afternoon ISF (0 = profile)</string>
+    <string name="si_uam_dura_enabled_title">UAM: DURA enabled (strengthen ISF if BG stuck high)</string>
+    <string name="si_uam_dura_floor_title">UAM: DURA strongest ISF allowed (floor)</string>
+    <string name="si_uam_dura_strength_title">UAM: DURA strength</string>
+    <string name="si_pf_dura_enabled_title">Protein/Fat: DURA enabled (strengthen ISF if BG stuck high)</string>
+    <string name="si_pf_dura_floor_title">Protein/Fat: DURA strongest ISF allowed (floor)</string>
+    <string name="si_pf_dura_strength_title">Protein/Fat: DURA strength</string>
+    <string name="si_uam_snack_enabled_title">UAM Snack enabled</string>
+    <string name="si_uam_snack_start_title">UAM Snack window start hour</string>
+    <string name="si_uam_snack_end_title">UAM Snack window end hour</string>
+    <string name="si_uam_snack_duration_title">UAM Snack mode duration (min)</string>
+    <string name="si_uam_snack_isf_title">UAM Snack ISF (0 = profile)</string>
+    <string name="si_uam_proteinfat_enabled_title">UAM Protein/Fat enabled (stuck-high detection)</string>
+    <string name="si_uam_proteinfat_duration_title">UAM Protein/Fat mode duration (min)</string>
+    <string name="si_uam_proteinfat_stuck_readings_title">UAM Protein/Fat stuck readings to trigger (2-12)</string>
+    <string name="si_uam_proteinfat_isf_title">UAM Protein/Fat ISF — fallback (0 = profile)</string>
+    <string name="si_uam_proteinfat_threshold_title">UAM Protein/Fat trigger threshold</string>
+    <string name="si_uam_pf_takeover_title">Let UAM meal windows take over from P/F</string>
+    <string name="si_uam_pf_takeover_summary">If you eat while Protein/Fat mode is running, a rise inside a UAM meal window replaces it with that meal mode. Uses the dirty-window thresholds, so only a rise clearly bigger than P/F\'s own drift escalates.</string>
+    <string name="si_uam_proteinfat_day_isf_title">P/F Day ISF (0 = use fallback)</string>
+    <string name="si_uam_proteinfat_day_start_title">P/F Day window start hour (inclusive)</string>
+    <string name="si_uam_proteinfat_day_end_title">P/F Day window end hour (inclusive). For clean handover set end=16, night start=17</string>
+    <string name="si_uam_proteinfat_night_isf_title">P/F Night ISF (0 = use fallback)</string>
+    <string name="si_uam_proteinfat_night_start_title">P/F Night window start hour (inclusive). For clean handover set day end=16, night start=17</string>
+    <string name="si_uam_proteinfat_night_end_title">P/F Night window end hour (inclusive). Hours outside both windows use fallback ISF</string>
+    <string name="si_uam_proteinfat_overnight_isf_title">P/F Overnight ISF (0 = use fallback)</string>
+    <string name="si_uam_proteinfat_overnight_start_title">P/F Overnight window start hour (inclusive)</string>
+    <string name="si_uam_proteinfat_overnight_end_title">P/F Overnight window end hour (inclusive)</string>
+    <string name="si_meal_modes_title">Meal Modes</string>
+    <string name="si_activity_dawn_title">Activity &amp; Dawn</string>
+    <string name="si_uam_settings_title">UAM Auto-Detection</string>
 </resources>

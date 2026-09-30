@@ -11,8 +11,9 @@ import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Steps from the phone's own hardware pedometer.
@@ -36,7 +37,7 @@ import javax.inject.Singleton
  * listening is close to nothing. Its value is cumulative and resets on reboot, which is what the
  * regression check in [onSensorChanged] is for.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class PhoneStepCounter @Inject constructor(
     private val context:    Context,
     private val aapsLogger: AAPSLogger

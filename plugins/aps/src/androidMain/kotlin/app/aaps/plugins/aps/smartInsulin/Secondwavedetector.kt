@@ -2,8 +2,9 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Spots a SECOND lot of food eaten inside a mode's own window — the late snack that would
@@ -46,7 +47,7 @@ import javax.inject.Singleton
  * episode slightly wrong, while a false positive throws away a real meal's evidence. Missing
  * detections is the cheaper mistake, so this errs that way.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class SecondWaveDetector @Inject constructor(
     private val aapsLogger: AAPSLogger
 ) {

@@ -1,4 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
+
+import app.aaps.core.keys.StringNonKey
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -7,8 +9,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
 /**
  * Learns a basal multiplier from fasting BG drift — any time of day.
@@ -29,7 +32,7 @@ import kotlin.math.abs
  *
  * Overnight observations still move the multiplier faster (higher weight).
  */
-@Singleton
+@SingleIn(AppScope::class)
 class BasalLearner @Inject constructor(
     private val sp: SP,
     private val aapsLogger:  AAPSLogger
@@ -171,7 +174,7 @@ class BasalLearner @Inject constructor(
         for (i in 0..6) { dayMultipliers[i] = 1.0; daySampleCount[i] = 0 }
         globalMultiplier = 1.0
         lastLearnMs      = 0L
-        sp.edit { putString(StringKey.ApsSmartInsulinBasalState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinBasalState.key, "") }
         aapsLogger.debug(LTag.APS, "BasalLearner: reset to 1.0")
     }
     // ── Persistence ───────────────────────────────────────────────────────────
@@ -189,7 +192,7 @@ class BasalLearner @Inject constructor(
             for (i in 0..6) dayArr.put(JSONObject().put("mult", dayMultipliers[i]).put("n", daySampleCount[i]))
             sp.edit {
                 putString(
-                    StringKey.ApsSmartInsulinBasalState.key,
+                    StringNonKey.ApsSmartInsulinBasalState.key,
                     JSONObject()
                         .put(K_MULTIPLIER, globalMultiplier)
                         .put(K_LAST_LEARN, lastLearnMs)
@@ -204,7 +207,7 @@ class BasalLearner @Inject constructor(
     }
     private fun restoreState() {
         try {
-            val raw = sp.getString(StringKey.ApsSmartInsulinBasalState.key, StringKey.ApsSmartInsulinBasalState.defaultValue)
+            val raw = sp.getString(StringNonKey.ApsSmartInsulinBasalState.key, StringNonKey.ApsSmartInsulinBasalState.defaultValue)
             if (raw.isNullOrBlank()) return
             val json    = JSONObject(raw)
             globalMultiplier = json.optDouble(K_MULTIPLIER, 1.0).coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)

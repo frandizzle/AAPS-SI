@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -12,8 +14,9 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.interfaces.sharedPreferences.SP
 import java.util.Calendar
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * UAM (Unannounced Meal) auto-detection controller.
@@ -21,7 +24,7 @@ import javax.inject.Singleton
  * Monitors fasting BG during configured time windows and auto-activates the
  * appropriate UAM meal mode when a confirmed BG rise is detected.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class UamController @Inject constructor(
     private val sp:                  SP,
     private val mealOverrideManager: MealOverrideManager,
@@ -72,7 +75,7 @@ class UamController @Inject constructor(
     private var lastEpisodeWasSoftLanding  = false
 
     init {
-        val saved = sp.getString(StringKey.ApsSmartInsulinLastMealEndedMs.key, StringKey.ApsSmartInsulinLastMealEndedMs.defaultValue).toLongOrNull() ?: 0L
+        val saved = sp.getString(StringNonKey.ApsSmartInsulinLastMealEndedMs.key, StringNonKey.ApsSmartInsulinLastMealEndedMs.defaultValue).toLongOrNull() ?: 0L
         if (saved > 0L) {
             val isExpired = (System.currentTimeMillis() - saved) > 10 * 60 * 60 * 1000L
             if (!isExpired) {
@@ -80,7 +83,7 @@ class UamController @Inject constructor(
                 lastMealEndedMs = saved
             } else {
                 aapsLogger.debug(LTag.APS, "UAM: discarding stale lastMealEndedMs (>10h old) — P/F disarmed")
-                sp.edit { putString(StringKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
+                sp.edit { putString(StringNonKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
                 lastMealEndedMs = 0L
             }
         }
@@ -167,7 +170,7 @@ class UamController @Inject constructor(
             val isExpired = (System.currentTimeMillis() - lastMealEndedMs) > 10 * 60 * 60 * 1000L
             if (isExpired) {
                 lastMealEndedMs = 0L
-                sp.edit { putString(StringKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
+                sp.edit { putString(StringNonKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
             }
         }
 
@@ -175,7 +178,7 @@ class UamController @Inject constructor(
         currentlyInMealMode = currentMealMode != MealMode.FASTING
         if (wasMealMode && !currentlyInMealMode) {
             lastMealEndedMs = System.currentTimeMillis()
-            sp.edit { putString(StringKey.ApsSmartInsulinLastMealEndedMs.key, lastMealEndedMs.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinLastMealEndedMs.key, lastMealEndedMs.toString()) }
         }
 
         if (wasInReboundWindow && !inReboundWindow) {
@@ -233,7 +236,7 @@ class UamController @Inject constructor(
             resetStreak(); stuckHighReadings = 0
             if (lastMealEndedMs > 0L) {
                 lastMealEndedMs = 0L
-                sp.edit { putString(StringKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
+                sp.edit { putString(StringNonKey.ApsSmartInsulinLastMealEndedMs.key, "0") }
             }
             return
         }

@@ -1,7 +1,8 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * DURA_ISF, adapted from openAPS AutoISF: the longer BG sits "stuck" (roughly flat) above
@@ -13,7 +14,7 @@ import javax.inject.Singleton
  * DURA isn't enabled for the currently active mode, so a stuck-BG plateau from one activation
  * never leaks into the next.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class DuraIsfTracker @Inject constructor() {
 
     private var anchorMgdl   = 0.0

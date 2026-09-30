@@ -8,8 +8,9 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Writes one CSV row per loop cycle for offline analysis.
@@ -27,7 +28,7 @@ import javax.inject.Singleton
  * kept as the offline-analysis hook. The doc block previously also listed a bg_30min_ago column
  * that HEADER has never emitted; removed rather than left describing a column that does not exist.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class LoopCsvLogger @Inject constructor(
     private val context: Context,
     private val aapsLogger: AAPSLogger

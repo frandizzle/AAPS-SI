@@ -2,14 +2,15 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
 
 /**
  * CgmWarmupGuard — cautious dosing protection for new/noisy CGM sensors.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class CgmWarmupGuard @Inject constructor(
     private val aapsLogger: AAPSLogger
 ) {

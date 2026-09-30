@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
@@ -9,8 +11,9 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import java.util.Calendar
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
 import kotlin.math.sign
 
@@ -25,7 +28,7 @@ import kotlin.math.sign
  * All three use 24-bucket EWMA. Only update during FASTING mode with zero COB.
  * Persisted as JSON in SharedPreferences.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class CircadianLearner @Inject constructor(
     private val aapsLogger: AAPSLogger,
     private val sp: SP
@@ -2066,7 +2069,7 @@ class CircadianLearner @Inject constructor(
                 put("aggr",  aggrState.toJson())
                 put(K_PRESENCE, presence)
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinCircadianState.key, json.toString()) }
             insulinPresenceDirty = false
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "CircadianLearner persist failed: ${e.message}")
@@ -2075,7 +2078,7 @@ class CircadianLearner @Inject constructor(
 
     private fun restore() {
         try {
-            val raw = sp.getString(StringKey.ApsSmartInsulinCircadianState.key, StringKey.ApsSmartInsulinCircadianState.defaultValue)
+            val raw = sp.getString(StringNonKey.ApsSmartInsulinCircadianState.key, StringNonKey.ApsSmartInsulinCircadianState.defaultValue)
             if (raw.isNullOrBlank()) return
             val json = JSONObject(raw)
 
@@ -2110,7 +2113,7 @@ class CircadianLearner @Inject constructor(
         lastFastingInsulinMs.clear()
         insulinPresenceDirty = false
         lastRetroAttribution = "No low attributed yet"
-        sp.edit { putString(StringKey.ApsSmartInsulinCircadianState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinCircadianState.key, "") }
         aapsLogger.debug(LTag.APS, "CircadianLearner reset")
     }
 

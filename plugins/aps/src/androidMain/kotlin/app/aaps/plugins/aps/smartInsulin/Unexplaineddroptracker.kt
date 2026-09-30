@@ -1,7 +1,8 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Rolling measure of how much BG has dropped BEYOND what insulin activity can account for.
@@ -23,7 +24,7 @@ import javax.inject.Singleton
  * (BG_now − BG_windowStart), so CGM noise is bounded by two readings rather than accumulating
  * across the window.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class UnexplainedDropTracker @Inject constructor() {
 
     private val window = ArrayDeque<Sample>()

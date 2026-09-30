@@ -1,143 +1,75 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import android.graphics.Color
-import android.graphics.Typeface
-import android.os.Bundle
-import android.Manifest
 import android.os.Handler
 import android.os.Looper
-import androidx.activity.result.contract.ActivityResultContracts
-import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import android.widget.LinearLayout
-import android.widget.TextView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
-import app.aaps.plugins.aps.databinding.FragmentSmartInsulinBinding
-import dagger.android.support.DaggerFragment
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.util.Calendar
-import javax.inject.Inject
 import kotlin.math.roundToInt
 
-class SmartInsulinFragment : DaggerFragment() {
+/**
+ * What the SmartInsulin tab shows, as data.
+ *
+ * The 3.4 tab built Android Views directly inside each `updateXCard()`: every row was a TextView
+ * added to a LinearLayout. 4.0 has no fragment-based plugin UI at all, only Compose, so that had to
+ * change — but the logic deciding WHAT each card says is the valuable part, and it was ported here
+ * verbatim. Each card is an extension on [SiCardBuilder], which offers the same `addRow`/`addDivider`/
+ * `addSectionHeader`/… calls the fragment had, so the original bodies — including their early
+ * `return`s — run unchanged. Only the output moved: from Views to a list of [SiItem]s that
+ * `SmartInsulinScreen` renders.
+ *
+ * Keeping it as data also makes the tab testable without a device, which the View version never was.
+ */
+sealed interface SiItem {
+    data class Row(val primary: String, val detail: String?, val color: Int) : SiItem
+    data object Divider : SiItem
+    data class Mono(val text: String, val color: Int, val bold: Boolean) : SiItem
+    data class Note(val text: String) : SiItem
+    data class Header(val title: String) : SiItem
+    /** Tappable text — the screen decides what [action] does. */
+    data class Action(val text: String, val action: SiAction, val color: Int) : SiItem
+}
 
-    @Inject lateinit var smartInsulinPlugin: SmartInsulinPlugin
-    @Inject lateinit var aapsLogger: AAPSLogger
+enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG }
 
-    private var _binding: FragmentSmartInsulinBinding? = null
-    private val binding get() = _binding!!
+data class SiCardContent(
+    val items: List<SiItem>,
+    /** False when the card has nothing to say and should be hidden, as the old `View.GONE` did. */
+    val visible: Boolean = true,
+    /** Button captions a card decided on (session buttons: "Golf" / "Stop Golf"). */
+    val labels: Map<String, String> = emptyMap()
+)
 
-    // Circadian day selector — defaults to today, resets when fragment resumes
-    private var selectedCircadianDow: Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-    private var showFfDebug = false
+class SiCardBuilder {
+    private val items = mutableListOf<SiItem>()
+    var visible = true
+    val labels = mutableMapOf<String, String>()
 
-    /**
-     * ACTIVITY_RECOGNITION is requested here rather than in the startup permission flow: the phone
-     * pedometer is opt-in and nothing else in the app needs it, so nagging every user at launch
-     * for a feature they may not use would be the wrong trade. Granting re-arms the listener
-     * immediately — no restart.
-     */
-    private val requestStepPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) smartInsulinPlugin.startPhoneStepCounter()
-            refreshStatus()
-        }
-
-    private val handler = Handler(Looper.getMainLooper())
-    private val updater = object : Runnable {
-        override fun run() { refreshStatus(); handler.postDelayed(this, REFRESH_MS) }
+    fun addRow(primary: String, detail: String? = null, primaryColor: Int = Color.WHITE) {
+        items += SiItem.Row(primary, detail, primaryColor)
     }
-
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        _binding = FragmentSmartInsulinBinding.inflate(inflater, container, false)
-        return binding.root
+    fun addDivider() { items += SiItem.Divider }
+    fun addGateRow(primary: String, detail: String, passed: Boolean) {
+        val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
+        addRow((if (passed) "✓ " else "✗ ") + primary, detail, color)
     }
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        binding.btnResetAggression.setOnClickListener {
-            confirmReset("Reset aggressiveness score to 1.0?") { smartInsulinPlugin.resetAggression(); refreshStatus() }
-        }
-        binding.btnResetIsf.setOnClickListener {
-            confirmReset("Reset ISF circadian learning to 1.0? Basal and aggression learning kept.") { smartInsulinPlugin.resetIsf(); refreshStatus() }
-        }
-        binding.btnResetBasal.setOnClickListener {
-            confirmReset("Reset basal + circadian basal learners to 1.0?") { smartInsulinPlugin.resetBasal(); refreshStatus() }
-        }
-        binding.btnResetCircadian.setOnClickListener {
-            confirmReset("Reset all circadian (ISF/basal/aggr) hourly learning?") { smartInsulinPlugin.resetCircadian(); refreshStatus() }
-        }
-        binding.btnResetProfiles.setOnClickListener {
-            confirmReset("Reset all learned insulin profiles back to defaults?") { smartInsulinPlugin.resetProfiles(); refreshStatus() }
-        }
-        binding.btnResetModeLearners.setOnClickListener {
-            confirmReset("Reset learned per-meal ISF adjustments and UAM entry fractions back to your configured values?") {
-                smartInsulinPlugin.resetModeLearners(); refreshStatus()
-            }
-        }
-        binding.btnSessionGolf.setOnClickListener { toggleSession(SessionLabel.GOLF) }
-        binding.btnSessionGym.setOnClickListener  { toggleSession(SessionLabel.GYM) }
-        binding.btnResetAll.setOnClickListener {
-            confirmReset("Reset ALL learners? This cannot be undone.") { smartInsulinPlugin.resetAllLearners(); refreshStatus() }
-        }
+    fun addMonospaceBlock(text: String, color: Int = Color.parseColor("#FFDDDDDD"), bold: Boolean = false) {
+        if (text.isNotBlank()) items += SiItem.Mono(text, color, bold)
     }
-
-    private fun toggleSession(label: SessionLabel) {
-        val running = smartInsulinPlugin.toggleActivitySession(label)
-        val msg = if (running) "${label.label} session started — UAM and P/F are off until it ends"
-                  else "${label.label} session ended — judged in an hour, once its tail is clear"
-        context?.let { android.widget.Toast.makeText(it, msg, android.widget.Toast.LENGTH_LONG).show() }
-        refreshStatus()
+    fun addNoteBlock(text: String) { if (text.isNotBlank()) items += SiItem.Note(text) }
+    fun addSectionHeader(title: String) { items += SiItem.Header(title) }
+    fun addAction(text: String, action: SiAction, color: Int = Color.parseColor("#FF64B5F6")) {
+        items += SiItem.Action(text, action, color)
     }
+    fun build() = SiCardContent(items.toList(), visible, labels.toMap())
+}
 
-    override fun onResume() {
-        super.onResume()
-        selectedCircadianDow = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        handler.post(updater)
-    }
-    override fun onPause()       { super.onPause();   handler.removeCallbacks(updater) }
-    override fun onDestroyView() { super.onDestroyView(); _binding = null }
+class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
 
-    private fun refreshStatus() {
-        if (_binding == null) return
-        val d = smartInsulinPlugin.fragmentData()
-        binding.tvStatus.text = smartInsulinPlugin.statusSummary()
-        updateGeneralCard(d)
-        updateSessionCard()
-        updateReboundCard(d)
-        updateTirBars(d)
-        updateLearningCard(d)
-        updateUamCard(d)
-        updateStftCard(d)
-        updateCircadianTable("")
-        updateProfilesCard(d)
-    }
-
-    // -- Layout helpers --------------------------------------------------------
-
-    private val dp get() = context?.resources?.displayMetrics?.density ?: 1f
-
-    private fun addRow(container: LinearLayout, primary: String, detail: String? = null,
-                       primaryColor: Int = Color.WHITE) {
-        val ctx = context ?: return
-        container.addView(TextView(ctx).apply {
-            text = primary; textSize = 14f; setTextColor(primaryColor)
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = if (detail != null) (2 * dp).toInt() else (10 * dp).toInt() }
-        })
-        if (detail != null) {
-            container.addView(TextView(ctx).apply {
-                text = detail; textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
-                typeface = android.graphics.Typeface.MONOSPACE
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .also { it.bottomMargin = (10 * dp).toInt() }
-            })
-        }
-    }
+    /** The tab's own expander state; lives here so the cards can read it like the fragment did. */
+    var showFfDebug = false
 
     private fun fmtBasal(u: Double) = "%.3f U/h".format(u)
 
@@ -148,36 +80,43 @@ class SmartInsulinFragment : DaggerFragment() {
         a < 0.95 -> "Slightly conservative"
         else     -> "Normal aggressiveness"
     }
+    private fun aggrDesc(a: Double) = when {
+        a > 1.15 -> "Delivering more insulin than usual"
+        a > 1.05 -> "Slightly more aggressive than normal"
+        a < 0.85 -> "Being cautious — reducing insulin"
+        a < 0.95 -> "Slightly conservative"
+        else     -> "Normal aggressiveness"
+    }
 
-    // -- Rebound / recovery card -----------------------------------------------
+    fun buildSessionCard(): SiCardContent =
+        SiCardBuilder().also { it.fillSessionCard() }.build()
 
-    private fun updateSessionCard() {
-        val c = _binding?.sessionRows ?: return; c.removeAllViews()
-        val running = smartInsulinPlugin.activitySessionLabel()
-        binding.btnSessionGolf.text = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
-        binding.btnSessionGym.text  = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
+    private fun SiCardBuilder.fillSessionCard() {
+        val running = plugin.activitySessionLabel()
+        labels["golf"] = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
+        labels["gym"] = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
 
-        smartInsulinPlugin.carbEpisodeStatus()?.let {
-            addRow(c, it, "Carbs were entered, so the COB curve doses this meal (profile ISF ÷ CR) and\n" +
+        plugin.carbEpisodeStatus()?.let {
+            addRow(it, "Carbs were entered, so the COB curve doses this meal (profile ISF ÷ CR) and\n" +
                 "UAM/P-F stand down. When COB reaches zero the post-meal lockout starts.",
                    Color.parseColor("#FF64B5F6"))
         }
-        smartInsulinPlugin.secondWaveNote()?.let {
-            addRow(c, "⚠ Second wave detected — episode not scored", it +
+        plugin.secondWaveNote()?.let {
+            addRow("⚠ Second wave detected — episode not scored", it +
                 ".\nMore food went in during the mode's own window, so nothing after it says\n" +
                 "anything about the dose this mode was given. Lows are still learned from.",
                    Color.parseColor("#FFFB8C00"))
         }
-        smartInsulinPlugin.activitySessionStatus()?.let {
-            addRow(c, it, "UAM and P/F blocked — a flat high here is hormones, not food.",
+        plugin.activitySessionStatus()?.let {
+            addRow(it, "UAM and P/F blocked — a flat high here is hormones, not food.",
                    Color.parseColor("#FFFB8C00"))
-        } ?: addRow(c, "No session running",
+        } ?: addRow("No session running",
                     "Start one for a round of golf or a gym session: no food, hormones running the show.",
                     Color.parseColor("#FFCCCCCC"))
 
-        val learned = smartInsulinPlugin.activitySessionLearned()
+        val learned = plugin.activitySessionLearned()
         if (learned.isEmpty()) {
-            addRow(c, "Nothing learned yet",
+            addRow("Nothing learned yet",
                    "Each finished session teaches it two things: how much extra insulin the\n" +
                        "resistant phase needs, and how early to back off before the late low.")
         } else {
@@ -186,26 +125,25 @@ class SmartInsulinFragment : DaggerFragment() {
                 val isfTxt = if (isfMult < 1.0) "ISF ×${"%.2f".format(isfMult)} (stronger)"
                              else if (isfMult > 1.0) "ISF ×${"%.2f".format(isfMult)} (easier)"
                              else "ISF unchanged"
-                addRow(c, "${label.label}: $isfTxt, washout ${washout}min before the end",
+                addRow("${label.label}: $isfTxt, washout ${washout}min before the end",
                        "Learned from $n session${if (n == 1) "" else "s"}.")
             }
         }
-        smartInsulinPlugin.activitySessionLastOutcome().takeIf { it.isNotEmpty() }?.let {
-            addRow(c, "Last: $it", null, Color.parseColor("#FFCCCCCC"))
+        plugin.activitySessionLastOutcome().takeIf { it.isNotEmpty() }?.let {
+            addRow("Last: $it", null, Color.parseColor("#FFCCCCCC"))
         }
     }
 
-    private fun updateReboundCard(d: SmartInsulinPlugin.FragmentData) {
-        val b = _binding ?: return
-        val c = b.reboundRows
-        c.removeAllViews()
+    fun buildReboundCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillReboundCard(d) }.build()
 
+    private fun SiCardBuilder.fillReboundCard(d: SmartInsulinPlugin.FragmentData) {
         if (!d.inReboundWindow && !d.bgWentLow) {
             // No rebound — hide card
-            b.reboundCard.visibility = View.GONE
+            visible = false
             return
         }
-        b.reboundCard.visibility = View.VISIBLE
+        visible = true
 
         if (d.inReboundWindow) {
             val elapsedMins  = d.reboundMins.toDouble()
@@ -224,12 +162,12 @@ class SmartInsulinFragment : DaggerFragment() {
                 "⚠ Recovery in progress — ${elapsedInt}min of ${windowInt}min"
             else
                 "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
-            addRow(c, headline, primaryColor = Color.parseColor("#FFFB8C00"))
+            addRow(headline, primaryColor = Color.parseColor("#FFFB8C00"))
 
             // BG a hair under the guard (inside the CGM match tolerance) — not far enough to count
             // as a low, so the window keeps running. Say so, so the counter isn't misread.
             if (d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl) {
-                addRow(c, "⚠ BG right on the low guard — recovery counter still running",
+                addRow("⚠ BG right on the low guard — recovery counter still running",
                        "Within 1 mg/dL of the guard, so it isn't treated as a new low. A proper dip below\n" +
                            "restarts the window, and doubles it if BG had genuinely recovered first.",
                        Color.parseColor("#FFE53935"))
@@ -238,24 +176,24 @@ class SmartInsulinFragment : DaggerFragment() {
             // Re-low extension row
             if (d.relowCount >= 1) {
                 val relowMins = (baseMins * d.relowCount).toInt()
-                addRow(c, "Went low again — recovery window ×${d.relowCount + 1}",
+                addRow("Went low again — recovery window ×${d.relowCount + 1}",
                        "Base: ${baseMins.toInt()}min + ${relowMins}min for ${if (d.relowCount == 1) "the second low" else "${d.relowCount} re-lows"}.\n" +
                            "Restarted from 30% when BG came back above the guard. Max ×${RecoveryRelowTracker.RELOW_MAX_EXTENSIONS + 1}.",
                        Color.parseColor("#FFFB8C00"))
             }
 
             // TBR taper
-            addRow(c, "TBR capped at ${tbrPct}% of normal",
+            addRow("TBR capped at ${tbrPct}% of normal",
                    "Starts at 30% and ramps back to 100% over ${windowMins.toInt()} minutes.\n" +
                        "Prevents insulin stacking after a low.")
 
             // SMB countdown
             if (smbUnlockIn > 0) {
-                addRow(c, "SMBs blocked — unlocks in ~${smbUnlockIn}min",
+                addRow("SMBs blocked — unlocks in ~${smbUnlockIn}min",
                        "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
                        Color.parseColor("#FFE53935"))
             } else {
-                addRow(c, "SMBs restored ✓",
+                addRow("SMBs restored ✓",
                        "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
                        Color.parseColor("#FF43A047"))
             }
@@ -268,7 +206,7 @@ class SmartInsulinFragment : DaggerFragment() {
                     2 -> "Rollercoaster 2 detected — extending recovery by ${extMins}min"
                     else -> "Rollercoaster ${d.consecutiveRollercoasters} detected — extending recovery by ${extMins}min"
                 }
-                addRow(c, extLabel,
+                addRow(extLabel,
                        "Base: ${(baseMins * (1 + d.relowCount)).toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\n" +
                            "Extension grows with each consecutive rollercoaster (max +45min).\n" +
                            "Resets after 2h with no further rollercoasters.",
@@ -277,7 +215,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // Meal mode active during recovery
             if (d.mealMode != "Fasting") {
-                addRow(c, "Meal mode active — low recovery bypassed until window finishes",
+                addRow("Meal mode active — low recovery bypassed until window finishes",
                        "Recovery protection (TBR taper, SMB gate) continues running in the background.\n" +
                            "Meal mode ISF and dosing are applied on top. Recovery ends in ${minsLeft}min.",
                        Color.parseColor("#FF64B5F6"))
@@ -285,7 +223,7 @@ class SmartInsulinFragment : DaggerFragment() {
 
             // Bypass status
             if (d.softLandingBypass) {
-                addRow(c, "Soft landing — meal detection still active",
+                addRow("Soft landing — meal detection still active",
                        "The low was borderline (not a crash). UAM is allowed to fire\n" +
                            "during recovery in case you eat.",
                        Color.parseColor("#FF64B5F6"))
@@ -295,7 +233,7 @@ class SmartInsulinFragment : DaggerFragment() {
             if (d.minBgDuringLow < Double.MAX_VALUE) {
                 val lowBgStr = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
                 else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
-                addRow(c, "Lowest BG: $lowBgStr",
+                addRow("Lowest BG: $lowBgStr",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U\n" +
                            if (d.secondLowOccurred) "⚠ Second low occurred — recovery window extended." else "")
             }
@@ -306,7 +244,7 @@ class SmartInsulinFragment : DaggerFragment() {
             // Check actual current BG to show correct message.
             val actuallyBelowGuard = d.currentBgMgdl > 0.0 && d.currentBgMgdl < d.lowGuardMgdl
             if (actuallyBelowGuard) {
-                addRow(c, "⚠ BG is below low guard — waiting for recovery",
+                addRow("⚠ BG is below low guard — waiting for recovery",
                        "Once BG rises above the low guard, the ${d.totalReboundWindowMins}-minute recovery window starts automatically." +
                            (if (d.relowCount >= 1) "\nWent low again — window extended ×${d.relowCount + 1} (base ${d.reboundWindowMins}min)." else "") +
                            if (d.consecutiveRollercoasters >= 1) {
@@ -315,7 +253,7 @@ class SmartInsulinFragment : DaggerFragment() {
                            } else "",
                        Color.parseColor("#FFE53935"))
             } else {
-                addRow(c, "⚡ BG recovering — rebound window starting",
+                addRow("⚡ BG recovering — rebound window starting",
                        "BG has crossed back above the low guard. The ${d.totalReboundWindowMins}-minute recovery window is activating." +
                            if (d.consecutiveRollercoasters >= 1) {
                                val extMins = d.totalReboundWindowMins - d.reboundWindowMins * (1 + d.relowCount)
@@ -324,29 +262,28 @@ class SmartInsulinFragment : DaggerFragment() {
                        Color.parseColor("#FFFB8C00"))
             }
             if (d.mealMode != "Fasting") {
-                addRow(c, "✓ Low recovery bypassed — meal mode active (${d.mealMode})",
+                addRow("✓ Low recovery bypassed — meal mode active (${d.mealMode})",
                        "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
                        Color.parseColor("#FF43A047"))
             }
             if (d.minBgDuringLow < Double.MAX_VALUE) {
                 val lowBgStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
                 else "${"%.0f".format(d.minBgDuringLow)} mg/dL"
-                addRow(c, "Lowest BG: $lowBgStr2",
+                addRow("Lowest BG: $lowBgStr2",
                        "IOB at time of low: ${"%.2f".format(d.iobAtLowTime)}U")
             }
         }
     }
 
-    // -- General card ----------------------------------------------------------
+    fun buildGeneralCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillGeneralCard(d) }.build()
 
-    private fun updateGeneralCard(d: SmartInsulinPlugin.FragmentData) {
-        val c = _binding?.generalRows ?: return; c.removeAllViews()
-
-        addRow(c, "${d.dayLabel}  ${d.hour}:00",
+    private fun SiCardBuilder.fillGeneralCard(d: SmartInsulinPlugin.FragmentData) {
+        addRow("${d.dayLabel}  ${d.hour}:00",
                "Current hour used for circadian adjustments")
 
         val modeColor = if (d.mealMode == "Fasting") Color.WHITE else Color.parseColor("#FF64B5F6")
-        addRow(c, "Mode: ${d.mealMode}",
+        addRow("Mode: ${d.mealMode}",
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
 
@@ -447,7 +384,7 @@ class SmartInsulinFragment : DaggerFragment() {
             d.bgWentLow         -> "⚡ BG recovered — rebound window activating"
             else                -> aggrDesc(d.aggressiveness)
         }
-        addRow(c, aggrPrimary, aggrDetail, when {
+        addRow(aggrPrimary, aggrDetail, when {
             d.inReboundWindow || d.bgWentLow -> Color.parseColor("#FFFB8C00")
             !isFasting -> Color.parseColor("#FF888888")
             else -> aggrColor
@@ -455,13 +392,13 @@ class SmartInsulinFragment : DaggerFragment() {
 
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
-            addRow(c, "Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
+            addRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
                    primaryColor = Color.parseColor("#FF43A047"))
         }
 
         // Pre-bolus 2 — show delivered amount once fired
         if (d.mealMode != "Fasting" && d.activePb2DoseU != null && d.activePb2DoseU > 0.0) {
-            addRow(c, "Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
+            addRow("Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
                    "Second bolus delivered as scheduled.",
                    Color.parseColor("#FF43A047"))
         } else if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
@@ -476,7 +413,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 gate != null -> "Pre-bolus 2 — waiting for safety gates"
                 else         -> "Pre-bolus 2"
             }
-            addRow(c, pb2Primary, primaryColor = if (isActive) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+            addRow(pb2Primary, primaryColor = if (isActive) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
 
             if (gate != null) {
                 val isMmol = gate.isMmol
@@ -491,28 +428,28 @@ class SmartInsulinFragment : DaggerFragment() {
                 val bgOk        = gate.bgMgdl > effectiveMin
                 val bgDiff      = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
                 else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
-                addGateRow(c, "BG: ${fmtBg(gate.bgMgdl)}  $bgDiff",
+                addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff",
                            "Must be above profile target ${fmtBg(targetMgdl)}", bgOk)
 
                 val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
                 val iobOk         = gate.iobU < maxAllowedIob
                 val iobDetail     = if (iobOk) "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (${fmtIob(maxAllowedIob - gate.iobU)} headroom)"
                 else "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (IOB too high — waiting)"
-                addGateRow(c, "IOB: $iobDetail", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob(maxAllowedIob)})", iobOk)
+                addGateRow("IOB: $iobDetail", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob(maxAllowedIob)})", iobOk)
 
                 val deltaOk   = gate.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
-                addGateRow(c, "Delta: ${fmtDelta(gate.deltaMgdl)}  (${if (deltaOk) "not falling fast" else "falling — waiting"})",
+                addGateRow("Delta: ${fmtDelta(gate.deltaMgdl)}  (${if (deltaOk) "not falling fast" else "falling — waiting"})",
                            "Blocked below ${fmtDelta(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk)
 
                 val shortOk   = gate.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-                addGateRow(c, "15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)}  (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
+                addGateRow("15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)}  (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
                            "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
             }
         }
 
         // Pre-bolus 3 — show delivered amount once fired
         if (d.mealMode != "Fasting" && d.activePb3DoseU != null && d.activePb3DoseU > 0.0) {
-            addRow(c, "Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
+            addRow("Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
                    "Third bolus delivered (late-meal cover).",
                    Color.parseColor("#FF43A047"))
         } else if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
@@ -531,7 +468,7 @@ class SmartInsulinFragment : DaggerFragment() {
             val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
                 "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
             else null
-            addRow(c, pb3Primary, pb3Sub,
+            addRow(pb3Primary, pb3Sub,
                    primaryColor = if (isActive3) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
 
             if (gate3 != null) {
@@ -546,21 +483,21 @@ class SmartInsulinFragment : DaggerFragment() {
                 val bgOk3        = gate3.bgMgdl > effectiveMin3
                 val bgDiff3      = if (bgOk3) "(+${fmtBg3(gate3.bgMgdl - effectiveMin3)} above target)"
                 else "(${fmtBg3(effectiveMin3 - gate3.bgMgdl)} below target — waiting)"
-                addGateRow(c, "BG: ${fmtBg3(gate3.bgMgdl)}  $bgDiff3",
+                addGateRow("BG: ${fmtBg3(gate3.bgMgdl)}  $bgDiff3",
                            "Must be above profile target ${fmtBg3(targetMgdl3)}", bgOk3)
 
                 val maxAllowedIob3 = gate3.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
                 val iobOk3         = gate3.iobU < maxAllowedIob3
                 val iobDetail3     = if (iobOk3) "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (${fmtIob3(maxAllowedIob3 - gate3.iobU)} headroom)"
                 else "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (IOB too high — waiting)"
-                addGateRow(c, "IOB: $iobDetail3", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob3(maxAllowedIob3)})", iobOk3)
+                addGateRow("IOB: $iobDetail3", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob3(maxAllowedIob3)})", iobOk3)
 
                 val deltaOk3 = gate3.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
-                addGateRow(c, "Delta: ${fmtDelta3(gate3.deltaMgdl)}  (${if (deltaOk3) "not falling fast" else "falling — waiting"})",
+                addGateRow("Delta: ${fmtDelta3(gate3.deltaMgdl)}  (${if (deltaOk3) "not falling fast" else "falling — waiting"})",
                            "Blocked below ${fmtDelta3(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk3)
 
                 val shortOk3 = gate3.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-                addGateRow(c, "15min avg: ${fmtDelta3(gate3.shortAvgDeltaMgdl)}  (${if (shortOk3) "trend stable" else "sustained fall — waiting"})",
+                addGateRow("15min avg: ${fmtDelta3(gate3.shortAvgDeltaMgdl)}  (${if (shortOk3) "trend stable" else "sustained fall — waiting"})",
                            "Blocked below ${fmtDelta3(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk3)
             }
         }
@@ -569,7 +506,7 @@ class SmartInsulinFragment : DaggerFragment() {
         val fIsf   = if (d.isMmol) d.finalIsfMgdl   / 18.0 else d.finalIsfMgdl
         val isfUnit = if (d.isMmol) "mmol/U" else "mg/dL/U"
         val isfFmt = if (d.isMmol) "%.2f" else "%.1f"
-        addRow(c, "Insulin sensitivity: ${isfFmt.format(fIsf)} $isfUnit",
+        addRow("Insulin sensitivity: ${isfFmt.format(fIsf)} $isfUnit",
                "Profile ${isfFmt.format(pfIsf)} ÷ multiplier ${"%.3f".format(d.isfMultiplier)} = ${isfFmt.format(fIsf)} $isfUnit\n" +
                    "Lower ISF = more insulin delivered per BG gap. Multiplier >1 reduces ISF, <1 raises ISF.")
 
@@ -582,70 +519,18 @@ class SmartInsulinFragment : DaggerFragment() {
         } else {
             d.lastBasalSignal.replace("mgdlhr", "mg/dL/hr")
         }
-        addRow(c, "Basal rate: ${fmtBasal(d.finalBasalU)}",
+        addRow("Basal rate: ${fmtBasal(d.finalBasalU)}",
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.\n" +
                    "Last basal learning: $basalSignalDisplay")
     }
 
-    // -- TIR bars --------------------------------------------------------------
+    fun buildLearningCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillLearningCard(d) }.build()
 
-    private data class TirValues(val inPct: Float, val highPct: Float, val lowPct: Float)
+    private fun SiCardBuilder.fillLearningCard(d: SmartInsulinPlugin.FragmentData) {
 
-    private fun parseTir(s: String, prefix: String): TirValues? {
-        val m = Regex("""$prefix:(\d+)%in/(\d+)%hi/(\d+)%lo""").find(s) ?: return null
-        return TirValues(m.groupValues[1].toFloatOrNull() ?: return null,
-                         m.groupValues[2].toFloatOrNull() ?: return null,
-                         m.groupValues[3].toFloatOrNull() ?: return null)
-    }
-
-    private fun applyTirBar(lv: View, iv: View, hv: View, pt: TextView, tir: TirValues?, label: String) {
-        if (tir == null) {
-            (lv.layoutParams as LinearLayout.LayoutParams).weight = 0f
-            (iv.layoutParams as LinearLayout.LayoutParams).weight = 1f
-            (hv.layoutParams as LinearLayout.LayoutParams).weight = 0f
-            iv.setBackgroundColor(Color.parseColor("#FF9E9E9E"))
-            lv.requestLayout(); iv.requestLayout(); hv.requestLayout()
-            pt.text = "Not enough data yet — needs ~2 hours of $label readings"; return
-        }
-        iv.setBackgroundColor(Color.parseColor("#FF43A047"))
-        (lv.layoutParams as LinearLayout.LayoutParams).weight = tir.lowPct
-        (iv.layoutParams as LinearLayout.LayoutParams).weight = tir.inPct
-        (hv.layoutParams as LinearLayout.LayoutParams).weight = tir.highPct
-        lv.requestLayout(); iv.requestLayout(); hv.requestLayout()
-        pt.text = "${tir.inPct.roundToInt()}% in range  •  ${tir.highPct.roundToInt()}% high  •  ${tir.lowPct.roundToInt()}% low"
-    }
-
-    private fun updateTirBars(d: SmartInsulinPlugin.FragmentData) {
-        val b = _binding ?: return
-        applyTirBar(b.tirFastingLow, b.tirFastingIn, b.tirFastingHigh, b.tvTirFastingPct, parseTir(d.tirRawLine, "Fasting"), "fasting")
-        applyTirBar(b.tirMealLow,    b.tirMealIn,    b.tirMealHigh,    b.tvTirMealPct,    parseTir(d.tirRawLine, "Meal"),    "meal")
-
-        // -- Estimated HbA1c (ADAG formula: HbA1c% = (avgBG_mgdl + 46.7) / 28.7) --
-        if (d.estimatedHba1c > 0.0) {
-            val avgStr = if (d.isMmol) "${"%.1f".format(d.avgBgMgdl24h / 18.0)} mmol/L"
-            else         "${"%.0f".format(d.avgBgMgdl24h)} mg/dL"
-            val windowNote = if (d.bgWindowHours < 24) "  (${d.bgWindowHours}h data)" else ""
-            val color = when {
-                d.estimatedHba1c < 6.5 -> "#FF43A047"  // green
-                d.estimatedHba1c < 7.5 -> "#FFFB8C00"  // amber
-                else                   -> "#FFE53935"  // red
-            }
-            b.tvTirHba1c.text = "Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  avg: $avgStr$windowNote"
-            b.tvTirHba1c.setTextColor(Color.parseColor(color))
-        } else {
-            b.tvTirHba1c.text = "Est. HbA1c: building… (~2h needed)"
-            b.tvTirHba1c.setTextColor(Color.parseColor("#FF888888"))
-        }
-    }
-
-    // -- Learning card ---------------------------------------------------------
-
-    private fun updateLearningCard(d: SmartInsulinPlugin.FragmentData) {
-        val c = _binding?.learningRows ?: return; c.removeAllViews()
-        val ctx = context ?: return
-
-        addRow(c, "SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FFCCCCCC"))
+        addRow("SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FFCCCCCC"))
 
         val (statePrimary, stateColor) = when {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
@@ -654,10 +539,10 @@ class SmartInsulinFragment : DaggerFragment() {
                 Pair("Limited — meal mode active, only learning Peak/DIA", Color.parseColor("#FFFB8C00"))
             else -> Pair("Learning active", Color.parseColor("#FF43A047"))
         }
-        addRow(c, statePrimary, "State: ${d.learningState}", stateColor)
+        addRow(statePrimary, "State: ${d.learningState}", stateColor)
 
         if (d.postMealLockoutMins > 0 && d.mealMode == "Fasting")
-            addRow(c, "Post-meal pause: ${d.postMealLockoutMins}min remaining",
+            addRow("Post-meal pause: ${d.postMealLockoutMins}min remaining",
                    "BG data after meals is excluded from basal/ISF learning.", Color.parseColor("#FFFB8C00"))
 
         val actColor = when (d.activityLevel) {
@@ -689,22 +574,16 @@ class SmartInsulinFragment : DaggerFragment() {
                 else -> Unit
             }
         }
-        addRow(c, activityDetail, "High activity raises target and pauses learning.", actColor)
+        addRow(activityDetail, "High activity raises target and pauses learning.", actColor)
 
         // Its own tappable row rather than text inside the one above, so the affordance is real.
-        if (d.phoneStepState == PhoneStepCounter.State.NEEDS_PERMISSION) context?.let { ctx ->
-            c.addView(TextView(ctx).apply {
-                text = "▶ Enable phone pedometer — steps with no watch delay"
-                textSize = 12f
-                setTextColor(Color.parseColor("#FF64B5F6"))
-                setPadding(0, 0, 0, (10 * dp).toInt())
-                setOnClickListener { requestStepPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION) }
-            })
-        }
+        if (d.phoneStepState == PhoneStepCounter.State.NEEDS_PERMISSION)
+            addAction("▶ Enable phone pedometer — steps with no watch delay", SiAction.REQUEST_STEP_PERMISSION,
+                      Color.parseColor("#FF64B5F6"))
 
-        if (d.cgmWarmup) addRow(c, "New sensor — learning paused for first 24h", null, Color.parseColor("#FFFB8C00"))
+        if (d.cgmWarmup) addRow("New sensor — learning paused for first 24h", null, Color.parseColor("#FFFB8C00"))
 
-        addDivider(c)
+        addDivider()
 
         // Parse Nudge Status
         val nudgeParts      = d.lastAggrNudgeStatus.split("|")
@@ -739,7 +618,7 @@ class SmartInsulinFragment : DaggerFragment() {
         fun fmtBas(mult: Double) = if (mult <= 0.0) "?" else "${"%.3f".format(profBas * mult)} U/h"
 
         // --- SHORT-TERM LEARNING ---
-        addSectionHeader(c, "Short-term learning")
+        addSectionHeader("Short-term learning")
 
         val stHeadline: String
         val stDetail: String
@@ -881,14 +760,14 @@ class SmartInsulinFragment : DaggerFragment() {
                 stColor    = Color.parseColor("#FFCCCCCC")
             }
         }
-        addRow(c, stHeadline, stDetail, stColor)
+        addRow(stHeadline, stDetail, stColor)
         d.lastRunError?.let {
-            addRow(c, "⚠️ Last loop cycle failed", it, Color.parseColor("#FFE53935"))
+            addRow("⚠️ Last loop cycle failed", it, Color.parseColor("#FFE53935"))
         }
 
         // --- LONG-TERM LEARNING ---
-        addDivider(c)
-        addSectionHeader(c, "Long-term learning")
+        addDivider()
+        addSectionHeader("Long-term learning")
 
         // Use multipliers from status if active, otherwise use current plugin state.
         // ISF has no separate flat-multiplier layer to combine, so the raw nudge value is fine there.
@@ -915,53 +794,47 @@ class SmartInsulinFragment : DaggerFragment() {
         val longTermPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
         val ltAction = if (longTermPct > 0) "Reduced insulin needs" else if (longTermPct < 0) "Increased insulin needs" else "Neutral"
 
-        addRow(c, "Profile updated: $ltAction", "Historical pattern at $hourStr on ${day}s.", Color.WHITE)
+        addRow("Profile updated: $ltAction", "Historical pattern at $hourStr on ${day}s.", Color.WHITE)
 
         val isfColor = when {
             ltIsfMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger/aggressive)
             ltIsfMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker/conservative)
             else -> Color.parseColor("#FFCCCCCC")
         }
-        addRow(c, "ISF: ${fmtIsf(ltIsfMult)} ($isfComp)", null, isfColor)
+        addRow("ISF: ${fmtIsf(ltIsfMult)} ($isfComp)", null, isfColor)
 
         val basColor = when {
             ltBasMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger)
             ltBasMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker)
             else -> Color.parseColor("#FFCCCCCC")
         }
-        addRow(c, "Basal: ${fmtBas(ltBasMult)} ($basComp)", null, basColor)
+        addRow("Basal: ${fmtBas(ltBasMult)} ($basComp)", null, basColor)
 
         // -- Feed-forward debug toggle -----------------------------------------
-        val ffCtx = context ?: return
-        c.addView(android.widget.TextView(ffCtx).apply {
-            text = if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)"
-            textSize = 12f
-            setTextColor(Color.parseColor("#FFCCCCCC"))
-            setPadding(0, (8 * dp).toInt(), 0, (4 * dp).toInt())
-            setOnClickListener { showFfDebug = !showFfDebug; refreshStatus() }
-        })
+        addAction(if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)",
+                  SiAction.TOGGLE_FF_DEBUG, Color.parseColor("#FFCCCCCC"))
         if (showFfDebug) {
-            addRow(c, "Acceleration (2nd derivative)", d.lastAccelDebug.ifEmpty { "(no data)" })
-            addRow(c, "Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
-            addRow(c, "Last basal signal", d.lastBasalSignal.ifEmpty { "(no data)" })
-            addRow(c, "Cycle summary (live)", d.lastCycleSummary.ifEmpty { "(no data)" })
+            addRow("Acceleration (2nd derivative)", d.lastAccelDebug.ifEmpty { "(no data)" })
+            addRow("Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
+            addRow("Last basal signal", d.lastBasalSignal.ifEmpty { "(no data)" })
+            addRow("Cycle summary (live)", d.lastCycleSummary.ifEmpty { "(no data)" })
             // The hours a low was charged back to are otherwise invisible: they are hours the
             // clock has already left, so nothing on the live line ever mentions them.
-            addRow(c, "Last low charged back to", d.lastRetroAttribution.ifEmpty { "(no data)" })
+            addRow("Last low charged back to", d.lastRetroAttribution.ifEmpty { "(no data)" })
         }
     }
 
-    // -- UAM card --------------------------------------------------------------
+    fun buildUamCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillUamCard(d) }.build()
 
-    private fun updateUamCard(d: SmartInsulinPlugin.FragmentData) {
-        val c = _binding?.uamRows ?: return; c.removeAllViews()
+    private fun SiCardBuilder.fillUamCard(d: SmartInsulinPlugin.FragmentData) {
         val line = d.uamStatusLine ?: ""
 
         // -- Active UAM meal mode — shown when a UAM mode is running ----------
         val isUamModeActive = d.mealMode.contains("UAM") || d.mealMode.contains("(UAM)")
         if (isUamModeActive) {
             val minsLeft = d.modeRemMins ?: 0
-            addRow(c, "${d.mealMode} active — ${minsLeft}min remaining",
+            addRow("${d.mealMode} active — ${minsLeft}min remaining",
                    "Meal auto-detected. ISF and dosing adjusted for ${d.mealMode}.\nUAM detection resumes when this mode expires.",
                    Color.parseColor("#FF64B5F6"))
         } else {
@@ -979,7 +852,7 @@ class SmartInsulinFragment : DaggerFragment() {
                 }
                 else -> Pair("UAM status", Color.WHITE)
             }
-            addRow(c, primary, uamPart.ifEmpty { null }, color)
+            addRow(primary, uamPart.ifEmpty { null }, color)
         }
 
         // UAM thresholds — strip leading spaces for clean alignment
@@ -989,15 +862,15 @@ class SmartInsulinFragment : DaggerFragment() {
             .joinToString("\n") { it.trimStart() }
             .trim()
         if (debugClean.isNotEmpty()) {
-            addRow(c, "Detection thresholds",
+            addRow("Detection thresholds",
                    debugClean + "\n\nUAM fires when BG rises consistently above the trigger\nthreshold during your configured meal windows.\n\n" +
                        "Clean window = fasting, normal thresholds apply.\n" +
                        "Dirty window = post-meal lockout active — thresholds are raised (~1.5×) to avoid\ndetecting fat/protein tail rises as a new meal.")
         }
 
         // -- P/F subheading ------------------------------------------------
-        addDivider(c)
-        addSectionHeader(c, "Protein / Fat Detection (P/F)")
+        addDivider()
+        addSectionHeader("Protein / Fat Detection (P/F)")
 
         val (pfPrimary, pfColor) = when {
             pfPart == null                       -> Pair("P/F detection disabled", Color.parseColor("#FFCCCCCC"))
@@ -1013,7 +886,7 @@ class SmartInsulinFragment : DaggerFragment() {
             .filter { it.trimStart().startsWith("P/F") }
             .joinToString("\n") { it.trimStart() }
             .trim()
-        addRow(c, pfPrimary, pfDebug.ifEmpty { null }, pfColor)
+        addRow(pfPrimary, pfDebug.ifEmpty { null }, pfColor)
 
         // -- Meal absorption log (observation-only) ----------------------------
         // Estimated carb-equivalent grams per completed meal/UAM activation, from BG
@@ -1021,26 +894,26 @@ class SmartInsulinFragment : DaggerFragment() {
         // breakdown (can't be distinguished from BG alone) — doesn't feed dosing, purely
         // for comparing against what was actually eaten. Full history also written to
         // Documents/AAPS/SmartInsulin/meal_absorption_log.csv.
-        addDivider(c)
-        addSectionHeader(c, "Meal Absorption Log (estimated, observation-only)")
+        addDivider()
+        addSectionHeader("Meal Absorption Log (estimated, observation-only)")
         if (d.mealAbsorptionInProgress.isNotBlank()) {
-            addRow(c, "In progress: ${d.mealAbsorptionInProgress}",
+            addRow("In progress: ${d.mealAbsorptionInProgress}",
                    "Updates live each loop cycle — only finalized into the log below once this mode ends.",
                    Color.parseColor("#FF64B5F6"))
         }
-        addDivider(c)
-        addSectionHeader(c, "Learned Mode ISF (per meal / UAM mode)")
-        addMonospaceBlock(c, d.modeIsfLearnerStatus)
-        addNoteBlock(c, "Judged ~75min after each episode ends: ended low → ISF weakens (mostly " +
+        addDivider()
+        addSectionHeader("Learned Mode ISF (per meal / UAM mode)")
+        addMonospaceBlock(d.modeIsfLearnerStatus)
+        addNoteBlock("Judged ~75min after each episode ends: ended low → ISF weakens (mostly " +
             "charged to DURA if DURA was pushing). Spike held ≥3mmol over target for 30min in the " +
             "first 75min with no front-loading left, or ended high without DURA → strengthens. " +
             "Ended high with DURA working the tail → no change, that stall is DURA's. Ate again " +
             "during the tail → skipped. Changing a mode's ISF override resets it.")
 
-        addDivider(c)
-        addSectionHeader(c, "Learned DURA Strength (per mode)")
-        addMonospaceBlock(c, d.duraStrengthStatus)
-        addNoteBlock(c, "Mode ISF handles the spike; DURA handles the stall after it. " +
+        addDivider()
+        addSectionHeader("Learned DURA Strength (per mode)")
+        addMonospaceBlock(d.duraStrengthStatus)
+        addNoteBlock("Mode ISF handles the spike; DURA handles the stall after it. " +
             "Floor = the strongest ISF DURA may take this mode to (approximate — shown against the " +
             "mode's learned ISF, which circadian moves through the day). Your floor in settings is " +
             "the hard limit. Went low with DURA engaged → floor raised from where DURA actually got " +
@@ -1049,97 +922,28 @@ class SmartInsulinFragment : DaggerFragment() {
             "floor is lowered, if it was still climbing strength goes up 3%. Held at your settings " +
             "floor, or already at full strength → no change, and it says so here. A low always wins.")
 
-        addDivider(c)
-        addSectionHeader(c, "Learned UAM Entry Fraction (per UAM mode)")
-        addMonospaceBlock(c, d.uamEntryFractionStatus)
-        addNoteBlock(c, "Shape knob — how front-loaded the first SMBs after a UAM entry are. " +
+        addDivider()
+        addSectionHeader("Learned UAM Entry Fraction (per UAM mode)")
+        addMonospaceBlock(d.uamEntryFractionStatus)
+        addNoteBlock("Shape knob — how front-loaded the first SMBs after a UAM entry are. " +
             "Low soon after entry → lowered. Big spike peaking 40min+ after entry but still ending " +
             "on target → raised. Peaked sooner than that → fast carbs, left alone, since no amount " +
             "of front-loading could have beaten it. Ended high, or went low late → left alone, " +
             "that is mode ISF's job. Entry SMB count stays manual.")
-        val ctx = context
         if (d.mealAbsorptionLog.isBlank()) {
-            addRow(c, "No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
-        } else if (ctx != null) {
-            c.addView(TextView(ctx).apply {
-                text = "Date      Meal                 Duration   Est. grams"
-                textSize = 11f; setTextColor(Color.parseColor("#FFCCCCCC"))
-                typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            })
-            c.addView(TextView(ctx).apply {
-                text = d.mealAbsorptionLog.trimEnd()
-                textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
-                typeface = android.graphics.Typeface.MONOSPACE
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .also { it.topMargin = (2 * dp).toInt() }
-            })
+            addRow("No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
+        } else {
+            addMonospaceBlock("Date      Meal                 Duration   Est. grams", Color.parseColor("#FFCCCCCC"), bold = true)
+            addMonospaceBlock(d.mealAbsorptionLog.trimEnd())
         }
     }
 
-    private fun addDivider(container: LinearLayout) {
-        val ctx = context ?: return
-        val v = android.view.View(ctx).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (1 * dp).toInt())
-                .also { it.topMargin = (8 * dp).toInt(); it.bottomMargin = (8 * dp).toInt() }
-            setBackgroundColor(Color.parseColor("#FF444444"))
-        }
-        container.addView(v)
-    }
+    fun buildStftCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillStftCard(d) }.build()
 
-    private fun addGateRow(container: LinearLayout, primary: String, detail: String, passed: Boolean) {
-        val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
-        val prefix = if (passed) "✓ " else "✗ "
-        addRow(container, "$prefix$primary", detail, color)
-    }
-
-    /** Monospace text block (no bold header) — for tables whose columns need to line up. */
-    private fun addMonospaceBlock(container: LinearLayout, text: String, color: Int = Color.parseColor("#FFDDDDDD")) {
-        val ctx = context ?: return
-        if (text.isBlank()) return
-        container.addView(TextView(ctx).apply {
-            this.text = text; textSize = 11f; setTextColor(color)
-            typeface = android.graphics.Typeface.MONOSPACE
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8 * dp).toInt() }
-        })
-    }
-
-    /**
-     * Dim prose under a table.
-     *
-     * Proportional, unlike [addMonospaceBlock], and that is the whole point: the blocks above are
-     * grids and these are sentences. Rendering both in the same monospace face, hard-wrapped to
-     * guessed widths, was most of why the three "Learned …" sections read as one undifferentiated
-     * wall. Letting prose wrap naturally also stops it fighting the device width.
-     */
-    private fun addNoteBlock(container: LinearLayout, text: String) {
-        val ctx = context ?: return
-        if (text.isBlank()) return
-        container.addView(TextView(ctx).apply {
-            this.text = text; textSize = 11f; setTextColor(Color.parseColor("#FF999999"))
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8 * dp).toInt() }
-        })
-    }
-
-    private fun addSectionHeader(container: LinearLayout, title: String) {
-        val ctx = context ?: return
-        container.addView(TextView(ctx).apply {
-            text = title; textSize = 13f
-            setTextColor(Color.parseColor("#FFCCCCCC"))
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8 * dp).toInt() }
-        })
-    }
-
-    // -- STFT card -------------------------------------------------------------
-
-    private fun updateStftCard(d: SmartInsulinPlugin.FragmentData) {
-        val c = _binding?.stftRows ?: return; c.removeAllViews()
+    private fun SiCardBuilder.fillStftCard(d: SmartInsulinPlugin.FragmentData) {
         if (d.stftActive && d.stftStatus != null) {
-            addRow(c, "Active — gently nudging the loop to correct",
+            addRow("Active — gently nudging the loop to correct",
                    d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
                    Color.parseColor("#FFFB8C00"))
         } else {
@@ -1155,150 +959,19 @@ class SmartInsulinFragment : DaggerFragment() {
                 else ->
                     "Inactive — BG is responding normally"
             }
-            addRow(c, inactiveReason,
+            addRow(inactiveReason,
                    "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.",
                    Color.parseColor("#FFCCCCCC"))
         }
     }
 
-    // -- Circadian table -------------------------------------------------------
+    fun buildProfilesCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =
+        SiCardBuilder().also { it.fillProfilesCard(d) }.build()
 
-    private data class CircRow(val hour: Int, val isfVal: Float, val basVal: Float, val ceil: Float, val confPct: Int)
+    private fun SiCardBuilder.fillProfilesCard(d: SmartInsulinPlugin.FragmentData) {
+        // (profile rows)
 
-    private fun parseCircRows(raw: String) = Regex("""[→►\s]\s*(\d{1,2})\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(\d+)%""")
-        .findAll(raw).mapNotNull { m -> CircRow(
-            m.groupValues[1].toIntOrNull()   ?: return@mapNotNull null,
-            m.groupValues[2].toFloatOrNull() ?: return@mapNotNull null,
-            m.groupValues[3].toFloatOrNull() ?: return@mapNotNull null,
-            m.groupValues[4].toFloatOrNull() ?: return@mapNotNull null,
-            m.groupValues[5].toIntOrNull()   ?: return@mapNotNull null) }.toList()
-
-    private fun confColor(p: Int)   = when { p >= 60 -> Color.parseColor("#FF43A047"); p >= 30 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFE53935") }
-    // Ceiling colour: <0.95 = blue (restricted), >1.05 = amber (boosted), else grey
-    private fun ceilColor(m: Float) = when { m > 1.05f -> Color.parseColor("#FFFB8C00"); m < 0.95f -> Color.parseColor("#FF64B5F6"); else -> Color.parseColor("#FFAAAAAA") }
-
-    private fun updateCircadianTable(ignored: String) {
-        val b = _binding ?: return; val ctx = context ?: return
-        val cont = b.circadianRows; cont.removeAllViews()
-        val todayDow   = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1
-        val currentHr  = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-        val dayLabels  = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-
-        // -- Day selector row — Mon first, Sun last ---------------------------
-        val selectorRow = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8*dp).toInt() }
-        }
-        val displayOrder = intArrayOf(1, 2, 3, 4, 5, 6, 0) // Mon, Tue, Wed, Thu, Fri, Sat, Sun
-        for (d in displayOrder) {
-            val label = if (d == todayDow) "Today" else dayLabels[d]
-            val isSelected = d == selectedCircadianDow
-            val btn = TextView(ctx).apply {
-                text = label; textSize = 11f; gravity = Gravity.CENTER
-                setPadding((6*dp).toInt(), (4*dp).toInt(), (6*dp).toInt(), (4*dp).toInt())
-                setTextColor(if (isSelected) Color.BLACK else Color.parseColor("#FFAAAAAA"))
-                setBackgroundColor(if (isSelected) Color.parseColor("#FF43A047") else Color.parseColor("#FF333333"))
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                    .also { it.marginEnd = (2*dp).toInt() }
-                setOnClickListener {
-                    selectedCircadianDow = d
-                    refreshStatus()
-                }
-            }
-            selectorRow.addView(btn)
-        }
-        cont.addView(selectorRow)
-
-        // -- Table for selected day --------------------------------------------
-        val raw   = smartInsulinPlugin.circadianDataForDay(selectedCircadianDow)
-        val rows  = parseCircRows(raw); if (rows.isEmpty()) return
-
-        // Profile reference values for colour coding
-        val isMmolUnit  = smartInsulinPlugin.isMmol
-        val profIsfMgdl = smartInsulinPlugin.profileIsfMgdl
-        val profBasalU  = smartInsulinPlugin.profileBasalU
-        val profIsfDisp = if (isMmolUnit && profIsfMgdl > 0) (profIsfMgdl / 18.0).toFloat() else profIsfMgdl.toFloat()
-
-        // Colour logic:
-        // ISF: grey = profile, orange = lower ISF (more aggressive), blue = higher ISF (less aggressive)
-        // Basal: grey = profile, orange = higher basal (more aggressive), blue = lower basal (less aggressive)
-        fun isfColor(v: Float): Int {
-            if (profIsfDisp <= 0f) return Color.parseColor("#FFDDDDDD")
-            val ratio = v / profIsfDisp
-            return when {
-                ratio < 0.97f -> Color.parseColor("#FFFB8C00")  // lower ISF = more aggressive = orange
-                ratio > 1.03f -> Color.parseColor("#FF64B5F6")  // higher ISF = less aggressive = blue
-                else          -> Color.parseColor("#FF888888")  // at profile = grey
-            }
-        }
-        fun basColor(v: Float): Int {
-            if (profBasalU <= 0.0) return Color.parseColor("#FFDDDDDD")
-            val ratio = v / profBasalU.toFloat()
-            return when {
-                ratio > 1.03f -> Color.parseColor("#FFFB8C00")  // higher basal = more aggressive = orange
-                ratio < 0.97f -> Color.parseColor("#FF64B5F6")  // lower basal = less aggressive = blue
-                else          -> Color.parseColor("#FF888888")  // at profile = grey
-            }
-        }
-        cont.addView(TextView(ctx).apply {
-            text = "Hourly multipliers learned from your BG patterns.\nISF and Bas = values the loop actually delivers for that hour.\nCeil = aggressiveness cap — lower = more conservative.\nConf = confidence — how much real data collected. Green =60%, amber =30%, red <30%."
-            textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                .also { it.bottomMargin = (8 * dp).toInt() }
-        })
-        val isfHeader  = if (isMmolUnit) "ISF mmol" else "ISF mg/dL"
-        val basHeader  = "Basal U/h"
-        val headerRow  = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (4*dp).toInt() }
-        }
-        fun hcell(t: String, w: Float) = TextView(ctx).apply {
-            text = t; textSize = 10f; setTextColor(Color.parseColor("#FFCCCCCC"))
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
-        }
-        headerRow.addView(hcell("Hr", 1f))
-        headerRow.addView(hcell(isfHeader, 2f))
-        headerRow.addView(hcell(basHeader, 2f))
-        headerRow.addView(hcell("Ceil", 2f))
-        headerRow.addView(hcell("Conf", 3f))
-        cont.addView(headerRow)
-
-        rows.forEach { row ->
-            val isCur = selectedCircadianDow == todayDow && row.hour == currentHr
-            val rowL = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also { it.bottomMargin = (2*dp).toInt() }
-                if (isCur) { setBackgroundColor(Color.parseColor("#22FFFFFF")); setPadding((4*dp).toInt(),(2*dp).toInt(),(4*dp).toInt(),(2*dp).toInt()) }
-            }
-            fun cell(t: String, w: Float, col: Int = Color.parseColor("#FFDDDDDD"), bold: Boolean = false) = TextView(ctx).apply {
-                text = t; textSize = 12f; setTextColor(col)
-                if (bold || isCur) setTypeface(null, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, w)
-            }
-            rowL.addView(cell(if (isCur) "→${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.WHITE else Color.parseColor("#FFCCCCCC"), isCur))
-            rowL.addView(cell(if (isMmolUnit) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal)))
-            rowL.addView(cell("%.3f".format(row.basVal), 2f, basColor(row.basVal)))
-            rowL.addView(cell("%.3f".format(row.ceil),   2f, ceilColor(row.ceil)))
-            val confL = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 3f)
-            }
-            val bt = (40*dp).toInt(); val bh = (8*dp).toInt(); val fw = ((row.confPct/100f)*bt).toInt()
-            confL.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(fw, bh); setBackgroundColor(confColor(row.confPct)) })
-            confL.addView(View(ctx).apply { layoutParams = LinearLayout.LayoutParams(bt-fw, bh); setBackgroundColor(Color.parseColor("#FF444444")) })
-            confL.addView(TextView(ctx).apply { text = " ${row.confPct}%"; textSize = 11f; setTextColor(confColor(row.confPct)); if (isCur) setTypeface(null, Typeface.BOLD) })
-            rowL.addView(confL); cont.addView(rowL)
-        }
-    }
-
-    // -- Profiles card ---------------------------------------------------------
-
-    private fun updateProfilesCard(d: SmartInsulinPlugin.FragmentData) {
-        val b = _binding ?: return; val c = b.profileRows; c.removeAllViews(); val ctx = context ?: return
-
-        addRow(c, "Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FFCCCCCC"))
+        addRow("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FFCCCCCC"))
         // -- Tracker status row (#27) ------------------------------------------
         val (profStatusPrimary, profStatusColor) = when {
             d.profileLearningStatus.startsWith("off") ->
@@ -1314,8 +987,8 @@ class SmartInsulinFragment : DaggerFragment() {
             .replace("tracker=waiting_peak", "Tracking: waiting for IOB to peak...")
             .replace("tracker=tracking_nadir", "Tracking: waiting for BG nadir...")
             .replace("tracker=confirming", "Tracking: confirming recovery from nadir...")
-        addRow(c, profStatusPrimary, profStatusDetail, profStatusColor)
-        addDivider(c)
+        addRow(profStatusPrimary, profStatusDetail, profStatusColor)
+        addDivider()
 
         d.profilesRawStatus.lines().filter { it.isNotBlank() }.forEach { line ->
             val parts = line.trim().split(":"); if (parts.size < 2) return@forEach
@@ -1333,27 +1006,7 @@ class SmartInsulinFragment : DaggerFragment() {
             val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFCCCCCC") }
             val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
             val prefix = if (isActive) "→ " else "  "
-            c.addView(TextView(ctx).apply {
-                text = "$prefix$name"; textSize = 13f; setTextColor(col)
-                setTypeface(null, Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .also { it.topMargin = (4*dp).toInt() }
-            })
-            c.addView(TextView(ctx).apply {
-                text = info + note; textSize = 11f; setTextColor(Color.parseColor("#FFDDDDDD"))
-                typeface = android.graphics.Typeface.MONOSPACE
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-                    .also { it.bottomMargin = (2*dp).toInt() }
-            })
+            addRow("$prefix$name", info + note, col)
         }
     }
-
-    private fun confirmReset(message: String, onConfirm: () -> Unit) {
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle("Confirm Reset").setMessage(message)
-            .setPositiveButton("Reset") { _, _ -> onConfirm() }
-            .setNegativeButton("Cancel", null).show()
-    }
-
-    companion object { private const val REFRESH_MS = 10_000L }
 }

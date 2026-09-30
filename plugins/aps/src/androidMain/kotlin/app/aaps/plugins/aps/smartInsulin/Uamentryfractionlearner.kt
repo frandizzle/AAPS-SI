@@ -1,13 +1,16 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Episode-outcome learning for the UAM *entry* SMB fraction — the front-loading of the first
@@ -48,7 +51,7 @@ import javax.inject.Singleton
  * with the fraction, and learning both would re-create the double-actuation problem this
  * arbitration exists to avoid.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class UamEntryFractionLearner @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger
@@ -547,7 +550,7 @@ class UamEntryFractionLearner @Inject constructor(
         activePeakMins = 0.0; pendingVerdictFromMs = 0L; pendingHandover = false
         magnitudeHandoff = null
         lastOutcome = ""
-        sp.edit { putString(StringKey.ApsSmartInsulinUamEntryFractionLearnerState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.key, "") }
         aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: reset")
     }
 
@@ -560,14 +563,14 @@ class UamEntryFractionLearner @Inject constructor(
                 if (!s.baseSig.isNaN()) obj.put(K_BASE, s.baseSig)  // JSON rejects NaN
                 json.put(mode.name, obj)
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinUamEntryFractionLearnerState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "UamEntryFractionLearner: persist failed: ${e.message}")
         }
     }
 
     private fun restore() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinUamEntryFractionLearnerState.key, StringKey.ApsSmartInsulinUamEntryFractionLearnerState.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.key, StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.defaultValue)
         if (raw.isBlank()) return
         try {
             val json = JSONObject(raw)

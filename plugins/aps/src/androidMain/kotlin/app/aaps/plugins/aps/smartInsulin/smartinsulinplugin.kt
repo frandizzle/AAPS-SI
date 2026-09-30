@@ -1,10 +1,17 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import androidx.compose.runtime.Composable
+import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
+import app.aaps.core.interfaces.notifications.NotificationManager
+import app.aaps.core.ui.compose.ComposablePluginContent
+import app.aaps.core.ui.compose.ToolbarConfig
+import app.aaps.core.ui.compose.icons.IcPluginInsulin
+import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
+import app.aaps.plugins.aps.ApsStrings
+import app.aaps.core.keys.StringNonKey
+
 import android.content.Context
 import android.content.Intent
-import androidx.preference.PreferenceCategory
-import androidx.preference.PreferenceManager
-import androidx.preference.PreferenceScreen
 import app.aaps.core.data.aps.SMBDefaults
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.GlucoseUnit
@@ -58,17 +65,19 @@ import app.aaps.core.objects.extensions.getPassedDurationToTimeInMinutes
 import app.aaps.core.objects.extensions.plannedRemainingMinutes
 import app.aaps.core.objects.extensions.target
 import app.aaps.core.validators.preferences.*
-import app.aaps.plugins.aps.smartInsulin.SmartInsulinFragment
 import org.json.JSONObject
-import javax.inject.Inject
+import dev.zacsweers.metro.Inject
 import kotlin.math.roundToInt
-import javax.inject.Singleton
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.floor
 
-@Singleton
+@SingleIn(AppScope::class)
 open class SmartInsulinPlugin @Inject constructor(
     aapsLogger: AAPSLogger,
     rh: ResourceHelper,
+    preferences: Preferences,
+    notificationManager: NotificationManager,
     val rxBus: RxBus,
     private val config: Config,
     private val profileFunction: ProfileFunction,
@@ -106,18 +115,34 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
     private val phoneStepCounter:        PhoneStepCounter
-) : PluginBase(
+) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.APS)
-        .fragmentClass(SmartInsulinFragment::class.java.name)
-        .pluginIcon(app.aaps.core.ui.R.drawable.ic_generic_icon)
-        .pluginName(R.string.smart_insulin)
-        .shortName(R.string.smart_insulin_short)
-        .preferencesId(PluginDescription.PREFERENCE_SCREEN)
+        .icon(IcPluginInsulin)
+        .pluginName(ApsStrings.smart_insulin)
+        .shortName(ApsStrings.smart_insulin_short)
         .preferencesVisibleInSimpleMode(false)
         .showInList { config.APS }
-        .description(R.string.smart_insulin_description),
-    aapsLogger, rh
+        .description(ApsStrings.smart_insulin_description)
+        .composeContent { plugin ->
+            object : ComposablePluginContent {
+                @Composable
+                override fun Render(
+                    setToolbarConfig: (ToolbarConfig) -> Unit,
+                    onNavigateBack: () -> Unit,
+                    onSettings: (() -> Unit)?
+                ) {
+                    SmartInsulinScreen(
+                        plugin = plugin as SmartInsulinPlugin,
+                        onNavigateBack = onNavigateBack,
+                        onSettings = onSettings,
+                        setToolbarConfig = setToolbarConfig
+                    )
+                }
+            }
+        },
+    ownPreferences = emptyList(),
+    aapsLogger, rh, preferences, notificationManager
 ), APS, PluginConstraints, SmartInsulinOverview {
 
     override var lastAPSRun: Long = 0
@@ -790,7 +815,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun onStart() {
         super.onStart()
-        learningDirtyUntilMs = sp.getString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
+        learningDirtyUntilMs = sp.getString(StringNonKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
         // No-op when the permission is missing or the device has no pedometer; the SI tab reports
         // which of those it is, and calling start() again after a grant is what picks it up.
         phoneStepCounter.start()
@@ -959,10 +984,10 @@ open class SmartInsulinPlugin @Inject constructor(
         // Including P/F here ensures the lockout fires when P/F ? FASTING, just like any other mode.
         if (previousMealModeForLockout != MealMode.FASTING && mealMode == MealMode.FASTING) {
             val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
-            if (lockoutMins > 0) { learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60000L); sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) } }
+            if (lockoutMins > 0) { learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60000L); sp.edit { putString(StringNonKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) } }
         }
         previousMealModeForLockout = mealMode
-        if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) { learningDirtyUntilMs = 0L; sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, "0") } }
+        if (learningDirtyUntilMs > 0L && now >= learningDirtyUntilMs) { learningDirtyUntilMs = 0L; sp.edit { putString(StringNonKey.ApsSmartInsulinLearningDirtyUntil.key, "0") } }
         val inPostMealLockout = mealMode == MealMode.FASTING && now < learningDirtyUntilMs
 
         val mIsfMgdl = modeIsfMgdl(mealMode, currentHour)
@@ -1092,7 +1117,7 @@ open class SmartInsulinPlugin @Inject constructor(
             val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
             if (lockoutMins > 0) {
                 learningDirtyUntilMs = maxOf(learningDirtyUntilMs, now + lockoutMins * 60_000L)
-                sp.edit { putString(StringKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) }
+                sp.edit { putString(StringNonKey.ApsSmartInsulinLearningDirtyUntil.key, learningDirtyUntilMs.toString()) }
             }
             aapsLogger.debug(LTag.APS, "SmartInsulin: carbs finished (${ended.label}) — post-meal lockout ${lockoutMins}min")
         }
@@ -1593,164 +1618,141 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun applyConfiguration(configuration: JSONObject) {}
 
-    override fun addPreferenceScreen(preferenceManager: PreferenceManager, parent: PreferenceScreen, context: Context, requiredKey: String?) {
-        val category = PreferenceCategory(context)
-        parent.addPreference(category)
-        category.apply {
-            key = "smart_insulin_settings"
-            title = rh.gs(R.string.smart_insulin)
+    override fun getPreferenceScreenContent() =
+    PreferenceSubScreenDef(
+        key = "smart_insulin_settings",
+        title = ApsStrings.smart_insulin,
+        items = listOf(
+            BooleanKey.ApsSmartInsulinEnableLearning,
+            DoubleKey.ApsSmartInsulinLearningRate,
+            DoubleKey.ApsSmartInsulinMaxSmb,
+            DoubleKey.ApsSmartInsulinMaxTbr,
+            DoubleKey.ApsSmartInsulinAggressionMax,
+            DoubleKey.ApsSmbMaxIob,
+            DoubleKey.ApsSmartInsulinMaxPreBolus,
+            DoubleKey.ApsSmartInsulinPreBolus2DefaultU,
+            IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,
+            IntKey.ApsSmartInsulinPredictionHorizonMins,
+            UnitDoubleKey.ApsSmartInsulinLowGuard,
+            UnitDoubleKey.ApsSmartInsulinWarnGuard,
+            IntKey.ApsMaxSmbFrequency,
+            UnitDoubleKey.ApsLgsThreshold,
+            IntKey.ApsSmartInsulinPostModeLockoutMins,
+            IntKey.ApsSmartInsulinReboundWindowMins,
+            BooleanKey.ApsSmartInsulinCgmWarmupEnabled,
+            BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,
+            BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing,
+            BooleanKey.ApsSmartInsulinTargetRespectEnabled,
+            PreferenceSubScreenDef(
+                key = "si_meal_modes_screen",
+                title = ApsStrings.si_meal_modes_title,
+                items = listOf(
+                    IntKey.ApsSmartInsulinModeWindowMins,
+                    BooleanKey.ApsSmartInsulinLowCarbMode,
+                    IntKey.ApsSmartInsulinLowCarbThresholdG,
+                    IntKey.ApsSmartInsulinBreakfastCarbsG,
+                    IntKey.ApsSmartInsulinLunchCarbsG,
+                    IntKey.ApsSmartInsulinDinnerCarbsG,
+                    IntKey.ApsSmartInsulinLowCarbCarbsG,
+                    IntKey.ApsSmartInsulinExtendedCarbsG,
+                    UnitDoubleKey.ApsSmartInsulinBreakfastIsf,
+                    UnitDoubleKey.ApsSmartInsulinLunchIsf,
+                    UnitDoubleKey.ApsSmartInsulinDinnerIsf,
+                    UnitDoubleKey.ApsSmartInsulinLowCarbIsf,
+                    UnitDoubleKey.ApsSmartInsulinExtendedIsf
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_activity_dawn_screen",
+                title = ApsStrings.si_activity_dawn_title,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinActivityTargetEnabled,
+                    UnitDoubleKey.ApsSmartInsulinActivityLightTarget,
+                    UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,
+                    UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,
+                    DoubleKey.ApsSmartInsulinRestingHrBpm,
+                    BooleanKey.ApsSmartInsulinBasalLearningEnabled,
+                    BooleanKey.ApsSmartInsulinModeIsfLearningEnabled,
+                    IntKey.ApsSmartInsulinLearningBias,
+                    IntKey.ApsSmartInsulinDawnWindowStartHour,
+                    IntKey.ApsSmartInsulinDawnWindowEndHour,
+                    DoubleKey.ApsSmartInsulinDawnSmbReduction
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_uam_screen",
+                title = ApsStrings.si_uam_settings_title,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinUamEnabled,
+                    BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,
+                    BooleanKey.ApsSmartInsulinUamWobbleTolerance,
+                    UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold,
+                    UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta,
+                    UnitDoubleKey.ApsSmartInsulinUamBurstThreshold,
+                    IntKey.ApsSmartInsulinUamRiseConsecutiveReadings,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFraction,
+                    IntKey.ApsSmartInsulinUamEntrySmbCount,
+                    IntKey.ApsSmartInsulinUamDayStartHour,
+                    IntKey.ApsSmartInsulinUamNightCutoffHour,
+                    BooleanKey.ApsSmartInsulinUamBreakfastEnabled,
+                    IntKey.ApsSmartInsulinUamBreakfastStartHour,
+                    IntKey.ApsSmartInsulinUamBreakfastEndHour,
+                    IntKey.ApsSmartInsulinUamBreakfastDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast,
+                    BooleanKey.ApsSmartInsulinUamLunchEnabled,
+                    IntKey.ApsSmartInsulinUamLunchStartHour,
+                    IntKey.ApsSmartInsulinUamLunchEndHour,
+                    IntKey.ApsSmartInsulinUamLunchDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamLunchIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch,
+                    BooleanKey.ApsSmartInsulinUamDinnerEnabled,
+                    IntKey.ApsSmartInsulinUamDinnerStartHour,
+                    IntKey.ApsSmartInsulinUamDinnerStartMinute,
+                    IntKey.ApsSmartInsulinUamDinnerEndHour,
+                    IntKey.ApsSmartInsulinUamDinnerEndMinute,
+                    IntKey.ApsSmartInsulinUamDinnerDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner,
+                    BooleanKey.ApsSmartInsulinUamSnackEnabled,
+                    IntKey.ApsSmartInsulinUamSnackStartHour,
+                    IntKey.ApsSmartInsulinUamSnackEndHour,
+                    IntKey.ApsSmartInsulinUamSnackDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamSnackIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack,
+                    BooleanKey.ApsSmartInsulinUamAfternoonEnabled,
+                    IntKey.ApsSmartInsulinUamAfternoonStartHour,
+                    IntKey.ApsSmartInsulinUamAfternoonStartMinute,
+                    IntKey.ApsSmartInsulinUamAfternoonEndHour,
+                    IntKey.ApsSmartInsulinUamAfternoonEndMinute,
+                    IntKey.ApsSmartInsulinUamAfternoonDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon,
+                    BooleanKey.ApsSmartInsulinUamProteinFatEnabled,
+                    IntKey.ApsSmartInsulinUamProteinFatDurationMins,
+                    IntKey.ApsSmartInsulinUamProteinFatStuckReadings,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,
+                    BooleanKey.ApsSmartInsulinUamPfTakeover,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatDayStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
+                    BooleanKey.ApsSmartInsulinUamDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinUamDuraFloor,
+                    DoubleKey.ApsSmartInsulinUamDuraStrength,
+                    BooleanKey.ApsSmartInsulinPfDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinPfDuraFloor,
+                    DoubleKey.ApsSmartInsulinPfDuraStrength
+                )
+            )
+        )
+        icon = pluginDescription.icon
+    )
 
-            // -- Learning ---------------------------------------------------------
-            addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinEnableLearning, R.string.smart_insulin_enable_learning_summary, R.string.smart_insulin_enable_learning))
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinLearningRate, R.string.smart_insulin_learning_rate_summary, R.string.smart_insulin_learning_rate))
-
-            // -- SMB / TBR / Aggression caps --------------------------------------
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxSmb, null, R.string.si_max_smb_title))
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxTbr, null, R.string.si_max_tbr_title))
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinAggressionMax, null, R.string.si_aggression_max_title))
-            addPreference(AdaptiveDoublePreference(ctx = context, doubleKey = DoubleKey.ApsSmbMaxIob, dialogMessage = R.string.openapssmb_max_iob_summary, title = R.string.openapssmb_max_iob_title))
-
-            // -- Pre-bolus --------------------------------------------------------
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinMaxPreBolus, R.string.si_max_prebolus_summary, R.string.si_max_prebolus_title))
-            addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinPreBolus2DefaultU, null, R.string.si_prebolus2_default_u_title))
-            addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins, null, null, R.string.si_prebolus2_default_delay_title))
-
-            // -- Prediction & guards -----------------------------------------------
-            addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPredictionHorizonMins, R.string.smart_insulin_prediction_horizon_summary, null, R.string.smart_insulin_prediction_horizon))
-            addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinLowGuard, profileUtil, sp, R.string.smart_insulin_low_guard_summary, R.string.smart_insulin_low_guard))
-            addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinWarnGuard, profileUtil, sp, R.string.smart_insulin_warn_guard_summary, R.string.smart_insulin_warn_guard))
-            addPreference(AdaptiveIntPreference(ctx = context, intKey = IntKey.ApsMaxSmbFrequency, title = R.string.smb_interval_summary))
-            addPreference(AdaptiveUnitPreference(ctx = context, unitKey = UnitDoubleKey.ApsLgsThreshold, dialogMessage = R.string.lgs_threshold_summary, title = R.string.lgs_threshold_title))
-
-
-            // -- Post-meal lockout & rebound window -------------------------------
-            addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinPostModeLockoutMins, null, null, R.string.si_post_mode_lockout_mins_title))
-            addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinReboundWindowMins, R.string.si_rebound_window_mins_summary, null, R.string.si_rebound_window_mins_title))
-
-            // -- CGM warmup & smoothing --------------------------------------------
-            addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinCgmWarmupEnabled, null, R.string.si_cgm_warmup_enabled_title))
-            addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinStftCgmWarmupBlock, null, R.string.si_stft_cgm_warmup_block_title))
-            addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing, R.string.si_first_day_cgm_smoothing_summary, R.string.si_first_day_cgm_smoothing_title))
-
-            // -- Target assist -----------------------------------------------------
-            addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinTargetRespectEnabled, null, R.string.si_target_respect_enabled_title))
-
-            // -- Meal Modes sub-screen ---------------------------------------------
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "si_meal_modes_screen"
-                title = rh.gs(R.string.si_meal_modes_title)
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinModeWindowMins, R.string.si_mode_window_mins_summary, null, R.string.si_mode_window_mins_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinLowCarbMode, R.string.smart_insulin_low_carb_mode_summary, R.string.smart_insulin_low_carb_mode))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinLowCarbThresholdG, R.string.smart_insulin_low_carb_threshold_summary, null, R.string.smart_insulin_low_carb_threshold))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinBreakfastCarbsG, null, null, R.string.si_breakfast_carbs_g_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinLunchCarbsG, null, null, R.string.si_lunch_carbs_g_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDinnerCarbsG, null, null, R.string.si_dinner_carbs_g_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinLowCarbCarbsG, null, null, R.string.si_lowcarb_carbs_g_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinExtendedCarbsG, null, null, R.string.si_extended_carbs_g_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinBreakfastIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_breakfast_isf_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinLunchIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_lunch_isf_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinDinnerIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_dinner_isf_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinLowCarbIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_lowcarb_isf_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinExtendedIsf, profileUtil, sp, R.string.si_isf_summary, R.string.si_extended_isf_title))
-            })
-
-            // -- Activity & Dawn sub-screen ----------------------------------------
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "si_activity_dawn_screen"
-                title = rh.gs(R.string.si_activity_dawn_title)
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinActivityTargetEnabled, null, R.string.si_activity_target_enabled_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinActivityLightTarget, profileUtil, sp, null, R.string.si_activity_light_target_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinActivityModerateTarget, profileUtil, sp, null, R.string.si_activity_moderate_target_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget, profileUtil, sp, null, R.string.si_activity_heavy_target_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinRestingHrBpm, null, R.string.si_resting_hr_bpm_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinBasalLearningEnabled, null, R.string.si_basal_learning_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled, R.string.si_mode_isf_learning_summary, R.string.si_mode_isf_learning_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinLearningBias, R.string.si_learning_bias_summary, null, R.string.si_learning_bias_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowStartHour, R.string.si_dawn_start_hour_summary, null, R.string.si_dawn_start_hour_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinDawnWindowEndHour, R.string.si_dawn_end_hour_summary, null, R.string.si_dawn_end_hour_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinDawnSmbReduction, R.string.si_dawn_smb_reduction_summary, R.string.si_dawn_smb_reduction_title))
-            })
-
-            // -- UAM Auto-Detection sub-screen -------------------------------------
-            addPreference(preferenceManager.createPreferenceScreen(context).apply {
-                key = "si_uam_screen"
-                title = rh.gs(R.string.si_uam_settings_title)
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamEnabled, null, R.string.si_uam_enabled_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamCgmWarmupBlock, null, R.string.si_uam_cgm_warmup_block_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamWobbleTolerance, R.string.si_uam_wobble_tolerance_summary, R.string.si_uam_wobble_tolerance_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamTriggerThreshold, profileUtil, sp, null, R.string.si_uam_trigger_threshold_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta, profileUtil, sp, null, R.string.si_uam_rise_min_delta_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamBurstThreshold, profileUtil, sp, null, R.string.si_uam_burst_threshold_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings, null, null, R.string.si_uam_rise_readings_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFraction, null, R.string.si_uam_entry_smb_fraction_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamEntrySmbCount, null, null, R.string.si_uam_entry_smb_count_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDayStartHour, null, null, R.string.si_uam_day_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamNightCutoffHour, null, null, R.string.si_uam_night_cutoff_title))
-                // Breakfast
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamBreakfastEnabled, null, R.string.si_uam_breakfast_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamBreakfastStartHour, null, null, R.string.si_uam_breakfast_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamBreakfastEndHour, null, null, R.string.si_uam_breakfast_end_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamBreakfastDurationMins, null, null, R.string.si_uam_breakfast_duration_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf, profileUtil, sp, null, R.string.si_uam_breakfast_isf_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast, null, R.string.si_uam_entry_smb_fraction_breakfast_title))
-                // Lunch
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamLunchEnabled, null, R.string.si_uam_lunch_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchStartHour, null, null, R.string.si_uam_lunch_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchEndHour, null, null, R.string.si_uam_lunch_end_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamLunchDurationMins, null, null, R.string.si_uam_lunch_duration_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamLunchIsf, profileUtil, sp, null, R.string.si_uam_lunch_isf_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch, null, R.string.si_uam_entry_smb_fraction_lunch_title))
-                // Dinner
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamDinnerEnabled, null, R.string.si_uam_dinner_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerStartHour, null, null, R.string.si_uam_dinner_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerStartMinute, null, null, R.string.si_uam_dinner_start_minute_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerEndHour, null, null, R.string.si_uam_dinner_end_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerEndMinute, null, null, R.string.si_uam_dinner_end_minute_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamDinnerDurationMins, null, null, R.string.si_uam_dinner_duration_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamDinnerIsf, profileUtil, sp, null, R.string.si_uam_dinner_isf_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner, null, R.string.si_uam_entry_smb_fraction_dinner_title))
-                // Snack
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamSnackEnabled, null, R.string.si_uam_snack_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackStartHour, null, null, R.string.si_uam_snack_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackEndHour, null, null, R.string.si_uam_snack_end_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamSnackDurationMins, null, null, R.string.si_uam_snack_duration_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamSnackIsf, profileUtil, sp, null, R.string.si_uam_snack_isf_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack, null, R.string.si_uam_entry_smb_fraction_snack_title))
-                // Afternoon
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamAfternoonEnabled, null, R.string.si_uam_afternoon_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonStartHour, null, null, R.string.si_uam_afternoon_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonStartMinute, null, null, R.string.si_uam_afternoon_start_minute_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonEndHour, null, null, R.string.si_uam_afternoon_end_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonEndMinute, null, null, R.string.si_uam_afternoon_end_minute_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamAfternoonDurationMins, null, null, R.string.si_uam_afternoon_duration_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf, profileUtil, sp, null, R.string.si_uam_afternoon_isf_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon, null, R.string.si_uam_entry_smb_fraction_afternoon_title))
-                // Protein/Fat
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamProteinFatEnabled, null, R.string.si_uam_proteinfat_enabled_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDurationMins, null, null, R.string.si_uam_proteinfat_duration_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatStuckReadings, null, null, R.string.si_uam_proteinfat_stuck_readings_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold, profileUtil, sp, null, R.string.si_uam_proteinfat_threshold_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamPfTakeover, R.string.si_uam_pf_takeover_summary, R.string.si_uam_pf_takeover_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_isf_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDayStartHour, null, null, R.string.si_uam_proteinfat_day_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatDayEndHour, null, null, R.string.si_uam_proteinfat_day_end_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_day_isf_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatNightStartHour, null, null, R.string.si_uam_proteinfat_night_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatNightEndHour, null, null, R.string.si_uam_proteinfat_night_end_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_night_isf_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour, null, null, R.string.si_uam_proteinfat_overnight_start_title))
-                addPreference(AdaptiveIntPreference(context, null, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour, null, null, R.string.si_uam_proteinfat_overnight_end_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf, profileUtil, sp, null, R.string.si_uam_proteinfat_overnight_isf_title))
-                // DURA for auto-fired modes. These have no activation dialog, so unlike the
-                // manual meal modes they're configured here. Grouped: one set for the UAM entry
-                // modes, one for P/F (a tail correction with quite different dynamics).
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinUamDuraEnabled, null, R.string.si_uam_dura_enabled_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinUamDuraFloor, profileUtil, sp, null, R.string.si_uam_dura_floor_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinUamDuraStrength, null, R.string.si_uam_dura_strength_title))
-                addPreference(AdaptiveSwitchPreference(context, null, BooleanKey.ApsSmartInsulinPfDuraEnabled, null, R.string.si_pf_dura_enabled_title))
-                addPreference(SmartInsulinUnitPreference(context, UnitDoubleKey.ApsSmartInsulinPfDuraFloor, profileUtil, sp, null, R.string.si_pf_dura_floor_title))
-                addPreference(AdaptiveDoublePreference(context, null, DoubleKey.ApsSmartInsulinPfDuraStrength, null, R.string.si_pf_dura_strength_title))
-            })
-        }
-    }
 }

@@ -1,12 +1,15 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
 
 /**
@@ -53,7 +56,7 @@ data class ActivitySession(
  *   - In the washout phase, insulin is tapered off toward the end — the same pre-emptive shape as
  *     the low-guard taper, but arriving before the low instead of after it.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class ActivitySessionManager @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger,
@@ -180,14 +183,14 @@ class ActivitySessionManager @Inject constructor(
                     .put(K_PLANNED, it.plannedMs)
                     .toString()
             } ?: ""
-            sp.edit { putString(StringKey.ApsSmartInsulinActivitySessionState.key, json) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinActivitySessionState.key, json) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "ActivitySession: persist failed: ${e.message}")
         }
     }
 
     private fun restore() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinActivitySessionState.key, StringKey.ApsSmartInsulinActivitySessionState.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinActivitySessionState.key, StringNonKey.ApsSmartInsulinActivitySessionState.defaultValue)
         if (raw.isBlank()) return
         try {
             val json  = JSONObject(raw)
@@ -218,7 +221,7 @@ class ActivitySessionManager @Inject constructor(
  * The asymmetry is the usual one: lows move things more than highs do, and a low always wins over
  * a high earlier in the same session.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class ActivitySessionLearner @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger
@@ -335,7 +338,7 @@ class ActivitySessionLearner @Inject constructor(
     fun reset() {
         states.clear()
         lastOutcome = ""
-        sp.edit { putString(StringKey.ApsSmartInsulinActivitySessionLearnerState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinActivitySessionLearnerState.key, "") }
     }
 
     /** Rows for the SI tab: label, learned ISF multiplier, washout, session count. */
@@ -354,14 +357,14 @@ class ActivitySessionLearner @Inject constructor(
                     .put(K_WASHOUT, s.washoutMins)
                     .put(K_N, s.sessions))
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinActivitySessionLearnerState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinActivitySessionLearnerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "ActivitySessionLearner: persist failed: ${e.message}")
         }
     }
 
     private fun restore() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinActivitySessionLearnerState.key, StringKey.ApsSmartInsulinActivitySessionLearnerState.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinActivitySessionLearnerState.key, StringNonKey.ApsSmartInsulinActivitySessionLearnerState.defaultValue)
         if (raw.isBlank()) return
         try {
             val json = JSONObject(raw)

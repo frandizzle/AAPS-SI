@@ -10,9 +10,9 @@ import app.aaps.core.interfaces.aps.RT
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Provider
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -38,9 +38,9 @@ import kotlin.math.min
  *   - predictedMin < warnGuard → CAUTION: scaled TBR, block SMBs
  *   - predictedMin >= warnGuard → NORMAL: profile basal, SMBs allowed
  */
-@Singleton
+@SingleIn(AppScope::class)
 class DetermineBasalSmartInsulin @Inject constructor(
-    private val apsResultProvider: Provider<APSResult>
+    private val apsResultProvider: () -> APSResult
 ) {
 
     private fun fmt(mgdl: Double, isMmol: Boolean): String =
@@ -120,7 +120,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sessionStatusText:        String = ""
     ): APSResult {
 
-        val result = apsResultProvider.get()
+        val result = apsResultProvider()
         val rT = RT(
             algorithm = APSResult.Algorithm.SMB,
             runningDynamicIsf = false,

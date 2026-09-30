@@ -1,13 +1,16 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Episode-outcome ISF learning per meal/UAM mode.
@@ -50,7 +53,7 @@ import javax.inject.Singleton
  * convergence slow and safe: a consistently under-dosed Dinner takes ~a week of dinners to
  * drift meaningfully stronger, and any single odd evening moves it at most one step.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class ModeIsfLearner @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger
@@ -670,7 +673,7 @@ class ModeIsfLearner @Inject constructor(
         lastMovedMode = null; lastMovedStartMs = 0L
         clearWatch()
         lastOutcome = ""
-        sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinModeIsfLearnerState.key, "") }
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: reset")
     }
 
@@ -682,14 +685,14 @@ class ModeIsfLearner @Inject constructor(
                 if (!s.baseSig.isNaN()) obj.put(K_BASE, s.baseSig)  // JSON rejects NaN
                 json.put(key, obj)
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinModeIsfLearnerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "ModeIsfLearner: persist failed: ${e.message}")
         }
     }
 
     private fun restore() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinModeIsfLearnerState.key, StringKey.ApsSmartInsulinModeIsfLearnerState.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinModeIsfLearnerState.key, StringNonKey.ApsSmartInsulinModeIsfLearnerState.defaultValue)
         if (raw.isBlank()) return
         try {
             val json = JSONObject(raw)

@@ -6,13 +6,14 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.interfaces.sharedPreferences.SP
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Short-Term Fuel Trim (STFT) — temporary target reduction for stuck-high BG.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class StftController @Inject constructor(
     private val aapsLogger:   AAPSLogger,
     private val sp:           SP,

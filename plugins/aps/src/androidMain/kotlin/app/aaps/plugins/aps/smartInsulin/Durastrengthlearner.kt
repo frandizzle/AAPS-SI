@@ -1,13 +1,16 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Learns how hard DURA should push, per mode — the tail of the meal, after mode ISF has handled
@@ -48,7 +51,7 @@ import javax.inject.Singleton
  * back into the next low with lows as the only brake. Mode ISF no longer strengthens on "needed
  * DURA" or on a stuck tail either — that was the spike knob being charged for the tail's problem.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class DuraStrengthLearner @Inject constructor(
     private val sp:         SP,
     private val aapsLogger: AAPSLogger
@@ -407,7 +410,7 @@ class DuraStrengthLearner @Inject constructor(
         episodeStallNote = null; episodeRejectedMs = 0L; clearRun()
         pendingScope = null
         lastOutcome = ""
-        sp.edit { putString(StringKey.ApsSmartInsulinDuraStrengthLearnerState.key, "") }
+        sp.edit { putString(StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.key, "") }
         aapsLogger.debug(LTag.APS, "DuraStrengthLearner: reset")
     }
 
@@ -420,14 +423,14 @@ class DuraStrengthLearner @Inject constructor(
                 if (s.ceiling != NO_CEILING) obj.put(K_CAP, s.ceiling)  // ...and Infinity
                 json.put(key, obj)
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinDuraStrengthLearnerState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "DuraStrengthLearner: persist failed: ${e.message}")
         }
     }
 
     private fun restore() {
-        val raw = sp.getString(StringKey.ApsSmartInsulinDuraStrengthLearnerState.key, StringKey.ApsSmartInsulinDuraStrengthLearnerState.defaultValue)
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.key, StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.defaultValue)
         if (raw.isBlank()) return
         try {
             val json = JSONObject(raw)

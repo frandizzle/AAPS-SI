@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -9,14 +11,15 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.interfaces.sharedPreferences.SP
 import java.util.Locale
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 import kotlin.math.max
 
 /**
  * Tracks post-bolus CGM curves to estimate observed peak and DIA per MealMode.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class BolusCurveTracker @Inject constructor(
     private val profileLearner: ProfileLearner,
     private val sp:             SP,
@@ -447,7 +450,7 @@ class BolusCurveTracker @Inject constructor(
                 }
                 put(K_BASAL_IOB_HISTORY, basalIobJson)
             }
-            sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, json.toString()) }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinTrackerState.key, json.toString()) }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to save state: ${e.message}")
         }
@@ -455,14 +458,14 @@ class BolusCurveTracker @Inject constructor(
 
     private fun restoreState() {
         try {
-            val raw = sp.getString(StringKey.ApsSmartInsulinTrackerState.key, StringKey.ApsSmartInsulinTrackerState.defaultValue)
+            val raw = sp.getString(StringNonKey.ApsSmartInsulinTrackerState.key, StringNonKey.ApsSmartInsulinTrackerState.defaultValue)
             if (raw.isNullOrBlank()) return
             val json = JSONObject(raw)
             if (!json.optBoolean(K_TRACKING, false)) return
 
             val restoredStartMs = json.getLong(K_START_MS)
             if (System.currentTimeMillis() - restoredStartMs > MAX_TRACK_DURATION_MS) {
-                sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, "") }
+                sp.edit { putString(StringNonKey.ApsSmartInsulinTrackerState.key, "") }
                 return
             }
 
@@ -538,7 +541,7 @@ class BolusCurveTracker @Inject constructor(
         curveHistory.clear()
         basalIobHistory.clear()
         try {
-            sp.edit { putString(StringKey.ApsSmartInsulinTrackerState.key, "") }
+            sp.edit { putString(StringNonKey.ApsSmartInsulinTrackerState.key, "") }
         } catch (e: Exception) {
             aapsLogger.debug(LTag.APS, "BolusCurveTracker: failed to clear persisted state: ${e.message}")
         }

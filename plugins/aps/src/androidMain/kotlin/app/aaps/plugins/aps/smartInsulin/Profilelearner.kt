@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -10,14 +12,15 @@ import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.keys.StringKey
 import java.util.Locale
 import org.json.JSONObject
-import javax.inject.Inject
-import javax.inject.Singleton
+import dev.zacsweers.metro.Inject
+import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.SingleIn
 
 /**
  * Learns and persists per-[MealMode] insulin activity profiles using
  * Exponential Weighted Moving Average (EWMA) updates.
  */
-@Singleton
+@SingleIn(AppScope::class)
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
     private val sp:              SP,
@@ -129,18 +132,18 @@ class ProfileLearner @Inject constructor(
 
     private fun prefKeyFor(mode: MealMode): StringKey =
         when (mode) {
-            MealMode.FASTING       -> StringKey.ApsSmartInsulinProfileFasting
-            MealMode.LOW_CARB      -> StringKey.ApsSmartInsulinProfileLowCarb
-            MealMode.BREAKFAST     -> StringKey.ApsSmartInsulinProfileBreakfast
-            MealMode.LUNCH         -> StringKey.ApsSmartInsulinProfileLunch
-            MealMode.DINNER        -> StringKey.ApsSmartInsulinProfileDinner
-            MealMode.EXTENDED      -> StringKey.ApsSmartInsulinProfileExtended
-            MealMode.UAM_BREAKFAST -> StringKey.ApsSmartInsulinProfileUamBreakfast
-            MealMode.UAM_LUNCH     -> StringKey.ApsSmartInsulinProfileUamLunch
-            MealMode.UAM_DINNER    -> StringKey.ApsSmartInsulinProfileUamDinner
-            MealMode.UAM_SNACK     -> StringKey.ApsSmartInsulinProfileUamSnack
-            MealMode.UAM_AFTERNOON    -> StringKey.ApsSmartInsulinProfileUamAfternoon
-            MealMode.UAM_PROTEIN_FAT  -> StringKey.ApsSmartInsulinProfileUamProteinFat
+            MealMode.FASTING       -> StringNonKey.ApsSmartInsulinProfileFasting
+            MealMode.LOW_CARB      -> StringNonKey.ApsSmartInsulinProfileLowCarb
+            MealMode.BREAKFAST     -> StringNonKey.ApsSmartInsulinProfileBreakfast
+            MealMode.LUNCH         -> StringNonKey.ApsSmartInsulinProfileLunch
+            MealMode.DINNER        -> StringNonKey.ApsSmartInsulinProfileDinner
+            MealMode.EXTENDED      -> StringNonKey.ApsSmartInsulinProfileExtended
+            MealMode.UAM_BREAKFAST -> StringNonKey.ApsSmartInsulinProfileUamBreakfast
+            MealMode.UAM_LUNCH     -> StringNonKey.ApsSmartInsulinProfileUamLunch
+            MealMode.UAM_DINNER    -> StringNonKey.ApsSmartInsulinProfileUamDinner
+            MealMode.UAM_SNACK     -> StringNonKey.ApsSmartInsulinProfileUamSnack
+            MealMode.UAM_AFTERNOON    -> StringNonKey.ApsSmartInsulinProfileUamAfternoon
+            MealMode.UAM_PROTEIN_FAT  -> StringNonKey.ApsSmartInsulinProfileUamProteinFat
         }
 
     private fun loadProfile(mode: MealMode): LearnedInsulinProfile {

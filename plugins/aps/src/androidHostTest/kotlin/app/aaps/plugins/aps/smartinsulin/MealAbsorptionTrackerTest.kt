@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.keys.StringNonKey
+
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
@@ -196,7 +198,7 @@ class MealAbsorptionTrackerTest {
                 .put("durationMs", 3_600_000L)
                 .put("estimatedGrams", 55.0)
         )
-        sp.putString(app.aaps.core.keys.StringKey.ApsSmartInsulinMealAbsorptionLog.key, arr.toString())
+        sp.putString(app.aaps.core.keys.StringNonKey.ApsSmartInsulinMealAbsorptionLog.key, arr.toString())
 
         val restored = MealAbsorptionTracker(sp, FakeAAPSLogger(collect = false))
         assertTrue(restored.history.isEmpty(), "Entries older than the retention window should be dropped on restore")
