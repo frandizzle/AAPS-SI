@@ -367,6 +367,25 @@
     <string name="si_confirm_pb2">Pre-bolus 2 in %2$d min: %1$s U (safety-gated)</string>
     <string name="si_confirm_pb3">Pre-bolus 3 %2$d min after PB2: %1$s U (safety-gated)</string>
     <string name="si_confirm_capped">Pre-bolus capped to max %1$s U</string>
+    <string name="si_active_title">Active now</string>
+    <string name="si_active_mode">%1$s · %2$d min left</string>
+    <string name="si_end_mode">End mode</string>
+    <string name="si_cancel_short">Cancel</string>
+    <string name="si_settings_title">Mode settings</string>
+    <string name="si_settings_subtitle">Saved per mode</string>
+    <string name="si_dura_title">DURA</string>
+    <string name="si_dura_summary_on">Floor %1$s · strength %2$s×</string>
+    <string name="si_dura_summary_nofloor">No floor · strength %1$s×</string>
+    <string name="si_dura_summary_off">Strengthens ISF if BG stays high</string>
+    <string name="si_pb1_title">Pre-bolus now</string>
+    <string name="si_pb2_title">Pre-bolus 2</string>
+    <string name="si_pb3_title">Pre-bolus 3</string>
+    <string name="si_pb_summary_now">%1$s U delivered on start</string>
+    <string name="si_pb2_summary">%1$s U after %2$d min, safety-gated</string>
+    <string name="si_pb3_summary">%1$s U %2$d min after PB2, safety-gated</string>
+    <string name="si_pb_off">Off</string>
+    <string name="si_start_mode">Start %1$s</string>
+    <string name="si_start_mode_units">Start %1$s · %2$s U</string>
     <string name="si_prebolus_note">SmartMeal %1$s pre-bolus 1</string>
 
 </resources>

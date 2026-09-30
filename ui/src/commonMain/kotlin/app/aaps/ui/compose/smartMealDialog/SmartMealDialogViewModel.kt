@@ -75,6 +75,7 @@ data class SmartMealDialogUiState(
 
     // What is running now
     val activeMode: MealMode? = null,
+    val activeRemainingMin: Int = 0,
     val pb2Pending: Boolean = false,
     val pb2Status: String = "",
     val pb3Pending: Boolean = false,
@@ -150,6 +151,7 @@ class SmartMealDialogViewModel(
         _uiState.update {
             it.copy(
                 activeMode = mealOverrideManager.activeMealMode,
+                activeRemainingMin = (mealOverrideManager.modeTimeRemainingMs / 60_000L).toInt(),
                 pb2Pending = mealOverrideManager.preBolus2Pending,
                 pb2Status = mealOverrideManager.preBolus2StatusText,
                 pb3Pending = mealOverrideManager.preBolus3Pending,
