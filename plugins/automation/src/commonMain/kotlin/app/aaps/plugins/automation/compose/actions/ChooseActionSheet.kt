@@ -42,6 +42,7 @@ import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
 import app.aaps.plugins.automation.actions.ActionSmoothingChange
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
+import app.aaps.plugins.automation.actions.ActionSmartInsulinReset
 import app.aaps.plugins.automation.actions.ActionStopProcessing
 import app.aaps.plugins.automation.actions.ActionStopTempTarget
 import app.aaps.plugins.automation.compose.iconColor
@@ -66,7 +67,8 @@ private fun actionCategoryOf(cls: KClass<*>): ActionCategory = when (cls) {
     ActionSMBChange::class,
     ActionSmoothingChange::class,
     ActionStopProcessing::class,
-    ActionRunAutotune::class -> ActionCategory.Loop
+    ActionRunAutotune::class,
+    ActionSmartInsulinReset::class -> ActionCategory.Loop
 
     ActionRunScene::class,
     ActionEnableScene::class,

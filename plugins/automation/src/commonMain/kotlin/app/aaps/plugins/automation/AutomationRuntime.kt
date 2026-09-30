@@ -697,6 +697,7 @@ class AutomationRuntime(
     fun getActionDummyObjects(): List<Action> {
         val actions = mutableListOf(
             actionFactory.actionStopProcessing(),
+            actionFactory.actionSmartInsulinReset(),
             actionFactory.actionStartTempTarget(),
             actionFactory.actionStopTempTarget(),
             actionFactory.actionNotification(),

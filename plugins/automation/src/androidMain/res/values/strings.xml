@@ -171,4 +171,6 @@
     <string name="permission_location_description">Needed for location-based automation triggers and WiFi network identification</string>
     <string name="permission_background_location_description">Needed for automation triggers to work when the app is in the background</string>
 
+    <string name="si_reset_action_name">SmartInsulin: Reset Learned Profiles</string>
+    <string name="si_reset_action_short">Reset learned DIA and peak to profile defaults</string>
 </resources>

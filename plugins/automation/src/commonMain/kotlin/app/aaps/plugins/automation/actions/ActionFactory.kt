@@ -1,5 +1,6 @@
 package app.aaps.plugins.automation.actions
 
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.interfaces.alerts.ReminderScheduler
 import app.aaps.core.interfaces.autotune.Autotune
 import app.aaps.core.interfaces.configuration.Config
@@ -58,6 +59,7 @@ class ActionFactory(
     private val sceneIconResolver: SceneIconResolver,
     private val smsCommunicator: SmsCommunicator,
     private val autotunePlugin: Autotune,
+    private val smartInsulinLearner: SmartInsulinLearner,
     private val importExportPrefs: ImportExportPrefs,
     private val exportPasswordDataStore: ExportPasswordDataStore,
     private val configBuilder: ConfigBuilder
@@ -93,6 +95,7 @@ class ActionFactory(
     fun actionSmoothingChange() = ActionSmoothingChange(aapsLogger, rh, pumpEnactResultProvider, activePlugin, configBuilder, triggerDeps)
     fun actionStartTempTarget() = ActionStartTempTarget(aapsLogger, rh, pumpEnactResultProvider, activePlugin, persistenceLayer, profileFunction, dateUtil, profileUtil, triggerDeps)
     fun actionStopProcessing() = ActionStopProcessing(aapsLogger, rh, pumpEnactResultProvider)
+    fun actionSmartInsulinReset() = ActionSmartInsulinReset(aapsLogger, rh, pumpEnactResultProvider, smartInsulinLearner)
     fun actionStopTempTarget() = ActionStopTempTarget(aapsLogger, rh, pumpEnactResultProvider, persistenceLayer, dateUtil)
 
     /**
@@ -117,6 +120,7 @@ class ActionFactory(
             ActionSendSMS::class.simpleName              -> actionSendSMS()
             ActionStartTempTarget::class.simpleName      -> actionStartTempTarget()
             ActionStopProcessing::class.simpleName       -> actionStopProcessing()
+            ActionSmartInsulinReset::class.simpleName    -> actionSmartInsulinReset()
             ActionStopTempTarget::class.simpleName       -> actionStopTempTarget()
             else                                             -> null
         }
