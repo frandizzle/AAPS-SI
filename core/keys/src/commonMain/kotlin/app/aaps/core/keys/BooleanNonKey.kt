@@ -47,4 +47,10 @@ enum class BooleanNonKey(
     // set on the next launch, the previous VACUUM died below the JVM (native abort / OOM) — used to
     // break the boot-crash loop. Transient device state, not a user setting → not exportable.
     VacuumInProgress("vacuum_in_progress", false, exportable = false),
+    // ── SmartInsulin: learner state and per-mode DURA settings ──
+    ApsSmartInsulinBreakfastDuraEnabled(key = "si_breakfast_dura_enabled", defaultValue = false),
+    ApsSmartInsulinLunchDuraEnabled(key = "si_lunch_dura_enabled", defaultValue = false),
+    ApsSmartInsulinDinnerDuraEnabled(key = "si_dinner_dura_enabled", defaultValue = false),
+    ApsSmartInsulinLowCarbDuraEnabled(key = "si_lowcarb_dura_enabled", defaultValue = false),
+    ApsSmartInsulinExtendedDuraEnabled(key = "si_extended_dura_enabled", defaultValue = false),
 }

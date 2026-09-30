@@ -446,6 +446,405 @@ enum class IntKey(
         ),
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
+    // ── SmartInsulin ──
+    ApsSmartInsulinPredictionHorizonMins(
+        key = "si_pred_horizon_mins",
+        defaultValue = 240,
+        min = 60,
+        max = 240,
+        title = KeysStrings.smart_insulin_prediction_horizon,
+        summary = KeysStrings.smart_insulin_prediction_horizon_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLowCarbThresholdG(
+        key = "si_low_carb_threshold_g",
+        defaultValue = 20,
+        min = 5,
+        max = 50,
+        title = KeysStrings.smart_insulin_low_carb_threshold,
+        summary = KeysStrings.smart_insulin_low_carb_threshold_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinBreakfastCarbsG(
+        key = "si_breakfast_carbs_g",
+        defaultValue = 45,
+        min = 10,
+        max = 150,
+        title = KeysStrings.si_breakfast_carbs_g_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLunchCarbsG(
+        key = "si_lunch_carbs_g",
+        defaultValue = 60,
+        min = 10,
+        max = 200,
+        title = KeysStrings.si_lunch_carbs_g_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinDinnerCarbsG(
+        key = "si_dinner_carbs_g",
+        defaultValue = 70,
+        min = 10,
+        max = 200,
+        title = KeysStrings.si_dinner_carbs_g_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLowCarbCarbsG(
+        key = "si_lowcarb_carbs_g",
+        defaultValue = 20,
+        min = 5,
+        max = 60,
+        title = KeysStrings.si_lowcarb_carbs_g_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinExtendedCarbsG(
+        key = "si_extended_carbs_g",
+        defaultValue = 50,
+        min = 10,
+        max = 150,
+        title = KeysStrings.si_extended_carbs_g_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinModeWindowMins(
+        key = "si_mode_window_mins",
+        defaultValue = 180,
+        min = 30,
+        max = 480,
+        title = KeysStrings.si_mode_window_mins_title,
+        summary = KeysStrings.si_mode_window_mins_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinPreBolus2DefaultDelayMins(
+        key = "si_prebolus2_default_delay_mins",
+        defaultValue = 25,
+        min = 5,
+        max = 120,
+        title = KeysStrings.si_prebolus2_default_delay_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinPostModeLockoutMins(
+        key = "si_post_mode_lockout_mins",
+        defaultValue = 90,
+        min = 0,
+        max = 180,
+        title = KeysStrings.si_post_mode_lockout_mins_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinReboundWindowMins(
+        key = "si_rebound_window_mins",
+        defaultValue = 60,
+        min = 20,
+        max = 90,
+        title = KeysStrings.si_rebound_window_mins_title,
+        summary = KeysStrings.si_rebound_window_mins_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLearningBias(
+        key = "si_learning_bias",
+        defaultValue = 2,
+        min = 0,
+        max = 4,
+        title = KeysStrings.si_learning_bias_title,
+        summary = KeysStrings.si_learning_bias_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinDawnWindowStartHour(
+        key = "si_dawn_start_hour",
+        defaultValue = 3,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_dawn_start_hour_title,
+        summary = KeysStrings.si_dawn_start_hour_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinDawnWindowEndHour(
+        key = "si_dawn_end_hour",
+        defaultValue = 9,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_dawn_end_hour_title,
+        summary = KeysStrings.si_dawn_end_hour_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinUamNightCutoffHour(
+        key = "si_uam_night_cutoff_hour",
+        defaultValue = 23,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_night_cutoff_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamDayStartHour(
+        key = "si_uam_day_start_hour",
+        defaultValue = 9,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_day_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamRiseConsecutiveReadings(
+        key = "si_uam_rise_readings",
+        defaultValue = 3,
+        min = 2,
+        max = 6,
+        title = KeysStrings.si_uam_rise_readings_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbCount(
+        key = "si_uam_entry_smb_count",
+        defaultValue = 3,
+        min = 1,
+        max = 10,
+        title = KeysStrings.si_uam_entry_smb_count_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamBreakfastStartHour(
+        key = "si_uam_breakfast_start",
+        defaultValue = 6,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_breakfast_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled
+    ),
+    ApsSmartInsulinUamBreakfastEndHour(
+        key = "si_uam_breakfast_end",
+        defaultValue = 10,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_breakfast_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled
+    ),
+    ApsSmartInsulinUamBreakfastDurationMins(
+        key = "si_uam_breakfast_duration",
+        defaultValue = 30,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_breakfast_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled
+    ),
+    ApsSmartInsulinUamLunchStartHour(
+        key = "si_uam_lunch_start",
+        defaultValue = 10,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_lunch_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled
+    ),
+    ApsSmartInsulinUamLunchEndHour(
+        key = "si_uam_lunch_end",
+        defaultValue = 14,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_lunch_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled
+    ),
+    ApsSmartInsulinUamLunchDurationMins(
+        key = "si_uam_lunch_duration",
+        defaultValue = 30,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_lunch_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled
+    ),
+    ApsSmartInsulinUamDinnerStartHour(
+        key = "si_uam_dinner_start",
+        defaultValue = 17,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_dinner_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamDinnerStartMinute(
+        key = "si_uam_dinner_start_minute",
+        defaultValue = 0,
+        min = 0,
+        max = 59,
+        title = KeysStrings.si_uam_dinner_start_minute_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamDinnerEndHour(
+        key = "si_uam_dinner_end",
+        defaultValue = 21,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_dinner_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamDinnerEndMinute(
+        key = "si_uam_dinner_end_minute",
+        defaultValue = 0,
+        min = 0,
+        max = 59,
+        title = KeysStrings.si_uam_dinner_end_minute_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamDinnerDurationMins(
+        key = "si_uam_dinner_duration",
+        defaultValue = 30,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_dinner_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamSnackStartHour(
+        key = "si_uam_snack_start",
+        defaultValue = 21,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_snack_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled
+    ),
+    ApsSmartInsulinUamSnackEndHour(
+        key = "si_uam_snack_end",
+        defaultValue = 23,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_snack_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled
+    ),
+    ApsSmartInsulinUamSnackDurationMins(
+        key = "si_uam_snack_duration",
+        defaultValue = 30,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_snack_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled
+    ),
+    ApsSmartInsulinUamAfternoonStartHour(
+        key = "si_uam_afternoon_start",
+        defaultValue = 14,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_afternoon_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
+    ApsSmartInsulinUamAfternoonStartMinute(
+        key = "si_uam_afternoon_start_minute",
+        defaultValue = 0,
+        min = 0,
+        max = 59,
+        title = KeysStrings.si_uam_afternoon_start_minute_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
+    ApsSmartInsulinUamAfternoonEndHour(
+        key = "si_uam_afternoon_end",
+        defaultValue = 17,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_afternoon_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
+    ApsSmartInsulinUamAfternoonEndMinute(
+        key = "si_uam_afternoon_end_minute",
+        defaultValue = 0,
+        min = 0,
+        max = 59,
+        title = KeysStrings.si_uam_afternoon_end_minute_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
+    ApsSmartInsulinUamAfternoonDurationMins(
+        key = "si_uam_afternoon_duration",
+        defaultValue = 60,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_afternoon_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
+    ApsSmartInsulinUamProteinFatDurationMins(
+        key = "si_uam_proteinfat_duration",
+        defaultValue = 30,
+        min = 15,
+        max = 120,
+        title = KeysStrings.si_uam_proteinfat_duration_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatStuckReadings(
+        key = "si_uam_proteinfat_stuck_readings",
+        defaultValue = 6,
+        min = 2,
+        max = 12,
+        title = KeysStrings.si_uam_proteinfat_stuck_readings_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatDayStartHour(
+        key = "si_uam_proteinfat_day_start",
+        defaultValue = 10,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_day_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatDayEndHour(
+        key = "si_uam_proteinfat_day_end",
+        defaultValue = 16,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_day_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatNightStartHour(
+        key = "si_uam_proteinfat_night_start",
+        defaultValue = 22,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_night_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatNightEndHour(
+        key = "si_uam_proteinfat_night_end",
+        defaultValue = 6,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_night_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatOvernightStartHour(
+        key = "si_uam_proteinfat_overnight_start",
+        defaultValue = 2,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_overnight_start_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamProteinFatOvernightEndHour(
+        key = "si_uam_proteinfat_overnight_end",
+        defaultValue = 4,
+        min = 0,
+        max = 23,
+        title = KeysStrings.si_uam_proteinfat_overnight_end_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
     ;
 
     override val entries: Map<Int, TextRef> = entriesRefs

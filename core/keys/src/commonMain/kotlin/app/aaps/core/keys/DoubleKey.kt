@@ -340,6 +340,146 @@ enum class DoubleKey(
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
 
+    // ── SmartInsulin ──
+    ApsSmartInsulinMaxSmb(
+        key = "si_max_smb_u",
+        defaultValue = 3.0,
+        min = 0.1,
+        max = 20.0,
+        title = KeysStrings.si_max_smb_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinMaxTbr(
+        key = "si_max_tbr_u",
+        defaultValue = 3.0,
+        min = 0.5,
+        max = 10.0,
+        title = KeysStrings.si_max_tbr_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinAggressionMax(
+        key = "si_aggression_max",
+        defaultValue = 1.5,
+        min = 1.0,
+        max = 2.5,
+        title = KeysStrings.si_aggression_max_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinMaxPreBolus(
+        key = "si_max_prebolus_u",
+        defaultValue = 8.0,
+        min = 0.5,
+        max = 15.0,
+        title = KeysStrings.si_max_prebolus_title,
+        summary = KeysStrings.si_max_prebolus_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinPreBolus2DefaultU(
+        key = "si_prebolus2_default_u",
+        defaultValue = 2.0,
+        min = 0.5,
+        max = 10.0,
+        title = KeysStrings.si_prebolus2_default_u_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLearningRate(
+        key = "si_learning_rate",
+        defaultValue = 0.15,
+        min = 0.05,
+        max = 0.5,
+        title = KeysStrings.smart_insulin_learning_rate,
+        summary = KeysStrings.smart_insulin_learning_rate_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinDawnSmbReduction(
+        key = "si_dawn_smb_reduction",
+        defaultValue = 0.5,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_dawn_smb_reduction_title,
+        summary = KeysStrings.si_dawn_smb_reduction_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinRestingHrBpm(
+        key = "si_resting_hr_bpm",
+        defaultValue = 70.0,
+        min = 50.0,
+        max = 110.0,
+        title = KeysStrings.si_resting_hr_bpm_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinUamDuraStrength(
+        key = "si_uam_dura_strength",
+        defaultValue = 1.0,
+        min = 0.0,
+        max = 5.0,
+        title = KeysStrings.si_uam_dura_strength_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDuraEnabled
+    ),
+    ApsSmartInsulinPfDuraStrength(
+        key = "si_pf_dura_strength",
+        defaultValue = 1.0,
+        min = 0.0,
+        max = 5.0,
+        title = KeysStrings.si_pf_dura_strength_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPfDuraEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFraction(
+        key = "si_uam_entry_smb_fraction",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFractionBreakfast(
+        key = "si_uam_entry_smb_fraction_breakfast",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_breakfast_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamBreakfastEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFractionLunch(
+        key = "si_uam_entry_smb_fraction_lunch",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_lunch_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamLunchEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFractionDinner(
+        key = "si_uam_entry_smb_fraction_dinner",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_dinner_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDinnerEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFractionSnack(
+        key = "si_uam_entry_smb_fraction_snack",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_snack_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamSnackEnabled
+    ),
+    ApsSmartInsulinUamEntrySmbFractionAfternoon(
+        key = "si_uam_entry_smb_fraction_afternoon",
+        defaultValue = 0.8,
+        min = 0.1,
+        max = 1.0,
+        title = KeysStrings.si_uam_entry_smb_fraction_afternoon_title,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamAfternoonEnabled
+    ),
     ;
 
 }

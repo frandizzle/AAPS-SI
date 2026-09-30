@@ -1,0 +1,409 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--  res/layout/dialog_smart_meal.xml
+      Place in:  ui/src/main/res/layout/dialog_smart_meal.xml  -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Mode spinner -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Meal Mode"
+            android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+        <Spinner
+            android:id="@+id/mode_spinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp" />
+
+        <!-- Duration picker -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Duration (mins)"
+            android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+        <app.aaps.core.ui.elements.NumberPicker
+            android:id="@+id/mode_duration"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="16dp" />
+
+        <!-- ISF override picker -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ISF override (0 = use profile)"
+            android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+        <app.aaps.core.ui.elements.NumberPicker
+            android:id="@+id/isf_amount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="16dp" />
+
+        <!-- DURA_ISF — strengthens ISF the longer BG sits stuck above target during this mode -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="DURA (strengthen ISF if BG stuck high)"
+                    android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Gradually tightens ISF the longer BG sits flat above target"
+                    android:textSize="12sp"
+                    android:alpha="0.6" />
+
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/dura_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- DURA floor (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/dura_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Strongest ISF allowed (floor)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/dura_floor_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Strength (how fast ISF ramps while stuck)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/dura_strength_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Pre-bolus"
+                android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/pre_bolus_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus amount (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/pre_bolus_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_horizontal">
+
+                <Button
+                    android:id="@+id/bolus1"
+                    style="@style/Widget.AppCompat.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+1U" />
+
+                <Button
+                    android:id="@+id/bolus2"
+                    style="@style/Widget.AppCompat.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+2U" />
+
+                <Button
+                    android:id="@+id/bolus3"
+                    style="@style/Widget.AppCompat.Button.Borderless"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="+3U" />
+
+            </LinearLayout>
+        </LinearLayout>
+
+
+        <!-- Pre-bolus 2 — scheduled bolus for protein/fat rise coverage -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Pre-bolus 2 (scheduled)"
+                    android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Auto-fires after delay if BG &gt; target"
+                    android:textSize="12sp"
+                    android:alpha="0.6" />
+
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/pre_bolus2_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus 2 controls (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/pre_bolus2_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Delay (mins after bolus 1)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus2_delay_mins"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Amount (units)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus2_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Safety checks: BG must be above target, BG not falling, and IOB must have headroom"
+                android:textSize="11sp"
+                android:alpha="0.55"
+                android:layout_marginBottom="4dp" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus 3 — fires N min after PB2 has actually delivered, same safety gates -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="8dp"
+            android:layout_marginBottom="8dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Pre-bolus 3 (after PB2)"
+                    android:textAppearance="@style/TextAppearance.AppCompat.Medium" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Fires N min after PB2 delivers, same safety checks"
+                    android:textSize="12sp"
+                    android:alpha="0.6" />
+
+            </LinearLayout>
+
+            <com.google.android.material.switchmaterial.SwitchMaterial
+                android:id="@+id/pre_bolus3_switch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+
+        </LinearLayout>
+
+        <!-- Pre-bolus 3 controls (shown only when toggle on) -->
+        <LinearLayout
+            android:id="@+id/pre_bolus3_layout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Delay (mins after PB2 fires)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus3_delay_mins"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="8dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Amount (units)"
+                android:textAppearance="@style/TextAppearance.AppCompat.Small" />
+
+            <app.aaps.core.ui.elements.NumberPicker
+                android:id="@+id/pre_bolus3_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Same safety checks as PB2: BG above target, not falling, IOB has headroom"
+                android:textSize="11sp"
+                android:alpha="0.55"
+                android:layout_marginBottom="4dp" />
+
+        </LinearLayout>
+
+        <!-- UAM active banner — shown when UAM auto-detected mode is active -->
+        <TextView
+            android:id="@+id/uam_active_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:padding="10dp"
+            android:backgroundTint="?attr/warningColor"
+            android:background="?attr/selectableItemBackground"
+            android:textColor="?attr/defaultTextColor"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <!-- Cancel active mode button (shown only if mode active) -->
+        <Button
+            android:id="@+id/cancel_mode_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:backgroundTint="?attr/warningColor"
+            android:text="Cancel active mode"
+            android:visibility="gone" />
+
+        <!-- Cancel PB2 button (shown only when PB2 pending) -->
+        <Button
+            android:id="@+id/cancel_pb2_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:backgroundTint="?attr/warningColor"
+            android:text="Cancel pre-bolus 2"
+            android:visibility="gone" />
+
+        <!-- Cancel PB3 button (shown only when PB3 pending) -->
+        <Button
+            android:id="@+id/cancel_pb3_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:backgroundTint="?attr/warningColor"
+            android:text="Cancel pre-bolus 3"
+            android:visibility="gone" />
+
+        <!-- OK / Cancel -->
+        <include
+            android:id="@+id/okcancel"
+            layout="@layout/okcancel" />
+
+    </LinearLayout>
+</ScrollView>

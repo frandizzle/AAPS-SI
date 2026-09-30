@@ -275,6 +275,150 @@ enum class BooleanKey(
     SiteRotationManagePump("site_rotation_manage_pump", defaultValue = false, title = KeysStrings.pref_title_site_rotation_manage_pump, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
     SiteRotationManageCgm("site_rotation_manage_cgm", defaultValue = false, title = KeysStrings.pref_title_site_rotation_manage_cgm, sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)),
 
+    // ── SmartInsulin ──
+    ApsSmartInsulinBasalLearningEnabled(
+        key = "si_basal_learning_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_basal_learning_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinEnableLearning(
+        key = "si_enable_learning",
+        defaultValue = true,
+        title = KeysStrings.smart_insulin_enable_learning,
+        summary = KeysStrings.smart_insulin_enable_learning_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinCgmWarmupEnabled(
+        key = "si_cgm_warmup_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_cgm_warmup_enabled_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinModeIsfLearningEnabled(
+        key = "si_mode_isf_learning_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_mode_isf_learning_title,
+        summary = KeysStrings.si_mode_isf_learning_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinLowCarbMode(
+        key = "si_low_carb_mode",
+        defaultValue = false,
+        title = KeysStrings.smart_insulin_low_carb_mode,
+        summary = KeysStrings.smart_insulin_low_carb_mode_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinActivityTargetEnabled(
+        key = "si_activity_target_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_activity_target_enabled_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinTargetRespectEnabled(
+        key = "si_target_respect_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_target_respect_enabled_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinUamEnabled(
+        key = "si_uam_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_uam_enabled_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinUamCgmWarmupBlock(
+        key = "si_uam_cgm_warmup_block",
+        defaultValue = true,
+        title = KeysStrings.si_uam_cgm_warmup_block_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinStftCgmWarmupBlock(
+        key = "si_stft_cgm_warmup_block",
+        defaultValue = true,
+        title = KeysStrings.si_stft_cgm_warmup_block_title,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFirstDayCgmSmoothing(
+        key = "si_first_day_cgm_smoothing",
+        defaultValue = true,
+        title = KeysStrings.si_first_day_cgm_smoothing_title,
+        summary = KeysStrings.si_first_day_cgm_smoothing_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinUamBreakfastEnabled(
+        key = "si_uam_breakfast_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_uam_breakfast_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamLunchEnabled(
+        key = "si_uam_lunch_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_uam_lunch_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamDinnerEnabled(
+        key = "si_uam_dinner_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_uam_dinner_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamSnackEnabled(
+        key = "si_uam_snack_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_uam_snack_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamAfternoonEnabled(
+        key = "si_uam_afternoon_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_uam_afternoon_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamProteinFatEnabled(
+        key = "si_uam_proteinfat_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_uam_proteinfat_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamPfTakeover(
+        key = "si_uam_pf_takeover",
+        defaultValue = true,
+        title = KeysStrings.si_uam_pf_takeover_title,
+        summary = KeysStrings.si_uam_pf_takeover_summary,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamProteinFatEnabled
+    ),
+    ApsSmartInsulinUamWobbleTolerance(
+        key = "si_uam_wobble_tolerance",
+        defaultValue = true,
+        title = KeysStrings.si_uam_wobble_tolerance_title,
+        summary = KeysStrings.si_uam_wobble_tolerance_summary,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinUamDuraEnabled(
+        key = "si_uam_dura_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_uam_dura_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamEnabled
+    ),
+    ApsSmartInsulinPfDuraEnabled(
+        key = "si_pf_dura_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_pf_dura_enabled_title,
+        defaultedBySM = true,
+        dependency = ApsSmartInsulinUamProteinFatEnabled
+    ),
     ;
 
 }
