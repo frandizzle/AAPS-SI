@@ -5,11 +5,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -19,23 +25,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import app.aaps.core.ui.compose.AapsTheme
 import java.util.Calendar
 import kotlin.math.roundToInt
 
 /*
- * The two parts of the SI tab that were drawn rather than listed in 3.4: the time-in-range bars and
- * the 24h circadian table. Parsing and colour rules are the 3.4 fragment's, unchanged.
+ * The two drawn parts of the SI tab: the time-in-range bars and the 24h circadian table. Parsing and
+ * the meaning of each colour are the 3.4 fragment's; the colours themselves come from the theme.
  */
-
-private val Green = Color(0xFF43A047)
-private val Amber = Color(0xFFFB8C00)
-private val Red = Color(0xFFE53935)
-private val Blue = Color(0xFF64B5F6)
-private val GreyText = Color(0xFF888888)
-private val LightText = Color(0xFFDDDDDD)
-private val HeaderText = Color(0xFFCCCCCC)
-private val Track = Color(0xFF444444)
 
 // ── Time in range ───────────────────────────────────────────────────────────
 
@@ -52,48 +49,74 @@ private fun parseTir(s: String, prefix: String): TirValues? {
 
 @Composable
 internal fun SiTirSection(d: SmartInsulinPlugin.FragmentData) {
-    Text("How much time BG has spent in the healthy range over the last 24h.", fontSize = 11.sp, color = LightText,
-         modifier = Modifier.padding(bottom = 8.dp))
-    TirBar("Fasting", parseTir(d.tirRawLine, "Fasting"), "fasting")
-    TirBar("Meal", parseTir(d.tirRawLine, "Meal"), "meal")
+    val colors = AapsTheme.generalColors
 
     // Estimated HbA1c (ADAG: HbA1c% = (avgBG_mgdl + 46.7) / 28.7)
-    if (d.estimatedHba1c > 0.0) {
-        val avg = if (d.isMmol) "${"%.1f".format(d.avgBgMgdl24h / 18.0)} mmol/L" else "${"%.0f".format(d.avgBgMgdl24h)} mg/dL"
-        val windowNote = if (d.bgWindowHours < 24) "  (${d.bgWindowHours}h data)" else ""
-        val color = when {
-            d.estimatedHba1c < 6.5 -> Green
-            d.estimatedHba1c < 7.5 -> Amber
-            else                   -> Red
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        if (d.estimatedHba1c > 0.0) {
+            val hba1cColor = when {
+                d.estimatedHba1c < 6.5 -> colors.statusNormal
+                d.estimatedHba1c < 7.5 -> colors.statusWarning
+                else                   -> colors.statusCritical
+            }
+            val avg = if (d.isMmol) "%.1f".format(d.avgBgMgdl24h / 18.0) else "%.0f".format(d.avgBgMgdl24h)
+            SiStat("Est. HbA1c", "%.1f%%".format(d.estimatedHba1c), if (d.bgWindowHours < 24) "${d.bgWindowHours}h of data" else "last 24h",
+                   Modifier.weight(1f), valueColor = hba1cColor)
+            SiStat("Average BG", avg, if (d.isMmol) "mmol/L" else "mg/dL", Modifier.weight(1f))
+        } else {
+            SiStat("Est. HbA1c", "—", "building… (~2h needed)", Modifier.weight(1f))
         }
-        Text("Est. HbA1c: ${"%.1f".format(d.estimatedHba1c)}%  •  avg: $avg$windowNote", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = color)
-    } else {
-        Text("Est. HbA1c: building… (~2h needed)", fontSize = 13.sp, color = GreyText)
+    }
+    SiSpacer(16)
+    TirBar("Fasting", parseTir(d.tirRawLine, "Fasting"), "fasting")
+    SiSpacer(12)
+    TirBar("Meal", parseTir(d.tirRawLine, "Meal"), "meal")
+    SiSpacer(12)
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+        Legend("Low", colors.bgLow)
+        Legend("In range", colors.bgInRange)
+        Legend("High", colors.bgHigh)
     }
 }
 
 @Composable
 private fun TirBar(title: String, tir: TirValues?, label: String) {
-    Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+    val colors = AapsTheme.generalColors
+    Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.fillMaxWidth()) {
+        Text(title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+        if (tir != null)
+            Text("${tir.inPct.roundToInt()}% in range", style = MaterialTheme.typography.labelLarge, color = colors.bgInRange)
+    }
+    Spacer(Modifier.height(6.dp))
     Row(
         Modifier
             .fillMaxWidth()
             .height(14.dp)
-            .clip(RoundedCornerShape(3.dp))
+            .clip(RoundedCornerShape(50))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
-        if (tir == null || tir.inPct + tir.highPct + tir.lowPct <= 0f) {
-            Box(Modifier.weight(1f).height(14.dp).background(Color(0xFF9E9E9E)))
-        } else {
-            if (tir.lowPct > 0f) Box(Modifier.weight(tir.lowPct).height(14.dp).background(Red))
-            if (tir.inPct > 0f) Box(Modifier.weight(tir.inPct).height(14.dp).background(Green))
-            if (tir.highPct > 0f) Box(Modifier.weight(tir.highPct).height(14.dp).background(Amber))
+        if (tir != null && tir.inPct + tir.highPct + tir.lowPct > 0f) {
+            if (tir.lowPct > 0f) Box(Modifier.weight(tir.lowPct).height(14.dp).background(colors.bgLow))
+            if (tir.inPct > 0f) Box(Modifier.weight(tir.inPct).height(14.dp).background(colors.bgInRange))
+            if (tir.highPct > 0f) Box(Modifier.weight(tir.highPct).height(14.dp).background(colors.bgHigh))
         }
     }
+    Spacer(Modifier.height(4.dp))
     Text(
         if (tir == null) "Not enough data yet — needs ~2 hours of $label readings"
-        else "${tir.inPct.roundToInt()}% in range  •  ${tir.highPct.roundToInt()}% high  •  ${tir.lowPct.roundToInt()}% low",
-        fontSize = 11.sp, color = LightText, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp)
+        else "${tir.lowPct.roundToInt()}% low  ·  ${tir.highPct.roundToInt()}% high",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+@Composable
+private fun Legend(text: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(color))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 // ── Circadian 24h ───────────────────────────────────────────────────────────
@@ -111,19 +134,6 @@ private fun parseCircRows(raw: String) = Regex("""[→►\s]\s*(\d{1,2})\s+([\d.
         )
     }.toList()
 
-private fun confColor(p: Int) = when {
-    p >= 60 -> Green
-    p >= 30 -> Amber
-    else    -> Red
-}
-
-// Ceiling: <0.95 = blue (restricted), >1.05 = amber (boosted), else grey
-private fun ceilColor(m: Float) = when {
-    m > 1.05f -> Amber
-    m < 0.95f -> Blue
-    else      -> Color(0xFFAAAAAA)
-}
-
 fun todayDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
 
 /**
@@ -131,25 +141,31 @@ fun todayDow(): Int = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
  */
 @Composable
 internal fun SiCircadianSection(plugin: SmartInsulinPlugin, selectedDow: Int, onSelectDow: (Int) -> Unit) {
+    val colors = AapsTheme.generalColors
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val today = todayDow()
     val currentHr = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
     val dayLabels = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 
-    // Day selector, Monday first
-    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        intArrayOf(1, 2, 3, 4, 5, 6, 0).forEach { d ->
-            val selected = d == selectedDow
-            Text(
-                if (d == today) "Today" else dayLabels[d],
-                fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                color = if (selected) Color.Black else Color(0xFFAAAAAA),
-                modifier = Modifier
-                    .weight(1f)
-                    .background(if (selected) Green else Color(0xFF333333))
-                    .clickable { onSelectDow(d) }
-                    .padding(vertical = 4.dp)
-            )
+    // Day selector, Monday first — a segmented row
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerHighest, shape = RoundedCornerShape(50)) {
+        Row(Modifier.fillMaxWidth().padding(3.dp)) {
+            intArrayOf(1, 2, 3, 4, 5, 6, 0).forEach { d ->
+                val selected = d == selectedDow
+                Text(
+                    if (d == today) "Today" else dayLabels[d],
+                    style = MaterialTheme.typography.labelMedium,
+                    textAlign = TextAlign.Center,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else muted,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .weight(if (d == today) 1.3f else 1f)
+                        .clip(RoundedCornerShape(50))
+                        .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                        .clickable { onSelectDow(d) }
+                        .padding(vertical = 7.dp)
+                )
+            }
         }
     }
 
@@ -160,74 +176,98 @@ internal fun SiCircadianSection(plugin: SmartInsulinPlugin, selectedDow: Int, on
     val profIsfMgdl = plugin.profileIsfMgdl
     val profBasal = plugin.profileBasalU
     val profIsfDisp = if (isMmol && profIsfMgdl > 0) (profIsfMgdl / 18.0).toFloat() else profIsfMgdl.toFloat()
+    val stronger = colors.statusWarning      // more insulin than profile
+    val weaker = AapsTheme.elementColors.insulin // less insulin than profile
 
-    // ISF: orange = lower ISF (more aggressive), blue = higher (less aggressive), grey = at profile
     fun isfColor(v: Float): Color {
-        if (profIsfDisp <= 0f) return LightText
+        if (profIsfDisp <= 0f) return muted
         val r = v / profIsfDisp
         return when {
-            r < 0.97f -> Amber
-            r > 1.03f -> Blue
-            else      -> GreyText
+            r < 0.97f -> stronger
+            r > 1.03f -> weaker
+            else      -> muted
         }
     }
 
-    // Basal: orange = higher basal (more aggressive), blue = lower, grey = at profile
     fun basColor(v: Float): Color {
-        if (profBasal <= 0.0) return LightText
+        if (profBasal <= 0.0) return muted
         val r = v / profBasal.toFloat()
         return when {
-            r > 1.03f -> Amber
-            r < 0.97f -> Blue
-            else      -> GreyText
+            r > 1.03f -> stronger
+            r < 0.97f -> weaker
+            else      -> muted
         }
     }
 
-    Text(
-        "Hourly multipliers learned from your BG patterns.\nISF and Bas = values the loop actually delivers for that hour.\n" +
-            "Ceil = aggressiveness cap — lower = more conservative.\n" +
-            "Conf = confidence — how much real data collected. Green ≥60%, amber ≥30%, red <30%.",
-        fontSize = 11.sp, color = LightText, modifier = Modifier.padding(bottom = 8.dp)
-    )
+    fun ceilColor(m: Float) = when {
+        m > 1.05f -> stronger
+        m < 0.95f -> weaker
+        else      -> muted
+    }
 
-    Row(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-        HeaderCell("Hr", 1f)
-        HeaderCell(if (isMmol) "ISF mmol" else "ISF mg/dL", 2f)
-        HeaderCell("Basal U/h", 2f)
-        HeaderCell("Ceil", 2f)
-        HeaderCell("Conf", 3f)
+    fun confColor(p: Int) = when {
+        p == 0  -> muted
+        p >= 60 -> colors.statusNormal
+        p >= 30 -> colors.statusWarning
+        else    -> colors.statusCritical
+    }
+
+    SiSpacer(12)
+    Text(
+        "What the loop delivers each hour, learned from your BG. Orange = more insulin than your profile, " +
+            "blue = less. Ceil caps aggressiveness for the hour; Conf is how much data backs it.",
+        style = MaterialTheme.typography.bodySmall, color = muted
+    )
+    SiSpacer(12)
+
+    Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+        HeaderCell("Hr", 0.8f)
+        HeaderCell("ISF", 1.4f)
+        HeaderCell("Basal", 1.4f)
+        HeaderCell("Ceil", 1.3f)
+        HeaderCell("Conf", 2.2f)
     }
 
     rows.forEach { row ->
         val isCur = selectedDow == today && row.hour == currentHr
+        val bg = when {
+            isCur              -> MaterialTheme.colorScheme.primaryContainer
+            row.hour % 2 == 0  -> MaterialTheme.colorScheme.surfaceContainerHigh
+            else               -> Color.Transparent
+        }
+        val weight = if (isCur) FontWeight.Bold else FontWeight.Normal
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(bottom = 2.dp)
-                .then(if (isCur) Modifier.background(Color(0x22FFFFFF)).padding(horizontal = 4.dp, vertical = 2.dp) else Modifier),
+                .clip(RoundedCornerShape(8.dp))
+                .background(bg)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Cell(if (isCur) "→${row.hour}" else "  ${row.hour}", 1f, if (isCur) Color.White else HeaderText, isCur)
-            Cell(if (isMmol) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 2f, isfColor(row.isfVal), isCur)
-            Cell("%.3f".format(row.basVal), 2f, basColor(row.basVal), isCur)
-            Cell("%.3f".format(row.ceil), 2f, ceilColor(row.ceil), isCur)
-            Row(Modifier.weight(3f), verticalAlignment = Alignment.CenterVertically) {
-                val fill = (row.confPct.coerceIn(0, 100) / 100f)
-                Row(Modifier.width(40.dp).height(8.dp)) {
-                    if (fill > 0f) Box(Modifier.weight(fill).height(8.dp).background(confColor(row.confPct)))
-                    if (fill < 1f) Box(Modifier.weight(1f - fill).height(8.dp).background(Track))
-                }
-                Text(" ${row.confPct}%", fontSize = 11.sp, color = confColor(row.confPct),
-                     fontWeight = if (isCur) FontWeight.Bold else FontWeight.Normal)
+            Cell("%02d".format(row.hour), 0.8f, if (isCur) MaterialTheme.colorScheme.onPrimaryContainer else muted, weight)
+            Cell(if (isMmol) "%.2f".format(row.isfVal) else "%.1f".format(row.isfVal), 1.4f, isfColor(row.isfVal), weight)
+            Cell("%.3f".format(row.basVal), 1.4f, basColor(row.basVal), weight)
+            Cell("%.2f".format(row.ceil), 1.3f, ceilColor(row.ceil), weight)
+            Row(Modifier.weight(2.2f), verticalAlignment = Alignment.CenterVertically) {
+                SiMeter(row.confPct / 100f, confColor(row.confPct), Modifier.weight(1f))
+                Text(
+                    "${row.confPct}%", style = MaterialTheme.typography.labelSmall, color = confColor(row.confPct),
+                    textAlign = TextAlign.End, modifier = Modifier.width(34.dp)
+                )
             }
         }
     }
+    SiSpacer(8)
+    Text(
+        if (isMmol) "ISF in mmol/U · basal in U/h" else "ISF in mg/dL/U · basal in U/h",
+        style = MaterialTheme.typography.labelSmall, color = muted
+    )
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.HeaderCell(text: String, weight: Float) =
-    Text(text, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = HeaderText, modifier = Modifier.weight(weight))
+private fun RowScope.HeaderCell(text: String, weight: Float) =
+    Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(weight))
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.Cell(text: String, weight: Float, color: Color, bold: Boolean) =
-    Text(text, fontSize = 12.sp, color = color, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(weight))
+private fun RowScope.Cell(text: String, weight: Float, color: Color, fontWeight: FontWeight) =
+    Text(text, style = MaterialTheme.typography.bodySmall, color = color, fontWeight = fontWeight, modifier = Modifier.weight(weight))

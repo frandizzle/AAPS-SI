@@ -3,26 +3,47 @@ package app.aaps.plugins.aps.smartInsulin
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DonutLarge
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.GolfCourse
+import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -33,21 +54,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.ToolbarConfig
 import kotlinx.coroutines.delay
 
 /**
  * The SmartInsulin tab.
  *
- * Deliberately thin: everything the tab SAYS is decided in [SmartInsulinTabCards], ported from the 3.4
- * fragment unchanged. This file only lays the cards out and wires the few things that need the UI —
- * the Golf/Gym buttons, the reset confirmations, the feed-forward expander and the pedometer permission.
+ * Everything the tab SAYS is decided in [SmartInsulinTabCards], ported from the 3.4 fragment unchanged.
+ * This file decides how it looks: a summary header, then foldable 4.0-style sections.
  */
 @Composable
 fun SmartInsulinScreen(
@@ -78,65 +97,113 @@ fun SmartInsulinScreen(
         )
     }
     LaunchedEffect(Unit) {
-        while (true) { delay(REFRESH_MS); tick++ }
+        while (true) {
+            delay(REFRESH_MS); tick++
+        }
     }
 
     val onAction: (SiAction) -> Unit = { a ->
         when (a) {
             SiAction.REQUEST_STEP_PERMISSION -> stepPermission.launch(Manifest.permission.ACTIVITY_RECOGNITION)
-            SiAction.TOGGLE_FF_DEBUG         -> { cards.showFfDebug = !cards.showFfDebug; tick++ }
+            SiAction.TOGGLE_FF_DEBUG         -> {
+                cards.showFfDebug = !cards.showFfDebug; tick++
+            }
         }
     }
 
     // Read on every tick; `tick` is here so recomposition re-runs the builders.
     @Suppress("UNUSED_EXPRESSION") tick
     val d = plugin.fragmentData()
+    val colors = AapsTheme.generalColors
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        SiCard("General", cards.buildGeneralCard(d), onAction)
+        SummaryCard(d)
+
+        SiSection("General", Icons.Filled.Tune, subtitle = "What the loop is doing this hour") {
+            SiItems(cards.buildGeneralCard(d).items, onAction)
+        }
 
         val session = cards.buildSessionCard()
-        SiCard("Activity / Stress Session", session, onAction) {
+        SiSection("Activity / Stress Session", Icons.AutoMirrored.Filled.DirectionsRun, accent = AapsTheme.elementColors.insulin) {
+            SiItems(session.items, onAction)
+            SiSpacer(14)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(onClick = { plugin.toggleActivitySession(SessionLabel.GOLF); tick++ },
-                               modifier = Modifier.weight(1f)) { Text(session.labels["golf"] ?: "Golf") }
-                OutlinedButton(onClick = { plugin.toggleActivitySession(SessionLabel.GYM); tick++ },
-                               modifier = Modifier.weight(1f)) { Text(session.labels["gym"] ?: "Gym") }
+                SessionButton(session.labels["golf"] ?: "Golf", Icons.Filled.GolfCourse, Modifier.weight(1f)) {
+                    plugin.toggleActivitySession(SessionLabel.GOLF); tick++
+                }
+                SessionButton(session.labels["gym"] ?: "Gym", Icons.Filled.FitnessCenter, Modifier.weight(1f)) {
+                    plugin.toggleActivitySession(SessionLabel.GYM); tick++
+                }
             }
         }
 
-        cards.buildReboundCard(d).takeIf { it.visible }?.let { SiCard("Low Recovery", it, onAction, accent = Color(0xFFFB8C00)) }
-        SiCard("Time in Range", SiCardContent(emptyList()), onAction) { SiTirSection(d) }
-        SiCard("Learning", cards.buildLearningCard(d), onAction)
-        SiCard("Meal Auto-Detection (UAM)", cards.buildUamCard(d), onAction)
-        SiCard("Soft Target Fine-Tune", cards.buildStftCard(d), onAction)
-        SiCard("Circadian 24h", SiCardContent(emptyList()), onAction) {
-            SiCircadianSection(plugin, circadianDow) { circadianDow = it; tick++ }
-        }
-        SiCard("Learned Insulin Profiles", cards.buildProfilesCard(d), onAction)
-        SiCard("Raw Status Log", SiCardContent(emptyList()), onAction) {
-            Text(plugin.statusSummary(), fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFDDDDDD), lineHeight = 15.sp)
+        cards.buildReboundCard(d).takeIf { it.visible }?.let {
+            SiSection("Low Recovery", Icons.AutoMirrored.Filled.TrendingDown, accent = colors.statusWarning, subtitle = "Protection window after a low") {
+                SiItems(it.items, onAction)
+            }
         }
 
-        SiCard("Reset Learners", SiCardContent(emptyList()), onAction) {
+        SiSection("Time in Range", Icons.Filled.DonutLarge, accent = colors.bgInRange, subtitle = "Last 24 hours") { SiTirSection(d) }
+
+        SiSection("Learning", Icons.Filled.Psychology) {
+            SiItems(cards.buildLearningCard(d).items, onAction)
+        }
+        SiSection("Meal Auto-Detection (UAM)", Icons.Filled.Restaurant, accent = AapsTheme.elementColors.carbs,
+                  subtitle = "Detects unannounced meals from BG rises") {
+            SiItems(cards.buildUamCard(d).items, onAction)
+        }
+        SiSection("Soft Target Fine-Tune", Icons.Filled.GpsFixed, accent = colors.adjusted,
+                  subtitle = if (d.stftActive) "Active" else "Nudges the target for stubborn highs") {
+            SiItems(cards.buildStftCard(d).items, onAction)
+        }
+        SiSection("Circadian 24h", Icons.Filled.Schedule, subtitle = "Hour-by-hour learned ISF and basal") {
+            SiCircadianSection(plugin, circadianDow) { circadianDow = it; tick++ }
+        }
+        SiSection("Learned Insulin Profiles", Icons.Filled.Timeline, subtitle = "Peak and duration per meal type", initiallyExpanded = false) {
+            SiItems(cards.buildProfilesCard(d).items, onAction)
+        }
+        SiSection("Raw Status Log", Icons.Filled.Code, accent = MaterialTheme.colorScheme.onSurfaceVariant, initiallyExpanded = false) {
+            SiItems(listOf(SiItem.Mono(plugin.statusSummary(), 0xFFDDDDDD.toInt(), false)), onAction)
+        }
+
+        SiSection("Reset Learners", Icons.Filled.RestartAlt, accent = colors.statusCritical, subtitle = "Undo what SmartInsulin has learned",
+                  initiallyExpanded = false) {
             ResetRow("Aggressiveness score") { confirm = "Reset aggressiveness score to 1.0?" to { plugin.resetAggression() } }
             ResetRow("ISF circadian learning") { confirm = "Reset ISF circadian learning to 1.0? Basal and aggression learning kept." to { plugin.resetIsf() } }
             ResetRow("Basal learning") { confirm = "Reset basal + circadian basal learners to 1.0?" to { plugin.resetBasal() } }
             ResetRow("All circadian learning") { confirm = "Reset all circadian (ISF/basal/aggr) hourly learning?" to { plugin.resetCircadian() } }
             ResetRow("Insulin profiles") { confirm = "Reset all learned insulin profiles back to defaults?" to { plugin.resetProfiles() } }
-            ResetRow("Meal/UAM learners") { confirm = "Reset learned per-meal ISF adjustments and UAM entry fractions back to your configured values?" to { plugin.resetModeLearners() } }
-            ResetRow("Everything") { confirm = "Reset ALL learners? This cannot be undone." to { plugin.resetAllLearners() } }
+            ResetRow("Meal/UAM learners") {
+                confirm = "Reset learned per-meal ISF adjustments and UAM entry fractions back to your configured values?" to { plugin.resetModeLearners() }
+            }
+            HorizontalDivider(Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            Button(
+                onClick = { confirm = "Reset ALL learners? This cannot be undone." to { plugin.resetAllLearners() } },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Reset everything")
+            }
         }
     }
 
     confirm?.let { (message, action) ->
         AlertDialog(
             onDismissRequest = { confirm = null },
+            icon = { Icon(Icons.Filled.RestartAlt, contentDescription = null) },
+            title = { Text("Confirm reset") },
             text = { Text(message) },
-            confirmButton = { TextButton(onClick = { action(); confirm = null; tick++ }) { Text("Reset") } },
+            confirmButton = {
+                TextButton(onClick = { action(); confirm = null; tick++ }) { Text("Reset", color = MaterialTheme.colorScheme.error) }
+            },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } }
         )
     }
@@ -144,51 +211,73 @@ fun SmartInsulinScreen(
 
 private const val REFRESH_MS = 5_000L
 
+/** At-a-glance header: what mode the loop is in, whether it is learning, and the numbers it is dosing with. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SiCard(
-    title: String,
-    content: SiCardContent,
-    onAction: (SiAction) -> Unit,
-    accent: Color = Color.Unspecified,
-    footer: (@Composable () -> Unit)? = null
-) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+private fun SummaryCard(d: SmartInsulinPlugin.FragmentData) {
+    val colors = AapsTheme.generalColors
+    val fasting = d.modeRemMins == null
+    val modeColor = when {
+        fasting                                                                           -> MaterialTheme.colorScheme.onSurfaceVariant
+        d.mealMode.contains("Protein", true) || d.mealMode.contains("P/F", true)          -> MaterialTheme.colorScheme.tertiary
+        else                                                                              -> AapsTheme.elementColors.carbs
+    }
+    val (learnText, learnColor) = when {
+        d.learningState.equals("learning", true)  -> "Learning" to colors.statusNormal
+        d.learningState.startsWith("limited")    -> "Learning limited" to colors.statusWarning
+        d.learningState.startsWith("off")        -> "Paused · ${d.learningState.removePrefix("off:").trim()}" to colors.statusCritical
+        else                                      -> d.learningState to colors.statusNormal
+    }
+    val isfUnits = if (d.isMmol) "mmol/U" else "mg/dL/U"
+    val isfShown = if (d.isMmol) "%.2f".format(d.finalIsfMgdl / 18.0) else "%.0f".format(d.finalIsfMgdl)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
         Column(Modifier.padding(16.dp)) {
-            Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = accent)
-            Box(Modifier.height(8.dp))
-            content.items.forEach { SiItemView(it, onAction) }
-            footer?.invoke()
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SiPill(if (fasting) "Fasting" else "${d.mealMode} · ${d.modeRemMins}m left", modeColor)
+                SiPill(learnText, learnColor)
+                if (d.activityLevel != "Sedentary") SiPill(d.activityLevel, AapsTheme.elementColors.insulin)
+                if (d.inReboundWindow) SiPill("Low recovery ${d.reboundMins}m", colors.statusWarning)
+            }
+            SiSpacer(14)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                SiStat("ISF", isfShown, isfUnits, Modifier.weight(1f))
+                SiStat("Basal", "%.2f".format(d.finalBasalU), "U/h", Modifier.weight(1f))
+                SiStat(
+                    "Aggression", "%.2f".format(d.aggressiveness), "ceiling %.2f".format(d.circCeil), Modifier.weight(1f),
+                    valueColor = when {
+                        d.aggressiveness > 1.05 -> colors.statusWarning
+                        d.aggressiveness < 0.95 -> AapsTheme.elementColors.insulin
+                        else                    -> MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun SiItemView(item: SiItem, onAction: (SiAction) -> Unit) {
-    when (item) {
-        is SiItem.Row -> {
-            Text(item.primary, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(item.color),
-                 modifier = Modifier.padding(bottom = if (item.detail != null) 2.dp else 10.dp))
-            item.detail?.let {
-                Text(it, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFDDDDDD),
-                     modifier = Modifier.padding(bottom = 10.dp))
-            }
-        }
-        SiItem.Divider   -> HorizontalDivider(Modifier.padding(vertical = 8.dp), color = Color(0xFF444444))
-        is SiItem.Mono   -> Text(item.text, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                                 fontWeight = if (item.bold) FontWeight.Bold else FontWeight.Normal,
-                                 color = Color(item.color), modifier = Modifier.padding(bottom = 8.dp))
-        is SiItem.Note   -> Text(item.text, fontSize = 11.sp, color = Color(0xFF999999), modifier = Modifier.padding(bottom = 8.dp))
-        is SiItem.Header -> Text(item.title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFFCCCCCC),
-                                 modifier = Modifier.padding(bottom = 8.dp))
-        is SiItem.Action -> Text(item.text, fontSize = 12.sp, color = Color(item.color),
-                                 modifier = Modifier.clickable { onAction(item.action) }.padding(vertical = 8.dp))
+private fun SessionButton(label: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    val running = label.startsWith("Stop")
+    val content: @Composable () -> Unit = {
+        Icon(if (running) Icons.Filled.Stop else icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(8.dp))
+        Text(label)
     }
+    if (running)
+        Button(onClick = onClick, modifier = modifier) { content() }
+    else
+        FilledTonalButton(onClick = onClick, modifier = modifier) { content() }
 }
 
 @Composable
 private fun ResetRow(label: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-        Text(label, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(top = 10.dp))
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
         OutlinedButton(onClick = onClick) { Text("Reset") }
     }
 }

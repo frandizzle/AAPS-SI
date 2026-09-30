@@ -229,7 +229,6 @@ open class SmartInsulinPlugin @Inject constructor(
             rollercoasters = circadianLearner.consecutiveRollercoasters
         )
 
-    @Volatile private var cachedLearningEnabled: Boolean = false
     @Volatile private var cachedCgmSuppressLearning: Boolean = false
     @Volatile private var cachedOverviewState: SmartInsulinOverview.OverviewState = SmartInsulinOverview.OverviewState("Meal: Fasting", null, null, "Learning")
 
@@ -761,7 +760,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val isMealModeActive = activeMode != null
         val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
         val liveLearningState = when {
-            !cachedLearningEnabled                   -> "off: Learning disabled"
+            !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Learning disabled"
             activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
             cachedCgmSuppressLearning                -> "off: CGM warmup"
             effectivePostMealLockout                 -> {
@@ -1540,7 +1539,6 @@ open class SmartInsulinPlugin @Inject constructor(
         if (sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) && glucoseStatus.noise <= 1.5 && activityMonitor.level == ActivityMonitor.ActivityLevel.SEDENTARY) bolusCurveTracker.onLoopCycle(glucoseStatus, mealMode, iobArray, dosingIsfMgdl)
 
         // Snapshot state for Overview (re-computed live in overviewState() for time-sensitive parts)
-        cachedLearningEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue)
         cachedCgmSuppressLearning = cgmState.suppressLearning
 
         val pb2DoseU = mealOverrideManager.activePb2DoseU
