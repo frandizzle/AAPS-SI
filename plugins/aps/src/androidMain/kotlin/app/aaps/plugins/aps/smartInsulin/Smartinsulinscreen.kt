@@ -60,6 +60,8 @@ fun SmartInsulinScreen(
     // Ticks to force a re-read; the plugin's data is plain state, not observable.
     var tick by remember { mutableIntStateOf(0) }
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    // Circadian day shown; starts on today each time the tab opens, as in 3.4.
+    var circadianDow by remember { mutableIntStateOf(todayDow()) }
     val stepPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
 
     LaunchedEffect(Unit) {
@@ -94,8 +96,6 @@ fun SmartInsulinScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text(plugin.statusSummary(), fontSize = 14.sp, color = Color(0xFFCCCCCC))
-
         SiCard("General", cards.buildGeneralCard(d), onAction)
 
         val session = cards.buildSessionCard()
@@ -109,12 +109,17 @@ fun SmartInsulinScreen(
         }
 
         cards.buildReboundCard(d).takeIf { it.visible }?.let { SiCard("Low Recovery", it, onAction, accent = Color(0xFFFB8C00)) }
+        SiCard("Time in Range", SiCardContent(emptyList()), onAction) { SiTirSection(d) }
         SiCard("Learning", cards.buildLearningCard(d), onAction)
         SiCard("Meal Auto-Detection (UAM)", cards.buildUamCard(d), onAction)
         SiCard("Soft Target Fine-Tune", cards.buildStftCard(d), onAction)
+        SiCard("Circadian 24h", SiCardContent(emptyList()), onAction) {
+            SiCircadianSection(plugin, circadianDow) { circadianDow = it; tick++ }
+        }
         SiCard("Learned Insulin Profiles", cards.buildProfilesCard(d), onAction)
-        if (d.circadianRawStatus.isNotBlank())
-            SiCard("24h Circadian", SiCardContent(listOf(SiItem.Mono(d.circadianRawStatus, 0xFFDDDDDD.toInt(), false))), onAction)
+        SiCard("Raw Status Log", SiCardContent(emptyList()), onAction) {
+            Text(plugin.statusSummary(), fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFFDDDDDD), lineHeight = 15.sp)
+        }
 
         SiCard("Reset Learners", SiCardContent(emptyList()), onAction) {
             ResetRow("Aggressiveness score") { confirm = "Reset aggressiveness score to 1.0?" to { plugin.resetAggression() } }
