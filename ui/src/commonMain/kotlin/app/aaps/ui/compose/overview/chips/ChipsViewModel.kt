@@ -12,6 +12,8 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.overview.SensitivityOverview
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
 import app.aaps.core.interfaces.plugin.ActivePlugin
+import app.aaps.core.interfaces.profile.ProfileFunction
+import app.aaps.core.interfaces.db.ProcessedTbrEbData
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventShowDialog
@@ -45,7 +47,9 @@ class ChipsViewModel(
     private val rh: TextResolver,
     private val decimalFormatter: DecimalFormatter,
     private val rxBus: RxBus,
-    private val activePlugin: ActivePlugin
+    private val activePlugin: ActivePlugin,
+    private val processedTbrEbData: ProcessedTbrEbData,
+    private val profileFunction: ProfileFunction
 ) : ViewModel() {
 
     @AssistedFactory
@@ -118,6 +122,23 @@ class ChipsViewModel(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = CobUiState()
+    )
+
+    /** Current basal rate as "0.00 U/h" (temp basal if running, else profile) for the SmartInsulin chip row. */
+    val basalRateText: StateFlow<String> = siTicker.map {
+        val now = System.currentTimeMillis()
+        val profileBasal = profileFunction.getProfile()?.getBasal(now) ?: 0.0
+        val tbr = processedTbrEbData.getTempBasalIncludingConvertedExtended(now)
+        val rate = when {
+            tbr == null     -> profileBasal
+            tbr.isAbsolute  -> tbr.rate
+            else            -> profileBasal * tbr.rate / 100.0
+        }
+        "${decimalFormatter.to2Decimal(rate)} U/h"
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ""
     )
 
     /** SmartInsulin meal mode, pre-bolus countdowns and learning state; null unless SmartInsulin is the active APS. */

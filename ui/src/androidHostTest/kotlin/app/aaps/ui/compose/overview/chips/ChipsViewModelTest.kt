@@ -50,7 +50,7 @@ internal class ChipsViewModelTest {
         whenever(cache.iobGraphFlow).thenReturn(MutableStateFlow(IobGraphData(emptyList(), emptyList())))
         whenever(cache.cobGraphFlow).thenReturn(MutableStateFlow(CobGraphData(emptyList(), emptyList())))
         whenever(cache.predictionsFlow).thenReturn(MutableStateFlow(emptyList()))
-        sut =ChipsViewModel(cache, iobCobCalculator, loop, config, persistenceLayer, sensitivityOverview, rh, decimalFormatter, rxBus, mock())
+        sut =ChipsViewModel(cache, iobCobCalculator, loop, config, persistenceLayer, sensitivityOverview, rh, decimalFormatter, rxBus, mock(), mock(), mock())
     }
 
     @AfterEach

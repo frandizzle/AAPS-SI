@@ -177,7 +177,7 @@ internal class OverviewViewModelFixture(private val screen: AapsScreenFixture) {
     }
 
     val chipsViewModel: ChipsViewModel by lazy {
-        ChipsViewModel(cache, iobCobCalculator, loop, screen.config, persistenceLayer, sensitivityOverview, rh, decimalFormatter, rxBus, mock())
+        ChipsViewModel(cache, iobCobCalculator, loop, screen.config, persistenceLayer, sensitivityOverview, rh, decimalFormatter, rxBus, mock(), mock(), mock())
     }
 
     val statusViewModel: StatusViewModel by lazy {

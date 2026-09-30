@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import app.aaps.core.interfaces.navigation.ElementType
@@ -39,7 +40,8 @@ fun ProfileChip(
     modifier: Modifier = Modifier,
     sceneManaged: Boolean = false,
     isNoProfile: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium
 ) {
     val containerColor = when {
         isNoProfile -> MaterialTheme.colorScheme.errorContainer
@@ -77,7 +79,7 @@ fun ProfileChip(
                 )
                 Text(
                     text = profileName,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = textStyle,
                     color = contentColor,
                     modifier = Modifier.padding(start = AapsSpacing.medium)
                 )

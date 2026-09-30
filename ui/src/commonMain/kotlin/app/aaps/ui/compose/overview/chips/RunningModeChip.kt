@@ -59,6 +59,8 @@ fun RunningModeChip(
     sceneManaged: Boolean = false,
     smbEnabled: Boolean = false,
     enabled: Boolean = true,
+    /** Show [text] beside the icon (the SmartInsulin overview layout). */
+    showText: Boolean = false,
     onClick: () -> Unit = {}
 ) {
     val isTemporary = mode.mustBeTemporary()
@@ -105,6 +107,15 @@ fun RunningModeChip(
                                     .background(AapsTheme.elementColors.insulin, TriangleShape)
                             )
                         }
+                    }
+                    if (showText) {
+                        Text(
+                            text = text,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.padding(start = AapsSpacing.medium)
+                        )
                     }
                     if (remaining.isNotEmpty()) {
                         Text(

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,6 +24,7 @@ import app.aaps.core.ui.compose.stringResource
 import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.overview.chips.CobUiState
+import app.aaps.ui.compose.overview.chips.SmartInsulinChipsRow
 import app.aaps.ui.compose.overview.chips.SmartInsulinStatusBlock
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 import app.aaps.ui.compose.overview.chips.IobUiState
@@ -54,6 +56,10 @@ fun OverviewChipsColumn(
     cobUiState: CobUiState,
     sensitivityUiState: SensitivityUiState,
     smartInsulinState: SmartInsulinOverview.OverviewState? = null,
+    /** Current basal rate text for the SmartInsulin chip row. */
+    basalRateText: String = "",
+    /** False when the screen draws the IOB row and sensitivity itself (the SmartInsulin phone layout). */
+    showIobRow: Boolean = true,
     onNavigate: (NavigationRequest) -> Unit,
     onTbrChipClick: () -> Unit,
     onIobChipClick: () -> Unit,
@@ -97,7 +103,8 @@ fun OverviewChipsColumn(
                             tbrState = tbrState,
                             onNavigate = onNavigate,
                             onTbrChipClick = onTbrChipClick,
-                            commandsAllowed = commandsAllowed
+                            commandsAllowed = commandsAllowed,
+                            siLayout = smartInsulinState != null
                         )
                         smartInsulinState?.let { SmartInsulinStatusBlock(it) }
                     }
@@ -127,19 +134,32 @@ fun OverviewChipsColumn(
                 tbrState = tbrState,
                 onNavigate = onNavigate,
                 onTbrChipClick = onTbrChipClick,
-                commandsAllowed = commandsAllowed
+                commandsAllowed = commandsAllowed,
+                siLayout = smartInsulinState != null
             )
             smartInsulinState?.let { SmartInsulinStatusBlock(it) }
         }
-        IobCobChipsRow(
-            iobUiState = iobUiState,
-            cobUiState = cobUiState,
-            onIobChipClick = onIobChipClick
-        )
-        SensitivityChipBlock(
-            state = sensitivityUiState,
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (showIobRow) {
+            if (smartInsulinState != null)
+                SmartInsulinChipsRow(
+                    iobUiState = iobUiState,
+                    tbrState = tbrState,
+                    basalRateText = basalRateText,
+                    cobUiState = cobUiState,
+                    onIobChipClick = onIobChipClick,
+                    onTbrChipClick = onTbrChipClick
+                )
+            else
+                IobCobChipsRow(
+                    iobUiState = iobUiState,
+                    cobUiState = cobUiState,
+                    onIobChipClick = onIobChipClick
+                )
+            SensitivityChipBlock(
+                state = sensitivityUiState,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }
 
@@ -163,8 +183,47 @@ private fun NarrowChips(
     tbrState: TbrState,
     onNavigate: (NavigationRequest) -> Unit,
     onTbrChipClick: () -> Unit,
-    commandsAllowed: Boolean
+    commandsAllowed: Boolean,
+    siLayout: Boolean = false
 ) {
+    if (siLayout) {
+        // SmartInsulin layout: loop (with its name), profile and target each on their own row;
+        // the basal rate lives in the chip row below instead.
+        if (runningModeText.isNotEmpty())
+            RunningModeChip(
+                mode = runningMode,
+                text = runningModeText,
+                progress = runningModeProgress,
+                remaining = runningModeRemaining,
+                sceneManaged = runningModeSceneManaged,
+                smbEnabled = smbEnabled,
+                enabled = commandsAllowed,
+                showText = true,
+                onClick = { onNavigate(NavigationRequest.Element(ElementType.RUNNING_MODE)) }
+            )
+        ProfileChip(
+            profileName = profileName.ifEmpty { stringResource(CoreUiStrings.no_profile_set) },
+            isModified = isProfileModified,
+            progress = profileProgress,
+            onClick = { onNavigate(NavigationRequest.Element(ElementType.PROFILE_MANAGEMENT)) },
+            sceneManaged = profileSceneManaged,
+            isNoProfile = profileName.isEmpty(),
+            textStyle = MaterialTheme.typography.bodyLarge
+        )
+        if (tempTargetText.isNotEmpty())
+            TempTargetChip(
+                targetText = tempTargetText,
+                state = tempTargetState,
+                progress = tempTargetProgress,
+                reason = tempTargetReason,
+                onClick = { onNavigate(NavigationRequest.Element(ElementType.TEMP_TARGET_MANAGEMENT)) },
+                sceneManaged = tempTargetSceneManaged,
+                enabled = commandsAllowed,
+                fillWhenAdjusted = false,
+                textStyle = MaterialTheme.typography.bodyLarge
+            )
+        return
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically
     ) {

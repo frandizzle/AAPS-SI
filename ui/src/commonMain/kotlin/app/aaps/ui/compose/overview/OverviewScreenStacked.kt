@@ -29,6 +29,7 @@ import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
 import app.aaps.ui.compose.overview.chips.ChipsViewModel
+import app.aaps.ui.compose.overview.chips.SmartInsulinChipsRow
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
 import app.aaps.ui.compose.overview.graphs.GraphsSection
 import app.aaps.ui.compose.overview.statusLights.StatusViewModel
@@ -77,6 +78,10 @@ fun OverviewScreenStacked(
     val iobUiState by chipsViewModel.iobUiState.collectAsStateWithLifecycle()
     val cobUiState by chipsViewModel.cobUiState.collectAsStateWithLifecycle()
     val smartInsulinState by chipsViewModel.smartInsulinUiState.collectAsStateWithLifecycle()
+    val basalRateText by chipsViewModel.basalRateText.collectAsStateWithLifecycle()
+    // SmartInsulin: the earlier 4.0 SI layout - IOB/basal/SMB row full width under the header,
+    // sensitivity under the BG circle.
+    val siLayout = smartInsulinState != null
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(false) }
@@ -99,7 +104,7 @@ fun OverviewScreenStacked(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.Bottom
+            verticalAlignment = if (siLayout) Alignment.Top else Alignment.Bottom
         ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -108,6 +113,7 @@ fun OverviewScreenStacked(
                     bgInfo = bgInfoState.bgInfo,
                     timeAgoText = bgInfoState.timeAgoText
                 )
+                if (siLayout) SensitivityChipBlock(state = sensitivityUiState)
             }
 
             OverviewChipsColumn(
@@ -131,6 +137,8 @@ fun OverviewScreenStacked(
                 cobUiState = cobUiState,
                 sensitivityUiState = sensitivityUiState,
                 smartInsulinState = smartInsulinState,
+                basalRateText = basalRateText,
+                showIobRow = !siLayout,
                 onNavigate = onNavigate,
                 onTbrChipClick = onTbrChipClick,
                 onIobChipClick = onIobChipClick,
@@ -140,6 +148,17 @@ fun OverviewScreenStacked(
                     .padding(start = 8.dp)
             )
         }
+
+        if (siLayout)
+            SmartInsulinChipsRow(
+                iobUiState = iobUiState,
+                tbrState = tbrState,
+                basalRateText = basalRateText,
+                cobUiState = cobUiState,
+                onIobChipClick = onIobChipClick,
+                onTbrChipClick = onTbrChipClick,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
 
         OverviewStatusSection(
             sensorStatus = statusState.sensorStatus,

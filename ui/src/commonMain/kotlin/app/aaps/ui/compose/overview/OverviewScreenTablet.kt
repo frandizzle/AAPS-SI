@@ -87,6 +87,7 @@ fun OverviewScreenTablet(
     val iobUiState by chipsViewModel.iobUiState.collectAsStateWithLifecycle()
     val cobUiState by chipsViewModel.cobUiState.collectAsStateWithLifecycle()
     val smartInsulinState by chipsViewModel.smartInsulinUiState.collectAsStateWithLifecycle()
+    val basalRateText by chipsViewModel.basalRateText.collectAsStateWithLifecycle()
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
@@ -164,6 +165,7 @@ fun OverviewScreenTablet(
                             cobUiState = cobUiState,
                             sensitivityUiState = sensitivityUiState,
                             smartInsulinState = smartInsulinState,
+                            basalRateText = basalRateText,
                             onNavigate = onNavigate,
                             onTbrChipClick = onTbrChipClick,
                             onIobChipClick = onIobChipClick,

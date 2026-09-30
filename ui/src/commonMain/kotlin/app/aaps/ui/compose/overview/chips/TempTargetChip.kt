@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -50,7 +51,10 @@ fun TempTargetChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     sceneManaged: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    /** False draws the APS-adjusted target without a fill (SmartInsulin adjusts it every loop). */
+    fillWhenAdjusted: Boolean = true,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium
 ) {
     val iconColor = when (state) {
         TempTargetChipState.Active   -> reason.toIconColor()
@@ -60,7 +64,7 @@ fun TempTargetChip(
     val textColor = MaterialTheme.colorScheme.onSurfaceVariant
     val containerColor = when (state) {
         TempTargetChipState.Active   -> iconColor.copy(alpha = 0.2f)
-        TempTargetChipState.Adjusted -> iconColor.copy(alpha = 0.2f)
+        TempTargetChipState.Adjusted -> if (fillWhenAdjusted) iconColor.copy(alpha = 0.2f) else Color.Transparent
         TempTargetChipState.None     -> Color.Transparent
     }
     val haptic = LocalHapticFeedback.current
@@ -97,7 +101,7 @@ fun TempTargetChip(
                 )
                 Text(
                     text = targetText,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = textStyle,
                     color = textColor,
                     modifier = Modifier.padding(start = AapsSpacing.medium)
                 )
