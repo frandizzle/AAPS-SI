@@ -447,64 +447,6 @@ enum class IntKey(
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
     // ── SmartInsulin ──
-    ApsSmartInsulinLowCarbThresholdG(
-        key = "si_low_carb_threshold_g",
-        defaultValue = 20,
-        min = 5,
-        max = 50,
-        title = KeysStrings.smart_insulin_low_carb_threshold,
-        summary = KeysStrings.smart_insulin_low_carb_threshold_summary,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinBreakfastCarbsG(
-        key = "si_breakfast_carbs_g",
-        defaultValue = 45,
-        min = 10,
-        max = 150,
-        title = KeysStrings.si_breakfast_carbs_g_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinLunchCarbsG(
-        key = "si_lunch_carbs_g",
-        defaultValue = 60,
-        min = 10,
-        max = 200,
-        title = KeysStrings.si_lunch_carbs_g_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinDinnerCarbsG(
-        key = "si_dinner_carbs_g",
-        defaultValue = 70,
-        min = 10,
-        max = 200,
-        title = KeysStrings.si_dinner_carbs_g_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinLowCarbCarbsG(
-        key = "si_lowcarb_carbs_g",
-        defaultValue = 20,
-        min = 5,
-        max = 60,
-        title = KeysStrings.si_lowcarb_carbs_g_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinExtendedCarbsG(
-        key = "si_extended_carbs_g",
-        defaultValue = 50,
-        min = 10,
-        max = 150,
-        title = KeysStrings.si_extended_carbs_g_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinModeWindowMins(
-        key = "si_mode_window_mins",
-        defaultValue = 180,
-        min = 30,
-        max = 480,
-        title = KeysStrings.si_mode_window_mins_title,
-        summary = KeysStrings.si_mode_window_mins_summary,
-        defaultedBySM = true
-    ),
     ApsSmartInsulinPreBolus2DefaultDelayMins(
         key = "si_prebolus2_default_delay_mins",
         defaultValue = 25,

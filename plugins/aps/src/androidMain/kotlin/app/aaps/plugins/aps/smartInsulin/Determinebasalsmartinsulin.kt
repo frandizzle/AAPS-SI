@@ -459,10 +459,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                         .coerceAtMost(maxTbrU)
                     // Target respect: reduce basal when pred_min is below target.
                     // Uses ISF math so small gaps → tiny reduction, large gaps → zero basal.
-                    // This used to be gated behind `targetRespectEnabled || targetBg > 6.0 mmol`,
-                    // but the plugin is the only caller and passes the flag true unconditionally,
-                    // so the target threshold has never been reachable. Removed rather than left
-                    // in place looking like a live configuration option.
+                    // Always on. It once sat behind a "target assist" setting that was never wired
+                    // up; the setting has been removed rather than left looking like it did something.
                     predictedMin < targetBg -> {
                         val missingBgMgdl   = targetBg - predictedMin
                         val missingInsulinU = missingBgMgdl / safeIsfMgdl

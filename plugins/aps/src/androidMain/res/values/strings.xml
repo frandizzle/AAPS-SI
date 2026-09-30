@@ -132,14 +132,8 @@
     <string name="smart_insulin">SmartInsulin</string>
     <string name="smart_insulin_short">SI</string>
     <string name="smart_insulin_description">Adaptive insulin model with BG prediction and anti-rebound dosing</string>
-    <string name="si_activity_target_enabled_title">Enable activity target raise (HR/steps)</string>
-    <string name="si_target_respect_enabled_title">Enable target assist (ISF-based basal reduction)</string>
     <string name="si_prebolus2_default_u_title">Pre-bolus 2: default amount (U)</string>
     <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>
-    <string name="smart_insulin_low_carb_mode">Low carb mode</string>
-    <string name="smart_insulin_low_carb_mode_summary">Treat meals below threshold as low-carb for cleaner insulin learning</string>
-    <string name="smart_insulin_low_carb_threshold">Low carb threshold (g)</string>
-    <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
     <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
     <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
     <string name="si_breakfast_isf_mult_title">Breakfast ISF multiplier</string>
@@ -147,10 +141,6 @@
     <string name="si_dinner_isf_mult_title">Dinner ISF multiplier</string>
     <string name="si_lowcarb_isf_mult_title">Low Carb ISF multiplier</string>
     <string name="si_extended_isf_mult_title">Extended meal ISF multiplier</string>
-    <string name="si_breakfast_carbs_g_title">Breakfast default carbs (g)</string>
-    <string name="si_lunch_carbs_g_title">Lunch default carbs (g)</string>
-    <string name="si_dinner_carbs_g_title">Dinner default carbs (g)</string>
-    <string name="si_mode_window_mins_title">Meal mode window (minutes)</string>
     <string name="si_max_prebolus_title">Max pre-bolus (U)</string>
     <string name="si_activity_light_target_title">Activity: Light target raise</string>
     <string name="si_activity_moderate_target_title">Activity: Moderate target raise</string>
@@ -214,9 +204,6 @@
     <string name="smart_meal_action_short">Meal: %1$s</string>
     <string name="smart_meal_select_mode">Meal type</string>
     <string name="smart_meal_prebolus">Pre-bolus now (when safe)</string>
-    <string name="si_lowcarb_carbs_g_title">Low Carb default carbs (g)</string>
-    <string name="si_extended_carbs_g_title">Extended meal default carbs (g)</string>
-    <string name="si_mode_window_mins_summary">How long the selected meal mode stays active</string>
     <string name="si_max_prebolus_summary">Safety cap on automatic pre-bolus dose</string>
     <string name="si_breakfast_isf_title">Breakfast ISF override (0 = use profile)</string>
     <string name="si_lunch_isf_title">Lunch ISF override (0 = use profile)</string>
@@ -298,8 +285,6 @@
     <string name="si_rebound_window_mins_summary">How long after a low BG event the loop runs in recovery mode — tapering basal from 30% back to 100% and blocking SMBs for the first 75% of the window. Shorter = faster return to normal dosing. Range: 20–90 min.</string>
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
     <string name="si_uam_cgm_warmup_block_title">UAM: disable during CGM warmup</string>
-    <string name="si_first_day_cgm_smoothing_title">First-day CGM smoothing (UKF, G6)</string>
-    <string name="si_first_day_cgm_smoothing_summary">Apply Unscented Kalman Filter smoothing during the first 24 h of a new sensor session. Reduces phantom spikes from sensor settling. Auto-expires after 24 h — no action needed. G6 users: enable this. G7 users: select UKF from the AAPS smoothing menu instead.</string>
     <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
     <string name="si_uam_wobble_tolerance_title">Wobble tolerance</string>
     <string name="si_uam_wobble_tolerance_summary">When ON: if the 15-minute average delta confirms a genuine rise (≥ your Rise Min Delta), a single weaker reading only needs to meet 50% of the threshold to keep the streak alive. Example: Rise Min Delta = 0.2 mmol (3.6 mg/dL) — with wobble ON, a +0.1 mmol (+1.8 mg/dL) reading mid-streak still counts if the 15-min average is ≥ 0.2 mmol (3.6 mg/dL). When OFF: every reading must independently meet the full Rise Min Delta. Simpler and more predictable — if you want +0.2 mmol (3.6 mg/dL) to always count and +0.1 mmol (1.8 mg/dL) to never count, turn this OFF.</string>

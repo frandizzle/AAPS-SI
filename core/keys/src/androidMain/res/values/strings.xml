@@ -433,10 +433,8 @@
     <string name="si_activity_heavy_target_title">Activity: Heavy target raise</string>
     <string name="si_activity_light_target_title">Activity: Light target raise</string>
     <string name="si_activity_moderate_target_title">Activity: Moderate target raise</string>
-    <string name="si_activity_target_enabled_title">Enable activity target raise (HR/steps)</string>
     <string name="si_aggression_max_title">Aggressiveness ceiling (1.0=off, 1.5=moderate, 2.0=aggressive)</string>
     <string name="si_basal_learning_title">Enable overnight basal learning</string>
-    <string name="si_breakfast_carbs_g_title">Breakfast default carbs (g)</string>
     <string name="si_breakfast_isf_title">Breakfast ISF override (0 = use profile)</string>
     <string name="si_cgm_warmup_enabled_title">CGM warmup guard (skip SMBs on new sensor)</string>
     <string name="si_dawn_end_hour_summary">SMB reduction ends at this hour (default 9 = 9:00 AM)</string>
@@ -445,18 +443,12 @@
     <string name="si_dawn_smb_reduction_title">Dawn window SMB reduction (0.1-1.0)</string>
     <string name="si_dawn_start_hour_summary">SMB reduction starts from this hour (default 3 = 3:00 AM)</string>
     <string name="si_dawn_start_hour_title">Dawn window start hour (0-23)</string>
-    <string name="si_dinner_carbs_g_title">Dinner default carbs (g)</string>
     <string name="si_dinner_isf_title">Dinner ISF override (0 = use profile)</string>
-    <string name="si_extended_carbs_g_title">Extended meal default carbs (g)</string>
     <string name="si_extended_isf_title">Extended meal ISF override (0 = use profile)</string>
-    <string name="si_first_day_cgm_smoothing_summary">Apply Unscented Kalman Filter smoothing during the first 24 h of a new sensor session. Reduces phantom spikes from sensor settling. Auto-expires after 24 h — no action needed. G6 users: enable this. G7 users: select UKF from the AAPS smoothing menu instead.</string>
-    <string name="si_first_day_cgm_smoothing_title">First-day CGM smoothing (UKF, G6)</string>
     <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol to dose as if ISF is 1.0 mmol for this meal mode.</string>
     <string name="si_learning_bias_summary">How hard the meal/UAM learners chase highs. Reactive makes every insulin-adding step bigger and lowers the bars for what counts as a spike, a high finish or a stall — quicker to add insulin, quicker to act on smaller excursions. Conservative does the opposite and also makes corrections after a low bigger. Steps that REMOVE insulin never shrink, whatever this is set to.</string>
     <string name="si_learning_bias_title">Learning bias (0 = very conservative, 2 = neutral, 4 = very reactive)</string>
-    <string name="si_lowcarb_carbs_g_title">Low Carb default carbs (g)</string>
     <string name="si_lowcarb_isf_title">Low Carb ISF override (0 = use profile)</string>
-    <string name="si_lunch_carbs_g_title">Lunch default carbs (g)</string>
     <string name="si_lunch_isf_title">Lunch ISF override (0 = use profile)</string>
     <string name="si_max_prebolus_summary">Safety cap on automatic pre-bolus dose</string>
     <string name="si_max_prebolus_title">Max pre-bolus (U)</string>
@@ -464,8 +456,6 @@
     <string name="si_max_tbr_title">SmartInsulin Max TBR (U/h) — inner cap (set equal to Max Basal Rate above)</string>
     <string name="si_mode_isf_learning_summary">Learns a per-mode ISF correction from how each meal or UAM episode lands. Off freezes what has been learned — the multipliers keep being dosed from, nothing new is learned. Use the reset button on the SmartInsulin tab to clear them instead.</string>
     <string name="si_mode_isf_learning_title">Enable per-meal/UAM ISF learning</string>
-    <string name="si_mode_window_mins_summary">How long the selected meal mode stays active</string>
-    <string name="si_mode_window_mins_title">Meal mode window (minutes)</string>
     <string name="si_pf_dura_enabled_title">Protein/Fat: DURA enabled (strengthen ISF if BG stuck high)</string>
     <string name="si_pf_dura_floor_title">Protein/Fat: DURA strongest ISF allowed (floor)</string>
     <string name="si_pf_dura_strength_title">Protein/Fat: DURA strength</string>
@@ -476,7 +466,6 @@
     <string name="si_rebound_window_mins_title">Low recovery window (min, default 60)</string>
     <string name="si_resting_hr_bpm_title">Resting heart rate (bpm, 0 = use absolute thresholds)</string>
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
-    <string name="si_target_respect_enabled_title">Enable target assist (ISF-based basal reduction)</string>
     <string name="si_uam_afternoon_duration_title">UAM Afternoon mode duration (min)</string>
     <string name="si_uam_afternoon_enabled_title">UAM Afternoon enabled</string>
     <string name="si_uam_afternoon_end_minute_title">UAM Afternoon window end minute (+ hour)</string>
@@ -544,10 +533,6 @@
     <string name="si_uam_wobble_tolerance_title">Wobble tolerance</string>
     <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
     <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
-    <string name="smart_insulin_low_carb_mode">Low carb mode</string>
-    <string name="smart_insulin_low_carb_mode_summary">Treat meals below threshold as low-carb for cleaner insulin learning</string>
-    <string name="smart_insulin_low_carb_threshold">Low carb threshold (g)</string>
-    <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
     <string name="smart_insulin_low_guard">Low guard threshold</string>
     <string name="smart_insulin_low_guard_summary">Predicted BG below this blocks SMB delivery entirely</string>
     <string name="smart_insulin_warn_guard">Warning guard threshold</string>

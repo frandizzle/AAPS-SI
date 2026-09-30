@@ -1645,8 +1645,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 items = listOf(
                     UnitDoubleKey.ApsSmartInsulinLowGuard,
                     UnitDoubleKey.ApsSmartInsulinWarnGuard,
-                    IntKey.ApsSmartInsulinReboundWindowMins,
-                    BooleanKey.ApsSmartInsulinTargetRespectEnabled
+                    IntKey.ApsSmartInsulinReboundWindowMins
                 )
             ),
             PreferenceSubScreenDef(
@@ -1669,14 +1668,6 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinMaxPreBolus,
                     DoubleKey.ApsSmartInsulinPreBolus2DefaultU,
                     IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,
-                    IntKey.ApsSmartInsulinModeWindowMins,
-                    BooleanKey.ApsSmartInsulinLowCarbMode,
-                    IntKey.ApsSmartInsulinLowCarbThresholdG,
-                    IntKey.ApsSmartInsulinBreakfastCarbsG,
-                    IntKey.ApsSmartInsulinLunchCarbsG,
-                    IntKey.ApsSmartInsulinDinnerCarbsG,
-                    IntKey.ApsSmartInsulinLowCarbCarbsG,
-                    IntKey.ApsSmartInsulinExtendedCarbsG,
                     PreferenceSubScreenDef(
                         key = "si_meal_isf_screen",
                         title = ApsStrings.si_cat_meal_isf,
@@ -1697,8 +1688,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 items = listOf(
                     BooleanKey.ApsSmartInsulinCgmWarmupEnabled,
                     BooleanKey.ApsSmartInsulinStftCgmWarmupBlock,
-                    BooleanKey.ApsSmartInsulinUamCgmWarmupBlock,
-                    BooleanKey.ApsSmartInsulinFirstDayCgmSmoothing
+                    BooleanKey.ApsSmartInsulinUamCgmWarmupBlock
                 )
             ),
             PreferenceSubScreenDef(
@@ -1706,7 +1696,6 @@ open class SmartInsulinPlugin @Inject constructor(
                 title = ApsStrings.si_cat_activity,
                 icon = Icons.AutoMirrored.Filled.DirectionsRun,
                 items = listOf(
-                    BooleanKey.ApsSmartInsulinActivityTargetEnabled,
                     UnitDoubleKey.ApsSmartInsulinActivityLightTarget,
                     UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,
                     UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,

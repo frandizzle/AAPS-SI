@@ -302,25 +302,6 @@ enum class BooleanKey(
         summary = KeysStrings.si_mode_isf_learning_summary,
         defaultedBySM = true
     ),
-    ApsSmartInsulinLowCarbMode(
-        key = "si_low_carb_mode",
-        defaultValue = false,
-        title = KeysStrings.smart_insulin_low_carb_mode,
-        summary = KeysStrings.smart_insulin_low_carb_mode_summary,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinActivityTargetEnabled(
-        key = "si_activity_target_enabled",
-        defaultValue = true,
-        title = KeysStrings.si_activity_target_enabled_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinTargetRespectEnabled(
-        key = "si_target_respect_enabled",
-        defaultValue = false,
-        title = KeysStrings.si_target_respect_enabled_title,
-        defaultedBySM = true
-    ),
     ApsSmartInsulinUamEnabled(
         key = "si_uam_enabled",
         defaultValue = false,
@@ -338,13 +319,6 @@ enum class BooleanKey(
         key = "si_stft_cgm_warmup_block",
         defaultValue = true,
         title = KeysStrings.si_stft_cgm_warmup_block_title,
-        defaultedBySM = true
-    ),
-    ApsSmartInsulinFirstDayCgmSmoothing(
-        key = "si_first_day_cgm_smoothing",
-        defaultValue = true,
-        title = KeysStrings.si_first_day_cgm_smoothing_title,
-        summary = KeysStrings.si_first_day_cgm_smoothing_summary,
         defaultedBySM = true
     ),
     ApsSmartInsulinUamBreakfastEnabled(
