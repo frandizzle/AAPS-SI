@@ -175,7 +175,7 @@ class UamEntrySmbFractionPerModeTest {
 
     /**
      * Confirms that the default value from DoubleKey is passed as the SP fallback,
-     * so a fresh install with no saved prefs gets the registered default (0.8), not 0.0.
+     * so a fresh install with no saved prefs gets the registered default (0.5), not 0.0.
      */
     @Test
     fun `default value from DoubleKey is passed as SP fallback for each mode`() {
@@ -189,8 +189,8 @@ class UamEntrySmbFractionPerModeTest {
             MealMode.UAM_SNACK,
             MealMode.UAM_AFTERNOON,
         ).forEach { mode ->
-            assertEquals(0.8, sut.entrySmbFractionForMode(mode), 0.001,
-                         "Mode $mode: default value should be 0.8 (DoubleKey default) when SP has no saved value")
+            assertEquals(0.5, sut.entrySmbFractionForMode(mode), 0.001,
+                         "Mode $mode: default value should be 0.5 (DoubleKey default) when SP has no saved value")
         }
     }
 
