@@ -447,15 +447,6 @@ enum class IntKey(
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
     // ── SmartInsulin ──
-    ApsSmartInsulinPredictionHorizonMins(
-        key = "si_pred_horizon_mins",
-        defaultValue = 240,
-        min = 60,
-        max = 240,
-        title = KeysStrings.smart_insulin_prediction_horizon,
-        summary = KeysStrings.smart_insulin_prediction_horizon_summary,
-        defaultedBySM = true
-    ),
     ApsSmartInsulinLowCarbThresholdG(
         key = "si_low_carb_threshold_g",
         defaultValue = 20,

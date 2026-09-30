@@ -544,16 +544,12 @@
     <string name="si_uam_wobble_tolerance_title">Wobble tolerance</string>
     <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
     <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
-    <string name="smart_insulin_learning_rate">Learning rate</string>
-    <string name="smart_insulin_learning_rate_summary">How quickly the model adapts. Lower = more stable, higher = faster adaptation (0.05–0.5)</string>
     <string name="smart_insulin_low_carb_mode">Low carb mode</string>
     <string name="smart_insulin_low_carb_mode_summary">Treat meals below threshold as low-carb for cleaner insulin learning</string>
     <string name="smart_insulin_low_carb_threshold">Low carb threshold (g)</string>
     <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
     <string name="smart_insulin_low_guard">Low guard threshold</string>
     <string name="smart_insulin_low_guard_summary">Predicted BG below this blocks SMB delivery entirely</string>
-    <string name="smart_insulin_prediction_horizon">Prediction horizon (min)</string>
-    <string name="smart_insulin_prediction_horizon_summary">How far ahead to predict BG when evaluating SMB safety</string>
     <string name="smart_insulin_warn_guard">Warning guard threshold</string>
     <string name="smart_insulin_warn_guard_summary">Predicted BG below this reduces SMB delivery proportionally</string>
 </resources>

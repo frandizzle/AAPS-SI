@@ -142,8 +142,6 @@
     <string name="smart_insulin_low_carb_threshold_summary">Carb entries below this value are treated as low-carb meals</string>
     <string name="smart_insulin_enable_learning">Enable adaptive learning</string>
     <string name="smart_insulin_enable_learning_summary">Continuously refine insulin peak and DIA from real CGM responses</string>
-    <string name="smart_insulin_learning_rate">Learning rate</string>
-    <string name="smart_insulin_learning_rate_summary">How quickly the model adapts. Lower = more stable, higher = faster adaptation (0.05–0.5)</string>
     <string name="si_breakfast_isf_mult_title">Breakfast ISF multiplier</string>
     <string name="si_lunch_isf_mult_title">Lunch ISF multiplier</string>
     <string name="si_dinner_isf_mult_title">Dinner ISF multiplier</string>
@@ -159,8 +157,6 @@
     <string name="si_activity_heavy_target_title">Activity: Heavy target raise</string>
     <string name="si_resting_hr_bpm_title">Resting heart rate (bpm, 0 = use absolute thresholds)</string>
     <string name="si_cgm_warmup_enabled_title">CGM warmup guard (skip SMBs on new sensor)</string>
-    <string name="smart_insulin_prediction_horizon">Prediction horizon (min)</string>
-    <string name="smart_insulin_prediction_horizon_summary">How far ahead to predict BG when evaluating SMB safety</string>
     <string name="smart_insulin_low_guard">Low guard threshold</string>
     <string name="smart_insulin_low_guard_summary">Predicted BG below this blocks SMB delivery entirely</string>
     <string name="smart_insulin_warn_guard">Warning guard threshold</string>
@@ -374,4 +370,25 @@
     <string name="si_meal_modes_title">Meal Modes</string>
     <string name="si_activity_dawn_title">Activity &amp; Dawn</string>
     <string name="si_uam_settings_title">UAM Auto-Detection</string>
+    <!-- SmartInsulin settings categories -->
+    <string name="si_cat_safety">Safety limits</string>
+    <string name="si_cat_low">Low protection</string>
+    <string name="si_cat_learning">Learning</string>
+    <string name="si_cat_meal">Meal modes &amp; pre-boluses</string>
+    <string name="si_cat_meal_isf">Meal ISF overrides</string>
+    <string name="si_cat_cgm">CGM</string>
+    <string name="si_cat_activity">Activity</string>
+    <string name="si_cat_dawn">Dawn phenomenon</string>
+    <string name="si_cat_uam">UAM detection</string>
+    <string name="si_cat_uam_windows">UAM meal windows</string>
+    <string name="si_cat_uam_breakfast">Breakfast window</string>
+    <string name="si_cat_uam_lunch">Lunch window</string>
+    <string name="si_cat_uam_afternoon">Afternoon window</string>
+    <string name="si_cat_uam_dinner">Dinner window</string>
+    <string name="si_cat_uam_snack">Snack window</string>
+    <string name="si_cat_uam_dura">UAM DURA</string>
+    <string name="si_cat_pf">Protein / fat</string>
+    <string name="si_cat_pf_times">Protein / fat time-of-day ISF</string>
+    <string name="si_cat_pf_dura">Protein / fat DURA</string>
+
 </resources>

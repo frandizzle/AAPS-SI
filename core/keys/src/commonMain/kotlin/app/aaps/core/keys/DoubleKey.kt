@@ -382,15 +382,6 @@ enum class DoubleKey(
         title = KeysStrings.si_prebolus2_default_u_title,
         defaultedBySM = true
     ),
-    ApsSmartInsulinLearningRate(
-        key = "si_learning_rate",
-        defaultValue = 0.15,
-        min = 0.05,
-        max = 0.5,
-        title = KeysStrings.smart_insulin_learning_rate,
-        summary = KeysStrings.smart_insulin_learning_rate_summary,
-        defaultedBySM = true
-    ),
     ApsSmartInsulinDawnSmbReduction(
         key = "si_dawn_smb_reduction",
         defaultValue = 0.5,
