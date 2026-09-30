@@ -424,6 +424,10 @@ open class SmartInsulinPlugin @Inject constructor(
     fun modeIsfLearningEnabled(): Boolean =
         sp.getBoolean(BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.key, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.defaultValue)
 
+    /** User switch for the DURA strength learner. Off freezes it; what it learned is still applied. */
+    fun duraLearningEnabled(): Boolean =
+        sp.getBoolean(BooleanKey.ApsSmartInsulinDuraLearningEnabled.key, BooleanKey.ApsSmartInsulinDuraLearningEnabled.defaultValue)
+
     /** Carb episode line for the SI tab, or null when no carbs are on board. */
     fun carbEpisodeStatus(): String? =
         carbEpisodeManager.statusLine(lastCobG, dateUtil.now())
@@ -598,6 +602,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 appendLine(learnerRow(PfWindow.label(mode, window), "×${"%.2f".format(f)}", floorTxt, n))
             }
             if (rows == 0) appendLine("No DURA interventions evaluated yet.")
+            if (!duraLearningEnabled())
+                appendLine("\nLearning OFF — these values are still applied, nothing new is learned.")
             if (duraStrengthLearner.lastOutcome.isNotEmpty()) appendLine("\nLast: ${duraStrengthLearner.lastOutcome}")
         }.trimEnd()
 
@@ -1388,7 +1394,8 @@ open class SmartInsulinPlugin @Inject constructor(
             duraAtCeiling     = duraAtCeilingThisCycle,
             duraAtFloor       = duraAtFloorThisCycle,
             modeInsulinShare  = modeInsulinShare,
-            watchMs           = postModeWatchMs()
+            watchMs           = postModeWatchMs(),
+            learningEnabled   = duraLearningEnabled()
         )
 
         // -- UAM entry SMB fraction --------------------------------------------
@@ -1655,6 +1662,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     BooleanKey.ApsSmartInsulinEnableLearning,
                     BooleanKey.ApsSmartInsulinBasalLearningEnabled,
                     BooleanKey.ApsSmartInsulinModeIsfLearningEnabled,
+                    BooleanKey.ApsSmartInsulinDuraLearningEnabled,
                     IntKey.ApsSmartInsulinLearningBias,
                     IntKey.ApsSmartInsulinPostModeLockoutMins
                 )

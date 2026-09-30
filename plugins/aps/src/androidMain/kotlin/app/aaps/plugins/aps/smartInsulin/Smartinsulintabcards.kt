@@ -652,10 +652,13 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 val trimDir = nudgeParts.getOrNull(1) ?: ""
                 val isHigh = trimDir == "ACTIVE_HIGH"
                 val isOvershoot = trimDir == "OVERSHOOT"
-                val wasIsfMult = d.nudgeSessionIsfMgdl.takeIf { it > 0 }?.let { profIsf / it } ?: 1.0
-                val wasBasMult = d.nudgeSessionBasalU.takeIf { it > 0 }?.let { it / profBas } ?: 1.0
-                val nowIsfMult = d.isfMultiplier
-                val nowBasMult = d.basalMultiplier
+                // FuelTrim moves this hour's aggressiveness CEILING, not ISF or basal. The card used to
+                // print an ISF/basal "was -> now" here, pairing a value captured when the hour began
+                // with the live, minute-interpolated multiplier - so crossing into an hour whose
+                // learned values sat stronger showed ISF/basal strengthening directly under
+                // "Reducing insulin". Show what the trim actually changed, and ISF/basal as this
+                // hour's bucket-centre values (the same reads as the 24h table), labelled as context.
+                val trimPct = nudgeParts.getOrNull(2) ?: ""
 
                 val trimAction = if (isHigh) "Adding insulin" else "Reducing insulin"
                 stHeadline = when {
@@ -667,8 +670,9 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     "BG spiked then fell back through target — too much insulin on board. Pulling insulin to stop the swing.\n"
                 else
                     "BG has been off target for ${d.trimMins}m. $trimAction to correct the trend.\n") +
-                    "ISF was ${fmtIsf(wasIsfMult)} → now ${fmtIsf(nowIsfMult)}\n" +
-                    "Basal was ${fmtBas(wasBasMult)} → now ${fmtBas(nowBasMult)}" +
+                    "Aggressiveness cap this hour: ×${"%.2f".format(d.circCeil)}" +
+                    (if (trimPct.isNotEmpty()) " (trim ${if (isHigh) "+" else "−"}$trimPct)" else "") + "\n" +
+                    "Unchanged by the trim — ISF ${fmtIsf(d.bucketIsfMultiplier)}, basal ${fmtBas(d.bucketBasalMultiplier)} this hour" +
                     learningPauseNote
                 stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
             }

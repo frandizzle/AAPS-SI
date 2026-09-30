@@ -302,6 +302,13 @@ enum class BooleanKey(
         summary = KeysStrings.si_mode_isf_learning_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinDuraLearningEnabled(
+        key = "si_dura_learning_enabled",
+        defaultValue = true,
+        title = KeysStrings.si_dura_learning_title,
+        summary = KeysStrings.si_dura_learning_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinUamEnabled(
         key = "si_uam_enabled",
         defaultValue = false,

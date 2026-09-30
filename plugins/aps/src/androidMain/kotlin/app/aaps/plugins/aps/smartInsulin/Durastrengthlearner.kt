@@ -200,8 +200,24 @@ class DuraStrengthLearner @Inject constructor(
         duraAtFloor:       Boolean = false,  // DURA's ISF was held at the configured floor
         modeInsulinShare:  Double = 1.0,     // share of the insulin behind a post-mode low that was
         // this mode's rather than the loop's own corrections since (see ModeInsulinShare)
-        watchMs:           Long = TAIL_MS    // how long after the mode ends its insulin is watched
+        watchMs:           Long = TAIL_MS,   // how long after the mode ends its insulin is watched
+        learningEnabled:   Boolean = true    // user switch. Off FREEZES this learner: episodes stop
+        // being judged and anything in flight is dropped, but the factor and ceiling already
+        // learned keep being applied. Clearing them is the reset button's job.
     ) {
+        if (!learningEnabled) {
+            // Drop anything in flight rather than judging it whenever the switch comes back on —
+            // that verdict would be about an episode from another era.
+            if (activeScope != null || pendingScope != null) {
+                activeScope = null; activeStartMs = 0L; episodeMaxDura = 1.0
+                episodeStuckMs = 0L; episodeAtCeilingMs = 0L; episodeAtFloorMs = 0L
+                episodeStallNote = null; episodeRejectedMs = 0L; clearRun()
+                pendingScope = null
+                lastOutcome = "DURA learning is switched off — episode dropped"
+                aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
+            }
+            return
+        }
         if (activeModeNow != null) {
             if (activeScope == null || modeStartMs != activeStartMs) {
                 pendingScope = null
