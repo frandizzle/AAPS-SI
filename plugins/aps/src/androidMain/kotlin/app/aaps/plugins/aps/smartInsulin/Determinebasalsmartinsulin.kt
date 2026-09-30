@@ -126,8 +126,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             runningDynamicIsf = false,
             timestamp = currentTime,
             consoleLog = mutableListOf(),
-            consoleError = mutableListOf(),
-            fuelTrim = fuelTrimStrength * 100.0
+            consoleError = mutableListOf()
         )
 
         val currentBg      = glucoseStatus.glucose

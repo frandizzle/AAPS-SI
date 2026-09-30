@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import kotlinx.coroutines.runBlocking
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
@@ -115,11 +116,12 @@ class ActivityMonitor @Inject constructor(
         if (refreshQueued || nowMs - lastComputedMs < DISPLAY_MAX_AGE_MS) return
         refreshQueued = true
         aapsSchedulers.io.scheduleDirect {
-            try { recompute(System.currentTimeMillis(), restingHrBpm) } finally { refreshQueued = false }
+            // Already on an io thread, so blocking it for the two reads costs nothing extra.
+            try { runBlocking { recompute(System.currentTimeMillis(), restingHrBpm) } } finally { refreshQueued = false }
         }
     }
 
-    fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
+    suspend fun recompute(nowMs: Long, restingHrBpm: Double = 0.0) {
         lastComputedMs = nowMs
 
         // ── Heart Rate — TriggerHeartRate pattern ─────────────────────────────

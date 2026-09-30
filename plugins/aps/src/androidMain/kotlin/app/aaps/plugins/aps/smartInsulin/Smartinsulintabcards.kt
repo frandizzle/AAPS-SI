@@ -80,13 +80,6 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         a < 0.95 -> "Slightly conservative"
         else     -> "Normal aggressiveness"
     }
-    private fun aggrDesc(a: Double) = when {
-        a > 1.15 -> "Delivering more insulin than usual"
-        a > 1.05 -> "Slightly more aggressive than normal"
-        a < 0.85 -> "Being cautious — reducing insulin"
-        a < 0.95 -> "Slightly conservative"
-        else     -> "Normal aggressiveness"
-    }
 
     fun buildSessionCard(): SiCardContent =
         SiCardBuilder().also { it.fillSessionCard() }.build()

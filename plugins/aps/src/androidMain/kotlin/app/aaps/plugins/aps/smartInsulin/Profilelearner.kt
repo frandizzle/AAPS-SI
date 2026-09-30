@@ -41,18 +41,28 @@ class ProfileLearner @Inject constructor(
         }
     }
 
+    // The configured insulin's DIA and peak. In 4.0 both live on the effective profile's insulin
+    // configuration and reading the profile is suspend, while this class is read from synchronous
+    // paths (the SI tab among them). So the loop hands them over each cycle and seeding reads the
+    // last values seen. Until the first cycle, the fallbacks below — the same ones a missing
+    // profile always fell back to.
+    @Volatile private var insulinDiaMins  = LearnedInsulinProfile.FALLBACK_DIA_MINS
+    @Volatile private var insulinPeakMins = 55.0
+
+    fun updateInsulinDefaults(diaMins: Double, peakMins: Double) {
+        if (diaMins > 0.0)  insulinDiaMins  = diaMins
+        if (peakMins > 0.0) insulinPeakMins = peakMins
+    }
+
     fun getProfile(mode: MealMode): LearnedInsulinProfile =
         profiles[mode] ?: profileSeededDefault(mode)
 
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
-        val profile  = profileFunction.getProfile()
-        val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        // Peak comes from whichever Insulin plugin is actually configured in Config Builder
-        // (Rapid-Acting=75, Ultra-rapid/Fiasp=55, Lyumjev=45, or the user-set value for
-        // Free-Peak Oref) — already in minutes, no conversion needed. Previously hardcoded to
-        // 55.0 (Fiasp's value) regardless of what insulin was selected, so switching insulin
-        // types and resetting profile learning always silently reseeded Fiasp's peak.
-        val peakMins = activePlugin.activeInsulin.peak.toDouble()
+        // Seeded from the insulin actually configured, as read by the last loop cycle — see
+        // [updateInsulinDefaults]. Previously hardcoded to 55.0 (Fiasp's value) regardless of
+        // insulin, so switching insulin types and resetting silently reseeded Fiasp's peak.
+        val diaMins  = insulinDiaMins
+        val peakMins = insulinPeakMins
         return LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
     }
 
@@ -130,7 +140,7 @@ class ProfileLearner @Inject constructor(
     private fun ewma(old: Double, observed: Double, alpha: Double): Double =
         (1.0 - alpha) * old + alpha * observed
 
-    private fun prefKeyFor(mode: MealMode): StringKey =
+    private fun prefKeyFor(mode: MealMode): StringNonKey =
         when (mode) {
             MealMode.FASTING       -> StringNonKey.ApsSmartInsulinProfileFasting
             MealMode.LOW_CARB      -> StringNonKey.ApsSmartInsulinProfileLowCarb
@@ -171,11 +181,8 @@ class ProfileLearner @Inject constructor(
     }
 
     override fun resetProfiles() {
-        val profile  = profileFunction.getProfile()
-        val diaMins  = profile?.dia?.times(60.0) ?: LearnedInsulinProfile.FALLBACK_DIA_MINS
-        // Same fix as profileSeededDefault() — read the actual configured insulin's peak
-        // instead of hardcoding Fiasp's 55.
-        val peakMins = activePlugin.activeInsulin.peak.toDouble()
+        val diaMins  = insulinDiaMins
+        val peakMins = insulinPeakMins
         MealMode.entries.forEach { mode ->
             val seeded = LearnedInsulinProfile.defaultFor(mode, peakMins, diaMins)
             profiles[mode] = seeded

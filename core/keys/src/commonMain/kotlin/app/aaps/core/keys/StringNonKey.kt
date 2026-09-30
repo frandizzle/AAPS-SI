@@ -99,8 +99,8 @@ enum class StringNonKey(
     NsClientControlClientId(key = "nsclient_control_client_id", defaultValue = "", exportable = false),
     NsClientControlMasterSecretEnc(key = "nsclient_control_master_secret_enc", defaultValue = "", exportable = false),
     // ── SmartInsulin: learner state and per-mode DURA settings ──
-    ApsSmartInsulinLearningDirtyUntil(key = "si_learning_dirty_until", defaultValue = ""),
-    ApsSmartInsulinLastMealEndedMs(key = "si_last_meal_ended_ms", defaultValue = ""),
+    ApsSmartInsulinLearningDirtyUntil(key = "si_learning_dirty_until", defaultValue = "0"),
+    ApsSmartInsulinLastMealEndedMs(key = "si_last_meal_ended_ms", defaultValue = "0"),
     ApsSmartInsulinProfileFasting(key = "si_profile_fasting", defaultValue = ""),
     ApsSmartInsulinProfileLowCarb(key = "si_profile_low_carb", defaultValue = ""),
     ApsSmartInsulinProfileBreakfast(key = "si_profile_breakfast", defaultValue = ""),
@@ -121,7 +121,7 @@ enum class StringNonKey(
     ApsSmartInsulinProfileUamBreakfast(key = "si_profile_uam_breakfast", defaultValue = ""),
     ApsSmartInsulinProfileUamLunch(key = "si_profile_uam_lunch", defaultValue = ""),
     ApsSmartInsulinProfileUamDinner(key = "si_profile_uam_dinner", defaultValue = ""),
-    ApsSmartInsulinProfileUamAfternoon(key = "si_profile_uam_afternoon", defaultValue = \"diaMinutes\":360),
+    ApsSmartInsulinProfileUamAfternoon(key = "si_profile_uam_afternoon", defaultValue = "{\"peakMinutes\":55,\"diaMinutes\":360,\"sampleCount\":0}"),
     ApsSmartInsulinProfileUamSnack(key = "si_profile_uam_snack", defaultValue = ""),
     ApsSmartInsulinProfileUamProteinFat(key = "si_profile_uam_proteinfat", defaultValue = ""),
 

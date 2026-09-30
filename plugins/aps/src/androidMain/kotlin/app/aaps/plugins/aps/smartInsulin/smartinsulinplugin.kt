@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.insulin.ConcentrationHelper
+import app.aaps.core.ui.CoreUiStrings
 import androidx.compose.runtime.Composable
 import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
 import app.aaps.core.interfaces.notifications.NotificationManager
@@ -61,10 +63,9 @@ import app.aaps.core.utils.MidnightUtils
 import app.aaps.core.interfaces.utils.Round
 import app.aaps.core.objects.constraints.ConstraintObject
 import app.aaps.core.objects.extensions.convertedToAbsolute
-import app.aaps.core.objects.extensions.getPassedDurationToTimeInMinutes
+import app.aaps.core.data.model.getPassedDurationToTimeInMinutes
 import app.aaps.core.objects.extensions.plannedRemainingMinutes
 import app.aaps.core.objects.extensions.target
-import app.aaps.core.validators.preferences.*
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
 import kotlin.math.roundToInt
@@ -114,7 +115,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activitySessionManager: ActivitySessionManager,
     private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
-    private val phoneStepCounter:        PhoneStepCounter
+    private val phoneStepCounter:        PhoneStepCounter,
+    private val ch:                      ConcentrationHelper
 ) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -163,6 +165,9 @@ open class SmartInsulinPlugin @Inject constructor(
     var uamEntrySmbsDelivered: Int = 0
     var uamEntryModeStartMs: Long = 0L
     var learningDirtyUntilMs: Long = 0L
+    /** COB as of the last loop cycle, for the SI tab — reading it fresh is suspend in 4.0. */
+    @Volatile private var lastCobG = 0.0
+
     /** Mode activation the second-wave detector is currently following. */
     private var secondWaveModeStartMs: Long = 0L
 
@@ -412,7 +417,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
     /** Carb episode line for the SI tab, or null when no carbs are on board. */
     fun carbEpisodeStatus(): String? =
-        carbEpisodeManager.statusLine(iobCobCalculator.getMealDataWithWaitingForCalculationFinish().mealCOB, dateUtil.now())
+        carbEpisodeManager.statusLine(lastCobG, dateUtil.now())
 
     /** Set while a second wave has been detected in the running episode — surfaced on the SI tab
      *  so this detector can be eyeballed on real data before it is trusted quietly. */
@@ -813,7 +818,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
-    override fun onStart() {
+    override suspend fun onStart() {
         super.onStart()
         learningDirtyUntilMs = sp.getString(StringNonKey.ApsSmartInsulinLearningDirtyUntil.key, "0").toLongOrNull() ?: 0L
         // No-op when the permission is missing or the device has no pedometer; the SI tab reports
@@ -821,7 +826,7 @@ open class SmartInsulinPlugin @Inject constructor(
         phoneStepCounter.start()
     }
 
-    override fun onStop() {
+    override suspend fun onStop() {
         phoneStepCounter.stop()
         super.onStop()
     }
@@ -938,7 +943,7 @@ open class SmartInsulinPlugin @Inject constructor(
         else                   -> sp.getDouble(DoubleKey.ApsSmartInsulinUamEntrySmbFraction.key,           DoubleKey.ApsSmartInsulinUamEntrySmbFraction.defaultValue)
     }
 
-    override fun invoke(initiator: String, tempBasalFallback: Boolean) {
+    override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         val previousAPSResult = lastAPSResult; lastAPSResult = null
         val profile = profileFunction.getProfile() ?: return
         cachedProfileIsf = profile.getIsfMgdl("SmartInsulinPlugin")
@@ -1113,6 +1118,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // The episode is filed under the meal window the clock was in when the carbs went in, and
         // closing it starts the post-meal lockout the same way a UAM mode ending does.
         val cobNowG = mealData.mealCOB
+        lastCobG = cobNowG
         carbEpisodeManager.onCycle(cobNowG, now, uamController.mealWindowAt(currentHour, currentMinute))?.let { ended ->
             val lockoutMins = sp.getInt(IntKey.ApsSmartInsulinPostModeLockoutMins.key, IntKey.ApsSmartInsulinPostModeLockoutMins.defaultValue)
             if (lockoutMins > 0) {
@@ -1419,7 +1425,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val stftAdjusted = stftController.onLoopCycle(profile.getTargetMgdl(), glucoseStatus.glucose, glucoseStatus.delta, glucoseStatus.shortAvgDelta, mealMode, isTempTarget, bgWentLow, inReboundWindow, cgmState.inWarmup, glucoseStatus.date)
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
-        val oapsProfile = OapsProfile(dia = profile.dia, min_5m_carbimpact = 0.0, max_iob = constraintsChecker.getMaxIOBAllowed().value(), max_daily_basal = profile.getMaxDailyBasal(), max_basal = constraintsChecker.getMaxBasalAllowed(profile).value(), min_bg = profile.getTargetLowMgdl(), max_bg = profile.getTargetHighMgdl(), target_bg = stftTargetMgdl, carb_ratio = profile.getIc(), sens = dosingIsfMgdl, autosens_adjust_targets = false, max_daily_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue), current_basal_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue), lgsThreshold = profileUtil.convertToMgdlDetect(sp.getDouble(UnitDoubleKey.ApsLgsThreshold.key, UnitDoubleKey.ApsLgsThreshold.defaultValue)).toInt(), high_temptarget_raises_sensitivity = false, low_temptarget_lowers_sensitivity = false, sensitivity_raises_target = sp.getBoolean(BooleanKey.ApsSensitivityRaisesTarget.key, BooleanKey.ApsSensitivityRaisesTarget.defaultValue), resistance_lowers_target = sp.getBoolean(BooleanKey.ApsResistanceLowersTarget.key, BooleanKey.ApsResistanceLowersTarget.defaultValue), adv_target_adjustments = SMBDefaults.adv_target_adjustments, exercise_mode = SMBDefaults.exercise_mode, half_basal_exercise_target = SMBDefaults.half_basal_exercise_target, maxCOB = SMBDefaults.maxCOB, skip_neutral_temps = activePlugin.activePump.setNeutralTempAtFullHour(), remainingCarbsCap = SMBDefaults.remainingCarbsCap, enableUAM = constraintsChecker.isUAMEnabled().value(), A52_risk_enable = SMBDefaults.A52_risk_enable, SMBInterval = sp.getInt(IntKey.ApsMaxSmbFrequency.key, IntKey.ApsMaxSmbFrequency.defaultValue), enableSMB_with_COB = sp.getBoolean(BooleanKey.ApsUseSmbWithCob.key, BooleanKey.ApsUseSmbWithCob.defaultValue), enableSMB_with_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithLowTt.key, BooleanKey.ApsUseSmbWithLowTt.defaultValue), allowSMB_with_high_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithHighTt.key, BooleanKey.ApsUseSmbWithHighTt.defaultValue), enableSMB_always = sp.getBoolean(BooleanKey.ApsUseSmbAlways.key, BooleanKey.ApsUseSmbAlways.defaultValue), enableSMB_after_carbs = sp.getBoolean(BooleanKey.ApsUseSmbAfterCarbs.key, BooleanKey.ApsUseSmbAfterCarbs.defaultValue), maxSMBBasalMinutes = Int.MAX_VALUE, maxUAMSMBBasalMinutes = Int.MAX_VALUE, bolus_increment = activePlugin.activePump.pumpDescription.bolusStep, carbsReqThreshold = sp.getInt(IntKey.ApsCarbsRequestThreshold.key, IntKey.ApsCarbsRequestThreshold.defaultValue), current_basal = activePlugin.activePump.baseBasalRate, temptargetSet = isTempTarget, autosens_max = sp.getDouble(DoubleKey.AutosensMax.key, DoubleKey.AutosensMax.defaultValue), out_units = if (isMmol) "mmol/L" else "mg/dl", variable_sens = 0.0, insulinDivisor = 0, TDD = 0.0)
+        profileLearner.updateInsulinDefaults(diaMins = profile.iCfg.dia * 60.0, peakMins = profile.iCfg.peak.toDouble())
+        val oapsProfile = OapsProfile(dia = profile.iCfg.dia, min_5m_carbimpact = 0.0, max_iob = constraintsChecker.getMaxIOBAllowed().value(), max_daily_basal = profile.getMaxDailyBasal(), max_basal = constraintsChecker.getMaxBasalAllowed(profile).value(), min_bg = profile.getTargetLowMgdl(), max_bg = profile.getTargetHighMgdl(), target_bg = stftTargetMgdl, carb_ratio = profile.getIc(), sens = dosingIsfMgdl, autosens_adjust_targets = false, max_daily_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue), current_basal_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue), lgsThreshold = profileUtil.convertToMgdlDetect(sp.getDouble(UnitDoubleKey.ApsLgsThreshold.key, UnitDoubleKey.ApsLgsThreshold.defaultValue)).toInt(), high_temptarget_raises_sensitivity = false, low_temptarget_lowers_sensitivity = false, sensitivity_raises_target = sp.getBoolean(BooleanKey.ApsSensitivityRaisesTarget.key, BooleanKey.ApsSensitivityRaisesTarget.defaultValue), resistance_lowers_target = sp.getBoolean(BooleanKey.ApsResistanceLowersTarget.key, BooleanKey.ApsResistanceLowersTarget.defaultValue), adv_target_adjustments = SMBDefaults.adv_target_adjustments, exercise_mode = SMBDefaults.exercise_mode, half_basal_exercise_target = SMBDefaults.half_basal_exercise_target, maxCOB = SMBDefaults.maxCOB, skip_neutral_temps = activePlugin.activePump.setNeutralTempAtFullHour(), remainingCarbsCap = SMBDefaults.remainingCarbsCap, enableUAM = constraintsChecker.isUAMEnabled().value(), A52_risk_enable = SMBDefaults.A52_risk_enable, SMBInterval = sp.getInt(IntKey.ApsMaxSmbFrequency.key, IntKey.ApsMaxSmbFrequency.defaultValue), enableSMB_with_COB = sp.getBoolean(BooleanKey.ApsUseSmbWithCob.key, BooleanKey.ApsUseSmbWithCob.defaultValue), enableSMB_with_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithLowTt.key, BooleanKey.ApsUseSmbWithLowTt.defaultValue), allowSMB_with_high_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithHighTt.key, BooleanKey.ApsUseSmbWithHighTt.defaultValue), enableSMB_always = sp.getBoolean(BooleanKey.ApsUseSmbAlways.key, BooleanKey.ApsUseSmbAlways.defaultValue), enableSMB_after_carbs = sp.getBoolean(BooleanKey.ApsUseSmbAfterCarbs.key, BooleanKey.ApsUseSmbAfterCarbs.defaultValue), maxSMBBasalMinutes = Int.MAX_VALUE, maxUAMSMBBasalMinutes = Int.MAX_VALUE, bolus_increment = activePlugin.activePump.pumpDescription.bolusStep, carbsReqThreshold = sp.getInt(IntKey.ApsCarbsRequestThreshold.key, IntKey.ApsCarbsRequestThreshold.defaultValue), current_basal = ch.fromPump(activePlugin.activePump.baseBasalRate), temptargetSet = isTempTarget, autosens_max = sp.getDouble(DoubleKey.AutosensMax.key, DoubleKey.AutosensMax.defaultValue), out_units = if (isMmol) "mmol/L" else "mg/dl", variable_sens = 0.0, insulinDivisor = 0, TDD = 0.0)
 
         aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout, now)
         val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute))
@@ -1582,41 +1589,37 @@ open class SmartInsulinPlugin @Inject constructor(
 
     override fun getGlucoseStatusData(allowOldData: Boolean): GlucoseStatus? = glucoseStatusCalculatorSMB.getGlucoseStatusData(allowOldData)
 
-    override fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
+    override suspend fun applyMaxIOBConstraints(maxIob: Constraint<Double>): Constraint<Double> {
         if (isEnabled()) {
-            val maxIobPref = sp.getDouble(DoubleKey.ApsSmbMaxIob.key, DoubleKey.ApsSmbMaxIob.defaultValue)
-            maxIob.setIfSmaller(maxIobPref, rh.gs(R.string.limiting_iob, maxIobPref, rh.gs(R.string.maxvalueinpreferences)), this)
-            maxIob.setIfSmaller(hardLimits.maxIobSMB(), rh.gs(R.string.limiting_iob, hardLimits.maxIobSMB(), rh.gs(R.string.hardlimit)), this)
+            val maxIobPref = preferences.get(DoubleKey.ApsSmbMaxIob)
+            maxIob.setIfSmaller(maxIobPref, rh.gs(ApsStrings.limiting_iob, maxIobPref, rh.gs(ApsStrings.maxvalueinpreferences)), this)
+            maxIob.setIfSmaller(hardLimits.maxIobSMB(), rh.gs(ApsStrings.limiting_iob, hardLimits.maxIobSMB(), rh.gs(ApsStrings.hardlimit)), this)
         }
         return maxIob
     }
 
     override fun applyBasalConstraints(absoluteRate: Constraint<Double>, profile: Profile): Constraint<Double> {
         if (isEnabled()) {
-            var maxBasal = sp.getDouble(DoubleKey.ApsMaxBasal.key, DoubleKey.ApsMaxBasal.defaultValue)
+            var maxBasal = preferences.get(DoubleKey.ApsMaxBasal)
             if (maxBasal < profile.getMaxDailyBasal()) maxBasal = profile.getMaxDailyBasal()
-            absoluteRate.setIfSmaller(maxBasal, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxBasal, rh.gs(R.string.maxvalueinpreferences)), this)
-            val maxFromBasalMultiplier = floor(sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue) * profile.getBasal() * 100) / 100
-            absoluteRate.setIfSmaller(maxFromBasalMultiplier, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromBasalMultiplier, rh.gs(R.string.max_basal_multiplier)), this)
-            val maxFromDaily = floor(profile.getMaxDailyBasal() * sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue) * 100) / 100
-            absoluteRate.setIfSmaller(maxFromDaily, rh.gs(app.aaps.core.ui.R.string.limitingbasalratio, maxFromDaily, rh.gs(R.string.max_daily_basal_multiplier)), this)
+            absoluteRate.setIfSmaller(maxBasal, rh.gs(CoreUiStrings.limitingbasalratio, maxBasal, rh.gs(ApsStrings.maxvalueinpreferences)), this)
+            val maxFromBasalMultiplier = floor(preferences.get(DoubleKey.ApsMaxCurrentBasalMultiplier) * profile.getBasal() * 100) / 100
+            absoluteRate.setIfSmaller(maxFromBasalMultiplier, rh.gs(CoreUiStrings.limitingbasalratio, maxFromBasalMultiplier, rh.gs(ApsStrings.max_basal_multiplier)), this)
+            val maxFromDaily = floor(profile.getMaxDailyBasal() * preferences.get(DoubleKey.ApsMaxDailyMultiplier) * 100) / 100
+            absoluteRate.setIfSmaller(maxFromDaily, rh.gs(CoreUiStrings.limitingbasalratio, maxFromDaily, rh.gs(ApsStrings.max_daily_basal_multiplier)), this)
         }
         return absoluteRate
     }
 
-    override fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        if (!sp.getBoolean(BooleanKey.ApsUseSmb.key, BooleanKey.ApsUseSmb.defaultValue)) value.set(false, rh.gs(R.string.smb_disabled_in_preferences), this)
+    override suspend fun isSMBModeEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
+        if (!preferences.get(BooleanKey.ApsUseSmb)) value.set(false, rh.gs(ApsStrings.smb_disabled_in_preferences), this)
         return value
     }
 
     override fun isUAMEnabled(value: Constraint<Boolean>): Constraint<Boolean> {
-        if (!sp.getBoolean(BooleanKey.ApsUseUam.key, BooleanKey.ApsUseUam.defaultValue)) value.set(false, rh.gs(R.string.uam_disabled_in_preferences), this)
+        if (!preferences.get(BooleanKey.ApsUseUam)) value.set(false, rh.gs(ApsStrings.uam_disabled_in_preferences), this)
         return value
     }
-
-    override fun configuration(): JSONObject = JSONObject()
-
-    override fun applyConfiguration(configuration: JSONObject) {}
 
     override fun getPreferenceScreenContent() =
     PreferenceSubScreenDef(
@@ -1751,7 +1754,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinPfDuraStrength
                 )
             )
-        )
+        ),
         icon = pluginDescription.icon
     )
 

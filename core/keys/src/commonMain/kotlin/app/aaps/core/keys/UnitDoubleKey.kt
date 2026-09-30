@@ -32,7 +32,7 @@ enum class UnitDoubleKey(
         defaultedBySM = true,
         dependency = BooleanKey.ApsUseDynamicSensitivity,
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
-    )
+    ),
     // ── SmartInsulin ──
     ApsSmartInsulinLowGuard(
         key = "si_low_guard",
