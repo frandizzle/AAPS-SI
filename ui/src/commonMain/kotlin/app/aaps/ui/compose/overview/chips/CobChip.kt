@@ -7,6 +7,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -93,7 +94,20 @@ internal fun CobChip(
                         .then(iconAlphaModifier)
                 )
             }
-            Text(
+            if (state.siLines.isNotEmpty()) {
+                // SmartInsulin: meal mode, pre-bolus countdowns and learning state instead of COB.
+                Column(modifier = Modifier.padding(start = if (showIcon) AapsSpacing.medium else 0.dp)) {
+                    state.siLines.forEach { line ->
+                        Text(
+                            text = line,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            modifier = Modifier.basicMarquee()
+                        )
+                    }
+                }
+            } else Text(
                 text = state.text,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -10,9 +10,11 @@ import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.overview.SensitivityOverview
 import app.aaps.core.interfaces.overview.graph.OverviewDataCache
+import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventShowDialog
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.objects.extensions.round
 import app.aaps.core.ui.CoreUiStrings
@@ -40,7 +42,8 @@ class ChipsViewModel(
     private val sensitivityOverview: SensitivityOverview,
     private val rh: TextResolver,
     private val decimalFormatter: DecimalFormatter,
-    private val rxBus: RxBus
+    private val rxBus: RxBus,
+    private val activePlugin: ActivePlugin
 ) : ViewModel() {
 
     @AssistedFactory
@@ -70,7 +73,7 @@ class ChipsViewModel(
         initialValue = IobUiState()
     )
 
-    val cobUiState: StateFlow<CobUiState> = iobCobTicker.combine(cache.cobGraphFlow) { _, _ ->
+    private val cobBaseFlow = iobCobTicker.combine(cache.cobGraphFlow) { _, _ ->
         val cobInfo = iobCobCalculator.getCobInfo("ChipsViewModel COB")
         var cobText = cobInfo.displayText(rh, decimalFormatter)
             ?: rh.gs(CoreUiStrings.value_unavailable_short)
@@ -89,7 +92,17 @@ class ChipsViewModel(
         }
 
         CobUiState(text = cobText, carbsReq = carbsReq, cobValue = cobInfo.displayCob ?: 0.0)
-    }.stateIn(
+    }
+
+    // Faster than the COB ticker: the PB2/PB3 countdowns move by the minute.
+    private val siLinesFlow = flow {
+        while (true) {
+            emit(smartInsulinLines())
+            delay(30_000L)
+        }
+    }
+
+    val cobUiState: StateFlow<CobUiState> = combine(cobBaseFlow, siLinesFlow) { cob, si -> cob.copy(siLines = si) }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = CobUiState()
@@ -137,5 +150,25 @@ class ChipsViewModel(
                 )
             )
         }
+    }
+
+    /**
+     * SmartInsulin replaced the COB cell with its meal mode and learning state in 3.4; same text here.
+     * Empty unless SmartInsulin is the active APS.
+     */
+    private fun smartInsulinLines(): List<String> {
+        val si = runCatching { activePlugin.activeAPS as? SmartInsulinOverview }.getOrNull() ?: return emptyList()
+        val s = si.overviewState()
+        val stateLabel = when {
+            s.learningState == "Learning"             -> "State: Learning"
+            s.learningState.startsWith("limited")     -> "State: Learning limited"
+            s.learningState.startsWith("off: Post-meal") -> {
+                val minsLeft = s.learningState.removePrefix("off: Post-meal").trim().removeSuffix("m left").trim()
+                "State: Post meal lockout ${minsLeft}m left"
+            }
+
+            else                                      -> "State: Not Learning"
+        }
+        return listOfNotNull(s.modeLine, s.pb2Line, s.pb3Line, stateLabel)
     }
 }
