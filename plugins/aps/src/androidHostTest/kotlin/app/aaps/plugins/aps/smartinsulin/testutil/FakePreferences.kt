@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin.testutil
 
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.sharedPreferences.SP
 
 class FakePreferences : SP {
@@ -15,8 +16,8 @@ class FakePreferences : SP {
     
     override fun contains(key: String): Boolean = values.containsKey(key)
 
-    override fun edit(commit: Boolean, block: SP.Editor.() -> Unit) {
-        val editor = object : SP.Editor {
+    override fun edit(commit: Boolean, block: KeyValueStore.Editor.() -> Unit) {
+        val editor = object : KeyValueStore.Editor {
             override fun putString(key: String, value: String) { values[key] = value }
             override fun putBoolean(key: String, value: Boolean) { values[key] = value }
             override fun putInt(key: String, value: Int) { values[key] = value }
@@ -24,13 +25,6 @@ class FakePreferences : SP {
             override fun putDouble(key: String, value: Double) { values[key] = value }
             override fun clear() { values.clear() }
             override fun remove(key: String) { values.remove(key) }
-            
-            override fun remove(resourceID: Int) {}
-            override fun putBoolean(resourceID: Int, value: Boolean) {}
-            override fun putDouble(resourceID: Int, value: Double) {}
-            override fun putLong(resourceID: Int, value: Long) {}
-            override fun putInt(resourceID: Int, value: Int) {}
-            override fun putString(resourceID: Int, value: String) {}
         }
         editor.block()
     }

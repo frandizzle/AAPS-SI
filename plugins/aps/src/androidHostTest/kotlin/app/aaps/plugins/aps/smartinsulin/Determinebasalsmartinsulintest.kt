@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.smartInsulin.MealMode
 
 import android.text.Spanned
+import kotlinx.serialization.json.JsonObject
 import app.aaps.core.data.model.GV
 import app.aaps.core.data.model.SourceSensor
 import app.aaps.core.data.model.TrendArrow
@@ -48,7 +49,7 @@ class DetermineBasalSmartInsulinTest {
         override var scriptDebug: List<String>?          = null
         override val predictionsAsGv: MutableList<GV>   = mutableListOf()
         override val latestPredictionsTime: Long         = 0
-        override val isChangeRequested: Boolean          = false
+        override suspend fun isChangeRequested(): Boolean = false
         override var isTempBasalRequested: Boolean       = false
         override val carbsRequiredText: String           = ""
         override var inputConstraints: Constraint<Double>?  = null
@@ -87,10 +88,9 @@ class DetermineBasalSmartInsulinTest {
                 )
             }
         }
-        override fun resultAsString(): String            = reason
-        override fun resultAsSpanned(): Spanned          = mock()
+        override suspend fun resultAsString(): String    = reason
         override fun newAndClone(): APSResult            = FakeAPSResult()
-        override fun json(): JSONObject?                 = null
+        override fun json(): JsonObject?                 = null
         override fun predictions(): Predictions?         = null
         override fun rawData(): Any                      = ""
     }

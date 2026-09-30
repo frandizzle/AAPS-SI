@@ -90,7 +90,10 @@ class UamEntrySmbFractionPerModeTest {
             carbEpisodeManager      = mock(),
             activitySessionManager  = mock(),
             activitySessionLearner  = mock(),
-            phoneStepCounter        = mock()
+            phoneStepCounter        = mock(),
+            preferences             = mock(),
+            notificationManager     = mock(),
+            ch                      = mock()
         )
     }
 

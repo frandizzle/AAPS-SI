@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import kotlinx.coroutines.runBlocking
+import org.mockito.kotlin.wheneverBlocking
 import app.aaps.core.data.model.HR
 import app.aaps.core.data.model.SC
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -26,8 +28,8 @@ class ActivityMonitorTest {
 
     @BeforeEach fun setUp() {
         sut = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
-        whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
-        whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(emptyList())
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenReturn(emptyList())
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -60,7 +62,7 @@ class ActivityMonitorTest {
         device     = "test"
     )
 
-    private fun recompute(restingHr: Double = 0.0) = sut.recompute(NOW, restingHr)
+    private fun recompute(restingHr: Double = 0.0) = runBlocking { sut.recompute(NOW, restingHr) }
 
     // ── Initial state ────────────────────────────────────────────────────────
 
@@ -92,49 +94,49 @@ class ActivityMonitorTest {
     // ── HR absolute thresholds ───────────────────────────────────────────────
 
     @Test fun `HR just below LIGHT threshold → SEDENTARY`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN - 1)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
     }
 
     @Test fun `HR at exact LIGHT threshold → LIGHT`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.LIGHT, sut.level)
     }
 
     @Test fun `HR between LIGHT and MODERATE → LIGHT`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_MODERATE_MIN - 1)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.LIGHT, sut.level)
     }
 
     @Test fun `HR at exact MODERATE threshold → MODERATE`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_MODERATE_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
     }
 
     @Test fun `HR between MODERATE and HEAVY → MODERATE`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_HEAVY_MIN - 1)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
     }
 
     @Test fun `HR at exact HEAVY threshold → HEAVY`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_HEAVY_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
     }
 
     @Test fun `very high HR → HEAVY`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(180.0)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
@@ -144,7 +146,7 @@ class ActivityMonitorTest {
 
     @Test fun `delta below REL_LIGHT with resting HR → SEDENTARY`() {
         val restingHr = 60.0
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(restingHr + ActivityMonitor.HR_REL_LIGHT_MIN - 1)))
         recompute(restingHr)
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
@@ -152,7 +154,7 @@ class ActivityMonitorTest {
 
     @Test fun `delta at REL_LIGHT with resting HR → LIGHT`() {
         val restingHr = 60.0
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(restingHr + ActivityMonitor.HR_REL_LIGHT_MIN)))
         recompute(restingHr)
         assertEquals(ActivityMonitor.ActivityLevel.LIGHT, sut.level)
@@ -160,7 +162,7 @@ class ActivityMonitorTest {
 
     @Test fun `delta at REL_MODERATE with resting HR → MODERATE`() {
         val restingHr = 60.0
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(restingHr + ActivityMonitor.HR_REL_MODERATE_MIN)))
         recompute(restingHr)
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
@@ -168,7 +170,7 @@ class ActivityMonitorTest {
 
     @Test fun `delta at REL_HEAVY with resting HR → HEAVY`() {
         val restingHr = 60.0
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(restingHr + ActivityMonitor.HR_REL_HEAVY_MIN)))
         recompute(restingHr)
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
@@ -178,7 +180,7 @@ class ActivityMonitorTest {
 
     @Test fun `avgHrBpm is duration-weighted across multiple HR records`() {
         val expected = (80.0 * 200_000 + 120.0 * 130_000) / 330_000.0
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(twoHrRecords(80.0, 200_000L, 120.0, 130_000L))
         recompute()
         assertEquals(expected, sut.avgHrBpm, 0.01)
@@ -187,35 +189,35 @@ class ActivityMonitorTest {
     // ── Steps thresholds ─────────────────────────────────────────────────────
 
     @Test fun `steps below LIGHT threshold → SEDENTARY`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_LIGHT_MIN - 1)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
     }
 
     @Test fun `steps at exact LIGHT threshold → LIGHT`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_LIGHT_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.LIGHT, sut.level)
     }
 
     @Test fun `steps at exact MODERATE threshold → MODERATE`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_MODERATE_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
     }
 
     @Test fun `steps at exact HEAVY threshold → HEAVY`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_HEAVY_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
     }
 
     @Test fun `steps record with slight duration jitter is still accepted`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecordJitter(ActivityMonitor.STEPS_HEAVY_MIN, jitterMs = 3000L)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
@@ -223,7 +225,7 @@ class ActivityMonitorTest {
     }
 
     @Test fun `steps record with jitter exceeding 5s tolerance is ignored`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecordJitter(ActivityMonitor.STEPS_HEAVY_MIN, jitterMs = 6000L)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
@@ -233,27 +235,27 @@ class ActivityMonitorTest {
     // ── HR wins over steps when higher, and vice versa ───────────────────────
 
     @Test fun `HEAVY HR overrides LIGHT steps`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_HEAVY_MIN)))
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_LIGHT_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
     }
 
     @Test fun `HEAVY steps overrides LIGHT HR`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_HEAVY_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.HEAVY, sut.level)
     }
 
     @Test fun `equal HR and steps levels → that level is reported`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_MODERATE_MIN)))
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecord(ActivityMonitor.STEPS_MODERATE_MIN)))
         recompute()
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
@@ -267,21 +269,21 @@ class ActivityMonitorTest {
     }
 
     @Test fun `suppressLearning is true when LIGHT`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
         recompute()
         assertTrue(sut.suppressLearning)
     }
 
     @Test fun `suppressLearning is true when MODERATE`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_MODERATE_MIN)))
         recompute()
         assertTrue(sut.suppressLearning)
     }
 
     @Test fun `suppressLearning is true when HEAVY`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_HEAVY_MIN)))
         recompute()
         assertTrue(sut.suppressLearning)
@@ -295,21 +297,21 @@ class ActivityMonitorTest {
     }
 
     @Test fun `targetOffsetMmol returns lightMmol when LIGHT`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
         recompute()
         assertEquals(0.5, sut.targetOffsetMmol(lightMmol = 0.5, moderateMmol = 1.0, heavyMmol = 2.0), 0.001)
     }
 
     @Test fun `targetOffsetMmol returns moderateMmol when MODERATE`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_MODERATE_MIN)))
         recompute()
         assertEquals(1.0, sut.targetOffsetMmol(lightMmol = 0.5, moderateMmol = 1.0, heavyMmol = 2.0), 0.001)
     }
 
     @Test fun `targetOffsetMmol returns heavyMmol when HEAVY`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_HEAVY_MIN)))
         recompute()
         assertEquals(2.0, sut.targetOffsetMmol(lightMmol = 0.5, moderateMmol = 1.0, heavyMmol = 2.0), 0.001)
@@ -319,7 +321,7 @@ class ActivityMonitorTest {
         // Before the fix: spMgdl fell back to a large defaultValue (e.g. 8.0),
         // multiplied by 18 → 144 mg/dL → /18 = 8.0 mmol offset → target jumped to ~14.5.
         // A correctly-read 0.5 mmol offset must never reach BG-range magnitudes.
-        whenever(persistenceLayer.getHeartRatesFromTime(any()))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }
             .thenReturn(listOf(hrRecord(ActivityMonitor.HR_LIGHT_MIN)))
         recompute()
         val offset = sut.targetOffsetMmol(lightMmol = 0.5, moderateMmol = 1.0, heavyMmol = 2.0)
@@ -329,14 +331,14 @@ class ActivityMonitorTest {
     // ── DB exception resilience ──────────────────────────────────────────────
 
     @Test fun `HR query exception → SEDENTARY and zero avgHrBpm`() {
-        whenever(persistenceLayer.getHeartRatesFromTime(any())).thenThrow(RuntimeException("db fail"))
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenThrow(RuntimeException("db fail"))
         recompute()
         assertEquals(0.0, sut.avgHrBpm, 0.001)
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
     }
 
     @Test fun `steps query exception → SEDENTARY and zero lastSteps5min`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any())).thenThrow(RuntimeException("db fail"))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenThrow(RuntimeException("db fail"))
         recompute()
         assertEquals(0, sut.lastSteps5min)
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
@@ -368,34 +370,34 @@ class ActivityMonitorTest {
     @Test fun `a record delivered late still counts`() {
         // 7 min old — dropped outright by the old 5-min window, which is what made steps appear
         // several loops after the walk.
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecordAged(400, 7 * 60_000L)))
-        sut.recompute(NOW)
+        runBlocking { sut.recompute(NOW) }
         assertEquals(400, sut.lastSteps5min)
         assertEquals(ActivityMonitor.ActivityLevel.MODERATE, sut.level)
         assertEquals(7 * 60_000L, sut.lastStepsAgeMs)
     }
 
     @Test fun `a record past the staleness cutoff stops counting but still reports its age`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecordAged(400, 12 * 60_000L)))
-        sut.recompute(NOW)
+        runBlocking { sut.recompute(NOW) }
         assertEquals(0, sut.lastSteps5min)
         assertEquals(ActivityMonitor.ActivityLevel.SEDENTARY, sut.level)
         assertEquals(12 * 60_000L, sut.lastStepsAgeMs)
     }
 
     @Test fun `no record at all reports a null age, not a zero one`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
-        sut.recompute(NOW)
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenReturn(emptyList())
+        runBlocking { sut.recompute(NOW) }
         assertEquals(0, sut.lastSteps5min)
         assertEquals(null, sut.lastStepsAgeMs)
     }
 
     @Test fun `a watch clock running ahead does not produce a negative age`() {
-        whenever(persistenceLayer.getStepsCountFromTime(any()))
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }
             .thenReturn(listOf(stepsRecordAged(400, -30_000L)))
-        sut.recompute(NOW)
+        runBlocking { sut.recompute(NOW) }
         assertEquals(400, sut.lastSteps5min)
         assertEquals(0L, sut.lastStepsAgeMs)
     }

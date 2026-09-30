@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import kotlinx.coroutines.runBlocking
+import org.mockito.kotlin.wheneverBlocking
 import app.aaps.core.data.model.HR
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.shared.tests.rx.TestAapsSchedulers
@@ -42,8 +44,8 @@ class ActivityTargetOffsetIntegrationTest {
 
     @BeforeEach fun setUp() {
         sut = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
-        whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
-        whenever(persistenceLayer.getStepsCountFromTime(any())).thenReturn(emptyList())
+        wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(emptyList())
+        wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenReturn(emptyList())
         // Default: SP returns whatever default is passed in
         whenever(sp.getDouble(any<String>(), any<Double>())).thenAnswer { it.getArgument<Double>(1) }
     }
@@ -73,15 +75,15 @@ class ActivityTargetOffsetIntegrationTest {
             ActivityMonitor.ActivityLevel.HEAVY     -> ActivityMonitor.HR_HEAVY_MIN
         }
         if (bpm == null) {
-            whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(emptyList())
+            wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(emptyList())
         } else {
             val hr = HR(
                 timestamp = NOW, duration = ActivityMonitor.HR_WINDOW_MS,
                 beatsPerMinute = bpm, device = "test"
             )
-            whenever(persistenceLayer.getHeartRatesFromTime(any())).thenReturn(listOf(hr))
+            wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(listOf(hr))
         }
-        sut.recompute(NOW)
+        runBlocking { sut.recompute(NOW) }
     }
 
     // ── Default SP values ────────────────────────────────────────────────────

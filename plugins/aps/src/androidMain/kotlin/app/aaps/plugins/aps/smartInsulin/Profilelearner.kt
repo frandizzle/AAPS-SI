@@ -35,12 +35,9 @@ class ProfileLearner @Inject constructor(
         private val PEAK_LEARNING_MODES = setOf(MealMode.FASTING, MealMode.LOW_CARB)
     }
 
-    init {
-        MealMode.entries.forEach { mode ->
-            profiles[mode] = loadProfile(mode)
-        }
-    }
-
+    // Declared ABOVE init{}: Kotlin initialises properties in declaration order, and restore()
+    // seeds profiles from these. Declared below it, they were still 0.0 when restore() ran, so
+    // every profile seeded at startup got a DIA and peak of zero.
     // The configured insulin's DIA and peak. In 4.0 both live on the effective profile's insulin
     // configuration and reading the profile is suspend, while this class is read from synchronous
     // paths (the SI tab among them). So the loop hands them over each cycle and seeding reads the
@@ -50,8 +47,25 @@ class ProfileLearner @Inject constructor(
     @Volatile private var insulinPeakMins = 55.0
 
     fun updateInsulinDefaults(diaMins: Double, peakMins: Double) {
+        val changed = (diaMins > 0.0 && diaMins != insulinDiaMins) || (peakMins > 0.0 && peakMins != insulinPeakMins)
         if (diaMins > 0.0)  insulinDiaMins  = diaMins
         if (peakMins > 0.0) insulinPeakMins = peakMins
+        if (!changed) return
+        // Profiles are seeded at construction, before the first loop cycle has reported the
+        // configured insulin, so they start from the fallbacks above. Any profile that has never
+        // learned anything is still just a seed: re-seed it from the real insulin now, as 3.4 did
+        // by reading the insulin plugin directly. Learned profiles (sampleCount > 0) are the user's
+        // data and are never touched.
+        MealMode.entries.forEach { mode ->
+            if ((profiles[mode]?.sampleCount ?: 0) == 0)
+                profiles[mode] = LearnedInsulinProfile.defaultFor(mode, insulinPeakMins, insulinDiaMins)
+        }
+    }
+
+    init {
+        MealMode.entries.forEach { mode ->
+            profiles[mode] = loadProfile(mode)
+        }
     }
 
     fun getProfile(mode: MealMode): LearnedInsulinProfile =
