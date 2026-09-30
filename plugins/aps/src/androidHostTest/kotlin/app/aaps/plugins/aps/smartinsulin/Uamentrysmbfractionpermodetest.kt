@@ -7,6 +7,7 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.DoubleKey
+import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -191,5 +192,18 @@ class UamEntrySmbFractionPerModeTest {
             assertEquals(0.8, sut.entrySmbFractionForMode(mode), 0.001,
                          "Mode $mode: default value should be 0.8 (DoubleKey default) when SP has no saved value")
         }
+    }
+
+    /**
+     * 4.0's settings screen draws one level of groups inside a plugin; a group nested in a group
+     * renders as a header that never expands. Keep every SI group flat.
+     */
+    @Test
+    fun `settings groups are never nested inside another group`() {
+        val nested = sut.getPreferenceScreenContent().items
+            .filterIsInstance<PreferenceSubScreenDef>()
+            .filter { group -> group.items.any { it is PreferenceSubScreenDef } }
+            .map { it.key }
+        assertEquals(emptyList<String>(), nested)
     }
 }

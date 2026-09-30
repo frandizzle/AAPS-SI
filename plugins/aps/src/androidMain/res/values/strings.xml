@@ -360,20 +360,15 @@
     <string name="si_cat_low">Low protection</string>
     <string name="si_cat_learning">Learning</string>
     <string name="si_cat_meal">Meal modes &amp; pre-boluses</string>
-    <string name="si_cat_meal_isf">Meal ISF overrides</string>
     <string name="si_cat_cgm">CGM</string>
     <string name="si_cat_activity">Activity</string>
     <string name="si_cat_dawn">Dawn phenomenon</string>
     <string name="si_cat_uam">UAM detection</string>
-    <string name="si_cat_uam_windows">UAM meal windows</string>
-    <string name="si_cat_uam_breakfast">Breakfast window</string>
-    <string name="si_cat_uam_lunch">Lunch window</string>
-    <string name="si_cat_uam_afternoon">Afternoon window</string>
-    <string name="si_cat_uam_dinner">Dinner window</string>
-    <string name="si_cat_uam_snack">Snack window</string>
-    <string name="si_cat_uam_dura">UAM DURA</string>
+    <string name="si_cat_uam_breakfast">UAM: Breakfast window</string>
+    <string name="si_cat_uam_lunch">UAM: Lunch window</string>
+    <string name="si_cat_uam_afternoon">UAM: Afternoon window</string>
+    <string name="si_cat_uam_dinner">UAM: Dinner window</string>
+    <string name="si_cat_uam_snack">UAM: Snack window</string>
     <string name="si_cat_pf">Protein / fat</string>
-    <string name="si_cat_pf_times">Protein / fat time-of-day ISF</string>
-    <string name="si_cat_pf_dura">Protein / fat DURA</string>
 
 </resources>

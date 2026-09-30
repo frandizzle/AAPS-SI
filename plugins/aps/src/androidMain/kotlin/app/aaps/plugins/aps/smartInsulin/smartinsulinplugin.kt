@@ -4,7 +4,6 @@ import androidx.compose.material.icons.filled.WbTwilight
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SetMeal
 import androidx.compose.material.icons.filled.Sensors
-import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.AutoGraph
@@ -1668,17 +1667,11 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinMaxPreBolus,
                     DoubleKey.ApsSmartInsulinPreBolus2DefaultU,
                     IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,
-                    PreferenceSubScreenDef(
-                        key = "si_meal_isf_screen",
-                        title = ApsStrings.si_cat_meal_isf,
-                        items = listOf(
-                            UnitDoubleKey.ApsSmartInsulinBreakfastIsf,
-                            UnitDoubleKey.ApsSmartInsulinLunchIsf,
-                            UnitDoubleKey.ApsSmartInsulinDinnerIsf,
-                            UnitDoubleKey.ApsSmartInsulinLowCarbIsf,
-                            UnitDoubleKey.ApsSmartInsulinExtendedIsf
-                        )
-                    )
+                    UnitDoubleKey.ApsSmartInsulinBreakfastIsf,
+                    UnitDoubleKey.ApsSmartInsulinLunchIsf,
+                    UnitDoubleKey.ApsSmartInsulinDinnerIsf,
+                    UnitDoubleKey.ApsSmartInsulinLowCarbIsf,
+                    UnitDoubleKey.ApsSmartInsulinExtendedIsf
                 )
             ),
             PreferenceSubScreenDef(
@@ -1727,86 +1720,73 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamEntrySmbCount,
                     IntKey.ApsSmartInsulinUamDayStartHour,
                     IntKey.ApsSmartInsulinUamNightCutoffHour,
-                    PreferenceSubScreenDef(
-                        key = "si_uam_dura_screen",
-                        title = ApsStrings.si_cat_uam_dura,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamDuraEnabled,
-                            UnitDoubleKey.ApsSmartInsulinUamDuraFloor,
-                            DoubleKey.ApsSmartInsulinUamDuraStrength
-                        )
-                    )
+                    BooleanKey.ApsSmartInsulinUamDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinUamDuraFloor,
+                    DoubleKey.ApsSmartInsulinUamDuraStrength
                 )
             ),
             PreferenceSubScreenDef(
-                key = "si_uam_windows_screen",
-                title = ApsStrings.si_cat_uam_windows,
-                icon = Icons.Filled.Schedule,
+                key = "si_uam_breakfast_screen",
+                title = ApsStrings.si_cat_uam_breakfast,
                 items = listOf(
-                    PreferenceSubScreenDef(
-                        key = "si_uam_breakfast_screen",
-                        title = ApsStrings.si_cat_uam_breakfast,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamBreakfastEnabled,
-                            IntKey.ApsSmartInsulinUamBreakfastStartHour,
-                            IntKey.ApsSmartInsulinUamBreakfastEndHour,
-                            IntKey.ApsSmartInsulinUamBreakfastDurationMins,
-                            UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,
-                            DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast
-                        )
-                    ),
-                    PreferenceSubScreenDef(
-                        key = "si_uam_lunch_screen",
-                        title = ApsStrings.si_cat_uam_lunch,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamLunchEnabled,
-                            IntKey.ApsSmartInsulinUamLunchStartHour,
-                            IntKey.ApsSmartInsulinUamLunchEndHour,
-                            IntKey.ApsSmartInsulinUamLunchDurationMins,
-                            UnitDoubleKey.ApsSmartInsulinUamLunchIsf,
-                            DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch
-                        )
-                    ),
-                    PreferenceSubScreenDef(
-                        key = "si_uam_afternoon_screen",
-                        title = ApsStrings.si_cat_uam_afternoon,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamAfternoonEnabled,
-                            IntKey.ApsSmartInsulinUamAfternoonStartHour,
-                            IntKey.ApsSmartInsulinUamAfternoonStartMinute,
-                            IntKey.ApsSmartInsulinUamAfternoonEndHour,
-                            IntKey.ApsSmartInsulinUamAfternoonEndMinute,
-                            IntKey.ApsSmartInsulinUamAfternoonDurationMins,
-                            UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,
-                            DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon
-                        )
-                    ),
-                    PreferenceSubScreenDef(
-                        key = "si_uam_dinner_screen",
-                        title = ApsStrings.si_cat_uam_dinner,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamDinnerEnabled,
-                            IntKey.ApsSmartInsulinUamDinnerStartHour,
-                            IntKey.ApsSmartInsulinUamDinnerStartMinute,
-                            IntKey.ApsSmartInsulinUamDinnerEndHour,
-                            IntKey.ApsSmartInsulinUamDinnerEndMinute,
-                            IntKey.ApsSmartInsulinUamDinnerDurationMins,
-                            UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,
-                            DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner
-                        )
-                    ),
-                    PreferenceSubScreenDef(
-                        key = "si_uam_snack_screen",
-                        title = ApsStrings.si_cat_uam_snack,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinUamSnackEnabled,
-                            IntKey.ApsSmartInsulinUamSnackStartHour,
-                            IntKey.ApsSmartInsulinUamSnackEndHour,
-                            IntKey.ApsSmartInsulinUamSnackDurationMins,
-                            UnitDoubleKey.ApsSmartInsulinUamSnackIsf,
-                            DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack
-                        )
-                    )
+                    BooleanKey.ApsSmartInsulinUamBreakfastEnabled,
+                    IntKey.ApsSmartInsulinUamBreakfastStartHour,
+                    IntKey.ApsSmartInsulinUamBreakfastEndHour,
+                    IntKey.ApsSmartInsulinUamBreakfastDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamBreakfastIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionBreakfast
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_uam_lunch_screen",
+                title = ApsStrings.si_cat_uam_lunch,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinUamLunchEnabled,
+                    IntKey.ApsSmartInsulinUamLunchStartHour,
+                    IntKey.ApsSmartInsulinUamLunchEndHour,
+                    IntKey.ApsSmartInsulinUamLunchDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamLunchIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionLunch
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_uam_afternoon_screen",
+                title = ApsStrings.si_cat_uam_afternoon,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinUamAfternoonEnabled,
+                    IntKey.ApsSmartInsulinUamAfternoonStartHour,
+                    IntKey.ApsSmartInsulinUamAfternoonStartMinute,
+                    IntKey.ApsSmartInsulinUamAfternoonEndHour,
+                    IntKey.ApsSmartInsulinUamAfternoonEndMinute,
+                    IntKey.ApsSmartInsulinUamAfternoonDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamAfternoonIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionAfternoon
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_uam_dinner_screen",
+                title = ApsStrings.si_cat_uam_dinner,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinUamDinnerEnabled,
+                    IntKey.ApsSmartInsulinUamDinnerStartHour,
+                    IntKey.ApsSmartInsulinUamDinnerStartMinute,
+                    IntKey.ApsSmartInsulinUamDinnerEndHour,
+                    IntKey.ApsSmartInsulinUamDinnerEndMinute,
+                    IntKey.ApsSmartInsulinUamDinnerDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamDinnerIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionDinner
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_uam_snack_screen",
+                title = ApsStrings.si_cat_uam_snack,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinUamSnackEnabled,
+                    IntKey.ApsSmartInsulinUamSnackStartHour,
+                    IntKey.ApsSmartInsulinUamSnackEndHour,
+                    IntKey.ApsSmartInsulinUamSnackDurationMins,
+                    UnitDoubleKey.ApsSmartInsulinUamSnackIsf,
+                    DoubleKey.ApsSmartInsulinUamEntrySmbFractionSnack
                 )
             ),
             PreferenceSubScreenDef(
@@ -1820,30 +1800,18 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatDurationMins,
                     BooleanKey.ApsSmartInsulinUamPfTakeover,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatIsf,
-                    PreferenceSubScreenDef(
-                        key = "si_pf_times_screen",
-                        title = ApsStrings.si_cat_pf_times,
-                        items = listOf(
-                            IntKey.ApsSmartInsulinUamProteinFatDayStartHour,
-                            IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
-                            UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf,
-                            IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
-                            IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
-                            UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
-                            IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
-                            IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour,
-                            UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf
-                        )
-                    ),
-                    PreferenceSubScreenDef(
-                        key = "si_pf_dura_screen",
-                        title = ApsStrings.si_cat_pf_dura,
-                        items = listOf(
-                            BooleanKey.ApsSmartInsulinPfDuraEnabled,
-                            UnitDoubleKey.ApsSmartInsulinPfDuraFloor,
-                            DoubleKey.ApsSmartInsulinPfDuraStrength
-                        )
-                    )
+                    IntKey.ApsSmartInsulinUamProteinFatDayStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatDayEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatDayIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatNightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatNightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatNightIsf,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour,
+                    IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
+                    BooleanKey.ApsSmartInsulinPfDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinPfDuraFloor,
+                    DoubleKey.ApsSmartInsulinPfDuraStrength
                 )
             )
         ),
