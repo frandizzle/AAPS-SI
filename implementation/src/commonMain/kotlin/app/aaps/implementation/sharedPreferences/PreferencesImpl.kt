@@ -242,11 +242,16 @@ class PreferencesImpl(
     }
 
     override fun get(key: UnitDoublePreferenceKey): Double =
-        if (simpleMode && key.defaultedBySM) profileUtil().valueInCurrentUnitsDetect(key.defaultValue)
-        else profileUtil().valueInCurrentUnitsDetect(sp.getDouble(key.key, key.defaultValue))
+        if (simpleMode && key.defaultedBySM) toCurrentUnits(key, key.defaultValue)
+        else toCurrentUnits(key, sp.getDouble(key.key, key.defaultValue))
 
     override fun getIfExists(key: UnitDoublePreferenceKey): Double? =
-        if (sp.contains(key.key)) profileUtil().valueInCurrentUnitsDetect(sp.getDouble(key.key, key.defaultValue)) else null
+        if (sp.contains(key.key)) toCurrentUnits(key, sp.getDouble(key.key, key.defaultValue)) else null
+
+    // A key known to be stored in mg/dl skips the magnitude guess, which reads anything under 36 as mmol.
+    private fun toCurrentUnits(key: UnitDoublePreferenceKey, stored: Double): Double =
+        if (key.storedAsMgdl) profileUtil().fromMgdlToUnits(stored)
+        else profileUtil().valueInCurrentUnitsDetect(stored)
 
     override fun put(key: UnitDoublePreferenceKey, value: Double) {
         sp.putDouble(key.key, value)

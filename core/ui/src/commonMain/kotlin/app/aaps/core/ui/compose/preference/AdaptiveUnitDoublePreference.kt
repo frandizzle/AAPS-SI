@@ -4,6 +4,7 @@
 
 package app.aaps.core.ui.compose.preference
 
+import app.aaps.core.data.model.GlucoseUnit
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -54,7 +55,11 @@ fun AdaptiveUnitDoublePreferenceItem(
     val maxDisplay = profileUtil.fromMgdlToUnits(unitKey.maxMgdl.toDouble())
 
     // Detect if using mg/dL by checking if conversion preserved the value
-    val isMgdl = abs(minDisplay - unitKey.minMgdl.toDouble()) < 0.01
+    // A key known to be stored in mg/dl can use the units directly; the min-value comparison below
+    // reads a 0 minimum as mg/dl in either unit.
+    val isMgdl =
+        if (unitKey.storedAsMgdl) profileUtil.units == GlucoseUnit.MGDL
+        else abs(minDisplay - unitKey.minMgdl.toDouble()) < 0.01
 
     // Adaptive step: 1.0 for mg/dL, 0.1 for mmol/L
     val step = if (isMgdl) 1.0 else 0.1

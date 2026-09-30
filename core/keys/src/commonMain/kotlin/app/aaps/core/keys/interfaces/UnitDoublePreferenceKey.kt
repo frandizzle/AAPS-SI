@@ -17,4 +17,11 @@ interface UnitDoublePreferenceKey : PreferenceKey {
      */
     val maxMgdl: Int
 
+    /**
+     * True when the value is known to always be stored in mg/dl, so the UI converts by the user's units
+     * instead of guessing them from the magnitude. The guess treats anything under 36 as mmol, which is
+     * right for a legacy target but wrong for a small mg/dl quantity such as an ISF or a BG delta.
+     */
+    val storedAsMgdl: Boolean get() = false
+
 }

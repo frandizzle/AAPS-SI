@@ -5,6 +5,7 @@
 
 package app.aaps.core.ui.compose.preference
 
+import app.aaps.core.data.model.GlucoseUnit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
@@ -596,7 +597,9 @@ class UnitDoublePreferenceState(
         setSharedStringState(sharedStates, "unit_display:${key.key}", newValue)
         // Convert from display units back to mg/dL for storage
         val displayDouble = newValue.toDoubleOrNull() ?: return
-        val mgdlValue = profileUtil.convertToMgdlDetect(displayDouble)
+        val mgdlValue =
+            if (key.storedAsMgdl) profileUtil.convertToMgdl(displayDouble, profileUtil.units)
+            else profileUtil.convertToMgdlDetect(displayDouble)
         preferences.put(key, mgdlValue)
     }
 }
@@ -608,7 +611,12 @@ class UnitDoublePreferenceState(
  * see [sharedStateUpdaterFor]. Two copies of this would be two ways of rounding the same number, and
  * the row would flicker between them as edits arrived.
  */
-private fun formatUnitDoubleForDisplay(profileUtil: ProfileUtil, storedValue: Double): String {
+private fun formatUnitDoubleForDisplay(profileUtil: ProfileUtil, storedValue: Double, storedAsMgdl: Boolean): String {
+    if (storedAsMgdl) {
+        val isMgdl = profileUtil.units == GlucoseUnit.MGDL
+        return NumberFormat.withDecimalsHalfUp(if (isMgdl) 0 else 1)
+            .format(profileUtil.fromMgdlToUnits(storedValue), NumberFormatPlatform.SEPARATOR_DOT)
+    }
     val displayValue = profileUtil.valueInCurrentUnitsDetect(storedValue)
     val isMgdl = displayValue == storedValue || (storedValue > 0 && displayValue / storedValue > 0.9)
     val precision = if (isMgdl) 0 else 1
@@ -625,7 +633,7 @@ fun rememberUnitDoublePreferenceState(
     val sharedStates = LocalSharedPreferenceStates.current
 
     // Back the display value with the shared state map so it's reactive
-    val formatted = formatUnitDoubleForDisplay(profileUtil, preferences.getRaw(key))
+    val formatted = formatUnitDoubleForDisplay(profileUtil, preferences.getRaw(key), key.storedAsMgdl)
     val displayState = remember(key) {
         mutableStateOf(getSharedStringState(sharedStates, "unit_display:${key.key}", formatted))
     }

@@ -258,4 +258,6 @@ enum class UnitDoubleKey(
     ),
     ;
 
+    /** SmartInsulin always writes and reads these in raw mg/dl, and many are below the 36 mg/dl mmol guess. */
+    override val storedAsMgdl: Boolean get() = name.startsWith("ApsSmartInsulin")
 }
