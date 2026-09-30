@@ -250,15 +250,54 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(r.isTempBasalRequested)
     }
 
-    @Test fun `CAUTION zone at max IOB sets zero TBR`() {
+    @Test fun `CAUTION zone over max IOB keeps its reduced basal`() {
+        // Below-profile basal adds no IOB, so max IOB has nothing to say about it.
         whenever(glucoseStatus.glucose).thenReturn(78.0)
-        // Same caution-zone curve as above, with max IOB below the 0.08 U on board.
         whenever(oapsProfile.max_iob).thenReturn(0.05)
         val r = invoke(iobArray = flatIobArray(iob = 0.08, activity = 0.0013))
         assertTrue(r.reason.contains("CAUTION"), "Expected CAUTION in reason, got: ${r.reason}")
-        assertTrue(r.reason.contains("maxIOB"), "Expected maxIOB note in reason, got: ${r.reason}")
-        assertEquals(0.0, r.rate, 0.001)
-        assertEquals(30, r.duration)
+        assertTrue(r.rate > 0.0 && r.rate < 1.0, "Expected the reduced caution rate, got ${r.rate}")
+    }
+
+    // ── Max IOB as a red line ────────────────────────────────────────────────
+
+    /** Extra insulin this cycle would add: the SMB plus the above-basal part of a 30-min temp. */
+    private fun extraU(r: FakeAPSResult) = r.smb + ((r.rate - 1.0).coerceAtLeast(0.0) * 0.5)
+
+    @Test fun `high BG at max IOB gets profile basal and no SMB`() {
+        whenever(glucoseStatus.glucose).thenReturn(250.0)
+        whenever(oapsProfile.max_iob).thenReturn(3.0)
+        val r = invoke(iobArray = flatIobArray(iob = 3.0, activity = 0.0))
+        assertEquals(0.0, r.smb, 0.001)
+        assertEquals(1.0, r.rate, 0.001)
+    }
+
+    @Test fun `high BG over max IOB gets no extra insulin and no zero temp`() {
+        whenever(glucoseStatus.glucose).thenReturn(250.0)
+        whenever(oapsProfile.max_iob).thenReturn(3.0)
+        val r = invoke(iobArray = flatIobArray(iob = 3.2, activity = 0.0))
+        assertEquals(0.0, r.smb, 0.001)
+        // No extra insulin, but not a hard stop either. It may sit below profile when the forecast
+        // itself dips under target (here 3.2 U on board does), never above it.
+        assertTrue(r.rate > 0.0 && r.rate <= 1.0 + 0.001, "Expected 0 < rate <= profile basal, got ${r.rate}")
+    }
+
+    @Test fun `SMB and temp together fill the headroom but never pass max IOB`() {
+        whenever(glucoseStatus.glucose).thenReturn(250.0)
+        whenever(oapsProfile.max_iob).thenReturn(3.0)
+        val r = invoke(iobArray = flatIobArray(iob = 2.8, activity = 0.0))
+        val extra = extraU(r)
+        assertTrue(extra <= 0.2 + 0.001, "SMB ${r.smb} + temp ${r.rate} adds ${extra}U, over the 0.2U headroom")
+        assertTrue(extra >= 0.2 - 0.06, "Should use the headroom (one pump step of slack), added only ${extra}U")
+    }
+
+    @Test fun `with SMBs off the temp alone fills the headroom`() {
+        whenever(glucoseStatus.glucose).thenReturn(250.0)
+        whenever(oapsProfile.max_iob).thenReturn(3.0)
+        val r = invoke(iobArray = flatIobArray(iob = 2.9, activity = 0.0), microBolusAllowed = false)
+        assertEquals(0.0, r.smb, 0.001)
+        assertEquals(1.0 + 0.1 / 0.5, r.rate, 0.01)
+        assertTrue(r.reason.contains("capped by maxIOB"), "Expected the cap note, got: ${r.reason}")
     }
 
     // ── NORMAL zone ──────────────────────────────────────────────────────────

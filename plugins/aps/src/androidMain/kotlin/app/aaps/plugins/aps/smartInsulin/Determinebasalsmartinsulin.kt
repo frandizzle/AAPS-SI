@@ -404,12 +404,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                // At or over max IOB the caution rate is zero, the same rule the NORMAL branch
-                // applies. Without this, a pre-bolus 2/3 landing on a dip into caution left the
-                // loop running a reduced-but-nonzero temp on top of IOB already past the cap.
-                val cautionRate = if (iobOk) cautionTbr * cautionTaper else 0.0
-                val maxIobNote = if (iobOk) "" else " | maxIOB(${"%.2f".format(Locale.US, currentIob)}/${"%.2f".format(Locale.US, oapsProfile.max_iob)}) tbr=0"
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}$maxIobNote")
+                // Max IOB does not apply here: caution never runs above profile basal, and basal
+                // at or below profile adds no IOB (AAPS counts basal IOB relative to profile).
+                val cautionRate = cautionTbr * cautionTaper
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
                 setTempBasal(cautionRate, 30, oapsProfile, rT, currentTemp)
             }
 
@@ -441,12 +439,22 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // SMBs but still needs elevated TBR to bring predMin to the temp target.
                 // insulinReq is already computed against targetBg (which IS the temp target
                 // when active), so TBR naturally aims for 6.5 not 5.5.
-                val tbrCorrectionU  = if (iobOk && insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                val tbrCorrectionU  = if (insulinReq > 0.0) insulinReq * aggressiveness else 0.0
                 val remainingU      = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
+                // Max IOB is a red line for EXTRA insulin: this cycle's SMB plus the above-basal part
+                // of the temp may together reach max IOB but not pass it. Basal IOB is counted
+                // against profile basal, so the extra a temp adds over its 30 minutes is
+                // (rate - basal) x 0.5 h - that, not the rate, is what shares the headroom with the
+                // SMB. At or over the line nothing extra is given and basal runs no higher than
+                // profile, letting IOB come back down on its own; the loop tops back up to the line
+                // on a later cycle once IOB has decayed below it.
+                val tbrHeadroomU    = (iobHeadroom - constrainedSmb).coerceAtLeast(0.0)
+                val tbrExtraU       = remainingU.coerceAtMost(tbrHeadroomU)
+                val tbrCappedByIob  = tbrExtraU < remainingU
+
                 val tbrRateRaw = when {
-                    !iobOk           -> 0.0
-                    remainingU > 0.0 -> (profileBasal + remainingU / TBR_WINDOW_HOURS)
+                    tbrExtraU > 0.0  -> (profileBasal + tbrExtraU / TBR_WINDOW_HOURS)
                         .coerceAtMost(oapsProfile.max_basal)
                         .coerceAtMost(maxTbrU)
                     // Target respect: reduce basal when pred_min is below target.
@@ -499,6 +507,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     !smbAllowed -> "blocked"
                     else        -> "predMinGap(${fmt(predictedMin, isMmol)}->${fmt(targetBg, isMmol)})"
                 }
+                val tbrIobNote = if (tbrCappedByIob)
+                    " (tbr capped by maxIOB: headroom ${"%.2f".format(Locale.US, tbrHeadroomU)}U)" else ""
 
                 val reboundStr = when {
                     inReboundWindow -> {
@@ -538,7 +548,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     " (wanted ${"%.2f".format(Locale.US, rawSmb)}U, capped at ${"%.2f".format(Locale.US, smbCap)}U)"
                 else ""
 
-                sb.append(" | NORMAL | targetBG=${fmt(targetBg, isMmol)} | microBolus=$microBolusAllowed | trigger=$trigger | SMB final: ${"%.2f".format(Locale.US, finalSmb)}U$smbCapNote | tbr=${"%.3f".format(Locale.US, tbrRate)}$reboundStr$activityStr$cgmBlockStr")
+                sb.append(" | NORMAL | targetBG=${fmt(targetBg, isMmol)} | microBolus=$microBolusAllowed | trigger=$trigger | SMB final: ${"%.2f".format(Locale.US, finalSmb)}U$smbCapNote | tbr=${"%.3f".format(Locale.US, tbrRate)}$tbrIobNote$reboundStr$activityStr$cgmBlockStr")
                 smbOut = finalSmb
                 setTempBasal(tbrRate, 30, oapsProfile, rT, currentTemp)
             }

@@ -81,7 +81,11 @@ fun SmartInsulinScreen(
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     // Circadian day shown; starts on today each time the tab opens, as in 3.4.
     var circadianDow by remember { mutableIntStateOf(todayDow()) }
-    val stepPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { tick++ }
+    // Start counting straight away on a grant; otherwise it would wait for the next app start.
+    val stepPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) plugin.startPhoneStepCounter()
+        tick++
+    }
 
     LaunchedEffect(Unit) {
         setToolbarConfig(
