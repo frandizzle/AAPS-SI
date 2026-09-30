@@ -84,6 +84,7 @@ import app.aaps.ui.compose.fillDialog.FillDialogScreen
 import app.aaps.ui.compose.foodManagement.FoodManagementViewModel
 import app.aaps.ui.compose.history.HistoryScreen
 import app.aaps.ui.compose.insulinDialog.InsulinDialogScreen
+import app.aaps.ui.compose.smartMealDialog.SmartMealDialogScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementScreen
 import app.aaps.ui.compose.insulinManagement.InsulinManagementViewModel
 import app.aaps.ui.compose.maintenance.ImportSettingsScreen
@@ -332,6 +333,18 @@ fun NavGraphBuilder.appNavGraph(
     composable(route = AppRoute.InsulinDialog.route) {
         InsulinDialogScreen(
             insulinButtonsDef = builtInSearchables.insulinButtons,
+            bgInfoState = graphViewModel.bgInfoState,
+            iobUiState = chipsViewModel.iobUiState,
+            cobUiState = chipsViewModel.cobUiState,
+            onNavigateBack = { navController.safePopBackStack() },
+            onShowDeliveryError = { comment ->
+                onShowDeliveryError(comment, CoreUiStrings.treatmentdeliveryerror)
+            }
+        )
+    }
+
+    composable(route = AppRoute.SmartMealDialog.route) {
+        SmartMealDialogScreen(
             bgInfoState = graphViewModel.bgInfoState,
             iobUiState = chipsViewModel.iobUiState,
             cobUiState = chipsViewModel.cobUiState,

@@ -2,9 +2,11 @@ package app.aaps.ui.compose.navigation
 
 import app.aaps.core.interfaces.calibration.Calibration
 import app.aaps.core.interfaces.navigation.ElementType
+import app.aaps.core.interfaces.aps.APS
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.plugin.PluginDescription
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.source.DexcomBoyda
 import app.aaps.core.interfaces.source.XDripSource
 import app.aaps.shared.tests.TestBase
@@ -21,6 +23,7 @@ import org.mockito.kotlin.whenever
  *  - CGM_XDRIP → only when XDrip source plugin is enabled
  *  - CGM_DEX   → only when Dexcom/BYODA source plugin is enabled
  *  - CALIBRATION → when XDrip is enabled OR a non-default calibration override plugin is active
+ *  - SMART_MEAL → only when SmartInsulin is the active APS
  *  - everything else → always available
  */
 class ElementAvailabilityTest : TestBase() {
@@ -131,12 +134,26 @@ class ElementAvailabilityTest : TestBase() {
         // Every type except the three CGM/calibration entries falls through to `true`. Looping
         // catches the case where someone adds a new entry to the gating `when` without
         // intentional defaults — this test will start failing for the new type.
-        val gated = setOf(ElementType.CGM_XDRIP, ElementType.CGM_DEX, ElementType.CALIBRATION)
+        val gated = setOf(ElementType.CGM_XDRIP, ElementType.CGM_DEX, ElementType.CALIBRATION, ElementType.SMART_MEAL)
         ElementType.entries
             .filterNot { it in gated }
             .forEach { type ->
                 assertThat(elementAvailability.isAvailable(type)).isTrue()
             }
+    }
+
+    // -------- SMART_MEAL --------
+
+    @Test
+    fun smartMeal_isAvailable_whenSmartInsulinIsActiveAps() {
+        whenever(activePlugin.activeAPS).thenReturn(mock<APS>(extraInterfaces = arrayOf(SmartInsulinOverview::class)))
+        assertThat(elementAvailability.isAvailable(ElementType.SMART_MEAL)).isTrue()
+    }
+
+    @Test
+    fun smartMeal_isUnavailable_withAnotherAps() {
+        whenever(activePlugin.activeAPS).thenReturn(mock<APS>())
+        assertThat(elementAvailability.isAvailable(ElementType.SMART_MEAL)).isFalse()
     }
 
     // -------- helpers --------

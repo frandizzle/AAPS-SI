@@ -15,6 +15,7 @@ data class TreatmentUiState(
     val showInsulin: Boolean = true,
     val showCarbs: Boolean = true,
     val showCalculator: Boolean = true,
+    val showSmartMeal: Boolean = false,
 
     // Source info
     val isDexcomSource: Boolean = false,

@@ -460,6 +460,8 @@
     <string name="boluswizard">Bolus wizard</string>
     <string name="treatment_desc">Record insulin and carbs together</string>
     <string name="treatment_insulin_desc">Deliver bolus manually</string>
+    <string name="smart_meal">Smart Meal</string>
+    <string name="smart_meal_desc">Start a SmartInsulin meal mode with optional pre-boluses</string>
     <string name="treatment_carbs_desc">Record carbs without insulin</string>
     <string name="treatment_calculator_desc">Calculate bolus</string>
     <string name="insulin_management" comment="Name of the screen for editing insulin types (DIA, peak). Must NOT translate to the same word as overview_insulin_label, which names the bolus action - both can sit next to each other on the quick launch toolbar, and one of them delivers insulin.">Insulin settings</string>

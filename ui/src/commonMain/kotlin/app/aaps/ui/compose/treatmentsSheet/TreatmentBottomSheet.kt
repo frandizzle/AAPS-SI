@@ -62,6 +62,7 @@ fun TreatmentBottomSheet(
     showCalculator: Boolean,
     isDexcomSource: Boolean,
     showSettingsIcon: Boolean,
+    showSmartMeal: Boolean = false,
     // QuickWizard
     quickWizardItems: List<QuickWizardItem>,
     // Callbacks
@@ -93,6 +94,7 @@ fun TreatmentBottomSheet(
                 showInsulin = showInsulin,
                 showCarbs = showCarbs,
                 showCalculator = showCalculator,
+                showSmartMeal = showSmartMeal,
                 isDexcomSource = isDexcomSource,
                 showSettingsIcon = showSettingsIcon,
                 onSettingsClick = { showSettings = true }
@@ -115,6 +117,7 @@ internal fun TreatmentSelectionContent(
     showInsulin: Boolean,
     showCarbs: Boolean,
     showCalculator: Boolean,
+    showSmartMeal: Boolean = false,
     isDexcomSource: Boolean,
     showSettingsIcon: Boolean,
     onSettingsClick: () -> Unit
@@ -280,6 +283,17 @@ internal fun TreatmentSelectionContent(
                 disabledAlpha = disabledAlpha,
                 onDismiss = onDismiss,
                 onClick = { onNavigate(NavigationRequest.Element(ElementType.BOLUS_WIZARD)) }
+            )
+        }
+
+        // SmartInsulin meal mode
+        if (showSmartMeal) {
+            TreatmentItem(
+                elementType = ElementType.SMART_MEAL,
+                enabled = true,
+                disabledAlpha = disabledAlpha,
+                onDismiss = onDismiss,
+                onClick = { onNavigate(NavigationRequest.Element(ElementType.SMART_MEAL)) }
             )
         }
     }

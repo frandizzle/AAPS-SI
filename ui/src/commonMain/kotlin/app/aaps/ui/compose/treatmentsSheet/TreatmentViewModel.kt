@@ -109,6 +109,7 @@ class TreatmentViewModel(
             val showInsulin = preferences.get(BooleanKey.OverviewShowInsulinButton)
             val showCarbs = preferences.get(BooleanKey.OverviewShowCarbsButton)
             val showCalculator = preferences.get(BooleanKey.OverviewShowWizardButton)
+            val showSmartMeal = elementAvailability.isAvailable(ElementType.SMART_MEAL)
 
             val showSettingsIcon = !preferences.simpleMode
 
@@ -120,6 +121,7 @@ class TreatmentViewModel(
                     showInsulin = showInsulin,
                     showCarbs = showCarbs,
                     showCalculator = showCalculator,
+                    showSmartMeal = showSmartMeal,
                     isDexcomSource = isDexcomSource,
                     quickWizardItems = quickWizardItems,
                     showSettingsIcon = showSettingsIcon

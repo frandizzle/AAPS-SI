@@ -3,6 +3,7 @@ package app.aaps.ui.compose.navigation
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.plugin.PluginBase
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.source.DexcomBoyda
 import app.aaps.core.interfaces.source.XDripSource
 import dev.zacsweers.metro.AppScope
@@ -29,6 +30,7 @@ class ElementAvailability(
         ElementType.CALIBRATION -> xDripSource.isEnabled() || isCalibrationOverrideActive()
         ElementType.CGM_XDRIP   -> xDripSource.isEnabled()
         ElementType.CGM_DEX     -> dexcomBoyda.isEnabled()
+        ElementType.SMART_MEAL  -> activePlugin.activeAPS is SmartInsulinOverview
 
         else                    -> true
     }

@@ -64,6 +64,7 @@ fun ElementType.color(): Color = when (this) {
     ElementType.FILL                    -> AapsTheme.elementColors.insulin
 
     ElementType.CARBS                   -> AapsTheme.elementColors.carbs
+    ElementType.SMART_MEAL              -> AapsTheme.elementColors.carbs
     ElementType.BOLUS_WIZARD            -> AapsTheme.elementColors.bolusWizard
     ElementType.QUICK_WIZARD,
     ElementType.QUICK_WIZARD_MANAGEMENT -> AapsTheme.elementColors.quickWizard
@@ -129,6 +130,7 @@ fun ElementType.color(): Color = when (this) {
 fun ElementType.icon(): ImageVector = when (this) {
     ElementType.INSULIN                 -> IcBolus
     ElementType.CARBS                   -> IcCarbs
+    ElementType.SMART_MEAL              -> IcPluginInsulin
     ElementType.BOLUS_WIZARD            -> IcCalculator
     ElementType.QUICK_WIZARD,
     ElementType.QUICK_WIZARD_MANAGEMENT -> IcQuickwizard
@@ -202,6 +204,7 @@ fun ElementCategory.label(): TextRef? = when (this) {
 fun ElementType.label(): TextRef? = when (this) {
     ElementType.INSULIN                 -> CoreUiStrings.overview_insulin_label
     ElementType.CARBS                   -> InterfacesStrings.carbs
+    ElementType.SMART_MEAL              -> CoreUiStrings.smart_meal
     ElementType.BOLUS_WIZARD            -> CoreUiStrings.boluswizard
     ElementType.QUICK_WIZARD            -> null // dynamic label
     ElementType.QUICK_WIZARD_MANAGEMENT -> CoreUiStrings.quickwizard_managemnt
@@ -255,6 +258,7 @@ fun ElementType.label(): TextRef? = when (this) {
 fun ElementType.description(): TextRef? = when (this) {
     ElementType.INSULIN                 -> CoreUiStrings.treatment_insulin_desc
     ElementType.CARBS                   -> CoreUiStrings.treatment_carbs_desc
+    ElementType.SMART_MEAL              -> CoreUiStrings.smart_meal_desc
     ElementType.BOLUS_WIZARD            -> CoreUiStrings.treatment_calculator_desc
     ElementType.TREATMENT               -> CoreUiStrings.treatment_desc
     ElementType.INSULIN_MANAGEMENT      -> CoreUiStrings.manage_insulin_desc

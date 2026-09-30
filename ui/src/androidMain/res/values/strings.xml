@@ -336,4 +336,37 @@
     <string name="cal_precheck_delta_too_high">Glucose is changing too fast (Δ %1$s %3$s per 5 min, limit %2$s). Wait for stability.</string>
     <string name="cal_precheck_mark_sensor_change">Mark sensor change</string>
 
+    <!-- SmartInsulin: Smart Meal dialog -->
+    <string name="si_mode_label">Meal mode</string>
+    <string name="si_duration_label">Duration</string>
+    <string name="si_isf_label">ISF override</string>
+    <string name="si_isf_hint">0 = use profile ISF. Saved for this mode.</string>
+    <string name="si_dura_switch">DURA: strengthen ISF if BG stays high</string>
+    <string name="si_dura_floor">DURA floor (strongest ISF)</string>
+    <string name="si_dura_strength">DURA strength</string>
+    <string name="si_prebolus1_switch">Pre-bolus now</string>
+    <string name="si_prebolus2_switch">Pre-bolus 2 (scheduled)</string>
+    <string name="si_prebolus3_switch">Pre-bolus 3 (after pre-bolus 2)</string>
+    <string name="si_prebolus_amount">Amount</string>
+    <string name="si_prebolus2_delay">Delay after activation</string>
+    <string name="si_prebolus3_delay">Delay after pre-bolus 2</string>
+    <string name="si_prebolus_gate_hint">Fires only if BG is above target and IOB has headroom</string>
+    <string name="si_cancel_mode">Cancel %1$s mode</string>
+    <string name="si_cancel_uam">Cancel UAM (%1$s)</string>
+    <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
+    <string name="si_cancel_uam_confirm">Cancel auto-detected %1$s? The loop will return to fasting mode.</string>
+    <string name="si_uam_active_banner">%1$s active — selecting a mode below will override it</string>
+    <string name="si_cancel_pb">Cancel | %1$s</string>
+    <string name="si_cancel_pb2_confirm">Cancel the scheduled pre-bolus 2? The meal mode will stay active.</string>
+    <string name="si_cancel_pb3_confirm">Cancel the scheduled pre-bolus 3? The meal mode will stay active.</string>
+    <string name="si_confirm_mode">Meal mode: %1$s</string>
+    <string name="si_confirm_duration">Duration: %1$d min</string>
+    <string name="si_confirm_isf">ISF override: %1$s</string>
+    <string name="si_confirm_isf_profile">ISF override: profile ISF</string>
+    <string name="si_confirm_dura">DURA on: floor %1$s, strength %2$sx</string>
+    <string name="si_confirm_pb2">Pre-bolus 2 in %2$d min: %1$s U (safety-gated)</string>
+    <string name="si_confirm_pb3">Pre-bolus 3 %2$d min after PB2: %1$s U (safety-gated)</string>
+    <string name="si_confirm_capped">Pre-bolus capped to max %1$s U</string>
+    <string name="si_prebolus_note">SmartMeal %1$s pre-bolus 1</string>
+
 </resources>

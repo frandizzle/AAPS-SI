@@ -62,7 +62,7 @@ ActionsTestBase : TestBaseWithProfile() {
             triggerDeps, aapsLogger, text, { pumpEnactResultProvider() }, rxBus, dateUtil, mock<ReminderScheduler>(),
             config, persistenceLayer, profileFunction, profileRepository, profileUtil, glucoseStatusProvider,
             notificationManager, activePlugin, preferences, sceneApi, sceneIconResolver, smsCommunicator,
-            autotunePlugin, importExportPrefs, exportPasswordDataStore, configBuilder
+            autotunePlugin, mock(), importExportPrefs, exportPasswordDataStore, configBuilder
         )
     }
 

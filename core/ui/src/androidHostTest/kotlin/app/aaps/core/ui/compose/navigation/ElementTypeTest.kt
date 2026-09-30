@@ -72,6 +72,7 @@ class ElementTypeTest {
             ElementType.BOLUS_WIZARD,
             ElementType.QUICK_WIZARD,
             ElementType.TREATMENT,
+            ElementType.SMART_MEAL,
             ElementType.TEMP_BASAL,
             ElementType.EXTENDED_BOLUS,
             ElementType.CANNULA_CHANGE,
