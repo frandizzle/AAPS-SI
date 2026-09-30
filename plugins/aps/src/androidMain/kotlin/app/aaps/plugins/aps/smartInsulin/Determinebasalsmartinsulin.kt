@@ -404,8 +404,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // warn guard. Floor at CAUTION_REBOUND_TAPER_FLOOR (0.5) so we always deliver at
                 // least half the caution rate. Full suspend still fires above if pred_min < lowGuard.
                 val cautionTaper = reboundTaperFraction.coerceAtLeast(CAUTION_REBOUND_TAPER_FLOOR)
-                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}")
-                setTempBasal(cautionTbr * cautionTaper, 30, oapsProfile, rT, currentTemp)
+                // At or over max IOB the caution rate is zero, the same rule the NORMAL branch
+                // applies. Without this, a pre-bolus 2/3 landing on a dip into caution left the
+                // loop running a reduced-but-nonzero temp on top of IOB already past the cap.
+                val cautionRate = if (iobOk) cautionTbr * cautionTaper else 0.0
+                val maxIobNote = if (iobOk) "" else " | maxIOB(${"%.2f".format(Locale.US, currentIob)}/${"%.2f".format(Locale.US, oapsProfile.max_iob)}) tbr=0"
+                sb.append(" | CAUTION | pred_min=${fmt(predictedMinSafety, isMmol)} | warnGuard=${fmt(effectiveCautionMgdl, isMmol)}${if (highTempTargetActive) "(TT)" else ""} | tbrFrac=${"%.2f".format(Locale.US, warnFrac)} | tbr=${"%.3f".format(Locale.US, cautionTbr)}$maxIobNote")
+                setTempBasal(cautionRate, 30, oapsProfile, rT, currentTemp)
             }
 
             // ── Normal dosing ─────────────────────────────────────────────────

@@ -250,6 +250,17 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(r.isTempBasalRequested)
     }
 
+    @Test fun `CAUTION zone at max IOB sets zero TBR`() {
+        whenever(glucoseStatus.glucose).thenReturn(78.0)
+        // Same caution-zone curve as above, with max IOB below the 0.08 U on board.
+        whenever(oapsProfile.max_iob).thenReturn(0.05)
+        val r = invoke(iobArray = flatIobArray(iob = 0.08, activity = 0.0013))
+        assertTrue(r.reason.contains("CAUTION"), "Expected CAUTION in reason, got: ${r.reason}")
+        assertTrue(r.reason.contains("maxIOB"), "Expected maxIOB note in reason, got: ${r.reason}")
+        assertEquals(0.0, r.rate, 0.001)
+        assertEquals(30, r.duration)
+    }
+
     // ── NORMAL zone ──────────────────────────────────────────────────────────
 
     @Test fun `NORMAL zone uses profile basal when stable at target`() {

@@ -719,14 +719,10 @@ open class SmartInsulinPlugin @Inject constructor(
             "Meal: $label ${mins}m"
         } ?: "Meal: Fasting"
 
+        // Pre-bolus lines show only while the pre-bolus is still to come. Once delivered they go —
+        // they used to switch to "PB2: active <mode time left>", which just repeated the meal
+        // countdown for the rest of the mode. The SI tab keeps the "delivered" confirmation.
         val livePb2Line = when {
-            // BUG FIX: must check > 0.0 not just != null. activePb2DoseU can be set to 0.0
-            // when a meal mode is activated without PB2 selected, which was incorrectly
-            // displaying "PB2: active 70m" on the overview (matches cached check at line 581).
-            (mealOverrideManager.activePb2DoseU ?: 0.0) > 0.0 -> {
-                val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-                "PB2: active ${mins}m"
-            }
             mealOverrideManager.preBolus2Pending -> {
                 val secs = mealOverrideManager.preBolus2SecondsRemaining ?: 0L
                 when {
@@ -739,11 +735,6 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val livePb3Line = when {
-            // Same fix as PB2 above — must check > 0.0 not just != null.
-            (mealOverrideManager.activePb3DoseU ?: 0.0) > 0.0 -> {
-                val mins = (mealOverrideManager.modeTimeRemainingMs / 60_000).toInt()
-                "PB3: active ${mins}m"
-            }
             mealOverrideManager.preBolus3Pending -> {
                 val secs = mealOverrideManager.preBolus3SecondsRemaining
                 when {
