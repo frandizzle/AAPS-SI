@@ -30,7 +30,8 @@ enum class UnitDoubleKey(
         title = KeysStrings.pref_title_lgs_threshold,
         summary = KeysStrings.lgs_threshold_summary,
         defaultedBySM = true,
-        dependency = BooleanKey.ApsUseDynamicSensitivity,
+        // No Dynamic ISF dependency: SmartInsulin hard-suspends on it too, so it must stay visible
+        // whether or not that (SMB-plugin) switch is on.
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
     // ── SmartInsulin ──

@@ -1634,8 +1634,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     DoubleKey.ApsSmartInsulinMaxSmb,
                     DoubleKey.ApsSmartInsulinMaxTbr,
                     IntKey.ApsMaxSmbFrequency,
-                    DoubleKey.ApsSmartInsulinAggressionMax,
-                    UnitDoubleKey.ApsLgsThreshold
+                    DoubleKey.ApsSmartInsulinAggressionMax
                 )
             ),
             PreferenceSubScreenDef(
@@ -1643,6 +1642,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 title = ApsStrings.si_cat_low,
                 icon = Icons.AutoMirrored.Filled.TrendingDown,
                 items = listOf(
+                    UnitDoubleKey.ApsLgsThreshold,
                     UnitDoubleKey.ApsSmartInsulinLowGuard,
                     UnitDoubleKey.ApsSmartInsulinWarnGuard,
                     IntKey.ApsSmartInsulinReboundWindowMins
