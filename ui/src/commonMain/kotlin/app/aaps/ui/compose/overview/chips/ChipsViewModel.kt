@@ -3,6 +3,7 @@ package app.aaps.ui.compose.overview.chips
 import androidx.compose.runtime.Stable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.aaps.core.data.model.BS
 import app.aaps.core.interfaces.InterfacesStrings
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.configuration.Config
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -94,19 +96,37 @@ class ChipsViewModel(
         CobUiState(text = cobText, carbsReq = carbsReq, cobValue = cobInfo.displayCob ?: 0.0)
     }
 
-    // Faster than the COB ticker: the PB2/PB3 countdowns move by the minute.
-    private val siLinesFlow = flow {
+    // Faster than the COB ticker: the SMB age and the PB2/PB3 countdowns move by the minute.
+    private val siTicker = flow {
         while (true) {
-            emit(smartInsulinLines())
+            emit(Unit)
             delay(30_000L)
         }
-    }
+    }.shareIn(viewModelScope, SharingStarted.WhileSubscribed(5000), replay = 1)
 
-    val cobUiState: StateFlow<CobUiState> = combine(cobBaseFlow, siLinesFlow) { cob, si -> cob.copy(siLines = si) }.stateIn(
+    private val smartInsulin: SmartInsulinOverview?
+        get() = runCatching { activePlugin.activeAPS as? SmartInsulinOverview }.getOrNull()
+
+    val cobUiState: StateFlow<CobUiState> = combine(cobBaseFlow, siTicker) { cob, _ ->
+        if (smartInsulin == null) return@combine cob
+        val smb = persistenceLayer.getNewestBolusOfType(BS.Type.SMB)
+        cob.copy(
+            smbText = smb?.let { "SMB: ${decimalFormatter.to2Decimal(it.amount)}U ${(System.currentTimeMillis() - it.timestamp) / 60_000L}m" }
+                ?: "SMB: --"
+        )
+    }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = CobUiState()
     )
+
+    /** SmartInsulin meal mode, pre-bolus countdowns and learning state; null unless SmartInsulin is the active APS. */
+    val smartInsulinUiState: StateFlow<SmartInsulinOverview.OverviewState?> = siTicker.map { smartInsulin?.overviewState() }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
 
     // The IOB graph is published before the loop runs in the same calculation chain, so on its
     // own it would show the previous loop's ratio and variable ISF. Predictions are published
@@ -150,25 +170,5 @@ class ChipsViewModel(
                 )
             )
         }
-    }
-
-    /**
-     * SmartInsulin replaced the COB cell with its meal mode and learning state in 3.4; same text here.
-     * Empty unless SmartInsulin is the active APS.
-     */
-    private fun smartInsulinLines(): List<String> {
-        val si = runCatching { activePlugin.activeAPS as? SmartInsulinOverview }.getOrNull() ?: return emptyList()
-        val s = si.overviewState()
-        val stateLabel = when {
-            s.learningState == "Learning"             -> "State: Learning"
-            s.learningState.startsWith("limited")     -> "State: Learning limited"
-            s.learningState.startsWith("off: Post-meal") -> {
-                val minsLeft = s.learningState.removePrefix("off: Post-meal").trim().removeSuffix("m left").trim()
-                "State: Post meal lockout ${minsLeft}m left"
-            }
-
-            else                                      -> "State: Not Learning"
-        }
-        return listOfNotNull(s.modeLine, s.pb2Line, s.pb3Line, stateLabel)
     }
 }

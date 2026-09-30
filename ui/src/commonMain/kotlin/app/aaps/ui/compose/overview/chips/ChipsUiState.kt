@@ -19,8 +19,8 @@ data class CobUiState(
     val text: String = "",
     val carbsReq: Int = 0,
     val cobValue: Double = 0.0,
-    /** SmartInsulin meal mode, PB2/PB3 and learning state. When non-empty the chip shows these instead of COB. */
-    val siLines: List<String> = emptyList()
+    /** SmartInsulin doses without carbs, so it shows the last SMB here instead of COB ("SMB: 0.20U 234m"). */
+    val smbText: String? = null
 )
 
 @Immutable

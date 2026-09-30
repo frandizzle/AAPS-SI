@@ -7,7 +7,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -28,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsSpacing
+import app.aaps.core.ui.compose.icons.IcSmb
 import app.aaps.core.ui.compose.navigation.color
 import app.aaps.core.ui.compose.navigation.icon
 import app.aaps.core.ui.compose.stringResource
@@ -73,7 +73,11 @@ internal fun CobChip(
     val chipDescription = stringResource(CoreUiStrings.cob)
     Surface(
         shape = RoundedCornerShape(AapsSpacing.chipCornerRadius),
-        color = if (hasValue) ElementType.COB.color().copy(alpha = 0.2f) else Color.Transparent,
+        color = when {
+            state.smbText != null -> ElementType.INSULIN.color().copy(alpha = 0.2f)
+            hasValue              -> ElementType.COB.color().copy(alpha = 0.2f)
+            else                  -> Color.Transparent
+        },
         modifier = modifier
             .heightIn(min = AapsSpacing.chipHeight)
             // This chip has no onClick, so unlike its siblings it does not merge on its own.
@@ -85,30 +89,17 @@ internal fun CobChip(
         ) {
             if (showIcon) {
                 Icon(
-                    imageVector = ElementType.COB.icon(),
+                    imageVector = if (state.smbText != null) IcSmb else ElementType.COB.icon(),
                     // Decorative: the Surface above names the chip and carries the value.
                     contentDescription = null,
-                    tint = ElementType.COB.color(),
+                    tint = if (state.smbText != null) ElementType.INSULIN.color() else ElementType.COB.color(),
                     modifier = Modifier
                         .size(AapsSpacing.chipIconSize)
                         .then(iconAlphaModifier)
                 )
             }
-            if (state.siLines.isNotEmpty()) {
-                // SmartInsulin: meal mode, pre-bolus countdowns and learning state instead of COB.
-                Column(modifier = Modifier.padding(start = if (showIcon) AapsSpacing.medium else 0.dp)) {
-                    state.siLines.forEach { line ->
-                        Text(
-                            text = line,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            modifier = Modifier.basicMarquee()
-                        )
-                    }
-                }
-            } else Text(
-                text = state.text,
+            Text(
+                text = state.smbText ?: state.text,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

@@ -15,6 +15,7 @@ import app.aaps.core.data.model.RM
 import app.aaps.core.data.model.TT
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.overview.graph.TbrState
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.navigation.NavigationRequest
@@ -22,6 +23,7 @@ import app.aaps.core.ui.compose.stringResource
 import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.overview.chips.CobUiState
+import app.aaps.ui.compose.overview.chips.SmartInsulinStatusBlock
 import app.aaps.ui.compose.overview.chips.IobCobChipsRow
 import app.aaps.ui.compose.overview.chips.IobUiState
 import app.aaps.ui.compose.overview.chips.ProfileChip
@@ -51,6 +53,7 @@ fun OverviewChipsColumn(
     iobUiState: IobUiState,
     cobUiState: CobUiState,
     sensitivityUiState: SensitivityUiState,
+    smartInsulinState: SmartInsulinOverview.OverviewState? = null,
     onNavigate: (NavigationRequest) -> Unit,
     onTbrChipClick: () -> Unit,
     onIobChipClick: () -> Unit,
@@ -96,6 +99,7 @@ fun OverviewChipsColumn(
                             onTbrChipClick = onTbrChipClick,
                             commandsAllowed = commandsAllowed
                         )
+                        smartInsulinState?.let { SmartInsulinStatusBlock(it) }
                     }
                     Row(
                         modifier = Modifier.weight(1f),
@@ -125,6 +129,7 @@ fun OverviewChipsColumn(
                 onTbrChipClick = onTbrChipClick,
                 commandsAllowed = commandsAllowed
             )
+            smartInsulinState?.let { SmartInsulinStatusBlock(it) }
         }
         IobCobChipsRow(
             iobUiState = iobUiState,

@@ -130,7 +130,7 @@ fun ElementType.color(): Color = when (this) {
 fun ElementType.icon(): ImageVector = when (this) {
     ElementType.INSULIN                 -> IcBolus
     ElementType.CARBS                   -> IcCarbs
-    ElementType.SMART_MEAL              -> IcPluginInsulin
+    ElementType.SMART_MEAL              -> IcCarbs
     ElementType.BOLUS_WIZARD            -> IcCalculator
     ElementType.QUICK_WIZARD,
     ElementType.QUICK_WIZARD_MANAGEMENT -> IcQuickwizard
