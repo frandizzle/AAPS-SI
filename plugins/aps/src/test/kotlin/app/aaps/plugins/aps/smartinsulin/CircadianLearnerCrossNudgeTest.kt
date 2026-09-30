@@ -89,28 +89,34 @@ class CircadianLearnerCrossNudgeTest {
 
     @Test
     fun `Signal 0 cross-nudges ISF by exactly 15 percent of its own movement`() {
+        // Signal 0 needs the same story three readings running before it writes anything, so the
+        // first two cycles here are the run building rather than noise.
         // activity=0.0 (below MIN_ACTIVITY) -> main ISF learner's own gate skips it, so
         // isfLearningActive is false without needing anything extra. totalIob=0.0 satisfies
         // Signal 0's basalIob gate. shortAvgDelta=+3.0 with ~zero activity means the delta is
         // entirely "unexplained" -> attributed to basal. bg(140) >= target(100) so the
         // below-target guard doesn't block the upward direction.
-        learner.update(
-            glucoseStatus    = glucoseStatus(glucose = 140.0, shortAvgDelta = 3.0),
-            iobArray         = iobArray(iob = 0.0, activity = 0.0),
-            mealMode         = MealMode.FASTING,
-            cobG             = 0.0,
-            profileIsfMgdl   = 50.0,
-            targetMgdl       = 100.0,
-            aggressiveness   = 1.0,
-            hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = BASE_MS
-        )
+        var t = BASE_MS
+        repeat(3) {
+            learner.update(
+                glucoseStatus    = glucoseStatus(glucose = 140.0, shortAvgDelta = 3.0),
+                iobArray         = iobArray(iob = 0.0, activity = 0.0),
+                mealMode         = MealMode.FASTING,
+                cobG             = 0.0,
+                profileIsfMgdl   = 50.0,
+                targetMgdl       = 100.0,
+                aggressiveness   = 1.0,
+                hour = 0, dow = 0, minute = BUCKET_CENTRE, nowMs = t
+            )
+            t += CYCLE_MS
+        }
 
         val isfAfter   = learner.isfMultiplier(0, 0, BUCKET_CENTRE)
         val basalAfter = learner.basalMultiplier(0, 0, BUCKET_CENTRE)
 
-        // Fresh state: alpha = BASAL_ALPHA(0.06) * 1.5 = 0.09. normAdj = (3.0/5.0).coerceIn(-1,0.5)
-        // clamps to +0.5. basalAfter = 1.0 + 0.5*0.09 = 1.045 exactly.
-        assertEquals(1.045, basalAfter, 1e-9, "Signal 0 should move basal by normAdj*alpha exactly")
+        // Fresh state: alpha = BASAL_ALPHA(0.06) * 1.5 = 0.09. normAdj = 3.0/15.0 = 0.2, at its
+        // up-clamp. basalAfter = 1.0 + 0.2*0.09 = 1.018 exactly.
+        assertEquals(1.018, basalAfter, 1e-9, "Signal 0 should move basal by normAdj*alpha exactly")
         assertTrue(isfAfter > 1.0, "ISF should be cross-nudged in the same (upward) direction, got $isfAfter")
 
         val basalMove = basalAfter - 1.0

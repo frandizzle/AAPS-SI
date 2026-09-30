@@ -1194,6 +1194,10 @@ class CircadianLearner @Inject constructor(
     private data class PendingCrossBasal(val dow: Int, val hour: Int, val target: Double, val alpha: Double)
     private var pendingCrossBasal: PendingCrossBasal? = null
 
+    /** Consecutive cycles Signal 0's conditions have held, with the sign it has held in. */
+    private var s0RunLength = 0
+    private var s0RunSign   = 0
+
     // Signal 4: sustained below-target + negative IOB window.
     // Stores (timestampMs, bg) pairs collected only when both conditions are met each cycle.
     // Window resets on any reading that breaks either condition, preventing stale signal mixing.
@@ -1253,6 +1257,7 @@ class CircadianLearner @Inject constructor(
             bg > lowGuardMgdl &&
             bg < BASAL_S0_HIGH_GATE_MGDL &&
             profileIsfMgdl > 0.0) {
+            // (a cycle that fails these conditions breaks the run — see the else at the end)
 
             // With near-zero activity, expectedDelta ≈ 0. actualDelta is driven by basal.
             // Positive delta (BG rising) → basal too low → mult UP (more background insulin)
@@ -1269,13 +1274,26 @@ class CircadianLearner @Inject constructor(
             // reducing basal while below target is never the wrong call.
             val blockUp = unexplainedDelta > 0.0 && bg < targetMgdl
             if (blockUp) {
+                s0RunLength = 0; s0RunSign = 0
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] blocked: positive delta=${"%.2f".format(unexplainedDelta)} " +
                                      "but bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound, not basal deficit")
             } else if (abs(unexplainedDelta) >= BASAL_S0_MIN_DELTA_MGDL) {
+                // Same direction as the run so far, or the run starts again from this reading.
+                val sign = if (unexplainedDelta > 0) 1 else -1
+                if (sign == s0RunSign) s0RunLength++ else { s0RunSign = sign; s0RunLength = 1 }
                 // Normalise to a fractional adjustment, same clamp philosophy as ISF:
                 // allow faster retreat (negative, BG falling too much) than advance (BG rising).
-                val normAdj = (unexplainedDelta / BASAL_S0_SENSITIVITY).coerceIn(-1.0, 0.5)
+                // Capped far tighter than the old (−1.0, +0.5): with alpha up to 0.09 this bounds
+                // a single cycle to ~2% of the multiplier, in line with every other signal here.
+                // Still asymmetric — retreat (less basal) may be larger than advance.
+                val normAdj = (unexplainedDelta / BASAL_S0_SENSITIVITY)
+                    .coerceIn(-BASAL_S0_MAX_ADJ_DOWN, BASAL_S0_MAX_ADJ_UP)
+                if (s0RunLength < BASAL_S0_MIN_RUN) {
+                    aapsLogger.debug(LTag.APS,
+                                     "CircadianLearner Basal[S0] waiting: ${s0RunLength}/$BASAL_S0_MIN_RUN cycles " +
+                                         "of delta=${"%.2f".format(unexplainedDelta)}")
+                } else {
                 val newMult = (basalState.get(dow, hour) + normAdj).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
 
                 val conf  = basalState.getConfidence(dow, hour)
@@ -1295,10 +1313,17 @@ class CircadianLearner @Inject constructor(
                                  "CircadianLearner Basal[S0] h=$hour delta=${"%.2f".format(unexplainedDelta)} " +
                                      "normAdj=${"%.3f".format(normAdj)} activity=${"%.5f".format(activity)} " +
                                      "totalIob=${"%.2f".format(totalIob)} → mult=${"%.3f".format(basalState.get(dow, hour))}")
+                }
             } else {
+                // Under the noise gate: the story has stopped being told, so the run restarts.
+                s0RunLength = 0; s0RunSign = 0
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] skip: delta=${"%.2f".format(unexplainedDelta)} < $BASAL_S0_MIN_DELTA_MGDL noise gate")
             }
+        } else {
+            // Conditions for a clean basal-only read no longer hold (insulin working, a meal
+            // lockout, BG out of range) — whatever run was building is no longer one story.
+            s0RunLength = 0; s0RunSign = 0
         }
 
         // -- Signal 1: Drift-based learning (activity-compensated) -------------
@@ -2189,7 +2214,27 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_S0_MAX_BASALIOB    = 0.20   // basalIob within ±0.20U — loop not aggressively compensating
         private const val BASAL_S0_HIGH_GATE_MGDL  = 180.0  // don't learn above 10 mmol — likely post-meal contamination
         private const val BASAL_S0_MIN_DELTA_MGDL  = 1.0    // noise gate — same as ISF MIN_EXPECTED_DELTA_MGDL
-        private const val BASAL_S0_SENSITIVITY     = 5.0    // 5 mg/dL/5min unexplained delta → ~1.0 full mult adjustment
+        private const val BASAL_S0_MAX_ADJ_DOWN    = 0.25   // per-cycle clamp, safety direction
+        private const val BASAL_S0_MAX_ADJ_UP      = 0.20
+        /**
+         * Qualifying cycles in a row before Signal 0 writes anything. The drift signal has always
+         * required a window; this one fired on a single reading, so one noisy delta could move an
+         * hour's basal on its own. Three readings is 10-15 minutes of the same story.
+         */
+        private const val BASAL_S0_MIN_RUN         = 3
+        /**
+         * Unexplained delta, per 5 min, that asks for a FULL-scale multiplier change.
+         *
+         * Was 5.0, which meant an ordinary quiet-fasting drift of −3 mg/dL (0.17 mmol/5min, about
+         * 2 mmol/hr) asked for basal ×0.40 — a 60% cut from one reading — and only the rails and
+         * the EWMA stopped it landing. On a fresh bucket (confidence 0, so alpha at its 0.09
+         * ceiling) that still moved basal 4.5% and ISF 0.8% in a SINGLE cycle, which is more than
+         * the drift signal moves in an hour and made this by far the twitchiest knob here.
+         *
+         * 15 mg/dL per 5 min is ~1 mmol/hr of unexplained movement for a full-scale ask, so
+         * everyday drift now asks for an everyday correction.
+         */
+        private const val BASAL_S0_SENSITIVITY     = 15.0
 
         // Predictive basal trim — forward-projects BG using current drift rate
         // and pre-emptively adjusts basal multiplier if projection is off target.
