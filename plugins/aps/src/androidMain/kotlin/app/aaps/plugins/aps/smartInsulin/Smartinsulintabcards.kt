@@ -967,7 +967,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
     private fun SiCardBuilder.fillProfilesCard(d: SmartInsulinPlugin.FragmentData) {
         // (profile rows)
 
-        addRow("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", tone = SiTone.MUTED)
+        addRow("Peak is learned from fasting and low-carb corrections. DIA is your insulin's configured value and is not learned: in this curve it sets the length of the insulin tail, and learning it from BG pulls it short (late lows with IOB near zero). Green = learned, amber = learning, grey = using profile values.", tone = SiTone.MUTED)
         // -- Tracker status row (#27) ------------------------------------------
         val (profStatusPrimary, profStatusColor) = when {
             d.profileLearningStatus.startsWith("off") ->

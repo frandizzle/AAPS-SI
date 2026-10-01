@@ -70,16 +70,68 @@ class ProfileLearnerTest {
             )
         }
         val profile = learner.getProfile(MealMode.FASTING)
-        // After 50 identical observations it should be very close to the target
+        // After 50 identical observations the PEAK should be very close to the target...
         assertEquals(55.0, profile.peakMinutes, 2.0)
-        assertEquals(350.0, profile.diaMinutes, 5.0)
+        // ...but DIA is never learned: it stays the configured insulin's (setUp hands over the fallback).
+        assertEquals(LearnedInsulinProfile.FALLBACK_DIA_MINS, profile.diaMinutes, 0.0)
     }
 
-    @Test fun `sample count increments on each observation`() {
+    @Test fun `sample count increments on each peak observation`() {
         repeat(3) {
-            learner.observeBolusCurve(MealMode.LUNCH, 70.0, 260.0, 0.15)
+            learner.observeBolusCurve(MealMode.FASTING, 70.0, 400.0, 0.15)
         }
-        assertEquals(3, learner.getProfile(MealMode.LUNCH).sampleCount)
+        assertEquals(3, learner.getProfile(MealMode.FASTING).sampleCount)
+    }
+
+    // ── DIA is the configured insulin's, never learned ───────────────────────
+
+    @Test fun `DIA is never learned, in any mode`() {
+        learner.updateInsulinDefaults(diaMins = 540.0, peakMins = 55.0)
+        MealMode.entries.forEach { mode ->
+            repeat(5) { learner.observeBolusCurve(mode, observedPeakMins = 60.0, observedDiaMins = 300.0, learningRate = 0.5) }
+            assertEquals(540.0, learner.getProfile(mode).diaMinutes, 0.0, "mode $mode")
+        }
+    }
+
+    @Test fun `a meal mode observation changes nothing - meals only ever learned DIA`() {
+        learner.updateInsulinDefaults(diaMins = 540.0, peakMins = 55.0)
+        val before = learner.getProfile(MealMode.LUNCH)
+        learner.observeBolusCurve(MealMode.LUNCH, observedPeakMins = 70.0, observedDiaMins = 320.0, learningRate = 0.5)
+        val after = learner.getProfile(MealMode.LUNCH)
+        assertEquals(before.peakMinutes, after.peakMinutes, 0.0)
+        assertEquals(540.0, after.diaMinutes, 0.0)
+        assertEquals(0, after.sampleCount)
+    }
+
+    @Test fun `the observed DIA is reported as a diagnostic, not applied`() {
+        learner.updateInsulinDefaults(diaMins = 540.0, peakMins = 55.0)
+        val notes = mutableListOf<String>()
+        learner.onChange = { notes += it }
+        learner.observeBolusCurve(MealMode.LUNCH, observedPeakMins = 70.0, observedDiaMins = 330.0, learningRate = 0.5)
+        assertEquals(1, notes.size)
+        assertTrue(notes.single().contains("observed DIA ≈ 5.5 h"), notes.single())
+        assertTrue(notes.single().contains("stays at the insulin's 9.0 h"), notes.single())
+    }
+
+    @Test fun `a profile that learned a DIA before takes the configured DIA and keeps its peak`() {
+        // Learn a peak first, with DIA at the 5 h fallback, then the real 9 h insulin arrives.
+        repeat(5) { learner.observeBolusCurve(MealMode.FASTING, observedPeakMins = 65.0, observedDiaMins = 400.0, learningRate = 0.5) }
+        val learnedPeak = learner.getProfile(MealMode.FASTING).peakMinutes
+        learner.updateInsulinDefaults(diaMins = 540.0, peakMins = 55.0)
+        val p = learner.getProfile(MealMode.FASTING)
+        assertEquals(540.0, p.diaMinutes, 0.0)
+        assertEquals(learnedPeak, p.peakMinutes, 0.0)
+        assertEquals(5, p.sampleCount)
+    }
+
+    @Test fun `the 5 h fallback is never forced onto a profile before the insulin is known`() {
+        // A fresh learner that has not been told the insulin yet: a stored learned 9 h DIA must survive.
+        val stored = LearnedInsulinProfile.defaultFor(MealMode.FASTING, 55.0, 540.0).copy(sampleCount = 4)
+        val fresh = ProfileLearner(logger, sp, profileFunction, activePlugin)
+        val field = ProfileLearner::class.java.getDeclaredField("profiles").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        (field.get(fresh) as MutableMap<MealMode, LearnedInsulinProfile>)[MealMode.FASTING] = stored
+        assertEquals(540.0, fresh.getProfile(MealMode.FASTING).diaMinutes, 0.0)
     }
 
     // ── DIA learning gate ────────────────────────────────────────────────────

@@ -178,7 +178,7 @@ fun SmartInsulinScreen(
         ) {
             LearningJournalList(journal)
         }
-        SiSection("Learned Insulin Profiles", Icons.Filled.Timeline, subtitle = "Peak and duration per meal type", initiallyExpanded = false) {
+        SiSection("Learned Insulin Profiles", Icons.Filled.Timeline, subtitle = "Learned peak; DIA fixed at your insulin's", initiallyExpanded = false) {
             SiItems(cards.buildProfilesCard(d).items, onAction)
         }
         SiSection("Raw Status Log", Icons.Filled.Code, accent = MaterialTheme.colorScheme.onSurfaceVariant, initiallyExpanded = false) {

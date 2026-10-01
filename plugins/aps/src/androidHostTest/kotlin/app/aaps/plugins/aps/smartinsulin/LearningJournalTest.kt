@@ -89,9 +89,11 @@ class LearningJournalTest {
         learner.updateInsulinDefaults(diaMins = 540.0, peakMins = 55.0)
         learner.onChange = { journal.note("Insulin profile", it) }
         learner.observeBolusCurve(MealMode.FASTING, observedPeakMins = 65.0, observedDiaMins = 540.0, learningRate = 0.5)
-        val entry = journal.entries().single()
-        assertEquals("Insulin profile", entry.source)
-        assertTrue(entry.text.startsWith("Fasting: peak 55→60 min"), entry.text)
-        assertTrue(entry.text.endsWith("(n=1)"), entry.text)
+        // Newest first: the peak change, then the observed-DIA diagnostic that preceded it.
+        val (peak, dia) = journal.entries()
+        assertEquals("Insulin profile", peak.source)
+        assertTrue(peak.text.startsWith("Fasting: peak 55→60 min"), peak.text)
+        assertTrue(peak.text.endsWith("(n=1)"), peak.text)
+        assertTrue(dia.text.contains("diagnostic only"), dia.text)
     }
 }

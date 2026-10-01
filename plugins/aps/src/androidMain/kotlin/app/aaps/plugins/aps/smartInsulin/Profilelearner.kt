@@ -45,12 +45,27 @@ class ProfileLearner @Inject constructor(
     // profile always fell back to.
     @Volatile private var insulinDiaMins  = LearnedInsulinProfile.FALLBACK_DIA_MINS
     @Volatile private var insulinPeakMins = 55.0
+    /** True once the loop has reported the configured insulin. Until then [insulinDiaMins] is only the 5 h
+     *  fallback, which must never be pushed onto a profile - a short DIA is exactly the failure the fixed
+     *  DIA exists to prevent. */
+    @Volatile private var insulinKnown = false
 
     fun updateInsulinDefaults(diaMins: Double, peakMins: Double) {
-        val changed = (diaMins > 0.0 && diaMins != insulinDiaMins) || (peakMins > 0.0 && peakMins != insulinPeakMins)
-        if (diaMins > 0.0)  insulinDiaMins  = diaMins
+        val changed = (diaMins > 0.0 && diaMins != insulinDiaMins) || (peakMins > 0.0 && peakMins != insulinPeakMins) ||
+            (diaMins > 0.0 && !insulinKnown)
+        if (diaMins > 0.0)  { insulinDiaMins = diaMins; insulinKnown = true }
         if (peakMins > 0.0) insulinPeakMins = peakMins
         if (!changed) return
+        // DIA is not learned: every profile, learned or not, uses the configured insulin's DIA. A profile that
+        // learned a DIA before this rule keeps its learned peak and sample count and takes the configured DIA.
+        MealMode.entries.forEach { mode ->
+            val p = profiles[mode] ?: return@forEach
+            if (p.sampleCount > 0 && p.diaMinutes != insulinDiaMins) {
+                val synced = p.copy(diaMinutes = insulinDiaMins)
+                profiles[mode] = synced
+                saveProfile(synced)
+            }
+        }
         // Profiles are seeded at construction, before the first loop cycle has reported the
         // configured insulin, so they start from the fallbacks above. Any profile that has never
         // learned anything is still just a seed: re-seed it from the real insulin now, as 3.4 did
@@ -68,8 +83,11 @@ class ProfileLearner @Inject constructor(
         }
     }
 
-    fun getProfile(mode: MealMode): LearnedInsulinProfile =
-        profiles[mode] ?: profileSeededDefault(mode)
+    fun getProfile(mode: MealMode): LearnedInsulinProfile {
+        val p = profiles[mode] ?: profileSeededDefault(mode)
+        // DIA is the configured insulin's, never a learned one - see [observeBolusCurve].
+        return if (insulinKnown && p.diaMinutes != insulinDiaMins) p.copy(diaMinutes = insulinDiaMins) else p
+    }
 
     private fun profileSeededDefault(mode: MealMode): LearnedInsulinProfile {
         // Seeded from the insulin actually configured, as read by the last loop cycle — see
@@ -113,21 +131,23 @@ class ProfileLearner @Inject constructor(
             peakUpdated = false
         }
 
+        // DIA is NOT learned. In oref's exponential curve DIA sets the length of the tail, not when the
+        // insulin "has finished", and the community-measured value is ~9 h for every rapid analogue - only the
+        // peak differs (bionicwookiee.com, "Insulin timings 2022"). The observed DIA here is solved from how
+        // far one correction dropped BG, so an ISF that is slightly off, a basal change, food or hormones all
+        // read as a DIA change, and they push it SHORT - which under-counts insulin still on board hours later
+        // and is how late lows with near-zero IOB happen. So it is reported, for the journal, and not applied.
         val clampedDia = observedDiaMins.coerceIn(
             LearnedInsulinProfile.DIA_MIN_MINUTES,
             LearnedInsulinProfile.DIA_MAX_MINUTES
         )
-        val newDia: Double
-        val diaUpdated: Boolean
-        if (mode.diaLearningEnabled) {
-            newDia     = ewma(current.diaMinutes, clampedDia, alpha)
-            diaUpdated = true
-        } else {
-            newDia     = current.diaMinutes
-            diaUpdated = false
-        }
+        onChange?.invoke(
+            "${mode.label}: observed DIA ≈ ${"%.1f".format(clampedDia / 60.0)} h — diagnostic only, " +
+                "DIA stays at the insulin's ${"%.1f".format(current.diaMinutes / 60.0)} h"
+        )
+        val newDia = current.diaMinutes
 
-        if (!peakUpdated && !diaUpdated) return
+        if (!peakUpdated) return
 
         val newSampleCount = current.sampleCount + 1
         val updated = current.copy(
@@ -140,10 +160,7 @@ class ProfileLearner @Inject constructor(
         profiles[mode] = updated
         saveProfile(updated)
         onChange?.invoke(
-            "${mode.label}: " + listOfNotNull(
-                if (peakUpdated) "peak ${current.peakMinutes.toInt()}→${newPeak.toInt()} min" else null,
-                if (diaUpdated) "DIA ${current.diaMinutes.toInt()}→${newDia.toInt()} min" else null
-            ).joinToString(", ") + " (n=$newSampleCount)"
+            "${mode.label}: peak ${current.peakMinutes.toInt()}→${newPeak.toInt()} min (n=$newSampleCount)"
         )
     }
 
