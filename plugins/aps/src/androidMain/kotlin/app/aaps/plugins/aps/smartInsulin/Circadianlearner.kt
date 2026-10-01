@@ -67,6 +67,12 @@ class CircadianLearner @Inject constructor(
     // can drive the hour-boundary behaviour deterministically.
     private var cycleMinute: Int = 0
 
+    // Last time BG was clearly below target (by more than [RECOVERY_DEAD_BAND_MGDL]). For
+    // [RECOVERY_LOCKOUT_MS] after that, no signal may make ISF or basal stronger. See update().
+    private var lastBelowTargetMs: Long = 0L
+    // Set once per cycle in update(). True while BG is below target or was below it recently.
+    private var recoveringFromBelowTarget = false
+
     // -- State write helpers ---------------------------------------------------
     // Every isfState/basalState/aggrState write goes through these rather than calling
     // updated()/updatedDayOnly() directly, so that (a) the minute-of-hour spread is applied
@@ -282,6 +288,17 @@ class CircadianLearner @Inject constructor(
         // meal-mode cycles are recorded too. Skipping them would leave holes in the ring that
         // are indistinguishable from "no insulin was working then".
         recordInsulinPresence(now, hour, dow, iob, mealMode == MealMode.FASTING)
+        // --- RECOVERY LOCKOUT ---
+        // The guards against "more insulin while low" used to check only the CURRENT reading.
+        // But the drift signal and PredTrim look back up to 90 min. So once BG came back above
+        // target, the climb out of the dip (zero temp held back basal, liver output) was read as
+        // "basal too weak", and ISF and basal were made stronger right after a near-low.
+        // The rebound window does not cover this: it only starts below the low guard.
+        // So: while BG is below target, and for 90 min after, nothing may strengthen. Weakening
+        // stays allowed. Recorded before the meal-mode skip so a dip in meal mode counts too.
+        if (bg > 0.0 && bg < targetMgdl - RECOVERY_DEAD_BAND_MGDL) lastBelowTargetMs = now
+        recoveringFromBelowTarget = inReboundWindow ||
+            (lastBelowTargetMs > 0L && now - lastBelowTargetMs < RECOVERY_LOCKOUT_MS)
         val rollercoaster = if (bgHistory.size >= MIN_HISTORY_FOR_ROLLER) detectRollercoaster(targetMgdl, lowGuardMgdl) else false
         // NOTE: computed BEFORE bgHistory.addLast — only valid for diagnostic logging.
         // updateAggrLearner re-computes post-addLast so the penalty sees the current reading.
@@ -568,9 +585,10 @@ class CircadianLearner @Inject constructor(
         // aggressive) — exactly backwards when BG is already below target. Block ONLY the
         // up-direction in that case; the down-direction (less aggressive) stays available
         // since reducing aggressiveness while low is always safe.
-        if (normDeviation > 0.0 && bg < targetMgdl) {
+        if (normDeviation > 0.0 && (bg < targetMgdl || recoveringFromBelowTarget)) {
             aapsLogger.debug(LTag.APS,
-                             "CircadianLearner ISF: blocked positive normDev=${"%.2f".format(normDeviation)} — bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)}, would increase aggressiveness while low")
+                             "CircadianLearner ISF: blocked positive normDev=${"%.2f".format(normDeviation)} — bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} " +
+                                 "recovering=$recoveringFromBelowTarget, would increase aggressiveness while low or just after")
             normDeviation = 0.0
         }
         // ISF_NORM_GAIN converts a dimensionless prediction error into a multiplier offset.
@@ -836,7 +854,7 @@ class CircadianLearner @Inject constructor(
                 // which is the honest answer for "recently high, currently under target".
                 val aboveBand = (avgBg > targetMgdl + TRIM_DEAD_BAND_MGDL) &&
                     bg >= targetMgdl &&
-                    !isLowRecovery && !overshootCrash
+                    !isLowRecovery && !recoveringFromBelowTarget && !overshootCrash
                 val belowBand = (avgBg < targetMgdl - TRIM_DEAD_BAND_MGDL) || overshootCrash
 
                 // --- HUMAN "STEP AND WAIT" LOGIC ---
@@ -975,7 +993,7 @@ class CircadianLearner @Inject constructor(
         // rollercoaster or soft-low penalty — left the nudge free to read the rescue-carb rise as
         // "not enough insulin" and stack basal-up onto a recovery. Gate on the window itself.
         // Only the add-insulin direction is blocked; cutting insulin during a recovery is safe.
-        if (notEnough && inReboundWindow) {
+        if (notEnough && (inReboundWindow || recoveringFromBelowTarget)) {
             notEnough = false
             lastAggrNudgeStatus = "PAUSED|Post-low recovery window"
             aapsLogger.debug(LTag.APS, "CircadianLearner aggrNudge[notEnough] blocked — inside post-low rebound window")
@@ -1275,12 +1293,12 @@ class CircadianLearner @Inject constructor(
             // gate alone doesn't exclude it. Block only the UP direction (more basal) when
             // BG is below target; the DOWN direction (less basal) stays available since
             // reducing basal while below target is never the wrong call.
-            val blockUp = unexplainedDelta > 0.0 && bg < targetMgdl
+            val blockUp = unexplainedDelta > 0.0 && (bg < targetMgdl || recoveringFromBelowTarget)
             if (blockUp) {
                 s0RunLength = 0; s0RunSign = 0
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Basal[S0] blocked: positive delta=${"%.2f".format(unexplainedDelta)} " +
-                                     "but bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound, not basal deficit")
+                                     "but bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} recovering=$recoveringFromBelowTarget — likely rebound, not basal deficit")
             } else if (abs(unexplainedDelta) >= BASAL_S0_MIN_DELTA_MGDL) {
                 // Same direction as the run so far, or the run starts again from this reading.
                 val sign = if (unexplainedDelta > 0) 1 else -1
@@ -1392,10 +1410,10 @@ class CircadianLearner @Inject constructor(
                         // catches it. Raising basal on a P/F tail is exactly the corruption the
                         // lockout exists to prevent. Block the up-direction only; a fall during
                         // the lockout still means too much basal and is safe to learn from.
-                        val guardedAdjustment = if (adjustment > 1.0 && (bg < targetMgdl || inPostMealLockout)) {
+                        val guardedAdjustment = if (adjustment > 1.0 && (bg < targetMgdl || recoveringFromBelowTarget || inPostMealLockout)) {
                             aapsLogger.debug(LTag.APS,
                                              "CircadianLearner Basal[drift] up-direction blocked: drift=${"%.2f".format(driftMgdlPerHr)} mg/dL/hr " +
-                                                 "but ${if (inPostMealLockout) "post-meal lockout active — likely fat/protein tail" else "bg=${"%.1f".format(bg)} < target=${"%.1f".format(targetMgdl)} — likely rebound"}, not basal deficit")
+                                                 "but ${if (inPostMealLockout) "post-meal lockout active — likely fat/protein tail" else "bg=${"%.1f".format(bg)} target=${"%.1f".format(targetMgdl)} below target now or in last 90 min — likely rebound"}, not basal deficit")
                             1.0
                         } else adjustment
                         val newMult    = (basalState.get(dow, hour) * guardedAdjustment).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
@@ -1502,10 +1520,10 @@ class CircadianLearner @Inject constructor(
                 // Same blind spot as Signals 0 and 1: a projected-high while current BG is below
                 // target is more likely a rebound/recovery than a genuine basal deficit. Block
                 // only the up-direction; the down-direction (less basal) is never blocked.
-                val blockUp = projectedError > 0.0 && bg < targetMgdl
+                val blockUp = projectedError > 0.0 && (bg < targetMgdl || recoveringFromBelowTarget)
                 when {
                     wouldFire && blockUp -> {
-                        lastPredTrimDebug = "blocked UP — proj=${"%.1f".format(projectedBg / 18.0)}mmol high but bg=${"%.1f".format(bg / 18.0)}mmol < target"
+                        lastPredTrimDebug = "blocked UP — proj=${"%.1f".format(projectedBg / 18.0)}mmol high but bg=${"%.1f".format(bg / 18.0)}mmol below target now or in last 90 min"
                         aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] up-direction blocked: projectedError=${"%.1f".format(projectedError)} but bg below target")
                     }
                     wouldFire -> {
@@ -2197,6 +2215,9 @@ class CircadianLearner @Inject constructor(
         private const val BASAL_MULT_MIN           = 0.5
         private const val BASAL_MULT_MAX           = 1.5
         private const val BASAL_DRIFT_WINDOW_MS    = 90 * 60 * 1000L  // 90 min window to measure drift
+        // As long as the drift window, so no window that holds a sub-target dip can strengthen.
+        private const val RECOVERY_LOCKOUT_MS      = BASAL_DRIFT_WINDOW_MS
+        private const val RECOVERY_DEAD_BAND_MGDL  = 5.4              // ~0.3 mmol under target counts as "below"
         private const val BASAL_MIN_SAMPLES        = 12               // ~60 min of readings
         private const val BASAL_MIN_ELAPSED_HRS    = 0.5              // at least 30 min spread
         private const val BASAL_MIN_DRIFT_MGDL_HR  = 2.0             // < 2 mg/dL/hr = noise, ignore
