@@ -43,9 +43,9 @@ fun SmartInsulinChipsRow(
         horizontalArrangement = Arrangement.spacedBy(AapsSpacing.small),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IobChip(state = iobUiState, onClick = onIobChipClick, modifier = Modifier.weight(1f))
+        IobChip(state = iobUiState, onClick = onIobChipClick, modifier = Modifier.weight(0.8f))
         BasalRateChip(tbrState = tbrState, text = basalRateText, onClick = onTbrChipClick, modifier = Modifier.weight(0.85f))
-        CobChip(state = cobUiState, modifier = Modifier.weight(1.1f))
+        CobChip(state = cobUiState, modifier = Modifier.weight(1.3f))
     }
 }
 
