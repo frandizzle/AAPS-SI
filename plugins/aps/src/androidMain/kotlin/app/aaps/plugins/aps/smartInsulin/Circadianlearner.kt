@@ -95,15 +95,33 @@ class CircadianLearner @Inject constructor(
     fun takeWriteSources(dow: Int, hour: Int): Set<WriteSource> =
         writeSources.remove(bucketKey(dow, hour)) ?: emptySet()
 
+    /**
+     * The one place the recovery lockout is enforced for every writer. Each signal also checks it
+     * itself, but some writers never did: the pull back toward the weekly average, the hour-boundary
+     * carry-over, and the spread of every write into the neighbouring hour. A write near :00 also
+     * pulls the hour before toward a value worked out for a different hour, which can make that
+     * hour stronger even when the write itself was a weakening one. While recovering, no bucket -
+     * this hour, its neighbour, day or global - may end up with a higher multiplier than it had.
+     */
+    private fun noStronger(before: DayOfWeekCircadianState, after: DayOfWeekCircadianState): DayOfWeekCircadianState {
+        if (!recoveringFromBelowTarget) return after
+        fun clamp(b: CircadianState, a: CircadianState): CircadianState {
+            var changed = false
+            val v = DoubleArray(24) { i -> if (a.values[i] > b.values[i]) { changed = true; b.values[i] } else a.values[i] }
+            return if (changed) a.copy(values = v) else a
+        }
+        return DayOfWeekCircadianState(Array(7) { clamp(before.days[it], after.days[it]) }, clamp(before.global, after.global))
+    }
+
     /** Physics write: measured behaviour of this hour, applies to every weekday. Day + global. */
     private fun writeIsf(dow: Int, hour: Int, value: Double, alpha: Double) {
         noteWrite(dow, hour)
-        isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
+        isfState = noStronger(isfState, isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha))
     }
 
     private fun writeBasal(dow: Int, hour: Int, value: Double, alpha: Double) {
         noteWrite(dow, hour)
-        basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
+        basalState = noStronger(basalState, basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha))
     }
 
     private fun writeAggr(dow: Int, hour: Int, value: Double, alpha: Double) {
@@ -113,12 +131,12 @@ class CircadianLearner @Inject constructor(
     /** Day-scoped write: nudge/trim corrections. Leaves the cross-day baseline untouched. */
     private fun writeIsfDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
         noteWrite(dow, hour)
-        isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
+        isfState = noStronger(isfState, isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0))
     }
 
     private fun writeBasalDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
         noteWrite(dow, hour)
-        basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
+        basalState = noStronger(basalState, basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0))
     }
 
     private fun writeAggrDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
