@@ -157,6 +157,7 @@ class AppRepository internal constructor(
     suspend fun clearDatabases() {
         database.clearAllTablesCompat()
         longTemporaryBasalCheck = null
+        longExtendedBolusCheck = null
         repositoryScope.launch { _databaseClearedFlow.emit(Unit) }
     }
 
@@ -817,6 +818,7 @@ class AppRepository internal constructor(
 
     private fun invalidateLongTemporaryBasalCheck(changes: List<DBEntry>) {
         if (changes.any { it is TemporaryBasal }) longTemporaryBasalCheck = null
+        if (changes.any { it is ExtendedBolus }) longExtendedBolusCheck = null
     }
 
     suspend fun getTemporaryBasalsActiveBetweenTimeAndTime(from: Long, to: Long): List<TemporaryBasal> =
@@ -860,8 +862,23 @@ class AppRepository internal constructor(
         }
     }
 
-    suspend fun getExtendedBolusActiveAt(timestamp: Long): ExtendedBolus? =
-        database.extendedBolusDao.getExtendedBolusActiveAt(timestamp)
+    /** Same bounded search as [getTemporaryBasalActiveAt], and exact for the same reason. It matters as much:
+     *  every temp basal lookup that finds nothing falls through to this one, and the status lights total the
+     *  insulin since a pod/cannula change with one of these per five minutes, every minute. */
+    suspend fun getExtendedBolusActiveAt(timestamp: Long): ExtendedBolus? {
+        database.extendedBolusDao.getExtendedBolusActiveAtSince(timestamp, timestamp - LONG_TEMP_BASAL_MS)?.let { return it }
+        return if (anyLongExtendedBolus()) database.extendedBolusDao.getExtendedBolusActiveAt(timestamp) else null
+    }
+
+    @Volatile private var longExtendedBolusCheck: Pair<Boolean, Long>? = null
+
+    private suspend fun anyLongExtendedBolus(): Boolean {
+        val now = System.currentTimeMillis()
+        longExtendedBolusCheck?.let { (exists, at) -> if (now - at < LONG_TEMP_BASAL_CHECK_TTL_MS) return exists }
+        val exists = database.extendedBolusDao.existsExtendedBolusLongerThan(LONG_TEMP_BASAL_MS)
+        longExtendedBolusCheck = exists to now
+        return exists
+    }
 
     suspend fun getExtendedBolusesStartingFromTime(timestamp: Long, ascending: Boolean): List<ExtendedBolus> =
         database.extendedBolusDao.getExtendedBolusesStartingFromTime(timestamp).reversedIf(!ascending)
