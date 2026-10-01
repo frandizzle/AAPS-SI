@@ -75,9 +75,38 @@ class ModeIsfLearnerTest {
     fun `low during the episode weakens immediately at mode end without waiting for the tail`() {
         // LOW_CARB is a manually-activated mode — no UAM entry burst, so there's no entry-shape
         // learner to arbitrate with and every low is this learner's (magnitude) evidence.
-        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 80.0, low = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 80.0, low = true)
         // single cycle after mode end — weaken should already have landed
-        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 90.0)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 90.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a low the mode was started in is not blamed on the mode`() {
+        // Already at 4.7 and low when Extended is switched on, to eat without spiking.
+        cycle(MealMode.EXTENDED, BASE_MS, BASE_MS, bg = 85.0, low = true)
+        cycle(MealMode.EXTENDED, BASE_MS, BASE_MS + CYCLE_MS, bg = 86.0, low = true)
+        cycle(MealMode.EXTENDED, BASE_MS, BASE_MS + 2 * CYCLE_MS, bg = 95.0)
+        // Dinner takes over: Extended is judged on what it did, and it caused no low.
+        cycle(MealMode.DINNER, BASE_MS + 3 * CYCLE_MS, BASE_MS + 3 * CYCLE_MS, bg = 110.0)
+        assertEquals(1.0, learner.multiplier(MealMode.EXTENDED), 1e-9)
+    }
+
+    @Test
+    fun `a new low after BG came out of the starting low still counts`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 85.0, low = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 110.0)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + 2 * CYCLE_MS, bg = 80.0, low = true)
+        cycle(null, 0L, BASE_MS + 3 * CYCLE_MS, bg = 90.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a starting low that gets clearly deeper counts`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 85.0, low = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 74.0, low = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 80.0)
         assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 
@@ -86,8 +115,9 @@ class ModeIsfLearnerTest {
         // Exercise signature: the low arrived alongside BG falling faster than insulin explains.
         // Still weakens (safety direction, classifier can be wrong) but only 40% of the step:
         // 1.0 + 0.05*0.4 = 1.02 instead of 1.05.
-        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 80.0, low = true, exercise = true)
-        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 90.0)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 80.0, low = true, exercise = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 90.0)
         assertEquals(1.02, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 
@@ -169,8 +199,9 @@ class ModeIsfLearnerTest {
     fun `weaken steps are railed at the 1_4 maximum`() {
         var t = BASE_MS
         repeat(20) {
-            cycle(MealMode.LUNCH, t, t, bg = 80.0, low = true)
-            t += CYCLE_MS
+            cycle(MealMode.LUNCH, t, t, bg = 110.0)
+            cycle(MealMode.LUNCH, t, t + CYCLE_MS, bg = 80.0, low = true)
+            t += 2 * CYCLE_MS
             cycle(null, 0L, t, bg = 90.0)  // immediate weaken at each mode end
             t += CYCLE_MS
         }

@@ -89,6 +89,9 @@ class ModeIsfLearner @Inject constructor(
     private var episodePeakMgdl  = 0.0
     /** BG when the mode opened, so a spike is measured as a RISE rather than as an altitude. */
     private var episodeStartBgMgdl = 0.0
+    /** BG was already low (or close to it) when the mode opened. That low is not the mode's doing,
+     *  so it is not scored until BG has come out of it, or gone clearly lower than it started. */
+    private var episodeCarriedInLow = false
     /** Recent deltas (newest first) at the evaluation, for the still-falling test. */
     private val tailDeltas       = ArrayDeque<Double>()
     /** Longest unbroken stretch spent at or above the spike bar, and the run currently open. */
@@ -168,6 +171,8 @@ class ModeIsfLearner @Inject constructor(
          * where the first cycles say nothing about whether the dose was too big.
          */
         private const val UNDERSHOOT_MIN_ELAPSED_MS = 25 * 60_000L
+        /** How much lower than the starting BG a carried-in low must go before it counts (~0.5 mmol). */
+        private const val CARRIED_IN_LOW_DEEPER_MGDL = 9.0
         /** Step fraction once the evaluation has been voided — the low is still real, but the
          *  episode is no longer clean enough to credit it in full. */
         private const val VOIDED_STEP_FRACTION      = 0.5
@@ -343,6 +348,7 @@ class ModeIsfLearner @Inject constructor(
                 episodeSpikeMs  = 0L
                 spikeRunStartMs = 0L
                 episodeStartBgMgdl = bgMgdl
+                episodeCarriedInLow = lowActive || undershootActive
                 tailDeltas.clear()
                 episodeShapeRailed = false
             }
@@ -358,7 +364,21 @@ class ModeIsfLearner @Inject constructor(
                 if (spikeRunStartMs == 0L) spikeRunStartMs = nowMs
                 episodeSpikeMs = maxOf(episodeSpikeMs, nowMs - spikeRunStartMs)
             } else spikeRunStartMs = 0L
-            if (lowActive) {
+            // A low the user started the mode in (eating to stop a low, or to stop a spike while
+            // already low) says nothing about the mode's dose. It stops being "carried in" once BG
+            // has come out of it - a later low is then a new one - or once BG has gone clearly
+            // lower than where the mode started, which the mode's insulin may well have caused.
+            if (episodeCarriedInLow) {
+                if (!lowActive && !undershootActive) episodeCarriedInLow = false
+                else if (bgMgdl < episodeStartBgMgdl - CARRIED_IN_LOW_DEEPER_MGDL) {
+                    episodeCarriedInLow = false
+                    aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${activeScope?.label} started low and BG fell further (" +
+                        "${"%.1f".format(episodeStartBgMgdl / 18.0)}→${"%.1f".format(bgMgdl / 18.0)} mmol) — this low counts")
+                }
+            }
+            if (episodeCarriedInLow) {
+                // Not scored: the low was there before the mode.
+            } else if (lowActive) {
                 // ARBITRATION with UamEntryFractionLearner: a low soon after a UAM entry is
                 // evidence the entry burst was too front-loaded (a SHAPE problem the entry
                 // learner owns) — not that the mode's overall ISF is too strong. Attributing
@@ -675,6 +695,7 @@ class ModeIsfLearner @Inject constructor(
         episodePeakMgdl = 0.0; episodeSpikeMs = 0L; spikeRunStartMs = 0L; episodeShapeRailed = false
         activeScope = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
+        episodeCarriedInLow = false
         pendingScope = null; pendingStartMs = 0L
         lastMovedMode = null; lastMovedStartMs = 0L
         clearWatch()

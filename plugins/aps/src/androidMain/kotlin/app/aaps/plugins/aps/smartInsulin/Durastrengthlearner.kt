@@ -98,6 +98,10 @@ class DuraStrengthLearner @Inject constructor(
     private val runBgs         = ArrayList<Double>()
     /** A low or near-low already happened this episode — it can no longer strengthen DURA. */
     private var episodeWentLow     = false
+    // BG was already low (or close to it) when the mode opened - not DURA's doing. Not scored until
+    // BG comes out of it, or goes clearly lower than [episodeStartBgMgdl]. Same rule as ModeIsfLearner.
+    private var episodeCarriedInLow = false
+    private var episodeStartBgMgdl  = 0.0
 
     // Post-episode watch window — a DURA-driven crash often lands after the mode itself ends,
     // and more so now that at-target auto-cancel ends modes while their insulin is still working.
@@ -164,6 +168,8 @@ class DuraStrengthLearner @Inject constructor(
         /** DURA needs time to have caused anything; a mode that starts inside the undershoot band
          *  says nothing about DURA's strength in its first cycles. */
         private const val UNDERSHOOT_MIN_ELAPSED_MS = 25 * 60_000L
+        /** How much lower than the starting BG a carried-in low must go before it counts (~0.5 mmol). */
+        private const val CARRIED_IN_LOW_DEEPER_MGDL = 9.0
 
         private const val K_FACTOR = "factor"
         private const val K_N      = "n"
@@ -250,6 +256,8 @@ class DuraStrengthLearner @Inject constructor(
                 episodeRejectedMs  = 0L
                 clearRun()
                 episodeWentLow     = false
+                episodeCarriedInLow = lowActive || undershootActive
+                episodeStartBgMgdl  = bgMgdl
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             val elevatedAndStuck = targetMgdl > 0.0 && bgMgdl >= targetMgdl + stuckMarginMgdl() && duraStuckMinutes > 0.0
@@ -270,9 +278,13 @@ class DuraStrengthLearner @Inject constructor(
             }
             // A low while the mode is still running, with DURA meaningfully engaged, is
             // immediate evidence — act now rather than waiting for the mode to expire.
+            if (episodeCarriedInLow &&
+                ((!lowActive && !undershootActive) || bgMgdl < episodeStartBgMgdl - CARRIED_IN_LOW_DEEPER_MGDL))
+                episodeCarriedInLow = false
             val undershootCounts = undershootActive && (nowMs - activeStartMs) >= UNDERSHOOT_MIN_ELAPSED_MS
-            if (lowActive || undershootCounts) episodeWentLow = true
-            if ((lowActive || undershootCounts) && episodeMaxDura >= ENGAGED_THRESHOLD) {
+            val lowCounts = !episodeCarriedInLow && (lowActive || undershootCounts)
+            if (lowCounts) episodeWentLow = true
+            if (lowCounts && episodeMaxDura >= ENGAGED_THRESHOLD) {
                 reduce(activeScope!!, exerciseSuspected, episodeMaxDura, "during", undershoot = !lowActive)
                 episodeMaxDura = 1.0  // don't fire repeatedly on one low
             }
