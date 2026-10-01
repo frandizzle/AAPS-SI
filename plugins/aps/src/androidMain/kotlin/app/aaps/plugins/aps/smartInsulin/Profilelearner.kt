@@ -139,7 +139,16 @@ class ProfileLearner @Inject constructor(
 
         profiles[mode] = updated
         saveProfile(updated)
+        onChange?.invoke(
+            "${mode.label}: " + listOfNotNull(
+                if (peakUpdated) "peak ${current.peakMinutes.toInt()}→${newPeak.toInt()} min" else null,
+                if (diaUpdated) "DIA ${current.diaMinutes.toInt()}→${newDia.toInt()} min" else null
+            ).joinToString(", ") + " (n=$newSampleCount)"
+        )
     }
+
+    /** Called with a description of each learned peak/DIA change; the plugin points it at [LearningJournal]. */
+    var onChange: ((String) -> Unit)? = null
 
     fun resetProfile(mode: MealMode) {
         val default = profileSeededDefault(mode)

@@ -109,8 +109,14 @@ class DuraStrengthLearner @Inject constructor(
     private var pendingAtFloorMs   = 0L
     private var pendingStallNote: String? = null
 
+    /** Called with each new verdict; the plugin points it at [LearningJournal]. */
+    var onOutcome: ((String) -> Unit)? = null
+
     var lastOutcome = ""
-        private set
+        private set(value) {
+            field = value
+            if (value.isNotEmpty()) onOutcome?.invoke(value)
+        }
 
     init { restore() }
 

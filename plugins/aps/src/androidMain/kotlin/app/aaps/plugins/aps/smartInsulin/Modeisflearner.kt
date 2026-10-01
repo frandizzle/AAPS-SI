@@ -126,8 +126,14 @@ class ModeIsfLearner @Inject constructor(
     private var lastMovedStartMs = 0L
 
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
+    /** Called with each new verdict; the plugin points it at [LearningJournal]. */
+    var onOutcome: ((String) -> Unit)? = null
+
     var lastOutcome = ""
-        private set
+        private set(value) {
+            field = value
+            if (value.isNotEmpty()) onOutcome?.invoke(value)
+        }
 
     init { restore() }
 

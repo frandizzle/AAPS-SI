@@ -94,7 +94,8 @@ class UamEntrySmbFractionPerModeTest {
             phoneStepCounter        = mock(),
             preferences             = mock(),
             notificationManager     = mock(),
-            ch                      = mock()
+            ch                      = mock(),
+            learningJournal         = mock()
         )
     }
 

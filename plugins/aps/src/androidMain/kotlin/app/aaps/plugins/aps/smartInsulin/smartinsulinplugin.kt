@@ -126,7 +126,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activitySessionLearner: ActivitySessionLearner,
     private val duraStrengthLearner:     DuraStrengthLearner,
     private val phoneStepCounter:        PhoneStepCounter,
-    private val ch:                      ConcentrationHelper
+    private val ch:                      ConcentrationHelper,
+    private val learningJournal:         LearningJournal
 ) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -258,6 +259,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // Per-hour table rows are read at the bucket centre so the table shows each hour's own
         // learned value, not the boundary-interpolated value applying at the current minute.
         private const val TABLE_BUCKET_MINUTE  = 30
+        private const val JOURNAL_MULT_STEP    = 0.005
+        private const val JOURNAL_AGGR_STEP    = 0.02
+        private val JOURNAL_DAYS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
         // Column widths for the learned-per-mode tables. 18 fits the longest mode label,
         // "Protein/Fat (UAM)", with a space to spare.
         private const val LEARNER_LABEL_W     = 18
@@ -366,14 +370,18 @@ open class SmartInsulinPlugin @Inject constructor(
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
         relowTracker.reset()
+        learningJournal.note("Reset", "All learners reset")
     }
 
-    fun resetAggression() { aggressionLearner.reset(); aggressionLearner.recalculate() }
-    fun resetIsf() { circadianLearner.resetIsf() }
-    fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal() }
-    fun resetCircadian() { circadianLearner.reset() }
-    fun resetProfiles() { profileLearner.resetProfiles() }
-    fun resetModeLearners() { modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset() }
+    fun resetAggression() { aggressionLearner.reset(); aggressionLearner.recalculate(); learningJournal.note("Reset", "Aggressiveness score reset to 1.0") }
+    fun resetIsf() { circadianLearner.resetIsf(); learningJournal.note("Reset", "Circadian ISF reset to 1.0") }
+    fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal(); learningJournal.note("Reset", "Basal learning reset to 1.0") }
+    fun resetCircadian() { circadianLearner.reset(); learningJournal.note("Reset", "All circadian learning reset") }
+    fun resetProfiles() { profileLearner.resetProfiles(); learningJournal.note("Reset", "Insulin profiles reset to defaults") }
+    fun resetModeLearners() {
+        modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset()
+        learningJournal.note("Reset", "Meal/UAM ISF, UAM entry fraction and DURA learning reset")
+    }
 
     // -- Activity/stress sessions (golf, gym) ---------------------------------
 
@@ -817,6 +825,74 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
     }
+
+    init {
+        // Every learner verdict goes to the journal; see LearningJournal.
+        modeIsfLearner.onOutcome          = { learningJournal.note("Meal ISF", it) }
+        uamEntryFractionLearner.onOutcome = { learningJournal.note("UAM entry", it) }
+        duraStrengthLearner.onOutcome     = { learningJournal.note("DURA", it) }
+        activitySessionLearner.onOutcome  = { learningJournal.note("Activity", it) }
+        profileLearner.onChange           = { learningJournal.note("Insulin profile", it) }
+    }
+
+    /** Learning journal, newest first, for the SI tab. */
+    fun learningJournalEntries(): List<LearningJournal.Entry> = learningJournal.entries()
+
+    // ── Learning journal digest for the continuous learners ───────────────────
+    // Circadian ISF/basal and aggressiveness move a little every cycle; journaling each move would bury
+    // everything else, so they are summarised: each hour's net change once that hour is over, and an
+    // aggressiveness entry when it has moved enough to matter. FuelTrim is noted when it starts and ends.
+    private var digestHour = -1
+    private var digestDow = -1
+    private var digestIsfMult = 1.0
+    private var digestBasMult = 1.0
+    private var digestAggr = Double.NaN
+    private var digestTrimActive = false
+
+    private fun journalLearningDigest(hour: Int, dow: Int) {
+        if (hour != digestHour || dow != digestDow) {
+            if (digestHour >= 0) {
+                // The hour just finished, read at its bucket centre - the same value the 24h table shows -
+                // so the comparison is learning only, never the interpolation into the next hour.
+                val endIsf = circadianLearner.isfMultiplier(digestHour, digestDow, TABLE_BUCKET_MINUTE)
+                val endBas = combinedBasalMultiplier(digestHour, digestDow, TABLE_BUCKET_MINUTE)
+                val parts = listOfNotNull(
+                    multChange("ISF", digestIsfMult, endIsf, up = "stronger", down = "weaker"),
+                    multChange("basal", digestBasMult, endBas, up = "more", down = "less")
+                )
+                if (parts.isNotEmpty())
+                    learningJournal.note("Circadian", "${JOURNAL_DAYS[digestDow]} ${"%02d".format(digestHour)}:00 — ${parts.joinToString(", ")}")
+            }
+            digestHour = hour
+            digestDow = dow
+            digestIsfMult = circadianLearner.isfMultiplier(hour, dow, TABLE_BUCKET_MINUTE)
+            digestBasMult = combinedBasalMultiplier(hour, dow, TABLE_BUCKET_MINUTE)
+        }
+
+        val aggr = aggressionLearner.aggressiveness
+        if (digestAggr.isNaN()) digestAggr = aggr
+        else if (kotlin.math.abs(aggr - digestAggr) >= JOURNAL_AGGR_STEP) {
+            learningJournal.note("Aggressiveness", "score ${"%.2f".format(digestAggr)}→${"%.2f".format(aggr)}")
+            digestAggr = aggr
+        }
+
+        val trimActive = circadianLearner.trimActive
+        if (trimActive != digestTrimActive) {
+            val strength = circadianLearner.trimStrength
+            learningJournal.note(
+                "FuelTrim",
+                if (trimActive) "started at ${"%02d".format(hour)}:00 — ${if (strength > 0) "sustained high, adding" else "sustained low, reducing"} " +
+                    "insulin (${"%.1f".format(kotlin.math.abs(strength) * 100)}%), cap this hour ×${"%.2f".format(circadianLearner.aggrCeiling(hour))}"
+                else "ended at ${"%02d".format(hour)}:00"
+            )
+            digestTrimActive = trimActive
+        }
+    }
+
+    /** "ISF ×0.871→0.866 (weaker)" when the multiplier moved by [JOURNAL_MULT_STEP] or more, else null. */
+    private fun multChange(name: String, from: Double, to: Double, up: String, down: String): String? =
+        if (kotlin.math.abs(to - from) < JOURNAL_MULT_STEP) null
+        else "$name ×${"%.3f".format(from)}→${"%.3f".format(to)} (${if (to > from) up else down})"
 
     override suspend fun onStart() {
         super.onStart()
@@ -1584,6 +1660,7 @@ open class SmartInsulinPlugin @Inject constructor(
             learningState = if (highTempTarget) "off: High temp target" else getLearningState()
         )
 
+        journalLearningDigest(currentHour, currentDow)
         rxBus.send(EventOpenAPSUpdateGui())
     }
 

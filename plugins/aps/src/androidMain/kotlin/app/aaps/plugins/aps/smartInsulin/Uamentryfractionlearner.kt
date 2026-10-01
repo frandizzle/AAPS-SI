@@ -98,8 +98,14 @@ class UamEntryFractionLearner @Inject constructor(
     private var pendingHandover       = false
 
     /** Human-readable summary of the most recent learning decision — for the SI tab. */
+    /** Called with each new verdict; the plugin points it at [LearningJournal]. */
+    var onOutcome: ((String) -> Unit)? = null
+
     var lastOutcome = ""
-        private set
+        private set(value) {
+            field = value
+            if (value.isNotEmpty()) onOutcome?.invoke(value)
+        }
 
     /** Set when a strengthen was warranted but the fraction is already railed at [FRACTION_MAX].
      *  Read once by the caller via [consumeMagnitudeHandoff]. */

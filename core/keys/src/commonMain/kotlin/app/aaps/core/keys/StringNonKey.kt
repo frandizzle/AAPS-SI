@@ -113,6 +113,7 @@ enum class StringNonKey(
     ApsSmartInsulinMealAbsorptionLog(key = "si_meal_absorption_log", defaultValue = ""),
     ApsSmartInsulinModeIsfLearnerState(key = "si_mode_isf_learner_state", defaultValue = ""),
     ApsSmartInsulinDuraStrengthLearnerState(key = "si_dura_strength_learner_state", defaultValue = ""),
+    ApsSmartInsulinLearningJournal(key = "si_learning_journal", defaultValue = ""),
     ApsSmartInsulinActivitySessionState(key = "si_activity_session_state", defaultValue = ""),
     ApsSmartInsulinActivitySessionLearnerState(key = "si_activity_session_learner_state", defaultValue = ""),
     ApsSmartInsulinUamEntryFractionLearnerState(key = "si_uam_entry_fraction_learner_state", defaultValue = ""),

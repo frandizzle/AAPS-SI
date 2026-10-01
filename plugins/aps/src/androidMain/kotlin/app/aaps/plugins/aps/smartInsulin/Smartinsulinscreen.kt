@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.GolfCourse
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Restaurant
@@ -169,6 +170,14 @@ fun SmartInsulinScreen(
         SiSection("Circadian 24h", Icons.Filled.Schedule, subtitle = "Hour-by-hour learned ISF and basal") {
             SiCircadianSection(plugin, circadianDow) { circadianDow = it; tick++ }
         }
+        val journal = plugin.learningJournalEntries()
+        SiSection(
+            "Learning Journal", Icons.Filled.History,
+            subtitle = if (journal.isEmpty()) "No learning changes recorded yet" else "${journal.size} changes in the last 14 days",
+            initiallyExpanded = false
+        ) {
+            LearningJournalList(journal)
+        }
         SiSection("Learned Insulin Profiles", Icons.Filled.Timeline, subtitle = "Peak and duration per meal type", initiallyExpanded = false) {
             SiItems(cards.buildProfilesCard(d).items, onAction)
         }
@@ -285,3 +294,53 @@ private fun ResetRow(label: String, onClick: () -> Unit) {
         OutlinedButton(onClick = onClick) { Text("Reset") }
     }
 }
+
+/**
+ * The learning journal, newest first: when, which learner (tag coloured by what it touches), and what it
+ * decided. Long histories show the latest [JOURNAL_PAGE] with a toggle for the rest.
+ */
+@Composable
+private fun LearningJournalList(entries: List<LearningJournal.Entry>) {
+    if (entries.isEmpty()) {
+        Text(
+            "Each learner adds a line here when it changes something or decides not to, so drift can be traced " +
+                "back to a learner and a day. Circadian ISF/basal are summarised once an hour.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        return
+    }
+    var showAll by remember { mutableStateOf(false) }
+    val shown = if (showAll) entries else entries.take(JOURNAL_PAGE)
+    val today = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_YEAR)
+    val dayFmt = remember { java.text.SimpleDateFormat("EEE d MMM", java.util.Locale.getDefault()) }
+    val timeFmt = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        shown.forEach { e ->
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = e.timeMs }
+            val day = if (cal.get(java.util.Calendar.DAY_OF_YEAR) == today) "Today" else dayFmt.format(java.util.Date(e.timeMs))
+            Column(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("$day ${timeFmt.format(java.util.Date(e.timeMs))}", style = MaterialTheme.typography.labelSmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    SiPill(e.source, journalSourceTone(e.source).color())
+                }
+                Text(e.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+            }
+        }
+        if (entries.size > JOURNAL_PAGE)
+            TextButton(onClick = { showAll = !showAll }) {
+                Text(if (showAll) "Show latest $JOURNAL_PAGE" else "Show all ${entries.size}")
+            }
+    }
+}
+
+private fun journalSourceTone(source: String): SiTone = when (source) {
+    "Reset"                     -> SiTone.CRITICAL
+    "DURA", "FuelTrim"          -> SiTone.WARNING
+    "Meal ISF", "UAM entry"     -> SiTone.GOOD
+    "Circadian", "Insulin profile", "Aggressiveness", "Activity" -> SiTone.INFO
+    else                        -> SiTone.MUTED
+}
+
+private const val JOURNAL_PAGE = 40
