@@ -23,28 +23,28 @@ internal interface RunningModeDao : TraceableDao<RunningMode> {
     @Query("SELECT id FROM $TABLE_RUNNING_MODE ORDER BY id DESC limit 1")
     suspend fun getLastId(): Long?
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE timestamp = :timestamp AND referenceId IS NULL")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE timestamp = :timestamp AND +referenceId IS NULL")
     suspend fun findByTimestamp(timestamp: Long): RunningMode?
 
     @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
     suspend fun findByNSId(nsId: String): RunningMode?
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     suspend fun getTemporaryRunningModeActiveAt(timestamp: Long): RunningMode?
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp <= :timestamp) AND (duration = 0) AND (referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp <= :timestamp) AND (duration = 0) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     suspend fun getPermanentRunningModeActiveAt(timestamp: Long): RunningMode?
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE referenceId IS NULL AND isValid = 1 ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE +referenceId IS NULL AND isValid = 1 ORDER BY timestamp DESC LIMIT 1")
     suspend fun getAllRunningModes(): List<RunningMode>
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :timestamp) AND (referenceId IS NULL) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :timestamp) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
     suspend fun getRunningModeDataIncludingInvalidFromTime(timestamp: Long): List<RunningMode>
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :timestamp) AND (isValid = 1) AND (referenceId IS NULL) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :timestamp) AND (isValid = 1) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
     suspend fun getRunningModeDataFromTime(timestamp: Long): List<RunningMode>
 
-    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :startTime) AND (timestamp <= :endTime) AND (isValid = 1) AND (referenceId IS NULL) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM $TABLE_RUNNING_MODE WHERE (timestamp >= :startTime) AND (timestamp <= :endTime) AND (isValid = 1) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
     suspend fun getRunningModeDataFromTimeToTime(startTime: Long, endTime: Long): List<RunningMode>
 
     // for WS we need 1 record only

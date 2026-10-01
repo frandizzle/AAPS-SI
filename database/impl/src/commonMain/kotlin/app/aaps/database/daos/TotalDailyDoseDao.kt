@@ -24,16 +24,16 @@ internal interface TotalDailyDoseDao : TraceableDao<TotalDailyDose> {
     @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (pumpId = :pumpId) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (referenceId IS NULL)")
     suspend fun findByPumpIds(pumpId: Long, pumpType: InterfaceIDs.PumpType, pumpSerial: String): TotalDailyDose?
 
-    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (+referenceId IS NULL)")
     suspend fun findByPumpTimestamp(timestamp: Long, pumpType: InterfaceIDs.PumpType?, pumpSerial: String?): TotalDailyDose?
 
-    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (referenceId IS NULL) ORDER BY id DESC")
+    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (+referenceId IS NULL) ORDER BY +id DESC")
     suspend fun findByPumpTimestamp(timestamp: Long, pumpType: InterfaceIDs.PumpType?): TotalDailyDose?
 
-    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE (timestamp = :timestamp) AND (pumpType = :pumpType) AND (+referenceId IS NULL)")
     suspend fun findByTimestamp(timestamp: Long, pumpType: InterfaceIDs.PumpType): TotalDailyDose?
 
-    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE isValid = 1 AND referenceId IS NULL AND pumpType <> :exclude ORDER BY timestamp DESC LIMIT :count")
+    @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE isValid = 1 AND +referenceId IS NULL AND pumpType <> :exclude ORDER BY timestamp DESC LIMIT :count")
     suspend fun getLastTotalDailyDoses(count: Int, exclude: InterfaceIDs.PumpType = InterfaceIDs.PumpType.CACHE): List<TotalDailyDose>
 
     @Query("SELECT * FROM $TABLE_TOTAL_DAILY_DOSES WHERE dateCreated > :since AND dateCreated <= :until LIMIT :limit OFFSET :offset")
