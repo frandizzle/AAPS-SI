@@ -90,7 +90,8 @@ class ModeInsulinShareTest {
     fun `a low that was almost entirely the loop's own insulin does not touch the mode`() {
         val l = modeIsf()
         lowAfterMode(l, share = 0.09, lowAfterMin = 60)
-        assertEquals(1.0, l.multiplier(MealMode.LUNCH), 1e-9)
+        // The mode ended at 140, so it was strengthened then; the low leaves that alone.
+        assertEquals(0.975, l.multiplier(MealMode.LUNCH), 1e-9)
         assertTrue(l.lastOutcome.contains("the loop's own insulin"), l.lastOutcome)
     }
 

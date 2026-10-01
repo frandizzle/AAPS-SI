@@ -170,12 +170,14 @@ class ModeIsfLearnerTest {
     @Test
     fun `fresh absorption during the tail skips the evaluation entirely`() {
         cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        // Ends on target, so the window verdict is no change.
+        var t = BASE_MS + CYCLE_MS
+        cycle(null, 0L, t, bg = 100.0)
         // Tail with sustained rise: delta=10, activity=0 → ci=10 → 2g/cycle at csf=5.
         // After 5 cycles that's 10g > 8g contamination gate → evaluation voided.
-        var t = BASE_MS
         repeat(6) {
             t += CYCLE_MS
-            cycle(null, 0L, t, bg = 150.0 + it * 10, delta = 10.0)
+            cycle(null, 0L, t, bg = 110.0 + it * 10, delta = 10.0)
         }
         // run past the would-be deadline quietly — nothing should fire
         runQuietTail(t, bg = 170.0)
@@ -184,14 +186,15 @@ class ModeIsfLearnerTest {
     }
 
     @Test
-    fun `new activation during a pending tail voids the previous evaluation`() {
+    fun `a new activation during a pending tail stops the tail but keeps the window verdict`() {
         cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 150.0)
-        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 150.0)  // LUNCH pending eval
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 150.0)  // LUNCH ended high: strengthened now
         val newStart = BASE_MS + 2 * CYCLE_MS
-        cycle(MealMode.DINNER, newStart, newStart, bg = 150.0)  // new mode → LUNCH eval voided
-        // end DINNER and let ITS tail complete above target — only DINNER should move
+        cycle(MealMode.DINNER, newStart, newStart, bg = 150.0)  // new mode → LUNCH tail stops
+        assertTrue(learner.lastOutcome.contains("tail not judged"), learner.lastOutcome)
+        // end DINNER above target and let its tail run — one strengthen each, never two
         runQuietTail(newStart, bg = 130.0)
-        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
     }
 
@@ -514,37 +517,44 @@ class ModeIsfLearnerTest {
         assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
     }
 
-    // ── a new mode starting in the settling tail ─────────────────────────────
-
-    /** Dinner runs at 140, ends, and its tail runs quietly at [tailBg] for [tailMin] before P/F starts. */
-    private fun dinnerThenPf(tailMin: Int, tailBg: Double) {
-        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 140.0)
-        var t = BASE_MS + CYCLE_MS
-        val tailEnd = t + tailMin * 60_000L
-        while (t < tailEnd) { cycle(null, 0L, t, bg = tailBg); t += CYCLE_MS }
-        cycle(MealMode.UAM_PROTEIN_FAT, t, t, bg = tailBg)
-    }
+    // ── the window is judged when the mode ends; the tail only catches a crash or a stall ──
 
     @Test
-    fun `a mode taken over late in its tail is judged, high means stronger`() {
-        dinnerThenPf(tailMin = 50, tailBg = 130.0)
+    fun `a mode ending high is strengthened at once, and P,F taking over keeps it`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 130.0)        // ended 1.7mmol above target
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
-        assertTrue(learner.lastOutcome.contains("Protein/Fat"), learner.lastOutcome)
-    }
-
-    @Test
-    fun `a mode taken over late in its tail on target is counted with no change`() {
-        dinnerThenPf(tailMin = 50, tailBg = 105.0)
-        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
-        assertTrue(learner.lastOutcome.contains("on target"), learner.lastOutcome)
+        cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS + 2 * CYCLE_MS, BASE_MS + 2 * CYCLE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
         assertEquals(1, learner.episodeCount(MealMode.DINNER))
     }
 
     @Test
-    fun `a mode taken over right after it ended is too early to judge`() {
-        dinnerThenPf(tailMin = 10, tailBg = 130.0)
+    fun `a mode ending high is not strengthened again by a high tail`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        runQuietTail(BASE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertEquals(1, learner.episodeCount(MealMode.DINNER))
+    }
+
+    @Test
+    fun `a mode ending on target with a tail that stays high is strengthened by the tail`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 105.0)        // on target at mode end
         assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
-        assertTrue(learner.lastOutcome.startsWith("skipped"), learner.lastOutcome)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertEquals(1, learner.episodeCount(MealMode.DINNER))
+    }
+
+    @Test
+    fun `a mode ending high that then crashes nets weaker`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 130.0)        // strengthened at mode end
+        cycle(null, 0L, BASE_MS + 12 * CYCLE_MS, bg = 70.0, low = true)
+        assertEquals(1.05, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.contains("undone"), learner.lastOutcome)
+        assertEquals(1, learner.episodeCount(MealMode.DINNER))
     }
 
     @Test
@@ -552,9 +562,9 @@ class ModeIsfLearnerTest {
         heldPeakNoTail(bg = 160.0, cycles = 8, offsetMin = 10)
         val t = BASE_MS + 3 * 60 * 60_000L
         cycle(null, 0L, t, bg = 102.0)
+        assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
         cycle(MealMode.UAM_PROTEIN_FAT, t + CYCLE_MS, t + CYCLE_MS, bg = 102.0)
         assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
-        assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
     }
 
     private fun heldPeakNoTail(bg: Double, cycles: Int, offsetMin: Int) {
@@ -625,9 +635,11 @@ class ModeIsfLearnerTest {
     fun `ending high while still working down an inherited high is not charged`() {
         val start = BASE_MS
         cycle(MealMode.LUNCH, start, start, bg = 165.0)          // opened at ~9.2mmol
-        cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 160.0)
+        cycle(MealMode.LUNCH, start, start + CYCLE_MS, bg = 150.0, delta = -2.5)
+        cycle(MealMode.LUNCH, start, start + 2 * CYCLE_MS, bg = 140.0, delta = -2.5)
+        cycle(MealMode.LUNCH, start, start + 3 * CYCLE_MS, bg = 132.0, delta = -2.5)
         // Ends at 130: over target, but 35 below where it started and still falling.
-        runQuietTail(start + CYCLE_MS, bg = 130.0, delta = -2.5)
+        runQuietTail(start + 3 * CYCLE_MS, bg = 130.0, delta = -2.5)
         assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9)
         assertTrue(learner.lastOutcome.contains("inherited high"), learner.lastOutcome)
     }

@@ -108,6 +108,9 @@ class ModeIsfLearner @Inject constructor(
      *  new activation can reset the spike tracking it was read from. */
     private var pendingSpikeTooHigh = false
     private var pendingStartBgMgdl  = 0.0
+    /** The step the window verdict applied (1.0 for none). Not 1.0 means the tail must not
+     *  strengthen the same episode again. */
+    private var pendingWindowStep = 1.0
     private var pendingTailGrams = 0.0
     private var pendingStartMs   = 0L
 
@@ -121,6 +124,8 @@ class ModeIsfLearner @Inject constructor(
     private var watchUntilMs  = 0L
     private var watchStartMs  = 0L
     private var watchReduced  = false  // evaluation was voided — still weaken, but at a smaller step
+    private var watchCounted  = false  // the window verdict already counted this episode once
+    private var watchWindowStep = 1.0  // what the window verdict applied; a charged low undoes it first
     private var watchMaxDura  = 1.0    // how hard DURA pushed in the episode being watched
 
     /** The episode this learner last actually MOVED the multiplier for. A shape handoff for an
@@ -142,9 +147,6 @@ class ModeIsfLearner @Inject constructor(
 
     companion object {
         private const val TAIL_MS                 = 75 * 60_000L  // settling tail before judging the episode
-        /** Least tail before a superseded episode is judged early: about one insulin peak, so most of
-         *  the mode's insulin has acted on the BG it is judged by. */
-        private const val EARLY_JUDGE_MIN_TAIL_MS = 45 * 60_000L
         /** How long after a mode ends its insulin can still be blamed for a low. Outlives
          *  [TAIL_MS] because the evaluation only needs absorption to be finished, whereas the
          *  low watch needs the mode's *insulin* to be finished — which takes longer. */
@@ -292,7 +294,9 @@ class ModeIsfLearner @Inject constructor(
             if (activeScope == null || modeStartMs != activeStartMs) {
                 // A new activation while an evaluation is still pending contaminates it —
                 // the tail can no longer be judged cleanly.
-                pendingScope?.let { judgePendingEarly(it, activeModeNow, bgMgdl, targetMgdl, nowMs) }
+                // The window was judged when it ended; only its tail is cut short here, and the new
+                // mode learns from its own episode.
+                pendingScope?.let { tailNotJudged(it, "${activeModeNow.label} took over") }
 
                 // The watch hands over to the new episode, which tracks its own lows from here.
                 // Keeping the old one open would weaken twice for a single low.
@@ -357,6 +361,8 @@ class ModeIsfLearner @Inject constructor(
             }
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
             if (entryShapeRailed) episodeShapeRailed = true
+            tailDeltas.addFirst(deltaMgdl)
+            while (tailDeltas.size > TREND_READINGS) tailDeltas.removeLast()
             // Time STUCK above the bar, not merely time touching it. A peak is a moment; what
             // separates a meal the loop is handling from one it isn't is how long BG sits up
             // there. Longest unbroken run, so a spike that crosses the bar twice on its way
@@ -469,7 +475,12 @@ class ModeIsfLearner @Inject constructor(
                 pendingStartBgMgdl  = episodeStartBgMgdl
                 pendingTailGrams = 0.0
                 pendingStartMs   = endedStartMs
-                openWatch(ended, nowMs, endedStartMs, maxDura, watchMs)
+                // Judge the window now: the spike, and where BG was when the mode ended. The tail
+                // after this only has to catch a crash (the low watch) or a BG that is still high
+                // at its end. A mode that takes over during the tail can then cut it short without
+                // losing anything this mode already showed.
+                pendingWindowStep = judgeWindow(ended, bgMgdl, targetMgdl)
+                openWatch(ended, nowMs, endedStartMs, maxDura, watchMs, counted = true, windowStep = pendingWindowStep)
             }
         }
 
@@ -483,19 +494,23 @@ class ModeIsfLearner @Inject constructor(
                 // bar the loop's own corrections own this low, and the circadian hard-low penalty
                 // is already charging the hour for it.
                 if (!ModeInsulinShare.chargeable(modeInsulinShare)) {
-                    noChange(w, "low after ${w.label} ended, but only ${ModeInsulinShare.describe(modeInsulinShare, w.label)} — the loop's own insulin since, not this mode's")
+                    noChange(w, "low after ${w.label} ended, but only ${ModeInsulinShare.describe(modeInsulinShare, w.label)} — the loop's own insulin since, not this mode's", countEpisode = !watchCounted)
                     clearWatch()
                     pendingScope = null
                     return
                 }
-                applyOutcome(w, weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura), share = modeInsulinShare),
+                // A mode strengthened for ending high and then crashed was not under-dosed after
+                // all: undo that strengthen before weakening, so the episode always nets weaker.
+                val undo = 1.0 / watchWindowStep
+                applyOutcome(w, undo * weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura), share = modeInsulinShare),
                              (if (soft) "BG near the low guard after ${w.label} ended" else "low after ${w.label} ended") +
                                  (if (exerciseSuspected) ", but BG was falling faster than insulin explains (exercise?)" else "") +
                                  (if (watchReduced) ", episode no longer clean" else "") +
                                  duraNote(watchMaxDura) +
                                  ", ${ModeInsulinShare.describe(modeInsulinShare, w.label)}" +
-                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced || duraDrove(watchMaxDura) || modeInsulinShare < 1.0) " at reduced step" else ""),
-                             watchStartMs)
+                                 " — weakened" + (if (soft || exerciseSuspected || watchReduced || duraDrove(watchMaxDura) || modeInsulinShare < 1.0) " at reduced step" else "") +
+                                 (if (watchWindowStep != 1.0) ", and the strengthen at mode end undone" else ""),
+                             watchStartMs, countEpisode = !watchCounted)
                 clearWatch()
                 pendingScope = null
                 return
@@ -512,51 +527,69 @@ class ModeIsfLearner @Inject constructor(
             // refuses to fall as fast as the insulin on board predicts reads as fresh absorption,
             // which is exactly what a fat tail looks like — so this fires routinely on the very
             // episodes most likely to end low, and dropping the watch here would lose them.
-            skipPending("fresh absorption (~${"%.0f".format(pendingTailGrams)}g) in ${p.label} tail")
+            tailNotJudged(p, "fresh absorption (~${"%.0f".format(pendingTailGrams)}g)")
             watchReduced = true
             return
         }
         if (nowMs >= pendingEvalAtMs) {
-            evaluatePending(p, bgMgdl, targetMgdl, note = "")
+            judgeTailEnd(p, bgMgdl, targetMgdl)
             pendingScope = null
             tailDeltas.clear()
         }
     }
 
-    /** The verdict on a finished episode, read at [bgMgdl]. [note] is added to every verdict. */
-    private fun evaluatePending(p: Scope, bgMgdl: Double, targetMgdl: Double, note: String) {
+    /**
+     * The verdict on the mode's own window, at the moment it ends: one step at most. Returns the
+     * step applied (1.0 for none), so the tail does not strengthen the same episode again and a
+     * low in the tail can undo it.
+     */
+    private fun judgeWindow(p: Scope, bgMgdl: Double, targetMgdl: Double): Double {
+        val aboveMmol = "%.1f".format((bgMgdl - targetMgdl) / 18.0)
         val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
         when {
-            pendingSpikeTooHigh ->
-                applyOutcome(p, strengthenStep(), "${p.label} spike held ≥3mmol over target for 30min with no front-loading left$note — strengthened", pendingStartMs)
+            pendingSpikeTooHigh -> {
+                val step = strengthenStep()
+                applyOutcome(p, step, "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                return step
+            }
             // Working through a high it inherited: below where it started and still coming
             // down. Charging this reads someone else's high as this mode's under-dosing.
             endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
-                noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling$note — working through an inherited high, no change")
-            endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
-                applyOutcome(p, strengthenStep(), "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target$note — strengthened", pendingStartMs)
-            endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)})$note — stalled tail is DURA's to fix, no change")
-            else      -> noChange(p, "${p.label} on target$note — no change")
+                noChange(p, "${p.label} ended ${aboveMmol}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling — working through an inherited high, no change")
+            endedHigh && pendingMaxDura < DURA_ENGAGED_MULT -> {
+                val step = strengthenStep()
+                applyOutcome(p, step, "${p.label} ended ${aboveMmol}mmol above target — strengthened", pendingStartMs)
+                return step
+            }
+            endedHigh -> noChange(p, "${p.label} ended ${aboveMmol}mmol above target with DURA working (×${"%.2f".format(pendingMaxDura)}) — a stall is DURA's to fix, no change")
+            else      -> noChange(p, "${p.label} ended on target — no change")
         }
+        return 1.0
     }
 
     /**
-     * A new mode started while [p] was still in its settling tail. This used to throw the episode
-     * away, but the mode ran its whole window and BG showed what its dose did. So it is judged now,
-     * by the same rules, at the BG the new mode starts from - as long as the tail has run long
-     * enough for that BG to mean something. A spike that was too high was decided inside the
-     * window itself, so it counts however short the tail was. Lows are not in question here: one
-     * in the window or the tail has already been charged by the time this runs.
+     * End of the settling tail with no low in it. Only one thing is left to learn: BG still high
+     * after the mode's insulin has done its work means the dose was too small - unless the window
+     * already said so. On target, or already strengthened, there is nothing new to record.
      */
-    private fun judgePendingEarly(p: Scope, next: MealMode, bgMgdl: Double, targetMgdl: Double, nowMs: Long) {
-        val tailMins = (nowMs - (pendingEvalAtMs - TAIL_MS)) / 60_000
-        val note = " (judged at ${tailMins}min of the tail, ${next.label} took over)"
-        when {
-            pendingSpikeTooHigh || tailMins * 60_000L >= EARLY_JUDGE_MIN_TAIL_MS -> evaluatePending(p, bgMgdl, targetMgdl, note)
-            else -> skipPending("${next.label} started only ${tailMins}min after ${p.label} ended — too early to judge")
-        }
+    private fun judgeTailEnd(p: Scope, bgMgdl: Double, targetMgdl: Double) {
+        val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
+        val inheritedHigh = stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL
+        if (endedHigh && pendingWindowStep == 1.0 && !inheritedHigh && pendingMaxDura < DURA_ENGAGED_MULT) {
+            val step = strengthenStep()
+            applyOutcome(p, step,
+                         "${p.label}: BG still ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target ${TAIL_MS / 60_000}min after it ended — strengthened",
+                         pendingStartMs, countEpisode = false)
+            // The low watch runs a little past the tail; a low in it undoes this too.
+            if (watchScope == p) watchWindowStep = step
+        } else aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${p.label} tail ended at ${"%.1f".format(bgMgdl / 18.0)}mmol — window verdict stands")
+    }
+
+    /** The tail stops early. The window verdict stands; the low watch is handled by the caller. */
+    private fun tailNotJudged(p: Scope, reason: String) {
+        lastOutcome = "${p.label} tail not judged — $reason (window already judged)"
+        aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
         pendingScope = null
-        tailDeltas.clear()
     }
 
     /** Insulin-pull-only residual (no target-seek term) — conservative fasting-rules check
@@ -613,9 +646,9 @@ class ModeIsfLearner @Inject constructor(
     private fun stillFalling(): Boolean =
         tailDeltas.size >= TREND_READINGS && tailDeltas.average() <= -STILL_FALLING_MGDL_PER_5MIN
 
-    private fun noChange(scope: Scope, outcome: String) {
+    private fun noChange(scope: Scope, outcome: String, countEpisode: Boolean = true) {
         val s = states.getOrPut(scope.key) { ModeState() }
-        s.episodes++
+        if (countEpisode) s.episodes++
         persist()
         lastOutcome = "$outcome (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
@@ -649,7 +682,10 @@ class ModeIsfLearner @Inject constructor(
         return 1.0 + (WEAKEN_STEP - 1.0) * fraction
     }
 
-    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double, watchMs: Long = WATCH_MS) {
+    private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double, watchMs: Long = WATCH_MS,
+                          counted: Boolean = false, windowStep: Double = 1.0) {
+        watchCounted = counted
+        watchWindowStep = windowStep
         watchScope   = mode
         watchUntilMs = nowMs + watchMs
         watchStartMs = episodeStartMs
@@ -663,6 +699,8 @@ class ModeIsfLearner @Inject constructor(
         watchStartMs = 0L
         watchReduced = false
         watchMaxDura = 1.0
+        watchCounted = false
+        watchWindowStep = 1.0
     }
 
     /** True when DURA was pushing hard enough that the low is its bill, not the mode dose's. */
@@ -700,10 +738,11 @@ class ModeIsfLearner @Inject constructor(
                      episodeStartMs)
     }
 
-    private fun applyOutcome(scope: Scope, step: Double, reason: String, episodeStartMs: Long = 0L) {
+    private fun applyOutcome(scope: Scope, step: Double, reason: String, episodeStartMs: Long = 0L,
+                             countEpisode: Boolean = true) {
         val s = states.getOrPut(scope.key) { ModeState() }
         s.mult = (s.mult * step).coerceIn(MULT_MIN, MULT_MAX)
-        s.episodes++
+        if (countEpisode) s.episodes++
         lastMovedMode    = scope.mode
         lastMovedStartMs = episodeStartMs
         persist()
