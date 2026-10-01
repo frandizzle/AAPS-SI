@@ -710,6 +710,11 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
+    /** How a mode reads on the overview's "Meal:" line: "Lunch" when started from Smart Meal, "Lunch UAM" when
+     *  UAM detected it, so the two are told apart at a glance. Fasting stays "Fasting". */
+    private fun overviewMealLabel(mode: MealMode): String =
+        if (mode.isUam) "${mode.label.removeSuffix(" (UAM)")} UAM" else mode.label
+
     override fun overviewState(): SmartInsulinOverview.OverviewState {
         // Recompute modeLine and learningState live so they're always current.
         // Avoids stale display between loop cycles (e.g. mode expired but state still shows P/F).
@@ -721,18 +726,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val liveModeLine = activeMode?.let { mode ->
             val mins = mealOverrideManager.modeTimeRemainingMs / 60_000
-            val label = if (mode.isUam) {
-                when (mode) {
-                    MealMode.UAM_BREAKFAST    -> "Breakfast"
-                    MealMode.UAM_LUNCH        -> "Lunch"
-                    MealMode.UAM_DINNER       -> "Dinner"
-                    MealMode.UAM_SNACK        -> "Snack"
-                    MealMode.UAM_PROTEIN_FAT  -> "Protein/Fat"
-                    MealMode.UAM_AFTERNOON    -> "Afternoon"
-                    else                      -> mode.label
-                }
-            } else mode.label
-            "Meal: $label ${mins}m"
+            "Meal: ${overviewMealLabel(mode)} ${mins}m"
         } ?: "Meal: Fasting"
 
         // Pre-bolus lines show only while the pre-bolus is still to come. Once delivered they go —
@@ -1584,7 +1578,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         cachedOverviewState = SmartInsulinOverview.OverviewState(
-            modeLine = "Meal: ${mealMode.label}", // Re-computed in overviewState()
+            modeLine = "Meal: ${overviewMealLabel(mealMode)}", // Re-computed in overviewState()
             pb2Line = pb2Line,
             pb3Line = pb3Line,
             learningState = if (highTempTarget) "off: High temp target" else getLearningState()

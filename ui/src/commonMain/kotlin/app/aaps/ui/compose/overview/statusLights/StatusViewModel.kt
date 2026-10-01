@@ -40,7 +40,11 @@ import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -74,19 +78,38 @@ class StatusViewModel(
         refreshState()
     }
 
+    /**
+     * Refresh only while something shows the status lights, as the 3.4 overview did by dropping its timer and
+     * listeners in onPause. This ViewModel outlives the screen: with the app in the background or the screen
+     * off it kept rebuilding every minute and on every pump status event, including the "insulin since
+     * cannula/patch change" total - one basal and extended-bolus lookup per five minutes of its life - for
+     * nobody. Every screen collects [uiState] with collectAsStateWithLifecycle, which unsubscribes below
+     * STARTED, so a subscriber means it is on screen; coming back refreshes at once.
+     */
     private fun setupEventListeners() {
         rxBus.toFlow(EventInitializationChanged::class)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
         persistenceLayer.observeChanges(TE::class)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
         persistenceLayer.databaseClearedFlow
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
         rxBus.toFlow(EventPumpStatusChanged::class)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
         rxBus.toFlow(EventNsClientStatusUpdated::class)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
         tickerFlow(60_000L)
-            .onEach { refreshState() }.launchIn(viewModelScope)
+            .onEach { refreshIfShown() }.launchIn(viewModelScope)
+        _uiState.subscriptionCount
+            .map { it > 0 }
+            .distinctUntilChanged()
+            .drop(1) // the initial refresh is in init
+            .filter { it }
+            .onEach { refreshState() }
+            .launchIn(viewModelScope)
+    }
+
+    private fun refreshIfShown() {
+        if (_uiState.subscriptionCount.value > 0) refreshState()
     }
 
     fun refreshState() {
