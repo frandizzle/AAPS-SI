@@ -173,7 +173,7 @@ fun SmartInsulinScreen(
             SiItems(cards.buildProfilesCard(d).items, onAction)
         }
         SiSection("Raw Status Log", Icons.Filled.Code, accent = MaterialTheme.colorScheme.onSurfaceVariant, initiallyExpanded = false) {
-            SiItems(listOf(SiItem.Mono(plugin.statusSummary(), 0xFFDDDDDD.toInt(), false)), onAction)
+            SiItems(listOf(SiItem.Mono(plugin.statusSummary(), SiTone.STRONG, false)), onAction)
         }
 
         SiSection("Reset Learners", Icons.Filled.RestartAlt, accent = colors.statusCritical, subtitle = "Undo what SmartInsulin has learned",

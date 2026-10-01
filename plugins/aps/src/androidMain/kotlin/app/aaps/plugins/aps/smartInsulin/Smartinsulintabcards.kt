@@ -1,6 +1,5 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -23,13 +22,13 @@ import kotlin.math.roundToInt
  * Keeping it as data also makes the tab testable without a device, which the View version never was.
  */
 sealed interface SiItem {
-    data class Row(val primary: String, val detail: String?, val color: Int) : SiItem
+    data class Row(val primary: String, val detail: String?, val tone: SiTone) : SiItem
     data object Divider : SiItem
-    data class Mono(val text: String, val color: Int, val bold: Boolean) : SiItem
+    data class Mono(val text: String, val tone: SiTone, val bold: Boolean) : SiItem
     data class Note(val text: String) : SiItem
     data class Header(val title: String) : SiItem
     /** Tappable text — the screen decides what [action] does. */
-    data class Action(val text: String, val action: SiAction, val color: Int) : SiItem
+    data class Action(val text: String, val action: SiAction, val tone: SiTone) : SiItem
 }
 
 enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG }
@@ -47,21 +46,21 @@ class SiCardBuilder {
     var visible = true
     val labels = mutableMapOf<String, String>()
 
-    fun addRow(primary: String, detail: String? = null, primaryColor: Int = Color.WHITE) {
-        items += SiItem.Row(primary, detail, primaryColor)
+    fun addRow(primary: String, detail: String? = null, tone: SiTone = SiTone.STRONG) {
+        items += SiItem.Row(primary, detail, tone)
     }
     fun addDivider() { items += SiItem.Divider }
     fun addGateRow(primary: String, detail: String, passed: Boolean) {
-        val color = if (passed) Color.parseColor("#FF43A047") else Color.parseColor("#FFE53935")
+        val color = if (passed) SiTone.GOOD else SiTone.CRITICAL
         addRow((if (passed) "✓ " else "✗ ") + primary, detail, color)
     }
-    fun addMonospaceBlock(text: String, color: Int = Color.parseColor("#FFDDDDDD"), bold: Boolean = false) {
-        if (text.isNotBlank()) items += SiItem.Mono(text, color, bold)
+    fun addMonospaceBlock(text: String, tone: SiTone = SiTone.STRONG, bold: Boolean = false) {
+        if (text.isNotBlank()) items += SiItem.Mono(text, tone, bold)
     }
     fun addNoteBlock(text: String) { if (text.isNotBlank()) items += SiItem.Note(text) }
     fun addSectionHeader(title: String) { items += SiItem.Header(title) }
-    fun addAction(text: String, action: SiAction, color: Int = Color.parseColor("#FF64B5F6")) {
-        items += SiItem.Action(text, action, color)
+    fun addAction(text: String, action: SiAction, tone: SiTone = SiTone.INFO) {
+        items += SiItem.Action(text, action, tone)
     }
     fun build() = SiCardContent(items.toList(), visible, labels.toMap())
 }
@@ -92,20 +91,20 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         plugin.carbEpisodeStatus()?.let {
             addRow(it, "Carbs were entered, so the COB curve doses this meal (profile ISF ÷ CR) and\n" +
                 "UAM/P-F stand down. When COB reaches zero the post-meal lockout starts.",
-                   Color.parseColor("#FF64B5F6"))
+                   SiTone.INFO)
         }
         plugin.secondWaveNote()?.let {
             addRow("⚠ Second wave detected — episode not scored", it +
                 ".\nMore food went in during the mode's own window, so nothing after it says\n" +
                 "anything about the dose this mode was given. Lows are still learned from.",
-                   Color.parseColor("#FFFB8C00"))
+                   SiTone.WARNING)
         }
         plugin.activitySessionStatus()?.let {
             addRow(it, "UAM and P/F blocked — a flat high here is hormones, not food.",
-                   Color.parseColor("#FFFB8C00"))
+                   SiTone.WARNING)
         } ?: addRow("No session running",
                     "Start one for a round of golf or a gym session: no food, hormones running the show.",
-                    Color.parseColor("#FFCCCCCC"))
+                    SiTone.MUTED)
 
         val learned = plugin.activitySessionLearned()
         if (learned.isEmpty()) {
@@ -123,7 +122,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             }
         }
         plugin.activitySessionLastOutcome().takeIf { it.isNotEmpty() }?.let {
-            addRow("Last: $it", null, Color.parseColor("#FFCCCCCC"))
+            addRow("Last: $it", null, SiTone.MUTED)
         }
     }
 
@@ -155,7 +154,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 "⚠ Recovery in progress — ${elapsedInt}min of ${windowInt}min"
             else
                 "⚠ Recovery in progress — SMBs restored, tapering off in ${minsLeft}min"
-            addRow(headline, primaryColor = Color.parseColor("#FFFB8C00"))
+            addRow(headline, tone = SiTone.WARNING)
 
             // BG a hair under the guard (inside the CGM match tolerance) — not far enough to count
             // as a low, so the window keeps running. Say so, so the counter isn't misread.
@@ -163,7 +162,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 addRow("⚠ BG right on the low guard — recovery counter still running",
                        "Within 1 mg/dL of the guard, so it isn't treated as a new low. A proper dip below\n" +
                            "restarts the window, and doubles it if BG had genuinely recovered first.",
-                       Color.parseColor("#FFE53935"))
+                       SiTone.CRITICAL)
             }
 
             // Re-low extension row
@@ -172,7 +171,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 addRow("Went low again — recovery window ×${d.relowCount + 1}",
                        "Base: ${baseMins.toInt()}min + ${relowMins}min for ${if (d.relowCount == 1) "the second low" else "${d.relowCount} re-lows"}.\n" +
                            "Restarted from 30% when BG came back above the guard. Max ×${RecoveryRelowTracker.RELOW_MAX_EXTENSIONS + 1}.",
-                       Color.parseColor("#FFFB8C00"))
+                       SiTone.WARNING)
             }
 
             // TBR taper
@@ -184,11 +183,11 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             if (smbUnlockIn > 0) {
                 addRow("SMBs blocked — unlocks in ~${smbUnlockIn}min",
                        "SMBs held back for first ${smbGateMins.toInt()} minutes (75% of ${windowMins.toInt()}min window).\nAvoids over-correcting while the low is still resolving.",
-                       Color.parseColor("#FFE53935"))
+                       SiTone.CRITICAL)
             } else {
                 addRow("SMBs restored ✓",
                        "Corrections running normally again. TBR taper still active for ${minsLeft}min.",
-                       Color.parseColor("#FF43A047"))
+                       SiTone.GOOD)
             }
 
             // Rollercoaster extension rows
@@ -203,7 +202,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                        "Base: ${(baseMins * (1 + d.relowCount)).toInt()}min + ${extMins}min extension = ${windowMins.toInt()}min total.\n" +
                            "Extension grows with each consecutive rollercoaster (max +45min).\n" +
                            "Resets after 2h with no further rollercoasters.",
-                       Color.parseColor("#FFFB8C00"))
+                       SiTone.WARNING)
             }
 
             // Meal mode active during recovery
@@ -211,7 +210,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 addRow("Meal mode active — low recovery bypassed until window finishes",
                        "Recovery protection (TBR taper, SMB gate) continues running in the background.\n" +
                            "Meal mode ISF and dosing are applied on top. Recovery ends in ${minsLeft}min.",
-                       Color.parseColor("#FF64B5F6"))
+                       SiTone.INFO)
             }
 
             // Bypass status
@@ -219,7 +218,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 addRow("Soft landing — meal detection still active",
                        "The low was borderline (not a crash). UAM is allowed to fire\n" +
                            "during recovery in case you eat.",
-                       Color.parseColor("#FF64B5F6"))
+                       SiTone.INFO)
             }
 
             // How low it went
@@ -244,7 +243,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                                val extMins = d.totalReboundWindowMins - d.reboundWindowMins * (1 + d.relowCount)
                                "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                            } else "",
-                       Color.parseColor("#FFE53935"))
+                       SiTone.CRITICAL)
             } else {
                 addRow("⚡ BG recovering — rebound window starting",
                        "BG has crossed back above the low guard. The ${d.totalReboundWindowMins}-minute recovery window is activating." +
@@ -252,12 +251,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                                val extMins = d.totalReboundWindowMins - d.reboundWindowMins * (1 + d.relowCount)
                                "\nRollercoaster ${d.consecutiveRollercoasters} detected — window extended by ${extMins}min."
                            } else "",
-                       Color.parseColor("#FFFB8C00"))
+                       SiTone.WARNING)
             }
             if (d.mealMode != "Fasting") {
                 addRow("✓ Low recovery bypassed — meal mode active (${d.mealMode})",
                        "Meal mode ISF and dosing running normally.\nRecovery window activates automatically when BG crosses back above the low guard.",
-                       Color.parseColor("#FF43A047"))
+                       SiTone.GOOD)
             }
             if (d.minBgDuringLow < Double.MAX_VALUE) {
                 val lowBgStr2 = if (d.isMmol) "${"%.1f".format(d.minBgDuringLow / 18.0)} mmol"
@@ -275,12 +274,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         addRow("${d.dayLabel}  ${d.hour}:00",
                "Current hour used for circadian adjustments")
 
-        val modeColor = if (d.mealMode == "Fasting") Color.WHITE else Color.parseColor("#FF64B5F6")
+        val modeColor = if (d.mealMode == "Fasting") SiTone.STRONG else SiTone.INFO
         addRow("Mode: ${d.mealMode}",
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
 
-        val aggrColor = when { d.aggressiveness > 1.05 -> Color.parseColor("#FFFB8C00"); d.aggressiveness < 0.95 -> Color.parseColor("#FF64B5F6"); else -> Color.WHITE }
+        val aggrColor = when { d.aggressiveness > 1.05 -> SiTone.WARNING; d.aggressiveness < 0.95 -> SiTone.INFO; else -> SiTone.STRONG }
         val isFasting = d.mealMode == "Fasting"
 
         // -- Plain-English short-term / long-term insulin summary -------------
@@ -378,22 +377,22 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             else                -> aggrDesc(d.aggressiveness)
         }
         addRow(aggrPrimary, aggrDetail, when {
-            d.inReboundWindow || d.bgWentLow -> Color.parseColor("#FFFB8C00")
-            !isFasting -> Color.parseColor("#FF888888")
+            d.inReboundWindow || d.bgWentLow -> SiTone.WARNING
+            !isFasting -> SiTone.MUTED
             else -> aggrColor
         })
 
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
             addRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
-                   primaryColor = Color.parseColor("#FF43A047"))
+                   tone = SiTone.GOOD)
         }
 
         // Pre-bolus 2 — show delivered amount once fired
         if (d.mealMode != "Fasting" && d.activePb2DoseU != null && d.activePb2DoseU > 0.0) {
             addRow("Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",
                    "Second bolus delivered as scheduled.",
-                   Color.parseColor("#FF43A047"))
+                   SiTone.GOOD)
         } else if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
@@ -406,7 +405,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 gate != null -> "Pre-bolus 2 — waiting for safety gates"
                 else         -> "Pre-bolus 2"
             }
-            addRow(pb2Primary, primaryColor = if (isActive) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+            addRow(pb2Primary, tone = if (isActive) SiTone.GOOD else SiTone.INFO)
 
             if (gate != null) {
                 val isMmol = gate.isMmol
@@ -444,7 +443,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         if (d.mealMode != "Fasting" && d.activePb3DoseU != null && d.activePb3DoseU > 0.0) {
             addRow("Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
                    "Third bolus delivered (late-meal cover).",
-                   Color.parseColor("#FF43A047"))
+                   SiTone.GOOD)
         } else if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
             val gate3    = d.pb3GateData
             val isActive3 = d.pb3Status.contains("active")
@@ -462,7 +461,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
             else null
             addRow(pb3Primary, pb3Sub,
-                   primaryColor = if (isActive3) Color.parseColor("#FF43A047") else Color.parseColor("#FF64B5F6"))
+                   tone = if (isActive3) SiTone.GOOD else SiTone.INFO)
 
             if (gate3 != null) {
                 val isMmol3 = gate3.isMmol
@@ -523,27 +522,27 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
 
     private fun SiCardBuilder.fillLearningCard(d: SmartInsulinPlugin.FragmentData) {
 
-        addRow("SmartInsulin adapts to your body over time using real BG data.", primaryColor = Color.parseColor("#FFCCCCCC"))
+        addRow("SmartInsulin adapts to your body over time using real BG data.", tone = SiTone.MUTED)
 
         val (statePrimary, stateColor) = when {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
-                Pair("Learning paused — ${d.learningState.removePrefix("off: ").trim().ifEmpty{"unknown"}}", Color.parseColor("#FFFB8C00"))
+                Pair("Learning paused — ${d.learningState.removePrefix("off: ").trim().ifEmpty{"unknown"}}", SiTone.WARNING)
             d.learningState == "limited" || d.learningState.startsWith("Limited") ->
-                Pair("Limited — meal mode active, only learning Peak/DIA", Color.parseColor("#FFFB8C00"))
-            else -> Pair("Learning active", Color.parseColor("#FF43A047"))
+                Pair("Limited — meal mode active, only learning Peak/DIA", SiTone.WARNING)
+            else -> Pair("Learning active", SiTone.GOOD)
         }
         addRow(statePrimary, "State: ${d.learningState}", stateColor)
 
         if (d.postMealLockoutMins > 0 && d.mealMode == "Fasting")
             addRow("Post-meal pause: ${d.postMealLockoutMins}min remaining",
-                   "BG data after meals is excluded from basal/ISF learning.", Color.parseColor("#FFFB8C00"))
+                   "BG data after meals is excluded from basal/ISF learning.", SiTone.WARNING)
 
         val actColor = when (d.activityLevel) {
-            "Sedentary" -> Color.parseColor("#FF888888")
-            "Light"     -> Color.parseColor("#FF43A047")
-            "Moderate"  -> Color.parseColor("#FFFB8C00")
-            "Heavy"     -> Color.parseColor("#FFEF6C00")
-            else        -> Color.parseColor("#FF888888")
+            "Sedentary" -> SiTone.MUTED
+            "Light"     -> SiTone.GOOD
+            "Moderate"  -> SiTone.WARNING
+            "Heavy"     -> SiTone.WARNING
+            else        -> SiTone.MUTED
         }
         val activityDetail = buildString {
             append("Activity: ${d.activityLevel}")
@@ -572,9 +571,9 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         // Its own tappable row rather than text inside the one above, so the affordance is real.
         if (d.phoneStepState == PhoneStepCounter.State.NEEDS_PERMISSION)
             addAction("▶ Enable phone pedometer — steps with no watch delay", SiAction.REQUEST_STEP_PERMISSION,
-                      Color.parseColor("#FF64B5F6"))
+                      SiTone.INFO)
 
-        if (d.cgmWarmup) addRow("New sensor — learning paused for first 24h", null, Color.parseColor("#FFFB8C00"))
+        if (d.cgmWarmup) addRow("New sensor — learning paused for first 24h", null, SiTone.WARNING)
 
         addDivider()
 
@@ -615,7 +614,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
 
         val stHeadline: String
         val stDetail: String
-        val stColor: Int
+        val stColor: SiTone
 
         val shortPct  = ((1.0 - d.circCeil) * 100).roundToInt()
         val stAction  = if (shortPct > 0) "Reducing insulin" else if (shortPct < 0) "Adding insulin" else "Neutral"
@@ -640,13 +639,13 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 stHeadline = "$stIcon Recovering from low — $stAction"
                 stDetail   = "TBR capped at ${(d.aggressiveness * 100).roundToInt()}% of normal to prevent stacking after a low." +
                     learningPauseNote
-                stColor    = Color.parseColor("#FFFB8C00")
+                stColor    = SiTone.WARNING
             }
             d.bgWentLow -> {
                 stHeadline = "⚠️ BG below low guard — Reducing insulin"
                 stDetail   = "Waiting for BG to recover above low guard before resuming normal corrections." +
                     learningPauseNote
-                stColor    = Color.parseColor("#FFE53935")
+                stColor    = SiTone.CRITICAL
             }
             nudgeTrim -> {
                 val trimDir = nudgeParts.getOrNull(1) ?: ""
@@ -674,19 +673,19 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     (if (trimPct.isNotEmpty()) " (trim ${if (isHigh) "+" else "−"}$trimPct)" else "") + "\n" +
                     "Unchanged by the trim — ISF ${fmtIsf(d.bucketIsfMultiplier)}, basal ${fmtBas(d.bucketBasalMultiplier)} this hour" +
                     learningPauseNote
-                stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
+                stColor    = if (isHigh) SiTone.GOOD else SiTone.WARNING
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("rollercoaster") == true -> {
                 stHeadline = "⬇️ Rollercoaster detected — Reducing insulin"
                 stDetail   = "Detected unstable swings (Rollercoaster #${d.consecutiveRollercoasters}). Capping insulin at ${(d.circCeil * 100).roundToInt()}% to stop the rollercoaster." +
                     learningPauseNote
-                stColor    = Color.parseColor("#FFFB8C00")
+                stColor    = SiTone.WARNING
             }
             nudgeActive && nudgeParts.getOrNull(9)?.contains("soft low") == true -> {
                 stHeadline = "⬇️ Soft low approach — Reducing insulin"
                 stDetail   = "BG is falling fast with IOB on board. Reducing insulin to prevent a crash." +
                     learningPauseNote
-                stColor    = Color.parseColor("#FFFB8C00")
+                stColor    = SiTone.WARNING
             }
             nudgeActive -> {
                 val isHigh = nudgeState == "ACTIVE_HIGH"
@@ -717,13 +716,13 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     "ISF was ${fmtIsf(sIsfMult)} → now ${fmtIsf(cIsfMult)}${if (isfHeld) heldNote else ""}\n" +
                     "Basal was ${fmtBas(sBasMult)} → now ${fmtBas(cBasMult)}${if (basHeld) heldNote else ""}" +
                     learningPauseNote
-                stColor    = if (isHigh) Color.parseColor("#FF43A047") else Color.parseColor("#FFFB8C00")
+                stColor    = if (isHigh) SiTone.GOOD else SiTone.WARNING
             }
             nudgePaused -> {
                 stHeadline = "⏸ Paused — ${nudgeParts.getOrNull(1) ?: "Learning suppressed"}"
                 stDetail   = "Short-term adjustments paused while not in a clean fasting state." +
                     learningPauseNote
-                stColor    = Color.parseColor("#FF64B5F6")
+                stColor    = SiTone.INFO
             }
             isMealOrUamActive || isPostMealLockout -> {
                 // No active nudge/trim but learning is paused — show a dedicated paused state
@@ -740,7 +739,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     else              ->
                         "ISF and basal learning paused while ${d.mealMode} is active.\nOnly DIA/peak learning active. Corrections still running normally."
                 }
-                stColor    = Color.parseColor("#FF64B5F6")
+                stColor    = SiTone.INFO
             }
             nudgeDecay -> {
                 stHeadline = "↩ Unwinding an old correction"
@@ -749,17 +748,17 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     "A one-off bad night fades out over about three days if it does not repeat.\n" +
                     "ISF ${fmtIsf(d.isfMultiplier)} · Basal ${fmtBas(d.basalMultiplier)}" +
                     learningPauseNote
-                stColor    = Color.parseColor("#FF64B5F6")
+                stColor    = SiTone.INFO
             }
             else -> {
                 stHeadline = "⏺ Stable — No short-term adjustments"
                 stDetail   = "BG is responding normally. Loop is running at profile aggressiveness."
-                stColor    = Color.parseColor("#FFCCCCCC")
+                stColor    = SiTone.MUTED
             }
         }
         addRow(stHeadline, stDetail, stColor)
         d.lastRunError?.let {
-            addRow("⚠️ Last loop cycle failed", it, Color.parseColor("#FFE53935"))
+            addRow("⚠️ Last loop cycle failed", it, SiTone.CRITICAL)
         }
 
         // --- LONG-TERM LEARNING ---
@@ -791,25 +790,25 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         val longTermPct   = ((1.0 - d.basalMultiplier) * 100).roundToInt()
         val ltAction = if (longTermPct > 0) "Reduced insulin needs" else if (longTermPct < 0) "Increased insulin needs" else "Neutral"
 
-        addRow("Profile updated: $ltAction", "Historical pattern at $hourStr on ${day}s.", Color.WHITE)
+        addRow("Profile updated: $ltAction", "Historical pattern at $hourStr on ${day}s.", SiTone.STRONG)
 
         val isfColor = when {
-            ltIsfMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger/aggressive)
-            ltIsfMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker/conservative)
-            else -> Color.parseColor("#FFCCCCCC")
+            ltIsfMult > 1.03 -> SiTone.WARNING // Orange (stronger/aggressive)
+            ltIsfMult < 0.97 -> SiTone.INFO // Blue (weaker/conservative)
+            else -> SiTone.MUTED
         }
         addRow("ISF: ${fmtIsf(ltIsfMult)} ($isfComp)", null, isfColor)
 
         val basColor = when {
-            ltBasMult > 1.03 -> Color.parseColor("#FFFB8C00") // Orange (stronger)
-            ltBasMult < 0.97 -> Color.parseColor("#FF64B5F6") // Blue (weaker)
-            else -> Color.parseColor("#FFCCCCCC")
+            ltBasMult > 1.03 -> SiTone.WARNING // Orange (stronger)
+            ltBasMult < 0.97 -> SiTone.INFO // Blue (weaker)
+            else -> SiTone.MUTED
         }
         addRow("Basal: ${fmtBas(ltBasMult)} ($basComp)", null, basColor)
 
         // -- Feed-forward debug toggle -----------------------------------------
         addAction(if (showFfDebug) "▲ Hide feed-forward debug" else "▼ Feed-forward debug (Accel + PredTrim)",
-                  SiAction.TOGGLE_FF_DEBUG, Color.parseColor("#FFCCCCCC"))
+                  SiAction.TOGGLE_FF_DEBUG, SiTone.MUTED)
         if (showFfDebug) {
             addRow("Acceleration (2nd derivative)", d.lastAccelDebug.ifEmpty { "(no data)" })
             addRow("Predictive Basal Trim (60min projection)", d.lastPredTrimDebug.ifEmpty { "(no data)" })
@@ -833,21 +832,21 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val minsLeft = d.modeRemMins ?: 0
             addRow("${d.mealMode} active — ${minsLeft}min remaining",
                    "Meal auto-detected. ISF and dosing adjusted for ${d.mealMode}.\nUAM detection resumes when this mode expires.",
-                   Color.parseColor("#FF64B5F6"))
+                   SiTone.INFO)
         } else {
             // -- UAM detection status ------------------------------------------
             val uamPart = line.substringBefore(" | P/F:").trim()
             val cleanUamPart = uamPart.removePrefix("[dirty] ").trim()
 
             val (primary, color) = when {
-                cleanUamPart.startsWith("watching") -> Pair("BG rising — building confirmation streak ?", Color.parseColor("#FFFB8C00"))
-                cleanUamPart.startsWith("last")     -> Pair("Meal auto-detected recently", Color.parseColor("#FF64B5F6"))
-                cleanUamPart.startsWith("armed")    -> Pair("Watching for unannounced meals", Color.parseColor("#FF43A047"))
+                cleanUamPart.startsWith("watching") -> Pair("BG rising — building confirmation streak ?", SiTone.WARNING)
+                cleanUamPart.startsWith("last")     -> Pair("Meal auto-detected recently", SiTone.INFO)
+                cleanUamPart.startsWith("armed")    -> Pair("Watching for unannounced meals", SiTone.GOOD)
                 cleanUamPart.startsWith("off")      -> {
                     val reason = cleanUamPart.substringAfter("off").removePrefix(" (").removeSuffix(")").trim()
-                    Pair("Auto-detection off — $reason", Color.parseColor("#FF888888"))
+                    Pair("Auto-detection off — $reason", SiTone.MUTED)
                 }
-                else -> Pair("UAM status", Color.WHITE)
+                else -> Pair("UAM status", SiTone.STRONG)
             }
             addRow(primary, uamPart.ifEmpty { null }, color)
         }
@@ -870,14 +869,14 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         addSectionHeader("Protein / Fat Detection (P/F)")
 
         val (pfPrimary, pfColor) = when {
-            pfPart == null                       -> Pair("P/F detection disabled", Color.parseColor("#FFCCCCCC"))
-            pfPart.contains("off")               -> Pair("P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}", Color.parseColor("#FFCCCCCC"))
-            pfPart.contains("armed")             -> Pair("Armed — will activate after meal expires", Color.parseColor("#FF43A047"))
+            pfPart == null                       -> Pair("P/F detection disabled", SiTone.MUTED)
+            pfPart.contains("off")               -> Pair("P/F off — ${pfPart.substringAfter("off").trim().removePrefix("(").removeSuffix(")")}", SiTone.MUTED)
+            pfPart.contains("armed")             -> Pair("Armed — will activate after meal expires", SiTone.GOOD)
             pfPart.contains("/") && pfPart.contains("stuck") -> {
                 val count = Regex("""(\d+/\d+)""").find(pfPart)?.groupValues?.get(1)
-                Pair("BG stuck high — counting readings ($count)", Color.parseColor("#FFFB8C00"))
+                Pair("BG stuck high — counting readings ($count)", SiTone.WARNING)
             }
-            else                                 -> Pair("P/F: $pfPart", Color.WHITE)
+            else                                 -> Pair("P/F: $pfPart", SiTone.STRONG)
         }
         val pfDebug = d.uamDebug.lines()
             .filter { it.trimStart().startsWith("P/F") }
@@ -896,7 +895,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         if (d.mealAbsorptionInProgress.isNotBlank()) {
             addRow("In progress: ${d.mealAbsorptionInProgress}",
                    "Updates live each loop cycle — only finalized into the log below once this mode ends.",
-                   Color.parseColor("#FF64B5F6"))
+                   SiTone.INFO)
         }
         addDivider()
         addSectionHeader("Learned Mode ISF (per meal / UAM mode)")
@@ -928,9 +927,9 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             "of front-loading could have beaten it. Ended high, or went low late → left alone, " +
             "that is mode ISF's job. Entry SMB count stays manual.")
         if (d.mealAbsorptionLog.isBlank()) {
-            addRow("No completed meal/UAM episodes logged yet", null, Color.parseColor("#FFCCCCCC"))
+            addRow("No completed meal/UAM episodes logged yet", null, SiTone.MUTED)
         } else {
-            addMonospaceBlock("Date      Meal                 Duration   Est. grams", Color.parseColor("#FFCCCCCC"), bold = true)
+            addMonospaceBlock("Date      Meal                 Duration   Est. grams", SiTone.MUTED, bold = true)
             addMonospaceBlock(d.mealAbsorptionLog.trimEnd())
         }
     }
@@ -942,7 +941,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         if (d.stftActive && d.stftStatus != null) {
             addRow("Active — gently nudging the loop to correct",
                    d.stftStatus + "\n\nSoft Target Fine-Tune temporarily lowers the loop's internal target\nwhen fasting BG stays stuck above target. Resets when BG falls.",
-                   Color.parseColor("#FFFB8C00"))
+                   SiTone.WARNING)
         } else {
             val inactiveReason = when {
                 d.stftStatus?.contains("high temp target") == true ->
@@ -958,7 +957,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             }
             addRow(inactiveReason,
                    "STFT activates when fasting BG stays above target for 3+ readings (~15min).\nLowers the loop's target slightly without changing your profile.",
-                   Color.parseColor("#FFCCCCCC"))
+                   SiTone.MUTED)
         }
     }
 
@@ -968,15 +967,15 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
     private fun SiCardBuilder.fillProfilesCard(d: SmartInsulinPlugin.FragmentData) {
         // (profile rows)
 
-        addRow("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", primaryColor = Color.parseColor("#FFCCCCCC"))
+        addRow("Learned peak and duration per meal type. Green = learned, amber = learning, grey = using profile values.", tone = SiTone.MUTED)
         // -- Tracker status row (#27) ------------------------------------------
         val (profStatusPrimary, profStatusColor) = when {
             d.profileLearningStatus.startsWith("off") ->
-                "Learning paused" to Color.parseColor("#FFFB8C00")
+                "Learning paused" to SiTone.WARNING
             d.profileLearningStatus.contains("tracker=idle") ->
-                "Watching for new bolus" to Color.parseColor("#FF43A047")
+                "Watching for new bolus" to SiTone.GOOD
             else ->
-                "Tracking active bolus curve" to Color.parseColor("#FF64B5F6")
+                "Tracking active bolus curve" to SiTone.INFO
         }
         val profStatusDetail = d.profileLearningStatus
             .replace("off: ", "")
@@ -1000,7 +999,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                     activeMealMode.contains(name, ignoreCase = true)
             }
             // Colour from learning status regardless of active state
-            val col  = when { n >= 5 -> Color.parseColor("#FF43A047"); n >= 1 -> Color.parseColor("#FFFB8C00"); else -> Color.parseColor("#FFCCCCCC") }
+            val col  = when { n >= 5 -> SiTone.GOOD; n >= 1 -> SiTone.WARNING; else -> SiTone.MUTED }
             val note = when { n == 0 -> "  (using profile values — not enough data yet)"; n < 5 -> "  (still learning)"; else -> "" }
             val prefix = if (isActive) "→ " else "  "
             addRow("$prefix$name", info + note, col)

@@ -50,27 +50,12 @@ import app.aaps.core.ui.compose.AapsTheme
  * Visual language for the SmartInsulin tab: 4.0 Material 3 cards and type, with every colour taken
  * from the theme so the tab reads correctly in light and dark.
  *
- * The card builders ([SmartInsulinTabCards]) still hand over the 3.4 fragment's ARGB ints. Rather than
- * rewrite ~1000 lines of wording logic, [siTone] classifies each int by hue into a meaning (good,
- * warning, critical, info, P/F, neutral) and the theme decides what that meaning looks like.
+ * The card builders ([SmartInsulinTabCards]) say what each line means ([SiTone]: good, warning,
+ * critical, info, strong, muted); [color] turns that into the theme's colour for it.
  */
 
-enum class SiTone { GOOD, WARNING, CRITICAL, INFO, SPECIAL, STRONG, MUTED }
-
-/** Classify a 3.4 hard-coded colour into what it meant. */
-fun siTone(argb: Int): SiTone {
-    val hsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(argb, hsv)
-    val (h, s, v) = Triple(hsv[0], hsv[1], hsv[2])
-    return when {
-        s < 0.25f -> if (v > 0.8f) SiTone.STRONG else SiTone.MUTED
-        h < 18f || h >= 340f -> SiTone.CRITICAL
-        h < 65f  -> SiTone.WARNING
-        h < 170f -> SiTone.GOOD
-        h < 250f -> SiTone.INFO
-        else     -> SiTone.SPECIAL
-    }
-}
+/** What a line on the tab means; the theme decides what that looks like. */
+enum class SiTone { GOOD, WARNING, CRITICAL, INFO, STRONG, MUTED }
 
 @Composable
 fun SiTone.color(): Color = when (this) {
@@ -78,13 +63,9 @@ fun SiTone.color(): Color = when (this) {
     SiTone.WARNING  -> AapsTheme.generalColors.statusWarning
     SiTone.CRITICAL -> AapsTheme.generalColors.statusCritical
     SiTone.INFO     -> AapsTheme.elementColors.insulin
-    SiTone.SPECIAL  -> MaterialTheme.colorScheme.tertiary
     SiTone.STRONG   -> MaterialTheme.colorScheme.onSurface
     SiTone.MUTED    -> MaterialTheme.colorScheme.onSurfaceVariant
 }
-
-@Composable
-fun siColor(argb: Int): Color = siTone(argb).color()
 
 // ── Card ─────────────────────────────────────────────────────────────────────
 
@@ -170,7 +151,7 @@ private fun SiItemView(item: SiItem, onAction: (SiAction) -> Unit, first: Boolea
                 if (tabular) item.text.trimEnd() else reflow(item.text),
                 style = MaterialTheme.typography.bodySmall,
                 fontFamily = if (tabular) FontFamily.Monospace else null,
-                color = siColor(item.color).let { if (siTone(item.color) == SiTone.STRONG) MaterialTheme.colorScheme.onSurface else it },
+                color = item.tone.color(),
                 modifier = Modifier.padding(10.dp)
             )
         }
@@ -196,7 +177,7 @@ private fun SiItemView(item: SiItem, onAction: (SiAction) -> Unit, first: Boolea
 /** A status line: coloured headline, with ✓ / ✗ prefixes turned into icons, and a muted explanation. */
 @Composable
 private fun SiRow(row: SiItem.Row, modifier: Modifier) {
-    val tone = siTone(row.color)
+    val tone = row.tone
     val color = tone.color()
     val (icon, text) = when {
         row.primary.startsWith("✓") -> Icons.Filled.CheckCircle to row.primary.removePrefix("✓").trim()
