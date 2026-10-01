@@ -78,12 +78,31 @@ class CircadianLearner @Inject constructor(
     // updated()/updatedDayOnly() directly, so that (a) the minute-of-hour spread is applied
     // uniformly and (b) the day-vs-global split for each writer is stated in exactly one place.
 
+    /** What moved ISF or basal: something BG did, or only the slow pull back toward the weekly average. */
+    enum class WriteSource { BG, DECAY }
+
+    // Set to DECAY only around [decayTowardBaseline]; every other ISF/basal write is a reaction to BG.
+    private var writeSource = WriteSource.BG
+    // Which sources wrote ISF/basal for each (day, hour) bucket since the plugin last asked. Lets
+    // the journal say "drifted back toward the weekly average" instead of calling that learning.
+    private val writeSources = mutableMapOf<Int, MutableSet<WriteSource>>()
+
+    private fun noteWrite(dow: Int, hour: Int) {
+        writeSources.getOrPut(bucketKey(dow, hour)) { mutableSetOf() }.add(writeSource)
+    }
+
+    /** Sources that wrote ISF/basal for [dow]/[hour] since the last call, and forgets them. */
+    fun takeWriteSources(dow: Int, hour: Int): Set<WriteSource> =
+        writeSources.remove(bucketKey(dow, hour)) ?: emptySet()
+
     /** Physics write: measured behaviour of this hour, applies to every weekday. Day + global. */
     private fun writeIsf(dow: Int, hour: Int, value: Double, alpha: Double) {
+        noteWrite(dow, hour)
         isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
     }
 
     private fun writeBasal(dow: Int, hour: Int, value: Double, alpha: Double) {
+        noteWrite(dow, hour)
         basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, alpha)
     }
 
@@ -93,10 +112,12 @@ class CircadianLearner @Inject constructor(
 
     /** Day-scoped write: nudge/trim corrections. Leaves the cross-day baseline untouched. */
     private fun writeIsfDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
+        noteWrite(dow, hour)
         isfState = isfState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
     }
 
     private fun writeBasalDayOnly(dow: Int, hour: Int, value: Double, alpha: Double) {
+        noteWrite(dow, hour)
         basalState = basalState.updatedSplit(dow, hour, cycleMinute, value, alpha, 0.0)
     }
 
@@ -1047,7 +1068,13 @@ class CircadianLearner @Inject constructor(
             // all the way onto global would delete real day-specific learning along with the
             // stale nudge. Pulling it back to within ±DECAY_BAND removes excursions only the
             // nudge could have produced and leaves ordinary day-to-day variation alone.
-            val decayed = !trimActive && decayTowardBaseline(dow, hour, isfPhysicsFired, basalPhysicsFired)
+            // Not in the post-meal lockout: nothing about ISF or basal should move in the hour after
+            // a meal, not even this slow pull back toward the weekly average. Seen on a phone as
+            // "learning" at 21:00 between Dinner ending and P/F starting.
+            val decayed = !trimActive && !inPostMealLockout && run {
+                writeSource = WriteSource.DECAY
+                try { decayTowardBaseline(dow, hour, isfPhysicsFired, basalPhysicsFired) } finally { writeSource = WriteSource.BG }
+            }
             lastAggrNudgeStatus = when {
                 trimActive -> "TRIM|${if (trimDirection > 0) "ACTIVE_HIGH" else if (trimWasOvershoot) "OVERSHOOT" else "ACTIVE_LOW"}|${"%.1f".format(kotlin.math.abs(trimStrength) * 100)}%"
                 decayed    -> "DECAY|${"%.3f".format(isfState.days[dow.coerceIn(0, 6)].get(hour))}|${"%.3f".format(basalState.days[dow.coerceIn(0, 6)].get(hour))}"

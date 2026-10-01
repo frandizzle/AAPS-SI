@@ -514,6 +514,55 @@ class ModeIsfLearnerTest {
         assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
     }
 
+    // ── a new mode starting in the settling tail ─────────────────────────────
+
+    /** Dinner runs at 140, ends, and its tail runs quietly at [tailBg] for [tailMin] before P/F starts. */
+    private fun dinnerThenPf(tailMin: Int, tailBg: Double) {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 140.0)
+        var t = BASE_MS + CYCLE_MS
+        val tailEnd = t + tailMin * 60_000L
+        while (t < tailEnd) { cycle(null, 0L, t, bg = tailBg); t += CYCLE_MS }
+        cycle(MealMode.UAM_PROTEIN_FAT, t, t, bg = tailBg)
+    }
+
+    @Test
+    fun `a mode taken over late in its tail is judged, high means stronger`() {
+        dinnerThenPf(tailMin = 50, tailBg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.contains("Protein/Fat"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a mode taken over late in its tail on target is counted with no change`() {
+        dinnerThenPf(tailMin = 50, tailBg = 105.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.contains("on target"), learner.lastOutcome)
+        assertEquals(1, learner.episodeCount(MealMode.DINNER))
+    }
+
+    @Test
+    fun `a mode taken over right after it ended is too early to judge`() {
+        dinnerThenPf(tailMin = 10, tailBg = 130.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.startsWith("skipped"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a spike that was too high counts even when taken over straight away`() {
+        heldPeakNoTail(bg = 160.0, cycles = 8, offsetMin = 10)
+        val t = BASE_MS + 3 * 60 * 60_000L
+        cycle(null, 0L, t, bg = 102.0)
+        cycle(MealMode.UAM_PROTEIN_FAT, t + CYCLE_MS, t + CYCLE_MS, bg = 102.0)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+        assertTrue(learner.lastOutcome.contains("spike held"), learner.lastOutcome)
+    }
+
+    private fun heldPeakNoTail(bg: Double, cycles: Int, offsetMin: Int) {
+        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 110.0)
+        var t = BASE_MS + offsetMin * 60_000L
+        repeat(cycles) { cycle(MealMode.LUNCH, BASE_MS, t, bg = bg); t += CYCLE_MS }
+    }
+
     @Test
     fun `the same held level late in the episode is a stall, not a spike`() {
         // Starts 80 minutes in — past the spike phase. That is the fat/protein stall DURA is for.

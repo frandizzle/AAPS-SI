@@ -142,6 +142,9 @@ class ModeIsfLearner @Inject constructor(
 
     companion object {
         private const val TAIL_MS                 = 75 * 60_000L  // settling tail before judging the episode
+        /** Least tail before a superseded episode is judged early: about one insulin peak, so most of
+         *  the mode's insulin has acted on the BG it is judged by. */
+        private const val EARLY_JUDGE_MIN_TAIL_MS = 45 * 60_000L
         /** How long after a mode ends its insulin can still be blamed for a low. Outlives
          *  [TAIL_MS] because the evaluation only needs absorption to be finished, whereas the
          *  low watch needs the mode's *insulin* to be finished — which takes longer. */
@@ -289,7 +292,7 @@ class ModeIsfLearner @Inject constructor(
             if (activeScope == null || modeStartMs != activeStartMs) {
                 // A new activation while an evaluation is still pending contaminates it —
                 // the tail can no longer be judged cleanly.
-                pendingScope?.let { skipPending("superseded by new ${activeModeNow.label} activation") }
+                pendingScope?.let { judgePendingEarly(it, activeModeNow, bgMgdl, targetMgdl, nowMs) }
 
                 // The watch hands over to the new episode, which tracks its own lows from here.
                 // Keeping the old one open would weaken twice for a single low.
@@ -514,22 +517,46 @@ class ModeIsfLearner @Inject constructor(
             return
         }
         if (nowMs >= pendingEvalAtMs) {
-            val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
-            when {
-                pendingSpikeTooHigh ->
-                    applyOutcome(p, strengthenStep(), "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
-                // Working through a high it inherited: below where it started and still coming
-                // down. Charging this reads someone else's high as this mode's under-dosing.
-                endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
-                    noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling — working through an inherited high, no change")
-                endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
-                    applyOutcome(p, strengthenStep(), "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target — strengthened", pendingStartMs)
-                endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)}) — stalled tail is DURA's to fix, no change")
-                else      -> noChange(p, "${p.label} on target — no change")
-            }
+            evaluatePending(p, bgMgdl, targetMgdl, note = "")
             pendingScope = null
             tailDeltas.clear()
         }
+    }
+
+    /** The verdict on a finished episode, read at [bgMgdl]. [note] is added to every verdict. */
+    private fun evaluatePending(p: Scope, bgMgdl: Double, targetMgdl: Double, note: String) {
+        val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
+        when {
+            pendingSpikeTooHigh ->
+                applyOutcome(p, strengthenStep(), "${p.label} spike held ≥3mmol over target for 30min with no front-loading left$note — strengthened", pendingStartMs)
+            // Working through a high it inherited: below where it started and still coming
+            // down. Charging this reads someone else's high as this mode's under-dosing.
+            endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
+                noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling$note — working through an inherited high, no change")
+            endedHigh && pendingMaxDura < DURA_ENGAGED_MULT ->
+                applyOutcome(p, strengthenStep(), "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target$note — strengthened", pendingStartMs)
+            endedHigh -> noChange(p, "${p.label} ended ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target with DURA working the tail (×${"%.2f".format(pendingMaxDura)})$note — stalled tail is DURA's to fix, no change")
+            else      -> noChange(p, "${p.label} on target$note — no change")
+        }
+    }
+
+    /**
+     * A new mode started while [p] was still in its settling tail. This used to throw the episode
+     * away, but the mode ran its whole window and BG showed what its dose did. So it is judged now,
+     * by the same rules, at the BG the new mode starts from - as long as the tail has run long
+     * enough for that BG to mean something. A spike that was too high was decided inside the
+     * window itself, so it counts however short the tail was. Lows are not in question here: one
+     * in the window or the tail has already been charged by the time this runs.
+     */
+    private fun judgePendingEarly(p: Scope, next: MealMode, bgMgdl: Double, targetMgdl: Double, nowMs: Long) {
+        val tailMins = (nowMs - (pendingEvalAtMs - TAIL_MS)) / 60_000
+        val note = " (judged at ${tailMins}min of the tail, ${next.label} took over)"
+        when {
+            pendingSpikeTooHigh || tailMins * 60_000L >= EARLY_JUDGE_MIN_TAIL_MS -> evaluatePending(p, bgMgdl, targetMgdl, note)
+            else -> skipPending("${next.label} started only ${tailMins}min after ${p.label} ended — too early to judge")
+        }
+        pendingScope = null
+        tailDeltas.clear()
     }
 
     /** Insulin-pull-only residual (no target-seek term) — conservative fasting-rules check

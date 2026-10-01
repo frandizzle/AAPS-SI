@@ -215,6 +215,11 @@ open class SmartInsulinPlugin @Inject constructor(
     private var lastSeenNudgeState: String = "INACTIVE"
     @Volatile private var cachedProfileIsf: Double = 0.0
     @Volatile private var cachedProfileBasal: Double = 0.0
+    // The profile's own ISF (mg/dL/U) and basal (U/h) for each hour, read at the bucket centre. The
+    // per-hour table and the journal need these: the current hour's values are wrong for any hour
+    // where the profile itself is different.
+    @Volatile private var cachedHourIsf = DoubleArray(24)
+    @Volatile private var cachedHourBasal = DoubleArray(24)
     @Volatile private var cachedProfileTarget: Double = 99.0
     @Volatile private var cachedSensorInsertTimeMs: Long = 0L
     @Volatile private var sensorCacheRefreshedAtMs: Long = 0L
@@ -810,8 +815,8 @@ open class SmartInsulinPlugin @Inject constructor(
         dow:        Int = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_WEEK) - 1,
         markerHour: Int = -1
     ): String {
-        val profileIsf   = cachedProfileIsf
-        val profileBasal = cachedProfileBasal
+        val hourIsf   = cachedHourIsf
+        val hourBasal = cachedHourBasal
         val isfUnit = if (isMmol) "mmol/U" else "mg/dL/U"
         return buildString {
             appendLine("  Hr  ISF ($isfUnit)   Basal (U/h)  Ceil   Conf")
@@ -819,8 +824,8 @@ open class SmartInsulinPlugin @Inject constructor(
                 val marker   = if (h == markerHour) "→" else " "
                 val hIsfMult = circadianLearner.isfMultiplier(h, dow, minute = TABLE_BUCKET_MINUTE)
                 val hBasMult = combinedBasalMultiplier(h, dow, minute = TABLE_BUCKET_MINUTE)
-                val hIsf = if (profileIsf > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(profileIsf / hIsfMult / 18.0) else "%.1f".format(profileIsf / hIsfMult)) else "—"
-                val hBas = if (profileBasal > 0) "%.3f".format(profileBasal * hBasMult) else "—"
+                val hIsf = if (hourIsf[h] > 0 && hIsfMult > 0) (if (isMmol) "%.2f".format(hourIsf[h] / hIsfMult / 18.0) else "%.1f".format(hourIsf[h] / hIsfMult)) else "—"
+                val hBas = if (hourBasal[h] > 0) "%.3f".format(hourBasal[h] * hBasMult) else "—"
                 appendLine("$marker ${h.toString().padStart(2)}  $hIsf  $hBas  ${"%.3f".format(circadianLearner.aggrCeiling(h, dow, minute = TABLE_BUCKET_MINUTE))}  ${"%.0f".format(circadianLearner.confidencePct(h, dow))}%")
             }
         }
@@ -857,14 +862,18 @@ open class SmartInsulinPlugin @Inject constructor(
                 val endIsf = circadianLearner.isfMultiplier(digestHour, digestDow, TABLE_BUCKET_MINUTE)
                 val endBas = combinedBasalMultiplier(digestHour, digestDow, TABLE_BUCKET_MINUTE)
                 val parts = listOfNotNull(
-                    multChange("ISF", digestIsfMult, endIsf, up = "stronger", down = "weaker"),
-                    multChange("basal", digestBasMult, endBas, up = "more", down = "less")
+                    isfChange(digestHour, digestIsfMult, endIsf),
+                    basalChange(digestHour, digestBasMult, endBas)
                 )
+                // Only the pull back toward the weekly average moved it: say so, it is not learning.
+                val decayOnly = circadianLearner.takeWriteSources(digestDow, digestHour) == setOf(CircadianLearner.WriteSource.DECAY)
                 if (parts.isNotEmpty())
-                    learningJournal.note("Circadian", "${JOURNAL_DAYS[digestDow]} ${"%02d".format(digestHour)}:00 — ${parts.joinToString(", ")}")
+                    learningJournal.note("Circadian", "${JOURNAL_DAYS[digestDow]} ${"%02d".format(digestHour)}:00 — ${parts.joinToString(", ")}" +
+                        if (decayOnly) " — drifted back toward this hour's weekly average, not learned from BG" else "")
             }
             digestHour = hour
             digestDow = dow
+            circadianLearner.takeWriteSources(dow, hour)  // start the new hour with a clean record
             digestIsfMult = circadianLearner.isfMultiplier(hour, dow, TABLE_BUCKET_MINUTE)
             digestBasMult = combinedBasalMultiplier(hour, dow, TABLE_BUCKET_MINUTE)
         }
@@ -889,10 +898,34 @@ open class SmartInsulinPlugin @Inject constructor(
         }
     }
 
-    /** "ISF ×0.871→0.866 (weaker)" when the multiplier moved by [JOURNAL_MULT_STEP] or more, else null. */
-    private fun multChange(name: String, from: Double, to: Double, up: String, down: String): String? =
-        if (kotlin.math.abs(to - from) < JOURNAL_MULT_STEP) null
-        else "$name ×${"%.3f".format(from)}→${"%.3f".format(to)} (${if (to > from) up else down})"
+    /** "ISF 2.10→2.06 mmol/U (stronger)" when the multiplier moved by [JOURNAL_MULT_STEP] or more, else null.
+     *  A higher multiplier is a smaller ISF, so stronger. Falls back to the multiplier with no profile yet. */
+    private fun isfChange(hour: Int, from: Double, to: Double): String? {
+        if (kotlin.math.abs(to - from) < JOURNAL_MULT_STEP) return null
+        val dir = if (to > from) "stronger" else "weaker"
+        val base = cachedHourIsf[hour]
+        if (base <= 0.0 || from <= 0.0 || to <= 0.0) return "ISF ×${"%.3f".format(from)}→${"%.3f".format(to)} ($dir)"
+        val scale = if (isMmol) 18.0 else 1.0
+        val (a, b) = journalPair(base / from / scale, base / to / scale, if (isMmol) 2 else 1)
+        return "ISF $a→$b ${if (isMmol) "mmol/U" else "mg/dL/U"} ($dir)"
+    }
+
+    /** "basal 0.75→0.78 U/h (more)", same rules as [isfChange]. */
+    private fun basalChange(hour: Int, from: Double, to: Double): String? {
+        if (kotlin.math.abs(to - from) < JOURNAL_MULT_STEP) return null
+        val dir = if (to > from) "more" else "less"
+        val base = cachedHourBasal[hour]
+        if (base <= 0.0) return "basal ×${"%.3f".format(from)}→${"%.3f".format(to)} ($dir)"
+        val (a, b) = journalPair(base * from, base * to, 2)
+        return "basal $a→$b U/h ($dir)"
+    }
+
+    /** Both values at [decimals], or one more when that would print the same number twice. */
+    private fun journalPair(from: Double, to: Double, decimals: Int): Pair<String, String> {
+        val a = "%.${decimals}f".format(from)
+        val b = "%.${decimals}f".format(to)
+        return if (a != b) a to b else "%.${decimals + 1}f".format(from) to "%.${decimals + 1}f".format(to)
+    }
 
     override suspend fun onStart() {
         super.onStart()
@@ -1024,6 +1057,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val profile = profileFunction.getProfile() ?: return
         cachedProfileIsf = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
+        cachedHourIsf = DoubleArray(24) { profile.getIsfMgdlTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }
+        cachedHourBasal = DoubleArray(24) { profile.getBasalTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }
         cachedProfileTarget = profile.getTargetMgdl()
 
         val now = dateUtil.now()
