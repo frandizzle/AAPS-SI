@@ -561,6 +561,25 @@ class ModeIsfLearnerTest {
     }
 
     @Test
+    fun `the journal shows the mode's ISF before and after, not the multiplier`() {
+        learner.isfText = { _, _, mult -> "%.2f mmol/U".format(2.0 * mult) }
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 130.0)              // ended high: stronger
+        assertTrue(learner.lastOutcome.endsWith("strengthened: ISF 2.00 mmol/U → 1.95 mmol/U (n=1)"), learner.lastOutcome)
+        cycle(null, 0L, BASE_MS + 12 * CYCLE_MS, bg = 70.0, low = true)  // then crashed
+        // One entry for the undo and the weaken together: from where it was to where it is.
+        assertTrue(learner.lastOutcome.endsWith("undone: ISF 1.95 mmol/U → 2.10 mmol/U (n=1)"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `with no ISF to show, the journal falls back to the multiplier`() {
+        learner.isfText = { _, _, _ -> null }
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 150.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 130.0)
+        assertTrue(learner.lastOutcome.endsWith("→ ×0.975 (n=1)"), learner.lastOutcome)
+    }
+
+    @Test
     fun `a spike that was too high counts even when taken over straight away`() {
         heldPeakNoTail(bg = 160.0, cycles = 8, offsetMin = 10)
         val t = BASE_MS + 3 * 60 * 60_000L

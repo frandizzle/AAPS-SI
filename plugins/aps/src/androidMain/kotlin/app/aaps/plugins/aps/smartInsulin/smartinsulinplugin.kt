@@ -839,6 +839,15 @@ open class SmartInsulinPlugin @Inject constructor(
     init {
         // Every learner verdict goes to the journal; see LearningJournal.
         modeIsfLearner.onOutcome          = { learningJournal.note("Meal ISF", it) }
+        // The journal shows the mode's ISF before and after, not the multiplier: the same base ISF
+        // the SI tab's learned-ISF table and dosing use.
+        modeIsfLearner.isfText = { mode, window, mult ->
+            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val baseMgdl = if (window == PfWindow.NONE) modeIsfMgdl(mode, hour) else pfIsfForWindow(window)
+            if (baseMgdl <= 0.0) null
+            else if (isMmol) "%.2f mmol/U".format(baseMgdl * mult / 18.0)
+            else "%.0f mg/dL/U".format(baseMgdl * mult)
+        }
         uamEntryFractionLearner.onOutcome = { learningJournal.note("UAM entry", it) }
         duraStrengthLearner.onOutcome     = { learningJournal.note("DURA", it) }
         activitySessionLearner.onOutcome  = { learningJournal.note("Activity", it) }

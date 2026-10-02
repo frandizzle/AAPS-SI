@@ -69,10 +69,17 @@ class ModeIsfLearner @Inject constructor(
     private val states = mutableMapOf<String, ModeState>()
 
     /** A mode together with the state slot and label it is being learned under this episode. */
-    private data class Scope(val mode: MealMode, val key: String, val label: String)
+    private data class Scope(val mode: MealMode, val key: String, val label: String, val window: PfWindow)
 
     private fun scopeOf(mode: MealMode, window: PfWindow) =
-        Scope(mode, PfWindow.stateKey(mode, window), PfWindow.label(mode, window))
+        Scope(mode, PfWindow.stateKey(mode, window), PfWindow.label(mode, window), window)
+
+    /**
+     * Turns a multiplier into the ISF it gives this mode, e.g. "2.05 mmol/U", or null when the mode
+     * has no ISF of its own to show. Set by the plugin, which knows each mode's base ISF and the
+     * units; the journal then reads "ISF 2.00→2.05 mmol/U" instead of a bare multiplier.
+     */
+    var isfText: ((mode: MealMode, window: PfWindow, mult: Double) -> String?)? = null
 
     // Currently-active episode tracking
     private var activeScope:     Scope? = null
@@ -752,12 +759,16 @@ class ModeIsfLearner @Inject constructor(
     private fun applyOutcome(scope: Scope, step: Double, reason: String, episodeStartMs: Long = 0L,
                              countEpisode: Boolean = true) {
         val s = states.getOrPut(scope.key) { ModeState() }
+        val before = s.mult
         s.mult = (s.mult * step).coerceIn(MULT_MIN, MULT_MAX)
         if (countEpisode) s.episodes++
         lastMovedMode    = scope.mode
         lastMovedStartMs = episodeStartMs
         persist()
-        lastOutcome = "$reason → ×${"%.3f".format(s.mult)} (n=${s.episodes})"
+        val from = isfText?.invoke(scope.mode, scope.window, before)
+        val to   = isfText?.invoke(scope.mode, scope.window, s.mult)
+        lastOutcome = if (from != null && to != null) "$reason: ISF $from → $to (n=${s.episodes})"
+        else "$reason → ×${"%.3f".format(s.mult)} (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
     }
 
