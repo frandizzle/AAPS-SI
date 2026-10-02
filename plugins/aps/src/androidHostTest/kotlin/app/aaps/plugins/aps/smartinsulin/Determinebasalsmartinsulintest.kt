@@ -132,8 +132,25 @@ class DetermineBasalSmartInsulinTest {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private fun flatIobArray(iob: Double, activity: Double, size: Int = 120): Array<IobTotal> =
-        Array(size) { t -> IobTotal(time = t * 60_000L, iob = iob, activity = activity) }
+    /**
+     * iobArray as AAPS would build it for one dose: [iob] and [activity] now, then decaying along the
+     * harness's insulin curve (peak 75, DIA 300). The forecast reads every tick, as stock oref does,
+     * so a flat line here would mean insulin acting at full strength for 4 hours.
+     * Negative or zero values stay flat; the forecast counts negative action as zero anyway.
+     */
+    private fun flatIobArray(iob: Double, activity: Double, size: Int = 48): Array<IobTotal> {
+        if (iob <= 0.0 || activity <= 0.0)
+            return Array(size) { t -> IobTotal(time = t * 300_000L, iob = iob, activity = activity) }
+        val peak = LearnedInsulinProfile.FALLBACK_PEAK_MINS
+        val dia  = LearnedInsulinProfile.FALLBACK_DIA_MINS
+        val age  = InsulinActivityCurve.effectiveAgeMinutes(activity, iob, peak, dia)
+        val units = iob / InsulinActivityCurve.iobFraction(age, peak, dia).coerceAtLeast(0.02)
+        return Array(size) { t ->
+            IobTotal(time = t * 300_000L,
+                     iob = units * InsulinActivityCurve.iobFraction(age + t * 5.0, peak, dia),
+                     activity = if (t == 0) activity else units * InsulinActivityCurve.activityFraction(age + t * 5.0, peak, dia))
+        }
+    }
 
     private fun defaultLearned(mode: MealMode = MealMode.FASTING) =
         LearnedInsulinProfile.defaultFor(mode)
@@ -168,8 +185,6 @@ class DetermineBasalSmartInsulinTest {
             iobArray              = iobArray,
             oapsProfile           = oapsProfile,
             mealData              = mealData,
-            profileIsfMgdl        = 50.0,
-            carbRatioGPerU        = 10.0,
             profile               = profile,
             learnedProfile        = learnedProfile,
             mealMode              = MealMode.FASTING,
@@ -361,9 +376,9 @@ class DetermineBasalSmartInsulinTest {
     // ── Prediction graph ─────────────────────────────────────────────────────
 
     @Test fun `predictionsAsGv is populated with correct count`() {
-        // default LearnedProfile has safeDiaMinutes=300 -> 300/5 = 60 ticks
+        // One per iobArray step, as stock oref: AAPS builds 48 (4 hours of 5 minutes).
         val r = invoke()
-        assertEquals(60, r.predictionsAsGv.size)
+        assertEquals(48, r.predictionsAsGv.size)
     }
 
     @Test fun `predictions are cleared and repopulated each call`() {
@@ -373,7 +388,7 @@ class DetermineBasalSmartInsulinTest {
                sourceSensor = SourceSensor.UNKNOWN)
         )
         val r = invoke()
-        assertEquals(60, r.predictionsAsGv.size)
+        assertEquals(48, r.predictionsAsGv.size)
     }
 
     @Test fun `zero IOB and zero delta predicts near-flat BG`() {
@@ -452,7 +467,8 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(iobArray = flatIobArray(0.0, 0.0))
 
         val peak = r.predictionsAsGv.maxOf { it.value }
-        assertEquals(150.0 + 18.0 * 6.5, peak, 0.5,
+        // Stock oref fades ci from the first step: 18 * (11/12 + 10/12 + ... + 1/12) = 18 * 5.5.
+        assertEquals(150.0 + 18.0 * 5.5, peak, 0.5,
                      "Sub-clamp carb impact should reach the prediction in full, got $peak")
     }
 
@@ -465,7 +481,6 @@ class DetermineBasalSmartInsulinTest {
         sut.determine_basal(
             glucoseStatus = glucoseStatus, currentTemp = currentTemp,
             iobArray = flatIobArray(0.0, 0.0), oapsProfile = oapsProfile, mealData = mealData,
-            profileIsfMgdl = 50.0, carbRatioGPerU = 10.0,
             profile = profile, learnedProfile = defaultLearned(), mealMode = MealMode.FASTING,
             lowGuardMmol = 3.9, warnGuardMmol = 4.5, maxSmbU = 2.0, maxTbrU = 5.0,
             aggressiveness = 1.0, tirSummary = "100%", basalMultiplier = 1.0,
@@ -704,5 +719,63 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(falling.reason.contains("NORMAL"), falling.reason)
         assertEquals(0.0, falling.smb, 1e-9)
         assertTrue(falling.rate > 0.0 && falling.rate < smoothed.rate, "rate ${falling.rate} vs ${smoothed.rate}")
+    }
+
+    // ── the forecast's insulin side is stock oref: AAPS's own iobArray ───────
+
+    /** iobArray for doses ([units] to [ageMin]) on the given curve, 48 ticks like AAPS builds it. */
+    private fun iobArrayOf(peak: Double, dia: Double, vararg doses: Pair<Double, Double>): Array<IobTotal> =
+        Array(48) { tick ->
+            var iob = 0.0; var act = 0.0
+            doses.forEach { (units, ageMin) ->
+                iob += units * InsulinActivityCurve.iobFraction(ageMin + tick * 5.0, peak, dia)
+                act += units * InsulinActivityCurve.activityFraction(ageMin + tick * 5.0, peak, dia)
+            }
+            IobTotal(time = tick * 300_000L, iob = iob, activity = act)
+        }
+
+    /**
+     * 2 Oct 18:26 as the log suggests it: net IOB 1.1 U while insulin acts at ~0.024 U/min - working
+     * bolus insulin with negative basal insulin after zero temps.
+     */
+    private fun mismatched(): Array<IobTotal> {
+        val working = iobArrayOf(55.0, 540.0, 4.0 to 75.0)
+        return Array(working.size) { i ->
+            IobTotal(time = i * 300_000L, iob = if (i == 0) 1.1 else working[i].iob - 2.9, activity = working[i].activity)
+        }
+    }
+
+    private fun landing(iobArray: Array<IobTotal>): FakeAPSResult {
+        fakeResult = FakeAPSResult()
+        whenever(glucoseStatus.glucose).thenReturn(103.0)
+        whenever(glucoseStatus.delta).thenReturn(-1.8)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(-1.8)
+        return invoke(iobArray = iobArray, learnedProfile = LearnedInsulinProfile.defaultFor(MealMode.FASTING, 55.0, 540.0))
+    }
+
+    @Test fun `insulin acting hard on a small net IOB is not forecast as a rise`() {
+        val r = landing(mismatched())
+        val min = r.predictionsAsGv.minOf { it.value }
+        assertTrue(min < 99.0, "insulin still working must take the forecast below target, got min ${min / 18}")
+        assertEquals(0.0, r.smb, 1e-9, r.reason)
+    }
+
+    @Test fun `the forecast is stock oref - BG plus each step's AAPS insulin action plus fading ci`() {
+        val arr = iobArrayOf(55.0, 540.0, 3.0 to 60.0)
+        val r = landing(arr)
+        // ci = min(delta, shortAvgDelta) - bgi now, bgi = -(activity * ISF * 5); ISF 50 in this harness
+        val ci = -1.8 + arr[0].activity * 50.0 * 5.0
+        var bg = 103.0
+        val expected = arr.mapIndexed { i, t ->
+            bg += -(t.activity * 50.0 * 5.0) + ci * (1.0 - minOf(1.0, (i + 1) / 12.0)); bg
+        }
+        val got = r.predictionsAsGv.map { it.value }
+        assertEquals(expected.size, got.size)
+        expected.zip(got).forEachIndexed { i, (e, g) -> assertEquals(e.coerceIn(39.0, 401.0).toInt().toDouble(), g, 1e-9, "tick $i") }
+    }
+
+    @Test fun `the reason shows what the forecast was built from`() {
+        val r = landing(iobArrayOf(55.0, 540.0, 3.0 to 60.0))
+        assertTrue(Regex("act=\\d\\.\\d{4}").containsMatchIn(r.reason), r.reason)
     }
 }

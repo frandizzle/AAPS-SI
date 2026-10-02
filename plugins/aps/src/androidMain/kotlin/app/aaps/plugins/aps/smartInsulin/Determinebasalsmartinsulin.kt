@@ -22,9 +22,8 @@ import kotlin.math.min
  *
  * ## BG Prediction
  * Projects glucose forward using:
- *   - IOB activity curve from iobArray (U/min * ISF = mg/dL/min drop)
- *   - Delta momentum (ci) from shortAvgDelta, fading linearly to zero by t=60 min
- *   - Exponential tail extrapolation beyond iobArray length
+ *   - Insulin action from AAPS's iobArray, step by step, exactly as stock oref (4 hours ahead)
+ *   - Delta momentum (ci) from min(shortAvgDelta, delta), fading linearly to zero by t=60 min
  *
  * ## predictedMin
  * Only tracked after the first 90 minutes (insulinPeakTicks) of the curve.
@@ -78,9 +77,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray:                 Array<IobTotal>,
         oapsProfile:              OapsProfile,
         mealData:                 MealData,
-        /** PROFILE ISF and CR — the food's own conversion, before any learned multiplier. */
-        profileIsfMgdl:           Double,
-        carbRatioGPerU:           Double,
         profile:                  Profile,
         learnedProfile:           LearnedInsulinProfile,
         mealMode:                 MealMode,
@@ -220,43 +216,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // insulin request. The floor is far below any usable ISF, so it never binds in practice.
         val safeIsfMgdl = dosingIsfMgdl.coerceAtLeast(MIN_DOSING_ISF_MGDL)
 
-        val predictedBg = predictBgCurve(
-            startBg       = currentBg,
-            ci            = ci,
-            iobArray      = iobArray,
-            isfMgdl       = dosingIsfMgdl,
-            learnedProfile = learnedProfile,
-            // Bounds match LearnedInsulinProfile's own DIA range — was hardcoded to (360, 480)
-            // independent of that range, which silently re-capped the prediction curve (and thus
-            // pred_min / low-guard decisions) at 8h even after DIA learning was fixed to reach
-            // the ~9h community reference value. Single source of truth now.
-            ticks         = learnedProfile.safeDiaMinutes.toInt()
-                .coerceIn(LearnedInsulinProfile.DIA_MIN_MINUTES.toInt(), LearnedInsulinProfile.DIA_MAX_MINUTES.toInt()) / 5
-        )
+        val bgiPerTick  = insulinBgiPerTick(iobArray, dosingIsfMgdl)
+        val predictedBg = predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick)
 
-        // ── Carbs on board: oref's COB curve takes over the forecast ──────────
-        // The curve above models insulin against the carb impact ALREADY VISIBLE in BG, which is
-        // all there is to go on when nothing was entered. With carbs entered there is more to go
-        // on: the food that has not shown up yet. OrefCarbCurve adds it, so the forecast (and
-        // therefore the dose) leads the meal instead of chasing it.
-        //
-        // profileIsfMgdl and the profile's CR, NOT dosingIsfMgdl: csf describes the food, and the
-        // learned multipliers are applied when this forecast is turned into insulin below. Using
-        // the learned ISF here would apply them twice.
-        val carbsOnBoard = mealData.mealCOB
-        val carbCurve = if (carbsOnBoard > 0.0 && carbRatioGPerU > 0.0)
-            OrefCarbCurve.predict(
-                startBg    = currentBg,
-                ci         = ci,
-                cobG       = carbsOnBoard,
-                isfMgdl    = profileIsfMgdl,
-                carbRatio  = carbRatioGPerU,
-                bgiPerTick = insulinBgiPerTick(iobArray, dosingIsfMgdl, learnedProfile, predictedBg.size)
-            )
-        else null
-        // Everything downstream — suspend decisions, SMB sizing, the low guard — reads these, so
-        // carbs change the dose through the same single path the rest of the plugin already uses.
-        val forecast = carbCurve?.bgs ?: predictedBg
+        // Carbs on board do not change the forecast: it is insulin plus what BG is doing now. An
+        // oref-style carb curve was tried and taken out again - not worth what it added.
+        val forecast = predictedBg
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
         // suspending on the early trough while insulin is still peaking. The +2 tick
@@ -290,10 +255,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
             .forEach { rawPrediction.add(it.coerceIn(39.0, 401.0).toInt()) }
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
-        // The COB line, drawn alongside IOB exactly as stock AAPS does when carbs are active.
-        carbCurve?.let { c ->
-            rT.predBGs?.COB = c.bgs.take(rawPrediction.size).map { it.coerceIn(39.0, 401.0).toInt() }
-        }
 
         // ── IOB / headroom ────────────────────────────────────────────────────
         val iobHeadroom  = (oapsProfile.max_iob - currentIob).coerceAtLeast(0.0)
@@ -333,6 +294,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label}")
         sb.append(" | BG=${fmt(currentBg, isMmol)}")
         sb.append(" | d=${fmt(delta, isMmol)}")
+        // What the forecast's insulin side was built from: insulin action now (U/min), so a forecast
+        // that looks wrong can be read off the log.
+        sb.append(" | act=${"%.4f".format(Locale.US, iobArray.firstOrNull()?.activity ?: 0.0)}")
         riseTurn?.takeIf { it.level != RiseTurnGuard.Level.NONE }?.let {
             sb.append(" | riseSlowing(${it.level}): raw ${fmt(it.rawStepMgdl, isMmol)} vs smoothed ${fmt(delta, isMmol)} → ${fmt(it.deltaMgdl, isMmol)}")
         }
@@ -576,71 +540,32 @@ class DetermineBasalSmartInsulin @Inject constructor(
 
     // ── Prediction curve ──────────────────────────────────────────────────────
     /**
-     * Insulin's expected effect per 5-minute tick, mg/dL and negative while insulin works — the
-     * same anchored, learned-curve maths [predictBgCurve] uses, exposed so the carb curve applies
-     * insulin identically. Two different insulin models across two forecasts would be a bug
-     * waiting to happen.
+     * Insulin's effect on BG for each 5-minute step ahead, mg/dL (negative while insulin works).
+     *
+     * Exactly stock oref: each step is that step's insulin action from AAPS's own iobArray, times
+     * ISF, times 5. AAPS builds iobArray per bolus and per temp, 4 hours ahead, so the forecast sees
+     * what AAPS itself counts as insulin on board - nothing reshaped.
+     *
+     * This replaces SmartInsulin's own curve, which collapsed IOB into one dose of one age (from
+     * activity / IOB) and re-timed it with the learned peak and DIA. When a small net IOB was still
+     * acting hard - working bolus insulin with negative basal insulin after zero temps - that age
+     * landed at the end of the tail, the curve predicted almost no further action, and BG landing at
+     * 5.7 with 1.1 U on board was forecast to climb to 6.3 and given insulin.
+     *
+     * One difference from stock, kept on purpose: negative action (insulin held back by a zero temp)
+     * is counted as zero, not as a push upward - see the bgi note in determine_basal.
      */
-    private fun insulinBgiPerTick(
-        iobArray: Array<IobTotal>,
-        isfMgdl: Double,
-        learnedProfile: LearnedInsulinProfile,
-        ticks: Int
-    ): List<Double> {
-        val peak = learnedProfile.safePeakMinutes
-        val dia  = learnedProfile.safeDiaMinutes
-        val iobNow      = iobArray.firstOrNull()?.iob ?: 0.0
-        val activityNow = iobArray.firstOrNull()?.activity ?: 0.0
-        val effAgeMins  = InsulinActivityCurve.effectiveAgeMinutes(activityNow, iobNow, peak, dia)
-        val iobFrac     = InsulinActivityCurve.iobFraction(effAgeMins, peak, dia).coerceAtLeast(IOB_FRACTION_FLOOR)
-        val anchorU     = iobNow / iobFrac
-        return (1..ticks).map { tick ->
-            val activity = max(0.0, anchorU * InsulinActivityCurve.activityFraction(effAgeMins + tick * 5.0, peak, dia))
-            -(activity * isfMgdl * 5.0)
+    private fun insulinBgiPerTick(iobArray: Array<IobTotal>, isfMgdl: Double): List<Double> =
+        iobArray.map { -(max(0.0, it.activity) * isfMgdl * 5.0) }
+
+    /** Stock oref IOBpredBGs: BG now, plus insulin per step, plus ci fading to zero over 60 minutes. */
+    private fun predictBgCurve(startBg: Double, ci: Double, bgiPerTick: List<Double>): List<Double> {
+        var bg = startBg
+        return bgiPerTick.mapIndexed { i, bgi ->
+            val predDev = ci * (1.0 - minOf(1.0, (i + 1) / (60.0 / 5.0)))
+            bg += bgi + predDev
+            bg
         }
-    }
-
-    private fun predictBgCurve(
-        startBg:        Double,
-        ci:             Double,
-        iobArray:       Array<IobTotal>,
-        isfMgdl:        Double,
-        learnedProfile: LearnedInsulinProfile,
-        ticks:          Int
-    ): List<Double> {
-        var bg          = startBg
-        val predictions = mutableListOf<Double>()
-
-        val peak = learnedProfile.safePeakMinutes
-        val dia  = learnedProfile.safeDiaMinutes
-
-        // Shape the forward insulin-activity curve with the LEARNED peak AND DIA as independent
-        // parameters (see InsulinActivityCurve), but anchor its MAGNITUDE to the real insulin on
-        // board. iobArray[0] is "now", built by AAPS from actual bolus/SMB history — we keep that
-        // real quantity and only re-time how it acts.
-        //
-        // Current IOB is a mixture of boluses at different ages. We collapse it to a single
-        // effective age (the age whose activity/IOB ratio matches what is observed right now) so
-        // the learned curve can reshape the forward decay WITHOUT needing per-bolus history. This
-        // reproduces current activity exactly at tick 0 and conserves total forward activity ==
-        // current IOB, while respecting that aged insulin is past its peak — so it never re-peaks
-        // already-decaying insulin the way a fresh-curve-from-zero model would.
-        val iobNow       = iobArray.firstOrNull()?.iob ?: 0.0
-        val activityNow  = iobArray.firstOrNull()?.activity ?: 0.0
-        val effAgeMins   = InsulinActivityCurve.effectiveAgeMinutes(activityNow, iobNow, peak, dia)
-        val iobFracAtAge = InsulinActivityCurve.iobFraction(effAgeMins, peak, dia)
-            .coerceAtLeast(IOB_FRACTION_FLOOR)
-        val anchorU      = iobNow / iobFracAtAge
-
-        for (tick in 1..ticks) {
-            val futureMins = tick * 5.0
-            val activity   = max(0.0, anchorU * InsulinActivityCurve.activityFraction(effAgeMins + futureMins, peak, dia))
-            val iobDelta   = -(activity * isfMgdl * 5.0)
-            val predDev    = ci * (1.0 - minOf(1.0, (tick - 1) / (60.0 / 5.0)))
-            bg += iobDelta + predDev
-            predictions.add(bg)
-        }
-        return predictions
     }
 
     companion object {
@@ -654,10 +579,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Floor for rebound taper in caution zone — prevents delivering near-zero basal
         // while BG is already heading toward the warn guard.
         private const val CAUTION_REBOUND_TAPER_FLOOR = 0.5
-        // Floor on the learned-curve IOB fraction at the effective age, so anchoring current
-        // IOB to a near-spent curve (iobFraction → 0) can't blow up the magnitude. At this
-        // point remaining activity is tiny anyway, so the floor is a safe numerical guard.
-        private const val IOB_FRACTION_FLOOR          = 0.02
         private const val CI_MAX_MGDL_PER_5MIN        = 1.5 * MMOL_TO_MGDL  // 27 mg/dL per 5 min
         // ~0.5 mmol/L per unit — an ISF this strong is outside any real profile; this exists
         // purely so a corrupt multiplier can never turn a division into an unbounded dose.

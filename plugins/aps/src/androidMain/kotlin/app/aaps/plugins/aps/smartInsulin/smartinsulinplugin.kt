@@ -1609,8 +1609,6 @@ open class SmartInsulinPlugin @Inject constructor(
             iobArray                 = iobArray,
             oapsProfile              = oapsProfile,
             mealData                 = mealData,
-            profileIsfMgdl           = trueIsfMgdl,
-            carbRatioGPerU           = profile.getIc(),
             profile                  = profile,
             learnedProfile           = profileLearner.getProfile(if (mealMode.isUam) MealMode.entries.find { it.label == mealMode.label.removePrefix("UAM ") } ?: mealMode else mealMode),
             mealMode                 = mealMode,
