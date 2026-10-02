@@ -22,7 +22,9 @@ interface SmartInsulinOverview {
         val pb3Line: String?,
         /** null = full learning active
          *  "limited" = meal mode (only DIA/peak learning)
-         *  "off: <reason>" = fully suppressed */
+         *  "off: <reason>" = fully suppressed
+         *  "low: guard" = BG is under the low guard; "low: recovering 23m left" = back above it,
+         *  recovery window running. Both take the place of the learning state while they last. */
         val learningState: String
     )
 

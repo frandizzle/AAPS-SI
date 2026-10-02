@@ -773,7 +773,12 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val isMealModeActive = activeMode != null
         val effectivePostMealLockout = !isMealModeActive && learningDirtyUntilMs > 0L && now < learningDirtyUntilMs
+        // Low guard first: while BG is under the guard, and then for the recovery window after it
+        // comes back up, that is what the loop is doing, whatever learning is up to.
+        val reboundMinsLeft = ((reboundGuardMs - msSinceLastSuspend + 59_999) / 60_000).coerceAtLeast(1)
         val liveLearningState = when {
+            bgWentLow && reboundWindowStartMs == 0L  -> "low: guard"
+            inReboundWindow                          -> "low: recovering ${reboundMinsLeft}m left"
             !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Learning disabled"
             activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
             cachedCgmSuppressLearning                -> "off: CGM warmup"
@@ -1063,6 +1068,7 @@ open class SmartInsulinPlugin @Inject constructor(
     override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         val previousAPSResult = lastAPSResult; lastAPSResult = null
         val profile = profileFunction.getProfile() ?: return
+        guardShownInMmol = isMmol
         cachedProfileIsf = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
         cachedHourIsf = DoubleArray(24) { profile.getIsfMgdlTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }
