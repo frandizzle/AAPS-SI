@@ -900,11 +900,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         addDivider()
         addSectionHeader("Learned Mode ISF (per meal / UAM mode)")
         addMonospaceBlock(d.modeIsfLearnerStatus)
-        addNoteBlock("Judged ~75min after each episode ends: ended low → ISF weakens (mostly " +
-            "charged to DURA if DURA was pushing). Spike held ≥3mmol over target for 30min in the " +
-            "first 75min with no front-loading left, or ended high without DURA → strengthens. " +
-            "Ended high with DURA working the tail → no change, that stall is DURA's. Ate again " +
-            "during the tail → skipped. Changing a mode's ISF override resets it.")
+        addNoteBlock("Judged when the mode ends: spike held ≥3mmol over target with a pre-bolus, ≥4mmol " +
+            "without one or for UAM, for 30min in the first 75min with no front-loading left, or ended ~1mmol+ above target " +
+            "without DURA working → strengthens. A low during the mode → weakens (mostly charged to " +
+            "DURA if DURA was pushing). For 75min after, a low or near-low undoes any strengthen and " +
+            "weakens; still high at the end → strengthens, if the mode end did not already. Another " +
+            "mode starting stops the tail. Changing a mode's ISF override resets it.")
 
         addDivider()
         addSectionHeader("Learned DURA Strength (per mode)")

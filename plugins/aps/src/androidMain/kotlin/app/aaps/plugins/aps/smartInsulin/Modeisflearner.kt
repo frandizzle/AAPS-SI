@@ -99,6 +99,8 @@ class ModeIsfLearner @Inject constructor(
     private var spikeRunStartMs  = 0L
     /** True if the entry-fraction knob was already at its ceiling at any point in the episode. */
     private var episodeShapeRailed = false
+    /** The episode started with a pre-bolus - it gets the tighter spike bar, see [LATE_SPIKE_MARGIN_MGDL]. */
+    private var episodePreBolused = false
 
     // Pending post-episode evaluation (settling tail)
     private var pendingScope:     Scope? = null
@@ -182,11 +184,17 @@ class ModeIsfLearner @Inject constructor(
          *  episode is no longer clean enough to credit it in full. */
         private const val VOIDED_STEP_FRACTION      = 0.5
         /**
-         * Peak this far above target makes the episode a LATE one — the same ~3 mmol bar
-         * [UamEntryFractionLearner] uses to call a spike a front-loading failure, so the two
-         * learners agree on what counts as one.
+         * Peak this far above target makes the episode a LATE one: ~3 mmol for a meal given a
+         * pre-bolus, which should keep the spike down.
          */
         private const val LATE_SPIKE_MARGIN_MGDL    = 54.0
+        /**
+         * ~4 mmol for a meal with no pre-bolus - every UAM mode, and a Smart Meal started without
+         * one. On Fiasp such a meal rises 3 mmol most of the time, since the insulin starts with the
+         * rise rather than before it, so 3 mmol called ordinary meals under-dosed. The same bar
+         * [UamEntryFractionLearner] uses, so the two agree.
+         */
+        private const val LATE_SPIKE_MARGIN_NO_PREBOLUS_MGDL = UamEntryFractionLearner.PEAK_STRENGTHEN_MARGIN_MGDL
         /**
          * How long BG must stay at or above that bar before the episode counts as under-dosed
          * rather than simply spiky.
@@ -274,6 +282,8 @@ class ModeIsfLearner @Inject constructor(
         secondWave: Boolean = false,  // a second lot of food was eaten inside this episode's own
         // window — see SecondWaveDetector. The episode can no longer say anything about the dose
         // it was given, so it is not scored; lows still land, they are a safety signal either way.
+        preBolused: Boolean = false,  // a pre-bolus was given when this mode started (Smart Meal
+        // PB1). Read when the episode opens; it sets how high a spike may go - see spikeMarginMgdl.
         pfWindow: PfWindow = PfWindow.NONE  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
@@ -358,6 +368,7 @@ class ModeIsfLearner @Inject constructor(
                 episodeCarriedInLow = lowActive || undershootActive
                 tailDeltas.clear()
                 episodeShapeRailed = false
+                episodePreBolused = preBolused && !activeModeNow.isUam
             }
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
             if (entryShapeRailed) episodeShapeRailed = true
@@ -549,7 +560,7 @@ class ModeIsfLearner @Inject constructor(
         when {
             pendingSpikeTooHigh -> {
                 val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} spike held ≥3mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                applyOutcome(p, step, "${p.label} spike held ≥${"%.0f".format(spikeMarginMgdl() / 18.0)}mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
                 return step
             }
             // Working through a high it inherited: below where it started and still coming
@@ -665,7 +676,7 @@ class ModeIsfLearner @Inject constructor(
     // ever scale up toward conservative (see LearningBias).
     private fun bias() = LearningBias.from(sp)
     private fun strengthenStep() = scaleStrengthenStep(STRENGTHEN_STEP, bias())
-    private fun spikeMarginMgdl() = LATE_SPIKE_MARGIN_MGDL * bias().barScale
+    private fun spikeMarginMgdl() = (if (episodePreBolused) LATE_SPIKE_MARGIN_MGDL else LATE_SPIKE_MARGIN_NO_PREBOLUS_MGDL) * bias().barScale
     private fun spikeSustainedMs() = (SPIKE_SUSTAINED_MS * bias().barScale).toLong()
     private fun strengthenMarginMgdl() = STRENGTHEN_MARGIN_MGDL * bias().barScale
 

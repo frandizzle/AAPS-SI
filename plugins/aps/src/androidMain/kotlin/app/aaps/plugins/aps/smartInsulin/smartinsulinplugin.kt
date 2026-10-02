@@ -1451,6 +1451,7 @@ open class SmartInsulinPlugin @Inject constructor(
             entryShapeRailed  = mealOverrideManager.activeMealMode
                 ?.let { uamEntryFractionLearner.isShapeRailed(it) } ?: false,
             secondWave        = secondWaveNow,
+            preBolused        = (mealOverrideManager.activeDoseU ?: 0.0) > 0.0,
             // Entered carbs are not a dose this loop chose, so the dose-judging learners sit them
             // out. Only the insulin-curve learner (DIA/peak) runs against a carb episode.
             learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive,

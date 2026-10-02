@@ -151,7 +151,9 @@ class UamEntryFractionLearner @Inject constructor(
          * burst exists to prevent. Anchoring to target instead doesn't care how late the
          * detector caught the rise.
          */
-        private const val PEAK_STRENGTHEN_MARGIN_MGDL = 54.0  // ~3 mmol above target
+        // ~4 mmol above target. Was 3: an unannounced meal on Fiasp rises 3 mmol most of the time,
+        // since the loop only starts once the rise is under way, so 3 called ordinary meals failures.
+        const val PEAK_STRENGTHEN_MARGIN_MGDL = 72.0
 
         /**
          * ...but the entry burst must still have had something to blunt. A mode that fired with

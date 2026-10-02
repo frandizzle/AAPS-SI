@@ -36,13 +36,14 @@ class ModeIsfLearnerTest {
         delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
-        pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true
+        pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true,
+        preBolused: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        pfWindow = pfWindow, learningEnabled = learning
+        pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -321,7 +322,7 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `a spike that settles just under target with the shape knob railed strengthens`() {
-        spikeThenLand(peak = 160.0, railed = true)   // +60 over target, past the ~3mmol bar
+        spikeThenLand(peak = 180.0, railed = true)   // +80 over target, past the ~4mmol UAM bar
         assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
         assertTrue(learner.lastOutcome.contains("late, not too much"), learner.lastOutcome)
     }
@@ -329,7 +330,7 @@ class ModeIsfLearnerTest {
     @Test
     fun `the same spike still weakens while the fraction has headroom left`() {
         // Shape can still be fixed where it belongs, so this learner must not also act.
-        spikeThenLand(peak = 160.0, railed = false)
+        spikeThenLand(peak = 180.0, railed = false)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
@@ -343,7 +344,7 @@ class ModeIsfLearnerTest {
     fun `a hard low after a late spike still weakens, at half the step`() {
         // Reaching the low guard means the total really was too much, whenever it arrived.
         // Strengthening from there would deepen the next one — only the step softens.
-        spikeThenLand(peak = 160.0, railed = true, low = true)
+        spikeThenLand(peak = 180.0, railed = true, low = true)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
         assertTrue(learner.lastOutcome.contains("weakened"), learner.lastOutcome)
     }
@@ -357,7 +358,7 @@ class ModeIsfLearnerTest {
     @Test
     fun `a suspected-exercise undershoot after a spike is not read as a timing failure`() {
         // BG falling faster than insulin explains says nothing about front-loading.
-        spikeThenLand(peak = 160.0, railed = true, exercise = true)
+        spikeThenLand(peak = 180.0, railed = true, exercise = true)
         assertEquals(1.01, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
@@ -366,14 +367,14 @@ class ModeIsfLearnerTest {
         // UAM cannot fire until BG is already climbing, so every episode spikes. One reading at
         // the peak and then a fall is late-but-sufficient insulin — strengthening on that would
         // ratchet the mode up meal after meal for doing its job.
-        spikeThenLand(peak = 160.0, railed = true, holdCycles = 1)
+        spikeThenLand(peak = 180.0, railed = true, holdCycles = 1)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
     fun `a spike held just under the sustained window does not qualify`() {
         // 5 readings = 25min, under the 30min bar.
-        spikeThenLand(peak = 160.0, railed = true, holdCycles = 5)
+        spikeThenLand(peak = 180.0, railed = true, holdCycles = 5)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
@@ -499,10 +500,12 @@ class ModeIsfLearnerTest {
 
     /** Holds [bg] for [cycles] readings starting [offsetMin] minutes into a manual Lunch, then
      *  lands on target and runs the tail. */
-    private fun heldPeak(bg: Double, cycles: Int, offsetMin: Int, mode: MealMode = MealMode.LUNCH, railed: Boolean = false) {
+    /** A Smart Meal mode defaults to having had a pre-bolus here: the tighter 3 mmol spike bar. */
+    private fun heldPeak(bg: Double, cycles: Int, offsetMin: Int, mode: MealMode = MealMode.LUNCH, railed: Boolean = false,
+                         preBolused: Boolean = true) {
         val start = BASE_MS
         var t = start
-        cycle(mode, start, t, bg = 110.0, railed = railed)
+        cycle(mode, start, t, bg = 110.0, railed = railed, preBolused = preBolused)
         t = start + offsetMin * 60_000L
         repeat(cycles) { cycle(mode, start, t, bg = bg, railed = railed); t += CYCLE_MS }
         cycle(mode, start, t, bg = 102.0, railed = railed)
@@ -568,7 +571,7 @@ class ModeIsfLearnerTest {
     }
 
     private fun heldPeakNoTail(bg: Double, cycles: Int, offsetMin: Int) {
-        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 110.0)
+        cycle(MealMode.LUNCH, BASE_MS, BASE_MS, bg = 110.0, preBolused = true)
         var t = BASE_MS + offsetMin * 60_000L
         repeat(cycles) { cycle(MealMode.LUNCH, BASE_MS, t, bg = bg); t += CYCLE_MS }
     }
@@ -582,13 +585,44 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `a UAM spike waits for the entry fraction while it has headroom`() {
-        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = false)
+        heldPeak(bg = 180.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = false)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a UAM rise of 3_3 mmol held half an hour is an ordinary unannounced meal, not a spike`() {
+        // 160 is +3.3 mmol over a 100 target: past the old 3 mmol bar, under the 4 mmol UAM one.
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = true)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `the same 3_3 mmol held in a Smart Meal given a pre-bolus is a spike - the pre-bolus should have held it`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.LUNCH, preBolused = true)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a Smart Meal with no pre-bolus gets the 4 mmol bar - 3_3 is an ordinary rise`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.LUNCH, preBolused = false)
+        assertEquals(1.0, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a Smart Meal with no pre-bolus past 4 mmol is a spike`() {
+        heldPeak(bg = 180.0, cycles = 8, offsetMin = 10, mode = MealMode.LUNCH, preBolused = false)
+        assertEquals(0.975, learner.multiplier(MealMode.LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a UAM mode never gets the tight bar, even if a pre-bolus was reported`() {
+        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = true, preBolused = true)
         assertEquals(1.0, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
     fun `a UAM spike with the entry fraction railed charges the ISF`() {
-        heldPeak(bg = 160.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = true)
+        heldPeak(bg = 180.0, cycles = 8, offsetMin = 10, mode = MealMode.UAM_LUNCH, railed = true)
         assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
@@ -623,7 +657,7 @@ class ModeIsfLearnerTest {
     fun `the same altitude reached by an actual rise is still charged`() {
         val start = BASE_MS
         var t = start
-        cycle(MealMode.LUNCH, start, t, bg = 110.0, railed = true)
+        cycle(MealMode.LUNCH, start, t, bg = 110.0, railed = true, preBolused = true)
         repeat(8) { t += CYCLE_MS; cycle(MealMode.LUNCH, start, t, bg = 163.0, railed = true) }
         t += CYCLE_MS
         cycle(MealMode.LUNCH, start, t, bg = 105.0, railed = true)

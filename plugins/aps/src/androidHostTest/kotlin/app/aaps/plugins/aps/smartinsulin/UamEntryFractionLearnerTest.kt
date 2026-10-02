@@ -213,15 +213,25 @@ class UamEntryFractionLearnerTest {
     @Test
     fun `a peak well above target raises the fraction even when the rise from entry was modest`() {
         // The case the relative bar misses: UAM can't fire until BG has been climbing ~15min,
-        // so entry at 7.0 (126) already hides most of the spike. Topping out at 9.0 (162) books
+        // so entry at 8.0 (144) already hides most of the spike. Topping out at 10.0 (180) books
         // only 36mg/dl of excursion — under the 45 bar — but it is exactly the episode the entry
-        // burst exists to prevent, and 162 is 63 above a 99 target.
+        // burst exists to prevent, and 180 is 81 above a 99 target.
+        val peakMs = BASE_MS + 50 * 60_000L
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 144.0, target = 99.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 180.0, target = 99.0)
+        runQuietTail(peakMs, bg = 105.0, target = 99.0)
+        // Graduated off the peak bar: 81/72 = 1.125× → 0.03 × 1.125 = 0.03375
+        assertEquals(0.03375, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a peak 3_5 mmol over target is an ordinary unannounced meal`() {
+        // 162 is 63 over a 99 target: past the old 3 mmol bar, under the 4 mmol one.
         val peakMs = BASE_MS + 50 * 60_000L
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 126.0, target = 99.0)
         cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 162.0, target = 99.0)
         runQuietTail(peakMs, bg = 105.0, target = 99.0)
-        // Graduated off the peak bar: 63/54 = 1.17× → 0.03 × 1.17 = 0.035
-        assertEquals(0.035, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
