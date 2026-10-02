@@ -67,6 +67,7 @@ import kotlin.math.abs
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 
 /**
  * Overview graphs section using Vico charts.
@@ -302,19 +303,30 @@ fun GraphsSection(
         lastBgTimestamp = newTimestamp
     }
 
-    // After a reset, the recreated bgScrollState defaults to Scroll.Absolute.End. If predictions
-    // are visible, nudge it further so "now + 2h" sits at the right edge instead, leaving room to
-    // see the forecast — same positioning as before, reapplied once the fresh scrollState (a new
-    // instance, since it's keyed on bgViewportResetTrigger too) is composed and ready.
-    LaunchedEffect(bgViewportResetTrigger, bgScrollState) {
-        if (bgViewportResetTrigger == 0) return@LaunchedEffect
+    // Where "now" sits. A new scroll state starts at Scroll.Absolute.End, the far end of the time
+    // range - and with predictions shown that is the end of the prediction line, so the graph
+    // opened on hours of empty future and had to be swiped back. With predictions shown, "now" goes
+    // in the middle instead: the last few hours on the left, the forecast on the right.
+    //
+    // Done on first open as well as after every reset. Before, only the reset did it, so opening
+    // the app always showed the far end. On first open the time range and predictions may still be
+    // loading, so this runs again when they arrive, and it is done only once. It waits for the chart
+    // to have a scroll range: a scroll before the chart is measured has nothing to scroll.
+    // Not in the history browser, which shows one whole day.
+    var nowPlacedOnOpen by remember { mutableStateOf(false) }
+    val timeRangeReady = derivedTimeRange != null
+    val predictionsReady = predictions.isNotEmpty()
+    LaunchedEffect(bgViewportResetTrigger, bgScrollState, timeRangeReady, predictionsReady) {
+        if (fitWholeWindow) return@LaunchedEffect
+        if (bgViewportResetTrigger == 0 && nowPlacedOnOpen) return@LaunchedEffect
         val showPredictions = SeriesType.PREDICTIONS in graphConfig.bgOverlays
-        val timeRange = derivedTimeRange
-        if (showPredictions && predictions.isNotEmpty() && timeRange != null) {
-            val (minTimestamp, _) = timeRange
-            val nowX = timestampToX(dateUtil.now(), minTimestamp)
-            bgScrollState.animateScroll(Scroll.Absolute.x(nowX + 120.0, bias = 1f))
-        }
+        val timeRange = derivedTimeRange ?: return@LaunchedEffect
+        if (!showPredictions || predictions.isEmpty()) return@LaunchedEffect
+        snapshotFlow { bgScrollState.maxValue }.first { it > 0f }
+        val nowX = timestampToX(dateUtil.now(), timeRange.first)
+        if (bgViewportResetTrigger == 0) bgScrollState.scroll(Scroll.Absolute.x(nowX, bias = 0.5f))
+        else bgScrollState.animateScroll(Scroll.Absolute.x(nowX, bias = 0.5f))
+        nowPlacedOnOpen = true
     }
 
     // Correct secondary graph scroll drift — Vico may internally adjust scroll

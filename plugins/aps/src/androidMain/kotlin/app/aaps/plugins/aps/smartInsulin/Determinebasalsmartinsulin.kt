@@ -117,7 +117,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
          *  Compounds with the rebound taper — two independent reasons to hold insulin back both
          *  apply, and the smaller one wins by construction. */
         sessionInsulinFraction:   Double = 1.0,
-        sessionStatusText:        String = ""
+        sessionStatusText:        String = "",
+        /** The rise as the raw readings see it, when a smoothing filter is behind - see [RiseTurnGuard].
+         *  null, or level NONE, leaves the smoothed delta untouched. */
+        riseTurn:                 RiseTurnGuard.Result? = null
     ): APSResult {
 
         val result = apsResultProvider()
@@ -204,7 +207,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // absorption rate (1.5 mmol/L per 5 min), so it never truncates genuine carb impact.
         // Only the positive side is capped: a large negative ci predicts a fall and produces
         // restraint, which is the safe direction and must not be limited.
-        val ci  = (min(glucoseStatus.shortAvgDelta, glucoseStatus.delta) - bgi).coerceAtMost(CI_MAX_MGDL_PER_5MIN)
+        //
+        // riseTurn: at the top of a rise a smoothing filter still says "rising fast" for a reading or
+        // two after the raw CGM has slowed. Its delta is never above the smoothed one, so this can
+        // only lower ci - and with it the predicted rise and the insulin asked for.
+        val turnedDelta = riseTurn?.takeIf { it.level != RiseTurnGuard.Level.NONE }?.deltaMgdl ?: glucoseStatus.delta
+        val ci  = (min(glucoseStatus.shortAvgDelta, min(glucoseStatus.delta, turnedDelta)) - bgi).coerceAtMost(CI_MAX_MGDL_PER_5MIN)
 
         // Every insulinReq-style division below uses this rather than dosingIsfMgdl directly.
         // dosingIsfMgdl is profileISF scaled by learned multipliers and aggressiveness; if any of
@@ -325,6 +333,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sb.append("SI mode=${mealMode.label}")
         sb.append(" | BG=${fmt(currentBg, isMmol)}")
         sb.append(" | d=${fmt(delta, isMmol)}")
+        riseTurn?.takeIf { it.level != RiseTurnGuard.Level.NONE }?.let {
+            sb.append(" | riseSlowing(${it.level}): raw ${fmt(it.rawStepMgdl, isMmol)} vs smoothed ${fmt(delta, isMmol)} → ${fmt(it.deltaMgdl, isMmol)}")
+        }
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")

@@ -159,7 +159,8 @@ class DetermineBasalSmartInsulinTest {
         // all afternoon failed the next morning with nothing changed. Nothing here exercises dawn
         // behaviour, so the harness turns it off; a future dawn test can pass its own value.
         dawnSmbReduction:  Double               = 1.0,
-        msSinceLastSuspend: Long                = 3600_000L
+        msSinceLastSuspend: Long                = 3600_000L,
+        riseTurn:          RiseTurnGuard.Result? = null
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -195,7 +196,8 @@ class DetermineBasalSmartInsulinTest {
             cgmSmbFraction        = 1.0,
             cgmDeltaPlausible     = true,
             cgmWarmupReason       = "",
-            uamSmbFraction        = uamSmbFraction
+            uamSmbFraction        = uamSmbFraction,
+            riseTurn              = riseTurn
         )
         return fakeResult
     }
@@ -647,5 +649,60 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(inReboundWindow = true, uamSmbFraction = 1.0, msSinceLastSuspend = 3_150_000L)
         assertTrue(r.reason.contains("rebound taper"), r.reason)
         assertFalse(r.reason.contains("capped at"), r.reason)
+    }
+
+    // ── rise slowing: the raw CGM step when smoothing lags at the top of a rise ──
+
+    /** 2 Oct 8:31 as the loop saw it: 10.4 mmol, UKF delta +0.8, raw step +0.2, some IOB working. */
+    private fun topOfRise(riseTurn: RiseTurnGuard.Result?): FakeAPSResult {
+        fakeResult = FakeAPSResult()
+        whenever(glucoseStatus.glucose).thenReturn(187.0)
+        whenever(glucoseStatus.delta).thenReturn(14.4)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(19.0)
+        return invoke(iobArray = flatIobArray(1.5, 0.004), riseTurn = riseTurn)
+    }
+
+    private fun turn(level: RiseTurnGuard.Level, deltaMgdl: Double, rawMgdl: Double = 3.6) =
+        RiseTurnGuard.Result(deltaMgdl, level, rawMgdl)
+
+    @Test fun `rise slowing - no guard result doses exactly as before`() {
+        val before = topOfRise(null)
+        val none = topOfRise(turn(RiseTurnGuard.Level.NONE, 14.4))
+        assertEquals(before.smb, none.smb, 1e-9)
+        assertEquals(before.rate, none.rate, 1e-9)
+        assertEquals(before.predictionsAsGv.map { it.value }, none.predictionsAsGv.map { it.value })
+        assertFalse(none.reason.contains("riseSlowing"))
+    }
+
+    @Test fun `rise slowing - the raw step gives less insulin than the smoothed delta`() {
+        val smoothed = topOfRise(null)
+        val raw = topOfRise(turn(RiseTurnGuard.Level.RAW, 3.6))
+        assertTrue(smoothed.smb > 0.0, "the smoothed case should be dosing, got ${smoothed.smb}")
+        assertTrue(raw.smb < smoothed.smb, "SMB ${raw.smb} should be below ${smoothed.smb}")
+        assertTrue(raw.predictionsAsGv.maxOf { it.value } < smoothed.predictionsAsGv.maxOf { it.value })
+        assertTrue(raw.reason.contains("riseSlowing(RAW)"), raw.reason)
+    }
+
+    @Test fun `rise slowing - halfway sits between the two`() {
+        val smoothed = topOfRise(null).smb
+        val half = topOfRise(turn(RiseTurnGuard.Level.HALF, 9.0)).smb
+        val raw = topOfRise(turn(RiseTurnGuard.Level.RAW, 3.6)).smb
+        assertTrue(half <= smoothed && half >= raw, "expected $raw <= $half <= $smoothed")
+    }
+
+    @Test fun `rise slowing - a result above the smoothed delta is never used`() {
+        // The guard never returns one; this checks determine_basal would not act on it if it did.
+        val before = topOfRise(null)
+        val bad = topOfRise(turn(RiseTurnGuard.Level.RAW, 40.0))
+        assertEquals(before.smb, bad.smb, 1e-9)
+        assertEquals(before.rate, bad.rate, 1e-9)
+    }
+
+    @Test fun `rise slowing - a raw step that has turned down gives no SMB and a lower temp, not a zero temp`() {
+        val smoothed = topOfRise(null)
+        val falling = topOfRise(turn(RiseTurnGuard.Level.RAW, -5.4, rawMgdl = -5.4))
+        assertTrue(falling.reason.contains("NORMAL"), falling.reason)
+        assertEquals(0.0, falling.smb, 1e-9)
+        assertTrue(falling.rate > 0.0 && falling.rate < smoothed.rate, "rate ${falling.rate} vs ${smoothed.rate}")
     }
 }

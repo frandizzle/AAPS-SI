@@ -940,6 +940,14 @@ open class SmartInsulinPlugin @Inject constructor(
         super.onStop()
     }
 
+    /** [RiseTurnGuard] on the newest raw readings (calibrated if calibrated), before smoothing. */
+    private fun riseTurnNow(smoothedDeltaMgdl: Double): RiseTurnGuard.Result? {
+        val data = iobCobCalculator.ads.getBucketedDataTableCopy() ?: return null
+        // A gap that bucketing filled in is not a reading; stop the raw series there.
+        val real = data.take(6).takeWhile { !it.filledGap }
+        return RiseTurnGuard.apply(smoothedDeltaMgdl, real.map { it.calibratedOrValue }, real.map { it.timestamp })
+    }
+
     /** Re-arm after the SI tab's permission request comes back granted. */
     fun startPhoneStepCounter() = phoneStepCounter.start()
 
@@ -1630,7 +1638,8 @@ open class SmartInsulinPlugin @Inject constructor(
             isMmol                   = isMmol,
             duraStatusText           = duraStatusText,
             sessionInsulinFraction   = sessionDose.insulinFraction,
-            sessionStatusText        = sessionStatus
+            sessionStatusText        = sessionStatus,
+            riseTurn                 = riseTurnNow(glucoseStatus.delta)
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)
