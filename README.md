@@ -1,6 +1,6 @@
 # AAPS — SmartInsulin APS Plugin
 
-> 💬 **SmartInsulin Discord:** [Join the server here](https://discord.gg/Jezqptxp) — if there's any questions, come in and ask away!
+> 💬 **SmartInsulin Discord:** [Join the server here](https://discord.gg/BfJA2RKeMw) — if there's any questions, come in and ask away!
 
 > 📖 **Full AAPS Wiki:** https://wiki.aaps.app
 >
@@ -42,6 +42,18 @@ Everything it learns is written down in a **Learning Journal** on the SmartInsul
 | `dev` | AAPS 3.4 | Older version, no longer updated |
 
 Build the **`fullRelease`** variant from `main` in Android Studio.
+
+---
+
+## First steps after installing
+
+1. **Select SmartInsulin** as your APS in **Configuration → APS**.
+2. **Add Smart Meal and SmartInsulin to the overview toolbar.** Tap the **⚙** button at the end of the toolbar (the row of buttons above Treatments / Manage) and pick:
+   - **Smart Meal** — starts a meal mode with optional pre-boluses
+   - **SmartInsulin** — opens the SmartInsulin panel (learning, journal, 24h table)
+
+   They are not on the toolbar by default.
+3. **Can't find something?** Use the **search bar** at the top of the overview. Type `SmartInsulin` to open the panel or its settings, or `Smart Meal` to open the dialog.
 
 ---
 
