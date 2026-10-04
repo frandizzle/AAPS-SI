@@ -210,7 +210,7 @@
     <string name="si_dinner_isf_title">Dinner ISF override (0 = use profile)</string>
     <string name="si_lowcarb_isf_title">Low Carb ISF override (0 = use profile)</string>
     <string name="si_extended_isf_title">Extended meal ISF override (0 = use profile)</string>
-    <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol to dose as if ISF is 1.0 mmol for this meal mode.</string>
+    <string name="si_isf_summary">Set to 0 to use your profile ISF. Set to e.g. 1.0 mmol/L (18 mg/dL) to dose as if ISF is 1.0 mmol/L (18 mg/dL) per unit for this meal mode.</string>
     <string name="si_max_smb_title">Max SMB (U)</string>
     <string name="si_dawn_start_hour_title">Dawn window start hour (0-23)</string>
     <string name="si_dawn_start_hour_summary">SMB reduction starts from this hour (default 3 = 3:00 AM)</string>
