@@ -346,7 +346,7 @@ class ModeIsfLearnerTest {
         // Strengthening from there would deepen the next one — only the step softens.
         spikeThenLand(peak = 180.0, railed = true, low = true)
         assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
-        assertTrue(learner.lastOutcome.contains("weakened"), learner.lastOutcome)
+        assertTrue(learner.lastOutcome.contains("ISF weaker (smaller step: it sat"), learner.lastOutcome)
     }
 
     @Test
@@ -568,7 +568,7 @@ class ModeIsfLearnerTest {
         assertTrue(learner.lastOutcome.endsWith("strengthened: ISF 2.00 mmol/U → 1.95 mmol/U (n=1)"), learner.lastOutcome)
         cycle(null, 0L, BASE_MS + 12 * CYCLE_MS, bg = 70.0, low = true)  // then crashed
         // One entry for the undo and the weaken together: from where it was to where it is.
-        assertTrue(learner.lastOutcome.endsWith("undone: ISF 1.95 mmol/U → 2.10 mmol/U (n=1)"), learner.lastOutcome)
+        assertTrue(learner.lastOutcome.endsWith("undone too: ISF 1.95 mmol/U → 2.10 mmol/U (n=1)"), learner.lastOutcome)
     }
 
     @Test

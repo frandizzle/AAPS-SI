@@ -128,15 +128,19 @@ class DuraStrengthLearner @Inject constructor(
         private const val TAIL_MS                   = 105 * 60_000L
         private const val ENGAGED_THRESHOLD         = 1.10  // DURA must have actually done something
         /**
-         * -5% strength per crash. Was 15% when strength was the only lever; the ceiling now takes
-         * the main correction, and charging both at full size would bill one low twice.
+         * -10% strength per low (-5% for a near-low). Was -5%: on a low DURA had pushed into, the
+         * strength barely moved (×1.00 → ×0.98 for a near-low), so the same low came back.
          */
-        private const val REDUCE_STEP               = 0.95
+        private const val REDUCE_STEP               = 0.90
         /** +3% strength per episode stuck long while DURA was still climbing. Smaller than the
          *  5% cut, so a mode oscillating between stuck and low still drifts toward safety. */
         private const val STRENGTHEN_STEP           = 1.03
-        /** Ceiling cut per crash, applied to the EXCESS over 1.0: a low after ×1.44 → ×1.374. */
-        private const val CAP_REDUCE_STEP           = 0.85
+        /**
+         * Ceiling cut per low, applied to the EXCESS over 1.0: a low halves the boost DURA reached
+         * (×1.17 → ×1.09; a near-low takes a quarter off, ×1.17 → ×1.13). Was 15% of the excess,
+         * which on a small boost was nothing: ×1.17 → ×1.16 after a near-low.
+         */
+        private const val CAP_REDUCE_STEP           = 0.50
         /** Ceiling loosen per episode stuck long at it, on the excess — 10%, but never less than
          *  [CAP_LOOSEN_MIN], or a ceiling cut down near ×1.09 would take dozens of meals to move. */
         private const val CAP_LOOSEN_STEP           = 1.10
@@ -371,6 +375,7 @@ class DuraStrengthLearner @Inject constructor(
         if (undershoot)        fraction *= UNDERSHOOT_STEP_FRACTION
         fraction *= share.coerceIn(0.0, 1.0)
         val step = 1.0 - (1.0 - REDUCE_STEP) * fraction
+        val factorBefore = s.factor
         s.factor = (s.factor * step).coerceIn(FACTOR_MIN, FACTOR_MAX)
         // Cut from the peak this episode actually reached, not from the old ceiling: DURA stopping
         // short of the ceiling and still causing a low means the ceiling was never the limit that
@@ -380,10 +385,18 @@ class DuraStrengthLearner @Inject constructor(
         s.ceiling = minOf(s.ceiling, 1.0 + (maxDura - 1.0) * capStep).coerceAtLeast(CAP_MIN)
         s.episodes++
         persist()
-        lastOutcome = (if (undershoot) "dip toward the low guard $whenTxt " else "low $whenTxt ") + "${mode.label} with DURA ×${"%.2f".format(maxDura)}" +
-            (if (exerciseSuspected) ", but BG fell faster than insulin explains" else "") +
-            " — DURA ceiling ${fmtCeiling(ceilingBefore)} → ${fmtCeiling(s.ceiling)}, strength → ×${"%.2f".format(s.factor)}" +
-            (if (fraction < 1.0) " (smaller step)" else "") +
+        // Plain words: what happened, why DURA is the one charged, what changed, and why the step
+        // is smaller when it is.
+        val event = if (undershoot) "BG dropped near the low guard" else "BG went low"
+        val where = if (whenTxt == "during") "during ${mode.label}" else "after ${mode.label} ended"
+        val why = buildList {
+            if (undershoot) add("near the low guard, not under it")
+            if (exerciseSuspected) add("BG fell faster than insulin explains (exercise?)")
+            if (share < 1.0) add("${(share * 100).toInt()}% of the insulin was this meal's")
+        }
+        lastOutcome = "$event $where, with DURA pushing (×${"%.2f".format(maxDura)}) — DURA takes the blame. " +
+            "Max DURA boost ${fmtCeiling(ceilingBefore)} → ${fmtCeiling(s.ceiling)}, strength ×${"%.2f".format(factorBefore)} → ×${"%.2f".format(s.factor)}" +
+            (if (why.isNotEmpty()) " (smaller cut: ${why.joinToString(", ")})" else "") +
             " (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
     }

@@ -210,9 +210,9 @@ class ModeUndershootLearningTest {
         duraCycle(null, 0L, t)                                // cancelled at target — watch opens
         t += CYCLE_MS
         duraCycle(null, 0L, t, undershoot = true)
-        // Half step on both: strength 1 - 0.05×0.5, ceiling 1 + 0.40 × (1 - 0.15×0.5).
-        assertEquals(0.975, dura.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
-        assertEquals(1.0 + 0.40 * 0.925, dura.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        // Half step on both: strength 1 - 0.10×0.5, ceiling 1 + 0.40 × (1 - 0.50×0.5).
+        assertEquals(0.95, dura.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        assertEquals(1.0 + 0.40 * 0.75, dura.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)
     }
 
     @Test
@@ -220,9 +220,9 @@ class ModeUndershootLearningTest {
         var t = BASE_MS
         repeat(8) { duraCycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, t, duraMult = 1.4); t += CYCLE_MS }
         duraCycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, t, duraMult = 1.4, undershoot = true)
-        // Half step on both: strength 1 - 0.05×0.5, ceiling 1 + 0.40 × (1 - 0.15×0.5).
-        assertEquals(0.975, dura.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
-        assertEquals(1.0 + 0.40 * 0.925, dura.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        // Half step on both: strength 1 - 0.10×0.5, ceiling 1 + 0.40 × (1 - 0.50×0.5).
+        assertEquals(0.95, dura.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        assertEquals(1.0 + 0.40 * 0.75, dura.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)
     }
 
     @Test

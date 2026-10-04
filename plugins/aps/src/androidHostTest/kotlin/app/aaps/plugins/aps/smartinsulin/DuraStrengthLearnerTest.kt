@@ -43,7 +43,7 @@ class DuraStrengthLearnerTest {
     fun `a crash while DURA was engaged reduces its strength`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
@@ -60,8 +60,8 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS, dura = 1.40)
         cycle(null, 0L, BASE_MS + CYCLE_MS)                        // mode ends, watch window opens
         cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, low = true)         // crash lands in the tail
-        assertEquals(0.95, learner.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
-        assertEquals(1.34, learner.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)   // 1 + 0.40×0.85
+        assertEquals(0.90, learner.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+        assertEquals(1.20, learner.ceiling(MealMode.UAM_PROTEIN_FAT), 1e-9)   // 1 + 0.40×0.50
     }
 
     @Test
@@ -83,16 +83,16 @@ class DuraStrengthLearnerTest {
         // strength 1.0 - (1.0-0.95)*0.4 = 0.98; ceiling step 1.0 - (1.0-0.85)*0.4 = 0.94
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30, exercise = true)
-        assertEquals(0.98, learner.factor(MealMode.UAM_DINNER), 1e-9)
-        assertEquals(1.0 + 0.30 * 0.94, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.96, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.0 + 0.30 * 0.80, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
     fun `repeated lows walk the ceiling down until DURA stops being the one pushing`() {
-        // Each low cuts the excess 15%, from what was actually dosed. Once the ceiling holds DURA
-        // under the 1.10 engaged bar, DURA is no longer doing enough to be blamed — later lows
-        // stop landing here at all and fall to the mode ISF learner at its full step instead.
-        // 0.40 × 0.85^9 = 0.0927: the ninth cut is the last one that started from ≥ 1.10.
+        // Each low halves the excess, from what was actually dosed: ×1.40 → ×1.20 → ×1.10 → ×1.05.
+        // Once the ceiling holds DURA under the 1.10 engaged bar, DURA is no longer doing enough to
+        // be blamed — later lows stop landing here at all and fall to the mode ISF learner at its
+        // full step instead. Three cuts, and ×1.05 is also the lowest ceiling allowed.
         var t = BASE_MS
         repeat(30) {
             val start = t
@@ -105,8 +105,8 @@ class DuraStrengthLearnerTest {
             cycle(null, 0L, t)
             t += CYCLE_MS
         }
-        assertEquals(1.0 + 0.40 * Math.pow(0.85, 9.0), learner.ceiling(MealMode.UAM_DINNER), 1e-9)
-        assertEquals(Math.pow(0.95, 9.0), learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.05, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(Math.pow(0.90, 3.0), learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
@@ -122,7 +122,7 @@ class DuraStrengthLearnerTest {
     fun `changing the configured DURA strength resets the learned factor`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30, baseSig = 2.0)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30, baseSig = 2.0)
-        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
 
         val newStart = BASE_MS + 6 * 60 * 60_000L
         cycle(MealMode.UAM_DINNER, newStart, newStart, baseSig = 3.0)
@@ -136,8 +136,8 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
 
         val restored = DuraStrengthLearner(sp, FakeAAPSLogger(collect = false))
-        assertEquals(0.95, restored.factor(MealMode.UAM_DINNER), 1e-9)
-        assertEquals(1.255, restored.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, restored.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.15, restored.ceiling(MealMode.UAM_DINNER), 1e-9)
         assertEquals(1, restored.episodeCount(MealMode.UAM_DINNER))
     }
 
@@ -165,20 +165,20 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         cleanDuraEpisode(MealMode.UAM_DINNER, BASE_MS + 10 * CYCLE_MS)
-        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
     fun `an episode where DURA never engaged gives nothing back`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
-        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
 
         // DURA below the 1.10 bar — this episode says nothing about DURA's strength either way,
         // so no watch window opens and the factor stays put.
         val next = BASE_MS + 10 * CYCLE_MS
         cleanDuraEpisode(MealMode.UAM_DINNER, next, dura = 1.02)
-        assertEquals(0.95, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 
     // ── P/F per-window learning ──────────────────────────────────────────────
@@ -188,7 +188,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS, dura = 1.30, pfWindow = PfWindow.OVERNIGHT)
         cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30,
               pfWindow = PfWindow.OVERNIGHT)
-        assertEquals(0.95, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.OVERNIGHT), 1e-9)
         assertEquals(1.0, learner.factor(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
         assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY))
     }
@@ -209,7 +209,7 @@ class DuraStrengthLearnerTest {
         // The lunch that prompted this: DURA got to ×1.44 and that was too much.
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
-        assertEquals(1.374, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)      // 1 + 0.44×0.85
+        assertEquals(1.22, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)      // 1 + 0.44×0.50
     }
 
     @Test
@@ -222,34 +222,34 @@ class DuraStrengthLearnerTest {
             undershootActive = true, pfWindow = PfWindow.DAY
         )
         // step = 1 - 0.15×0.5 = 0.925 → 1 + 0.31×0.925
-        assertEquals(1.0 + 0.31 * 0.925, learner.ceiling(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
+        assertEquals(1.0 + 0.31 * 0.75, learner.ceiling(MealMode.UAM_PROTEIN_FAT, PfWindow.DAY), 1e-9)
     }
 
     @Test
     fun `a later low that never reached the ceiling cuts from its own peak`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.50)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.50)
-        assertEquals(1.425, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.25, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
 
         // Next dinner DURA only got to ×1.20 and it still went low — ×1.20 was the problem.
         val next = BASE_MS + 10 * CYCLE_MS
         cycle(MealMode.UAM_DINNER, next, next, dura = 1.20)
         cycle(MealMode.UAM_DINNER, next, next + CYCLE_MS, low = true, dura = 1.20)
-        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)       // 1 + 0.20×0.85
+        assertEquals(1.10, learner.ceiling(MealMode.UAM_DINNER), 1e-9)       // 1 + 0.20×0.50
     }
 
     @Test
     fun `a ceiling that is already tighter is kept`() {
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.20)
         cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.20)
-        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.10, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
 
         // A later reading of ×1.40 can only come from before the ceiling existed (or a restore) —
         // it must never loosen the ceiling.
         val next = BASE_MS + 10 * CYCLE_MS
         cycle(MealMode.UAM_DINNER, next, next, dura = 1.40)
         cycle(MealMode.UAM_DINNER, next, next + CYCLE_MS, low = true, dura = 1.40)
-        assertEquals(1.17, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.10, learner.ceiling(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
@@ -257,7 +257,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)
         cleanDuraEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, dura = 1.15)
-        assertEquals(1.374, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(1.22, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -314,7 +314,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)                 // an old cut first
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60)
-        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
         assertTrue(learner.lastOutcome.contains("still climbing"), learner.lastOutcome)
     }
 
@@ -329,8 +329,8 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.44)
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.44)   // ceiling 1.374
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, dura = 1.374, atCeiling = true)
-        assertEquals(1.0 + 0.374 * 1.10, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
-        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(1.0 + 0.22 * 1.10, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -360,8 +360,8 @@ class DuraStrengthLearnerTest {
     @Test
     fun `a low after a long stall never strengthens — it cuts`() {
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS, stuckMin = 60, dura = 1.40, lowAfter = true)
-        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
-        assertEquals(1.34, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(1.20, learner.ceiling(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -389,7 +389,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60,
                      duraAt = { m -> if (m >= 40) 1.15 else 1.05 })
-        assertEquals(0.95, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -398,7 +398,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 80,
                      duraAt = { m -> if (m >= 45) 1.15 else 1.05 })
-        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -417,7 +417,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         // −6 mg/dL across the hour — under the 0.5mmol allowance.
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, bgAt = { m -> TARGET + 36.0 - m / 10.0 })
-        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -425,7 +425,7 @@ class DuraStrengthLearnerTest {
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, dura = 1.30)
         cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
         stuckEpisode(MealMode.UAM_LUNCH, BASE_MS + 10 * CYCLE_MS, stuckMin = 60, bgAt = { m -> TARGET + 30.0 + m / 5.0 })
-        assertEquals(0.95 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(0.90 * 1.03, learner.factor(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
