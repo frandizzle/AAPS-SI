@@ -32,6 +32,8 @@ Everything it learns is written down in a **Learning Journal** on the SmartInsul
   <img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
 </p>
 
+> 📷 **Note:** these screenshots are from the older AAPS 3.4 version. SmartInsulin on AAPS 4.0 has a new look, so your screens will look different — the features are the same or better.
+
 ---
 
 ## Which branch?
@@ -335,6 +337,8 @@ Set your dawn window hours, and how much SMBs are reduced during it.
   <img src="https://github.com/user-attachments/assets/a5bc2936-4785-4a37-8a9e-54ce6a3bd2a4" width="200">
   <img src="https://github.com/user-attachments/assets/04ac513b-c25c-4acd-ba09-88afd63ea980" width="200">
 </p>
+
+> 📷 **Note:** these screenshots are from the older AAPS 3.4 version. SmartInsulin on AAPS 4.0 has a new look, so your screens will look different — the features are the same or better.
 
 ---
 
