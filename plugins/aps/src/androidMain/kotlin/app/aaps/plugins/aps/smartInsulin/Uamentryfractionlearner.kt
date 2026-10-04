@@ -413,8 +413,8 @@ class UamEntryFractionLearner @Inject constructor(
                 (peakAboveTarget >= peakBarMgdl() && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
             val peakWasLate     = pendingPeakOffsetMs >= MIN_PEAK_OFFSET_FOR_STRENGTHEN_MS
             val peakMins        = pendingPeakOffsetMs / 60_000
-            val excMmol         = "%.1f".format(pendingExcursion / 18.0)
-            val peakMmol        = "%.1f".format(pendingPeakMgdl / 18.0)
+            val excMmol         = BgText.bg(pendingExcursion)
+            val peakMmol        = BgText.bg(pendingPeakMgdl)
             when {
                 bigExcursion && endedOnTarget && peakWasLate -> {
                     // Graduated: a spike twice the size of the bar is twice the evidence, and a
@@ -432,22 +432,22 @@ class UamEntryFractionLearner @Inject constructor(
                         // learner that moved when nothing changed. The evidence is real, so it
                         // goes to the only actuator still holding travel.
                         magnitudeHandoff = p to pendingStartMs
-                        note(p, "${p.label} reached ${peakMmol}mmol, ended on target, but entry fraction is already at max — handed to mode ISF")
+                        note(p, "${p.label} reached ${peakMmol}, ended on target, but entry fraction is already at max — handed to mode ISF")
                     } else {
                         applyOutcome(p, step,
-                                     "${p.label} reached ${peakMmol}mmol (+${excMmol} after entry) peaking ${peakMins}min in, ended on target — entry fraction raised")
+                                     "${p.label} reached ${peakMmol} (+${excMmol} after entry) peaking ${peakMins}min in, ended on target — entry fraction raised")
                     }
                 }
                 bigExcursion && endedOnTarget ->
                     // Fast-carb signature: the peak beat the entry insulin, so a bigger entry
                     // SMB could not have prevented it — only landed later and caused a low.
-                    note(p, "${p.label} reached ${peakMmol}mmol but peaked only ${peakMins}min after entry — fast carbs, not a shape problem")
+                    note(p, "${p.label} reached ${peakMmol} but peaked only ${peakMins}min after entry — fast carbs, not a shape problem")
                 !endedOnTarget && stillFalling() ->
                     // Still coming down under its own steam. Where BG happens to be right now says
                     // nothing about the entry dose — and this is the branch every fat/protein meal
                     // lands in, which is what keeps the one below from ratcheting on the majority
                     // of real meals.
-                    note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol but still falling ${"%.1f".format(-meanTailDelta() / 18.0)}mmol/5min — resolving on its own, entry shape not charged")
+                    note(p, "${p.label} $whenTxt ${BgText.bg(bgMgdl)} but still falling ${BgText.bg(-meanTailDelta())}/5min — resolving on its own, entry shape not charged")
                 !endedOnTarget && (pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL) -> {
                     // Flat, still over target, and it did rise after entry: nothing is holding BG
                     // up any more, so the front-loading fell short. Scaled by how far over it
@@ -457,19 +457,19 @@ class UamEntryFractionLearner @Inject constructor(
                     if (railedHigh(p)) {
                         magnitudeHandoff = p to pendingStartMs
                         clearSlowReturnStreak(p)
-                        note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol and flat, but entry fraction is already at max — handed to mode ISF")
+                        note(p, "${p.label} $whenTxt ${BgText.bg(bgMgdl)} and flat, but entry fraction is already at max — handed to mode ISF")
                     } else {
                         val streak = (states[p]?.slowReturnStreak ?: 0) + 1
                         applyOutcome(p, step,
-                                     "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol and flat — nothing still bringing it down, entry fraction raised" +
+                                     "${p.label} $whenTxt ${BgText.bg(bgMgdl)} and flat — nothing still bringing it down, entry fraction raised" +
                                          (if (streak >= SLOW_RETURN_STREAK_NOTE) " (${streak}th in a row with no low since — worth a sanity-check)" else ""))
                         states[p]?.let { it.slowReturnStreak = streak; persist() }
                     }
                 }
                 !endedOnTarget ->
-                    note(p, "${p.label} $whenTxt ${"%.1f".format(bgMgdl / 18.0)}mmol but barely rose after entry — not the entry burst's doing, left to mode ISF")
+                    note(p, "${p.label} $whenTxt ${BgText.bg(bgMgdl)} but barely rose after entry — not the entry burst's doing, left to mode ISF")
                 else ->
-                    note(p, "${p.label} peaked ${peakMmol}mmol, ended on target — entry shape OK")
+                    note(p, "${p.label} peaked ${peakMmol}, ended on target — entry shape OK")
             }
             pendingMode = null
             pendingHandover = false

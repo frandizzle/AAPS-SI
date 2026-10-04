@@ -95,7 +95,7 @@ class CgmWarmupGuard @Inject constructor(
                 inWarmup         = suppressLearning,
                 sensorAgeHours   = sensorAgeHours,
                 suppressLearning = suppressLearning,
-                reason           = "cgmJump(delta=${"%.1f".format(deltaMmol)}mmol SMBsBlocked TBRok)"
+                reason           = "cgmJump(delta=${BgText.bg(deltaMmol * 18.0)} SMBsBlocked TBRok)"
             )
         }
 
@@ -135,7 +135,7 @@ class CgmWarmupGuard @Inject constructor(
             else -> "allowed"
         }
         val noiseDesc = buildString {
-            if (sensorErratic) append(" erratic(div=${"%.1f".format(deltaDivergence)}mmol)")
+            if (sensorErratic) append(" erratic(div=${BgText.bg(deltaDivergence * 18.0)})")
             if (highNoise)     append(" noise=${"%.0f".format(noiseLevelRaw)}")
         }
         val cycleDesc = if (skipN > 0) "(cyc=$cycleCounter→${if (allowThisCycle) "SMB" else "skip"})" else ""

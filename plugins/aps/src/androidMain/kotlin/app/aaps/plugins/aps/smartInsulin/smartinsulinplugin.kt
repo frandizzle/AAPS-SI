@@ -1077,7 +1077,7 @@ open class SmartInsulinPlugin @Inject constructor(
     override suspend fun invoke(initiator: String, tempBasalFallback: Boolean) {
         val previousAPSResult = lastAPSResult; lastAPSResult = null
         val profile = profileFunction.getProfile() ?: return
-        guardShownInMmol = isMmol
+        BgText.mmol = isMmol
         cachedProfileIsf = profile.getIsfMgdl("SmartInsulinPlugin")
         cachedProfileBasal = profile.getBasal()
         cachedHourIsf = DoubleArray(24) { profile.getIsfMgdlTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }

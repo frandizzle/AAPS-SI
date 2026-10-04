@@ -141,7 +141,7 @@ class SecondWaveDetector @Inject constructor(
         if (rateSignal && bgSignal) {
             detected = true
             description = "second wave: absorption re-accelerated to ${"%.1f".format(smoothedRate)}g/5min after decaying, " +
-                "and BG climbed at ${"%.1f".format(maxRiseSinceDescent / 18.0)}mmol/5min to a new high at ${"%.1f".format(bgMgdl / 18.0)}mmol"
+                "and BG climbed at ${BgText.bg(maxRiseSinceDescent)}/5min to a new high at ${BgText.bg(bgMgdl)}"
             aapsLogger.debug(LTag.APS, "SecondWaveDetector: $description")
         }
     }

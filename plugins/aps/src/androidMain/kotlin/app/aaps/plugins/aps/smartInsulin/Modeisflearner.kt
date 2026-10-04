@@ -336,7 +336,7 @@ class ModeIsfLearner @Inject constructor(
                             // under target with no front-loading left is late, not excessive.
                             if (lateSpikeWithNoShapeLeft(targetMgdl) && !episodeLowWasUnexplained)
                                 applyOutcome(superseded, strengthenStep(),
-                                             "${superseded.label} peaked ${"%.1f".format(episodePeakMgdl / 18.0)}mmol then settled just under target with entry front-loading maxed — strengthened",
+                                             "${superseded.label} peaked ${BgText.bg(episodePeakMgdl)} then settled just under target with entry front-loading maxed — strengthened",
                                              activeStartMs)
                             else
                                 applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true, duraDrove = duraDrove(episodeMaxDura)),
@@ -400,7 +400,7 @@ class ModeIsfLearner @Inject constructor(
                 else if (bgMgdl < episodeStartBgMgdl - CARRIED_IN_LOW_DEEPER_MGDL) {
                     episodeCarriedInLow = false
                     aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${activeScope?.label} started low and BG fell further (" +
-                        "${"%.1f".format(episodeStartBgMgdl / 18.0)}→${"%.1f".format(bgMgdl / 18.0)} mmol) — this low counts")
+                        "${BgText.bg(episodeStartBgMgdl)}→${BgText.bg(bgMgdl)}) — this low counts")
                 }
             }
             if (episodeCarriedInLow) {
@@ -435,7 +435,7 @@ class ModeIsfLearner @Inject constructor(
             activeScope   = null
             activeStartMs = 0L
             val lateSpike    = lateSpikeWithNoShapeLeft(targetMgdl)
-            val peakMmol     = "%.1f".format(episodePeakMgdl / 18.0)
+            val peakMmol     = BgText.bg(episodePeakMgdl)
             if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
@@ -447,8 +447,8 @@ class ModeIsfLearner @Inject constructor(
                 applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike, duraDrove = duraDrove(maxDura)),
                              when {
                                  unexplained -> "low during ${ended.label} episode, but BG was falling faster than insulin explains (exercise?) — weakened at reduced step"
-                                 lateSpike   -> "low during ${ended.label} episode, but it sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol first with entry front-loading maxed${duraNote(maxDura)} — weakened at reduced step"
-                                 duraDrove(maxDura) -> "low during ${ended.label} episode, peak ${peakMmol}mmol, DURA ×${"%.2f".format(maxDura)} drove the descent — DURA takes the correction, ${ended.label} ISF weakened at a small step"
+                                 lateSpike   -> "low during ${ended.label} episode, but it sat ${episodeSpikeMs / 60_000}min at ${peakMmol} first with entry front-loading maxed${duraNote(maxDura)} — weakened at reduced step"
+                                 duraDrove(maxDura) -> "low during ${ended.label} episode, peak ${peakMmol}, DURA ×${"%.2f".format(maxDura)} drove the descent — DURA takes the correction, ${ended.label} ISF weakened at a small step"
                                  else        -> "low during ${ended.label} episode — weakened"
                              },
                              endedStartMs)
@@ -470,7 +470,7 @@ class ModeIsfLearner @Inject constructor(
                 // reach it still weakens, at twice this step, in the branch above.
                 if (lateSpike && !unexplained) {
                     applyOutcome(ended, strengthenStep(),
-                                 "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol}mmol then settled just under target with entry front-loading maxed — late, not too much — strengthened",
+                                 "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol} then settled just under target with entry front-loading maxed — late, not too much — strengthened",
                                  endedStartMs)
                 } else {
                     applyOutcome(ended, weakenStep(unexplained, undershoot = true, duraDrove = duraDrove(maxDura)),
@@ -562,24 +562,24 @@ class ModeIsfLearner @Inject constructor(
      * low in the tail can undo it.
      */
     private fun judgeWindow(p: Scope, bgMgdl: Double, targetMgdl: Double): Double {
-        val aboveMmol = "%.1f".format((bgMgdl - targetMgdl) / 18.0)
+        val aboveMmol = BgText.bg(bgMgdl - targetMgdl)
         val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
         when {
             pendingSpikeTooHigh -> {
                 val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} spike held ≥${"%.0f".format(spikeMarginMgdl() / 18.0)}mmol over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                applyOutcome(p, step, "${p.label} spike held ≥${BgText.bg(spikeMarginMgdl(), 0)} over target for 30min with no front-loading left — strengthened", pendingStartMs)
                 return step
             }
             // Working through a high it inherited: below where it started and still coming
             // down. Charging this reads someone else's high as this mode's under-dosing.
             endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
-                noChange(p, "${p.label} ended ${aboveMmol}mmol above target but ${"%.1f".format((pendingStartBgMgdl - bgMgdl) / 18.0)}mmol below where it started, still falling — working through an inherited high, no change")
+                noChange(p, "${p.label} ended ${aboveMmol} above target but ${BgText.bg(pendingStartBgMgdl - bgMgdl)} below where it started, still falling — working through an inherited high, no change")
             endedHigh && pendingMaxDura < DURA_ENGAGED_MULT -> {
                 val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} ended ${aboveMmol}mmol above target — strengthened", pendingStartMs)
+                applyOutcome(p, step, "${p.label} ended ${aboveMmol} above target — strengthened", pendingStartMs)
                 return step
             }
-            endedHigh -> noChange(p, "${p.label} ended ${aboveMmol}mmol above target with DURA working (×${"%.2f".format(pendingMaxDura)}) — a stall is DURA's to fix, no change")
+            endedHigh -> noChange(p, "${p.label} ended ${aboveMmol} above target with DURA working (×${"%.2f".format(pendingMaxDura)}) — a stall is DURA's to fix, no change")
             else      -> noChange(p, "${p.label} ended on target — no change")
         }
         return 1.0
@@ -596,11 +596,11 @@ class ModeIsfLearner @Inject constructor(
         if (endedHigh && pendingWindowStep == 1.0 && !inheritedHigh && pendingMaxDura < DURA_ENGAGED_MULT) {
             val step = strengthenStep()
             applyOutcome(p, step,
-                         "${p.label}: BG still ${"%.1f".format((bgMgdl - targetMgdl) / 18.0)}mmol above target ${TAIL_MS / 60_000}min after it ended — strengthened",
+                         "${p.label}: BG still ${BgText.bg(bgMgdl - targetMgdl)} above target ${TAIL_MS / 60_000}min after it ended — strengthened",
                          pendingStartMs, countEpisode = false)
             // The low watch runs a little past the tail; a low in it undoes this too.
             if (watchScope == p) watchWindowStep = step
-        } else aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${p.label} tail ended at ${"%.1f".format(bgMgdl / 18.0)}mmol — window verdict stands")
+        } else aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${p.label} tail ended at ${BgText.bg(bgMgdl)} — window verdict stands")
     }
 
     /** The tail stops early. The window verdict stands; the low watch is handled by the caller. */

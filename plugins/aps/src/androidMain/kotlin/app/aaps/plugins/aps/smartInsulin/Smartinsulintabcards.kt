@@ -900,8 +900,10 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         addDivider()
         addSectionHeader("Learned Mode ISF (per meal / UAM mode)")
         addMonospaceBlock(d.modeIsfLearnerStatus)
-        addNoteBlock("Judged when the mode ends: spike held ≥3mmol over target with a pre-bolus, ≥4mmol " +
-            "without one or for UAM, for 30min in the first 75min with no front-loading left, or ended ~1mmol+ above target " +
+        // The bars below in the user's units: 3, 4 and 1 mmol are 54, 72 and 18 mg/dL.
+        fun bar(mgdl: Double) = if (d.isMmol) "%.0fmmol".format(mgdl / 18.0) else "%.0fmg/dL".format(mgdl)
+        addNoteBlock("Judged when the mode ends: spike held ≥${bar(54.0)} over target with a pre-bolus, ≥${bar(72.0)} " +
+            "without one or for UAM, for 30min in the first 75min with no front-loading left, or ended ~${bar(18.0)}+ above target " +
             "without DURA working → strengthens. A low during the mode → weakens (mostly charged to " +
             "DURA if DURA was pushing). For 75min after, a low or near-low undoes any strengthen and " +
             "weakens; still high at the end → strengthens, if the mode end did not already. Another " +
@@ -914,7 +916,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             "Floor = the strongest ISF DURA may take this mode to (approximate — shown against the " +
             "mode's learned ISF, which circadian moves through the day). Your floor in settings is " +
             "the hard limit. Went low with DURA engaged → floor raised from where DURA actually got " +
-            "to, strength trimmed 5%. Stuck ≥1mmol over target and flat for an unbroken hour, " +
+            "to, strength trimmed 5%. Stuck ≥${bar(18.0)} over target and flat for an unbroken hour, " +
             "nothing low after → DURA wasn't enough: if it was held at the learned floor that " +
             "floor is lowered, if it was still climbing strength goes up 3%. Held at your settings " +
             "floor, or already at full strength → no change, and it says so here. A low always wins.")

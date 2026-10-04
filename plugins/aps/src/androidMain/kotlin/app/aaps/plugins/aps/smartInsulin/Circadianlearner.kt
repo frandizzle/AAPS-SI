@@ -1568,7 +1568,7 @@ class CircadianLearner @Inject constructor(
                 val blockUp = projectedError > 0.0 && (bg < targetMgdl || recoveringFromBelowTarget)
                 when {
                     wouldFire && blockUp -> {
-                        lastPredTrimDebug = "blocked UP — proj=${"%.1f".format(projectedBg / 18.0)}mmol high but bg=${"%.1f".format(bg / 18.0)}mmol below target now or in last 90 min"
+                        lastPredTrimDebug = "blocked UP — proj=${BgText.bg(projectedBg)} high but bg=${BgText.bg(bg)} below target now or in last 90 min"
                         aapsLogger.debug(LTag.APS, "CircadianLearner Basal[predTrim] up-direction blocked: projectedError=${"%.1f".format(projectedError)} but bg below target")
                     }
                     wouldFire -> {
@@ -1587,15 +1587,15 @@ class CircadianLearner @Inject constructor(
                             writeIsf(dow, hour, crossIsfMult, ISF_ALPHA * 0.5)
                         }
 
-                        lastBasalSignal  = "PredTrim: proj=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
-                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | " +
+                        lastBasalSignal  = "PredTrim: proj=${BgText.signed(projectedError)}/60min ? ×${"%.3f".format(basalState.get(dow, hour))} (h=$hour)"
+                        lastPredTrimDebug = "proj=${BgText.bg(projectedBg)} | err=${BgText.signed(projectedError)} | " +
                             "rawAdj=${if (rawAdjust > 0) "+" else ""}${"%.3f".format(rawAdjust)} | mult=${"%.3f".format(basalState.get(dow, hour))} (EWMA a=0.03 — slow)"
                         aapsLogger.debug(LTag.APS,
                                          "CircadianLearner Basal[predTrim] h=$hour projectedBg=${"%.1f".format(projectedBg)} " +
                                              "target=${"%.1f".format(targetMgdl)} error=${"%.1f".format(projectedError)} rawAdjust=${"%.3f".format(rawAdjust)} ? mult=${"%.3f".format(basalState.get(dow, hour))}")
                     }
                     else -> {
-                        lastPredTrimDebug = "proj=${"%.1f".format(projectedBg / 18.0)}mmol | err=${if (projectedError > 0) "+" else ""}${"%.1f".format(projectedError / 18.0)}mmol | ${if (kotlin.math.abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
+                        lastPredTrimDebug = "proj=${BgText.bg(projectedBg)} | err=${BgText.signed(projectedError)} | ${if (kotlin.math.abs(projectedError) <= PRED_TRIM_DEAD_BAND_MGDL) "dead-band — no action" else "active"}"
                     }
                 }
             }
@@ -1665,7 +1665,7 @@ class CircadianLearner @Inject constructor(
 
                 subTargetNegIobWindow.clear()
                 subTargetFired = true
-                lastBasalSignal = "SubTarget: avg ${"%.1f".format(avgBg / 18.0)}mmol < target ${"%.1f".format(targetMgdl / 18.0)}mmol " +
+                lastBasalSignal = "SubTarget: avg ${BgText.bg(avgBg)} < target ${BgText.bg(targetMgdl)} " +
                     "for ${"%.0f".format(elapsedHrs * 60)}min basalIob<${SUB_TARGET_NEG_IOB_GATE}U " +
                     "→ bas×${"%.3f".format(basalState.get(dow, hour))} isf×${"%.3f".format(isfState.get(dow, hour))} (h=$hour)"
                 aapsLogger.debug(LTag.APS,

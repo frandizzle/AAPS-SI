@@ -404,7 +404,7 @@ class DuraStrengthLearner @Inject constructor(
                 runEngagedMs < engagedMinMs() ->
                     "stuck ${lenMs / 60_000}min but DURA engaged only ${runEngagedMs / 60_000}min of it"
                 netDrop > MAX_NET_DROP_MGDL ->
-                    "stuck ${lenMs / 60_000}min but already drifting down ${"%.1f".format(netDrop / 18.0)}mmol"
+                    "stuck ${lenMs / 60_000}min but already drifting down ${BgText.bg(netDrop)}"
                 else -> null
             }
             if (reject == null) {

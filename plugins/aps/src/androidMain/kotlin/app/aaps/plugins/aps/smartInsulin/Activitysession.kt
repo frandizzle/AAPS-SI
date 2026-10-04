@@ -323,13 +323,13 @@ class ActivitySessionLearner @Inject constructor(
             startBgMgdl > 0.0 && scoreEndBgMgdl > 0.0 &&
                 scoreEndBgMgdl <= startBgMgdl - RESOLVING_DROP_MGDL &&
                 resistantAvgBgMgdl > targetMgdl + RESISTANT_HIGH_MARGIN_MGDL ->
-                lastOutcome = "${label.label}: started ${"%.1f".format(startBgMgdl / 18.0)}mmol and came down " +
-                    "${"%.1f".format((startBgMgdl - scoreEndBgMgdl) / 18.0)}mmol through the resistant phase — " +
+                lastOutcome = "${label.label}: started ${BgText.bg(startBgMgdl)} and came down " +
+                    "${BgText.bg(startBgMgdl - scoreEndBgMgdl)} through the resistant phase — " +
                     "working through an inherited high, no change"
 
             resistantAvgBgMgdl > targetMgdl + RESISTANT_HIGH_MARGIN_MGDL -> {
                 s.isfMult = (s.isfMult * ISF_STRENGTHEN_STEP).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                lastOutcome = "${label.label}: ran ${"%.1f".format((resistantAvgBgMgdl - targetMgdl) / 18.0)}mmol over target " +
+                lastOutcome = "${label.label}: ran ${BgText.bg(resistantAvgBgMgdl - targetMgdl)} over target " +
                     "with no low — resistant phase strengthened to ×${"%.2f".format(s.isfMult)}"
             }
 

@@ -31,12 +31,6 @@ internal fun activityOffsetMmol(sp: SP, monitor: ActivityMonitor): Double =
     )
 
 /**
- * Whether BG is shown in mmol/L. Set by the plugin every loop cycle; [bgBelowGuard] needs it to
- * compare the way the screen does.
- */
-@Volatile internal var guardShownInMmol: Boolean = true
-
-/**
  * The single definition of "BG has gone below the low guard": the number on screen is lower than
  * the guard. "BG 4.8, guard 4.8" is not a low; "BG 4.7, guard 4.8" always is.
  *
@@ -53,6 +47,6 @@ internal fun activityOffsetMmol(sp: SP, monitor: ActivityMonitor): Double =
  * Only "below" is defined here. How far above the guard anything unlocks is each caller's own
  * business.
  */
-internal fun bgBelowGuard(bgMgdl: Double, lowGuardMgdl: Double, mmol: Boolean = guardShownInMmol): Boolean =
+internal fun bgBelowGuard(bgMgdl: Double, lowGuardMgdl: Double, mmol: Boolean = BgText.mmol): Boolean =
     if (mmol) bgMgdl < (Math.round(lowGuardMgdl / 18.0 * 10.0) / 10.0 - 0.05) * 18.0
     else bgMgdl < Math.round(lowGuardMgdl) - 0.5
