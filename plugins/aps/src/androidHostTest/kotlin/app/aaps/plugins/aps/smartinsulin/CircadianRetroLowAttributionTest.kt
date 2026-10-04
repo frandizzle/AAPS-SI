@@ -6,6 +6,7 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -61,7 +62,8 @@ class CircadianRetroLowAttributionTest {
         iob:      Double   = 1.2,
         activity: Double   = 0.02,
         mode:     MealMode = MealMode.FASTING,
-        dow:      Int      = DOW
+        dow:      Int      = DOW,
+        mealInsulin: Boolean = false
     ): Long {
         var t = startMs
         repeat(count) {
@@ -73,6 +75,7 @@ class CircadianRetroLowAttributionTest {
                 profileIsfMgdl = 50.0,
                 targetMgdl     = TARGET,
                 lowGuardMgdl   = GUARD,
+                mealInsulinDominant = mealInsulin,
                 hour = hour, dow = dow, minute = 30, nowMs = t
             )
             t += CYCLE_MS
@@ -81,7 +84,7 @@ class CircadianRetroLowAttributionTest {
     }
 
     /** One cycle with BG under the low guard — fires the hard-low penalty. */
-    private fun hardLowAt(hour: Int, minute: Int, nowMs: Long, dow: Int = DOW) {
+    private fun hardLowAt(hour: Int, minute: Int, nowMs: Long, dow: Int = DOW, mealInsulin: Boolean = false) {
         learner.update(
             glucoseStatus  = glucoseStatus(glucose = 70.0, shortAvgDelta = -3.0),
             iobArray       = arrayOf(IobTotal(time = 0, iob = 1.0, activity = 0.02, basaliob = 1.0)),
@@ -90,6 +93,7 @@ class CircadianRetroLowAttributionTest {
             profileIsfMgdl = 50.0,
             targetMgdl     = TARGET,
             lowGuardMgdl   = GUARD,
+            mealInsulinDominant = mealInsulin,
             hour = hour, dow = dow, minute = minute, nowMs = nowMs
         )
     }
@@ -256,5 +260,47 @@ class CircadianRetroLowAttributionTest {
 
         assertTrue(isf(5) < before5 - 1e-6, "hour 5 should still be chargeable after a restart")
         assertTrue(isf(6) < before6 - 1e-6, "hour 6 should still be chargeable after a restart")
+    }
+
+    // ── a low from a meal mode's insulin is not the fasting hours' ───────────
+
+    @Test
+    fun `a low from a meal mode's insulin does not cut the fasting hour or charge earlier hours`() {
+        // 4 Oct: P/F Night + DURA ended 22:52, learning back at 23:37, BG under the guard just after.
+        var t = BASE_MS
+        t = runHour(21, t); t = runHour(22, t); t = runHour(23, t, count = 6)
+        val before = (21..23).associateWith { isf(it) to basal(it) }
+
+        hardLowAt(hour = 23, minute = 45, nowMs = t, mealInsulin = true)
+
+        // The penalty is a 10% cut; ordinary learning on the low cycle itself can move a hair.
+        for (h in 21..23) {
+            assertEquals(before.getValue(h).first, isf(h), before.getValue(h).first * 0.01, "hour $h ISF")
+            assertEquals(before.getValue(h).second, basal(h), before.getValue(h).second * 0.01, "hour $h basal")
+        }
+        assertTrue(learner.lastRetroAttribution.contains("meal mode's insulin"), learner.lastRetroAttribution)
+    }
+
+    @Test
+    fun `the same low from fasting insulin is still charged as before`() {
+        var t = BASE_MS
+        t = runHour(21, t); t = runHour(22, t); t = runHour(23, t, count = 6)
+        val isf23 = isf(23)
+        hardLowAt(hour = 23, minute = 45, nowMs = t, mealInsulin = false)
+        assertTrue(isf(23) < isf23 - 1e-6, "hour 23 ISF should be cut: $isf23 -> ${isf(23)}")
+    }
+
+    @Test
+    fun `insulin a meal mode left behind is not fasting insulin for a later charge-back`() {
+        // Hour 22 only carried the meal's insulin; hour 23 was genuinely fasting. A later low
+        // (no longer the meal's) charges hour 23 but leaves hour 22 alone.
+        var t = BASE_MS
+        t = runHour(22, t, mealInsulin = true)
+        t = runHour(23, t)
+        t = runHour(0, t, dow = (DOW + 1) % 7, count = 3)
+        val isf22 = isf(22)
+        hardLowAt(hour = 0, minute = 15, nowMs = t, dow = (DOW + 1) % 7)
+        assertEquals(isf22, isf(22), 1e-9, "hour 22 carried only meal insulin")
+        assertFalse(learner.lastRetroAttribution.contains("h=22"), learner.lastRetroAttribution)
     }
 }

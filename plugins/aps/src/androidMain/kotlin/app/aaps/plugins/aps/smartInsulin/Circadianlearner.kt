@@ -302,6 +302,10 @@ class CircadianLearner @Inject constructor(
         lowGuardMgdl:             Double  = 90.0,
         inPostMealLockout:        Boolean = false,
         inReboundWindow:          Boolean = false,
+        // A meal mode ended recently and its insulin is still most of what is working (see the
+        // plugin's mealInsulinDominant). A low then is the meal's, and the meal learners (meal ISF,
+        // DURA) charge it; the fasting hours are not cut for insulin they did not give.
+        mealInsulinDominant:      Boolean = false,
         aggressiveness:           Double  = 1.0,
         fastingPeakMins:          Double  = 90.0,   // learned fasting insulin peak — sets trim window
         // Learned fasting DIA. Only used by the retroactive low attribution, which needs the full
@@ -326,7 +330,9 @@ class CircadianLearner @Inject constructor(
         // retroactive blame if it was FASTING, and that distinction can only be drawn if
         // meal-mode cycles are recorded too. Skipping them would leave holes in the ring that
         // are indistinguishable from "no insulin was working then".
-        recordInsulinPresence(now, hour, dow, iob, mealMode == MealMode.FASTING)
+        // Insulin a meal mode left behind is not fasting insulin, even once the mode has ended - so
+        // a later low is never charged back to the hours that only carried the meal's tail.
+        recordInsulinPresence(now, hour, dow, iob, mealMode == MealMode.FASTING && !mealInsulinDominant)
         // --- RECOVERY LOCKOUT ---
         // The guards against "more insulin while low" used to check only the CURRENT reading.
         // But the drift signal and PredTrim look back up to 90 min. So once BG came back above
@@ -483,6 +489,7 @@ class CircadianLearner @Inject constructor(
         // Rollercoaster and soft-low penalties must fire even on a new sensor —
         // a real rapid rise/crash is dangerous regardless of sensor age.
         updateAggrLearner(hour, dow, bg, delta, targetMgdl, iobArray, lowGuardMgdl, mealMode == MealMode.FASTING, inPostMealLockout,
+                          mealInsulinDominant = mealInsulinDominant,
                           fastingPeakMins = fastingPeakMins, fastingDiaMins = fastingDiaMins)
 
         // -- 4. Short-term fuel trim + aggression nudge --------------------------
@@ -1751,6 +1758,7 @@ class CircadianLearner @Inject constructor(
         lowGuardMgdl:     Double,
         isFasting:        Boolean = true,
         inPostMealLockout: Boolean = false,
+        mealInsulinDominant: Boolean = false,
         fastingPeakMins:  Double  = 90.0,
         fastingDiaMins:   Double  = 300.0
     ) {
@@ -1814,7 +1822,17 @@ class CircadianLearner @Inject constructor(
             // isNewLowEvent read false and the genuinely new low got no penalty at all. Now
             // only stamped inside the isNewLowEvent block below, so it tracks event starts.
 
-            if (isNewLowEvent) {
+            if (isNewLowEvent && mealInsulinDominant) {
+                // The meal's insulin, not the fasting profile's: the meal learners (meal ISF, DURA)
+                // charge this low. Still a low, so the rebound blindfold is armed exactly as below -
+                // nothing may read the recovery rise as "not enough insulin" - but no ISF, basal or
+                // ceiling cut, and nothing charged back to earlier hours.
+                lastHardLowPenaltyMs = nowMs
+                lastPenaltyMs        = nowMs
+                lastPenaltyReason    = "hard low"
+                lastRetroAttribution = "low at h=$hour — a meal mode's insulin, charged to the meal learners, not this hour"
+                aapsLogger.debug(LTag.APS, "CircadianLearner Aggr h=$hour HARD_LOW from meal insulin — no fasting penalty")
+            } else if (isNewLowEvent) {
                 lastHardLowPenaltyMs = nowMs
                 // BUG FIX (found in audit): this block previously only stamped
                 // lastHardLowPenaltyMs (used for this signal's own 30-min re-fire gate) but
@@ -1868,7 +1886,7 @@ class CircadianLearner @Inject constructor(
         // Previous check was bg < lowGuardMgdl which is unreachable — the hard-low penalty
         // block above (gated on bg < lowGuardMgdl) already handles and returns for that case.
         // Correct condition here: within SOFT_LOW_APPROACH_MGDL above guard, not below it.
-        val approachingLow = isFasting && !inPostMealLockout &&
+        val approachingLow = isFasting && !inPostMealLockout && !mealInsulinDominant &&
             // Complement of the hard-low test, so a BG level with the guard falls to this signal
             // rather than through the gap between the two.
             !bgBelowGuard(bg, lowGuardMgdl) && bg < lowGuardMgdl + SOFT_LOW_APPROACH_MGDL &&

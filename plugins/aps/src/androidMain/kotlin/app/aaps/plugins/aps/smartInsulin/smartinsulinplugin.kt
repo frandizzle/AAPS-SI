@@ -189,6 +189,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private var postModeDeliveredU   = 0.0
     private var postModeSinceMs      = 0L
     private var lastModeStartSeenMs  = 0L
+    private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
     private var lastIobSampleMs      = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
@@ -264,6 +265,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // Per-hour table rows are read at the bucket centre so the table shows each hour's own
         // learned value, not the boundary-interpolated value applying at the current minute.
         private const val TABLE_BUCKET_MINUTE  = 30
+        /** At least this much of the insulin since a mode ended is the mode's: its insulin is most of it. */
+        private const val MEAL_INSULIN_DOMINANT_SHARE = 0.5
         private const val JOURNAL_MULT_STEP    = 0.005
         private const val JOURNAL_AGGR_STEP    = 0.02
         private val JOURNAL_DAYS = arrayOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
@@ -1148,6 +1151,44 @@ open class SmartInsulinPlugin @Inject constructor(
         // one more cycle of exercise-contaminated data before noticing.
         activityMonitor.recompute(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
 
+        // -- Whose insulin is behind a post-mode low ---------------------------
+        // While a mode runs, keep a live reading of what it has working; once it ends, add up what
+        // the loop gives afterwards. Boluses come from the database (SMBs are boluses); the basal
+        // side is the temp rate's difference from profile over the cycle.
+        val modeRunning = mealOverrideManager.activeMealMode != null
+        if (modeRunning) {
+            if (mealOverrideManager.modeStartMs != lastModeStartSeenMs) {
+                lastModeStartSeenMs = mealOverrideManager.modeStartMs
+                postModeDeliveredU  = 0.0
+                postModeSinceMs     = 0L
+            }
+            // Refreshed every cycle, so whenever the mode ends this holds its parting IOB and time.
+            modeIobAtEndU  = (iobArray.firstOrNull()?.iob ?: 0.0).coerceAtLeast(0.0)
+            postModeSinceMs = now
+            modeEndedMs     = now
+        } else if (postModeSinceMs > 0L) {
+            val boluses = try {
+                persistenceLayer.getBolusesFromTimeToTime(postModeSinceMs, now, true).sumOf { it.amount }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SmartInsulin share: bolus read failed: ${e.message}"); 0.0
+            }
+            val basalExtraU = previousAPSResult?.let { prev ->
+                val hours = (now - lastIobSampleMs).coerceIn(0L, 10 * 60_000L) / 3_600_000.0
+                ((prev.rate - profile.getBasal()) * hours).coerceAtLeast(0.0)
+            } ?: 0.0
+            postModeDeliveredU += boluses + basalExtraU
+            postModeSinceMs = now
+        }
+        lastIobSampleMs = now
+        val modeInsulinShare = ModeInsulinShare.share(modeIobAtEndU, postModeDeliveredU)
+        // The meal's insulin is still most of what is working: a mode ended inside its own watch
+        // and at least half of the insulin since is that mode's. The circadian learner is told, so a
+        // low then is charged to the meal learners (meal ISF, DURA) and not to the fasting hours.
+        // See CircadianLearner.update's mealInsulinDominant.
+        val mealInsulinDominant = !modeRunning && modeEndedMs > 0L &&
+            now - modeEndedMs <= postModeWatchMs() &&
+            modeInsulinShare >= MEAL_INSULIN_DOMINANT_SHARE
+
         if (!highTempTarget) {
             // Capture multipliers BEFORE update() so "was" reflects the baseline the
             // loop was delivering before this cycle's nudge fires.
@@ -1175,6 +1216,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
                 inReboundWindow          = inReboundWindow,
+                mealInsulinDominant      = mealInsulinDominant,
                 aggressiveness           = aggressionLearner.aggressiveness,
                 fastingPeakMins          = profileLearner.getProfile(MealMode.FASTING).peakMinutes,
                 // Peak and DIA together — the retroactive low attribution needs the whole curve
@@ -1394,35 +1436,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // still high / DURA had to rescue → strengthen, ate again → skip). Uses the
         // FASTING ISF for its tail contamination check — the mode ISF no longer applies
         // once the mode has ended.
-        // -- Whose insulin is behind a post-mode low ---------------------------
-        // While a mode runs, keep a live reading of what it has working; once it ends, add up what
-        // the loop gives afterwards. Boluses come from the database (SMBs are boluses); the basal
-        // side is the temp rate's difference from profile over the cycle.
-        val modeRunning = mealOverrideManager.activeMealMode != null
-        if (modeRunning) {
-            if (mealOverrideManager.modeStartMs != lastModeStartSeenMs) {
-                lastModeStartSeenMs = mealOverrideManager.modeStartMs
-                postModeDeliveredU  = 0.0
-                postModeSinceMs     = 0L
-            }
-            // Refreshed every cycle, so whenever the mode ends this holds its parting IOB.
-            modeIobAtEndU  = (iobArray.firstOrNull()?.iob ?: 0.0).coerceAtLeast(0.0)
-            postModeSinceMs = now
-        } else if (postModeSinceMs > 0L) {
-            val boluses = try {
-                persistenceLayer.getBolusesFromTimeToTime(postModeSinceMs, now, true).sumOf { it.amount }
-            } catch (e: Exception) {
-                aapsLogger.error(LTag.APS, "SmartInsulin share: bolus read failed: ${e.message}"); 0.0
-            }
-            val basalExtraU = previousAPSResult?.let { prev ->
-                val hours = (now - lastIobSampleMs).coerceIn(0L, 10 * 60_000L) / 3_600_000.0
-                ((prev.rate - profile.getBasal()) * hours).coerceAtLeast(0.0)
-            } ?: 0.0
-            postModeDeliveredU += boluses + basalExtraU
-            postModeSinceMs = now
-        }
-        lastIobSampleMs = now
-        val modeInsulinShare = ModeInsulinShare.share(modeIobAtEndU, postModeDeliveredU)
 
         // Second helping inside a mode's own window: detected from the shape of absorption plus a
         // second BG peak, and it stops the episode being scored either way.
