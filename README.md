@@ -28,11 +28,9 @@ In plain words, it watches your BG every 5 minutes and learns:
 Everything it learns is written down in a **Learning Journal** on the SmartInsulin tab, in real numbers (for example `ISF 2.00 → 1.95 mmol/U`), so you can always see what changed and why.
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/b877932e-043d-4cf7-9906-c8f3ef1113b0" width="250">
-  <img src="https://github.com/user-attachments/assets/6a13ea32-3d61-4630-8ff4-0e9104d1b26c" width="250">
+  <img src="docs/screenshots/overview.jpg" width="250" alt="Overview">
+  <img src="docs/screenshots/smart-meal.jpg" width="250" alt="Smart Meal dialog">
 </p>
-
-> 📷 **Note:** these screenshots are from the older AAPS 3.4 version. SmartInsulin on AAPS 4.0 has a new look, so your screens will look different — the features are the same or better.
 
 ---
 
@@ -331,14 +329,17 @@ Set your dawn window hours, and how much SMBs are reduced during it.
 | **Reset** | Reset buttons for each learner |
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/2f3e04b9-dc41-4371-b083-cfd760e35b2d" width="200">
-  <img src="https://github.com/user-attachments/assets/e018530b-134d-4bbe-8313-eb4320076ed4" width="200">
-  <img src="https://github.com/user-attachments/assets/c89e37ab-f520-47e2-8263-73b6f0d8f3fb" width="200">
-  <img src="https://github.com/user-attachments/assets/a5bc2936-4785-4a37-8a9e-54ce6a3bd2a4" width="200">
-  <img src="https://github.com/user-attachments/assets/04ac513b-c25c-4acd-ba09-88afd63ea980" width="200">
+  <img src="docs/screenshots/si-tab-01.jpg" width="200" alt="Summary and General">
+  <img src="docs/screenshots/si-tab-02.jpg" width="200" alt="Activity session and Time in Range">
+  <img src="docs/screenshots/si-tab-03.jpg" width="200" alt="Time in Range and Learning">
+  <img src="docs/screenshots/si-tab-04.jpg" width="200" alt="Meal auto-detection (UAM)">
+  <img src="docs/screenshots/si-tab-05.jpg" width="200" alt="Learned meal ISF">
+  <img src="docs/screenshots/si-tab-06.jpg" width="200" alt="Learned DURA and UAM entry">
+  <img src="docs/screenshots/si-tab-07.jpg" width="200" alt="Meal absorption log, Soft Target, Circadian">
+  <img src="docs/screenshots/si-tab-08.jpg" width="200" alt="Circadian 24h table">
+  <img src="docs/screenshots/si-tab-09.jpg" width="200" alt="Learning Journal">
+  <img src="docs/screenshots/si-tab-10.jpg" width="200" alt="Reset learners">
 </p>
-
-> 📷 **Note:** these screenshots are from the older AAPS 3.4 version. SmartInsulin on AAPS 4.0 has a new look, so your screens will look different — the features are the same or better.
 
 ---
 
