@@ -24,7 +24,7 @@ internal interface BolusCalculatorResultDao : TraceableDao<BolusCalculatorResult
     @Query("SELECT id FROM $TABLE_BOLUS_CALCULATOR_RESULTS ORDER BY id DESC limit 1")
     suspend fun getLastId(): Long?
 
-    @Query("SELECT * FROM $TABLE_BOLUS_CALCULATOR_RESULTS WHERE (timestamp = :timestamp) AND (+referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_BOLUS_CALCULATOR_RESULTS WHERE (timestamp = :timestamp) AND (referenceId IS NULL)")
     suspend fun findByTimestamp(timestamp: Long): BolusCalculatorResult?
 
     @Query("SELECT * FROM $TABLE_BOLUS_CALCULATOR_RESULTS WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")

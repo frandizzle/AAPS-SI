@@ -26,13 +26,13 @@ internal interface CalibrationEntryDao : TraceableDao<CalibrationEntry> {
     @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
     suspend fun findByNSId(nsId: String): CalibrationEntry?
 
-    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE (timestamp = :timestamp) AND (+referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE (timestamp = :timestamp) AND (referenceId IS NULL)")
     suspend fun findByTimestamp(timestamp: Long): CalibrationEntry?
 
-    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE isValid = 1 AND +referenceId IS NULL ORDER BY timestamp DESC")
+    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE isValid = 1 AND referenceId IS NULL ORDER BY timestamp DESC")
     suspend fun getAllValid(): List<CalibrationEntry>
 
-    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE isValid = 1 AND +referenceId IS NULL AND timestamp >= :from ORDER BY timestamp DESC")
+    @Query("SELECT * FROM $TABLE_CALIBRATION_ENTRIES WHERE isValid = 1 AND referenceId IS NULL AND timestamp >= :from ORDER BY timestamp DESC")
     suspend fun getValidSince(from: Long): List<CalibrationEntry>
 
     // for WS we need 1 record only

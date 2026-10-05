@@ -119,7 +119,6 @@ class AppRepository internal constructor(
                     transaction.run()
                 }
             }
-            invalidateLongTemporaryBasalCheck(changes)
             // Notify observers
             if (changes.isNotEmpty()) {
                 _changeFlow.emit(changes)
@@ -146,7 +145,6 @@ class AppRepository internal constructor(
                     transaction.run()
                 }
             }
-            invalidateLongTemporaryBasalCheck(changes)
             // Notify observers
             if (changes.isNotEmpty()) {
                 _changeFlow.emit(changes)
@@ -156,8 +154,6 @@ class AppRepository internal constructor(
 
     suspend fun clearDatabases() {
         database.clearAllTablesCompat()
-        longTemporaryBasalCheck = null
-        longExtendedBolusCheck = null
         repositoryScope.launch { _databaseClearedFlow.emit(Unit) }
     }
 
@@ -378,6 +374,9 @@ class AppRepository internal constructor(
 
     suspend fun getTemporaryTargetActiveAt(timestamp: Long): TemporaryTarget? =
         database.temporaryTargetDao.getTemporaryTargetActiveAt(timestamp)
+
+    suspend fun getTemporaryTargetsActiveAt(timestamp: Long): List<TemporaryTarget> =
+        database.temporaryTargetDao.getTemporaryTargetsActiveAt(timestamp)
 
     suspend fun getLastTempTargetId(): Long? =
         database.temporaryTargetDao.getLastId()
@@ -784,45 +783,11 @@ class AppRepository internal constructor(
         }
     }
 
-    /**
-     * The temp basal active at [timestamp] - the same answer as the unbounded DAO query, found cheaply.
-     *
-     * The unbounded query walks the timestamp index backwards until it finds a temp basal still running
-     * at [timestamp]. When none is running (between temps, or a future time the graph asks about) that
-     * walk reads the entire history, and a loop that sets a temp every cycle has a long history: this
-     * one query was most of AAPS's CPU and battery use.
-     *
-     * Exact, not a heuristic: search the last [LONG_TEMP_BASAL_MS] first. Anything found there started
-     * later than anything outside it, so it is what the unbounded query would return too. If nothing is
-     * found, a temp basal active at [timestamp] must have started earlier and so last longer than
-     * [LONG_TEMP_BASAL_MS]; only if such a long temp basal exists at all does the unbounded query run.
-     */
-    suspend fun getTemporaryBasalActiveAt(timestamp: Long): TemporaryBasal? {
-        database.temporaryBasalDao.getTemporaryBasalActiveAtSince(timestamp, timestamp - LONG_TEMP_BASAL_MS)?.let { return it }
-        return if (anyLongTemporaryBasal()) database.temporaryBasalDao.getTemporaryBasalActiveAt(timestamp) else null
-    }
+    suspend fun getTemporaryBasalActiveAt(timestamp: Long): TemporaryBasal? =
+        database.temporaryBasalDao.getTemporaryBasalActiveAt(timestamp)
 
-    /** Cached [TemporaryBasalDao.existsTemporaryBasalLongerThan] (exists, checkedAtMs); null = recheck. Cleared
-     *  right after any transaction that writes a temp basal, before observers are told, so a newly added long
-     *  temp basal can never be missed. Deletions outside transactions can only leave it `true`, which is safe:
-     *  it just falls back to the exact unbounded query. Also expires, as a backstop. */
-    @Volatile private var longTemporaryBasalCheck: Pair<Boolean, Long>? = null
-
-    private suspend fun anyLongTemporaryBasal(): Boolean {
-        val now = System.currentTimeMillis()
-        longTemporaryBasalCheck?.let { (exists, at) -> if (now - at < LONG_TEMP_BASAL_CHECK_TTL_MS) return exists }
-        val exists = database.temporaryBasalDao.existsTemporaryBasalLongerThan(LONG_TEMP_BASAL_MS)
-        longTemporaryBasalCheck = exists to now
-        return exists
-    }
-
-    private fun invalidateLongTemporaryBasalCheck(changes: List<DBEntry>) {
-        if (changes.any { it is TemporaryBasal }) longTemporaryBasalCheck = null
-        if (changes.any { it is ExtendedBolus }) longExtendedBolusCheck = null
-    }
-
-    suspend fun getTemporaryBasalsActiveBetweenTimeAndTime(from: Long, to: Long): List<TemporaryBasal> =
-        database.temporaryBasalDao.getTemporaryBasalActiveBetweenTimeAndTime(from, to)
+    suspend fun getTemporaryBasalsActiveAt(timestamp: Long): List<TemporaryBasal> =
+        database.temporaryBasalDao.getTemporaryBasalsActiveAt(timestamp)
 
     suspend fun getTemporaryBasalsStartingFromTime(timestamp: Long, ascending: Boolean): List<TemporaryBasal> =
         database.temporaryBasalDao.getTemporaryBasalDataFromTime(timestamp).reversedIf(!ascending)
@@ -862,23 +827,11 @@ class AppRepository internal constructor(
         }
     }
 
-    /** Same bounded search as [getTemporaryBasalActiveAt], and exact for the same reason. It matters as much:
-     *  every temp basal lookup that finds nothing falls through to this one, and the status lights total the
-     *  insulin since a pod/cannula change with one of these per five minutes, every minute. */
-    suspend fun getExtendedBolusActiveAt(timestamp: Long): ExtendedBolus? {
-        database.extendedBolusDao.getExtendedBolusActiveAtSince(timestamp, timestamp - LONG_TEMP_BASAL_MS)?.let { return it }
-        return if (anyLongExtendedBolus()) database.extendedBolusDao.getExtendedBolusActiveAt(timestamp) else null
-    }
+    suspend fun getExtendedBolusActiveAt(timestamp: Long): ExtendedBolus? =
+        database.extendedBolusDao.getExtendedBolusActiveAt(timestamp)
 
-    @Volatile private var longExtendedBolusCheck: Pair<Boolean, Long>? = null
-
-    private suspend fun anyLongExtendedBolus(): Boolean {
-        val now = System.currentTimeMillis()
-        longExtendedBolusCheck?.let { (exists, at) -> if (now - at < LONG_TEMP_BASAL_CHECK_TTL_MS) return exists }
-        val exists = database.extendedBolusDao.existsExtendedBolusLongerThan(LONG_TEMP_BASAL_MS)
-        longExtendedBolusCheck = exists to now
-        return exists
-    }
+    suspend fun getExtendedBolusesActiveAt(timestamp: Long): List<ExtendedBolus> =
+        database.extendedBolusDao.getExtendedBolusesActiveAt(timestamp)
 
     suspend fun getExtendedBolusesStartingFromTime(timestamp: Long, ascending: Boolean): List<ExtendedBolus> =
         database.extendedBolusDao.getExtendedBolusesStartingFromTime(timestamp).reversedIf(!ascending)
@@ -973,9 +926,3 @@ class AppRepository internal constructor(
 
     fun <T> Iterable<T>.reversedIf(reverse: Boolean): List<T> = if (reverse) this.reversed() else this.toList()
 }
-/** Window searched first for an active temp basal. Pumps cap a temp basal at 12-24 h, so a temp basal active
- *  "now" almost always started inside it; longer ones are handled exactly by the fallback. */
-private const val LONG_TEMP_BASAL_MS = 24 * 60 * 60 * 1000L
-
-/** Backstop expiry for the cached "is there any temp basal longer than [LONG_TEMP_BASAL_MS]" answer. */
-private const val LONG_TEMP_BASAL_CHECK_TTL_MS = 10 * 60 * 1000L

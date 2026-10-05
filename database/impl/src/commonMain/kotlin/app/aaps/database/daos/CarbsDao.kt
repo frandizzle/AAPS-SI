@@ -27,16 +27,16 @@ internal interface CarbsDao : TraceableDao<Carbs> {
     @Query("SELECT * FROM $TABLE_CARBS WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
     suspend fun getByNSId(nsId: String): Carbs?
 
-    @Query("SELECT * FROM $TABLE_CARBS WHERE (timestamp = :timestamp) AND (+referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_CARBS WHERE (timestamp = :timestamp) AND (referenceId IS NULL)")
     suspend fun findByTimestamp(timestamp: Long): Carbs?
 
-    @Query("SELECT * FROM $TABLE_CARBS WHERE (pumpId = :pumpId) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_CARBS WHERE (pumpId = :pumpId) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (+referenceId IS NULL)")
     suspend fun findByPumpIds(pumpId: Long, pumpType: InterfaceIDs.PumpType, pumpSerial: String): Carbs?
 
-    @Query("SELECT * FROM $TABLE_CARBS WHERE isValid = 1 AND referenceId IS NULL ORDER BY id DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_CARBS WHERE isValid = 1 AND +referenceId IS NULL ORDER BY id DESC LIMIT 1")
     suspend fun getLastCarbsRecord(): Carbs?
 
-    @Query("SELECT * FROM $TABLE_CARBS WHERE isValid = 1 AND referenceId IS NULL ORDER BY id ASC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_CARBS WHERE isValid = 1 AND +referenceId IS NULL ORDER BY id ASC LIMIT 1")
     suspend fun getOldestCarbsRecord(): Carbs?
 
     @Query("SELECT * FROM $TABLE_CARBS WHERE (isValid = 1) AND (timestamp >= :timestamp) AND (+referenceId IS NULL) ORDER BY +id DESC")

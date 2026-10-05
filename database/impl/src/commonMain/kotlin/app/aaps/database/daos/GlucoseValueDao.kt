@@ -29,7 +29,7 @@ internal interface GlucoseValueDao : TraceableDao<GlucoseValue> {
     @Query("SELECT * FROM $TABLE_GLUCOSE_VALUES WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
     suspend fun findByNSId(nsId: String): GlucoseValue?
 
-    @Query("SELECT * FROM $TABLE_GLUCOSE_VALUES WHERE (timestamp = :timestamp) AND (sourceSensor = :sourceSensor) AND (+referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_GLUCOSE_VALUES WHERE (timestamp = :timestamp) AND (sourceSensor = :sourceSensor) AND (referenceId IS NULL)")
     suspend fun findByTimestampAndSensor(timestamp: Long, sourceSensor: GlucoseValue.SourceSensor): GlucoseValue?
 
     @Query("SELECT * FROM $TABLE_GLUCOSE_VALUES WHERE (timestamp >= :timestamp) AND (isValid = 1) AND (+referenceId IS NULL) AND (value >= 39) ORDER BY timestamp ASC")

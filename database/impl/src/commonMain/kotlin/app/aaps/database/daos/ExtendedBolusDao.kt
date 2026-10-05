@@ -24,7 +24,7 @@ internal interface ExtendedBolusDao : TraceableDao<ExtendedBolus> {
     @Query("SELECT id FROM $TABLE_EXTENDED_BOLUSES ORDER BY id DESC limit 1")
     suspend fun getLastId(): Long?
 
-    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp = :timestamp) AND (+referenceId IS NULL)")
+    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp = :timestamp) AND (referenceId IS NULL)")
     suspend fun findByTimestamp(timestamp: Long): ExtendedBolus?
 
     @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
@@ -36,25 +36,20 @@ internal interface ExtendedBolusDao : TraceableDao<ExtendedBolus> {
     @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (endId = :endPumpId) AND (pumpType = :pumpType) AND (pumpSerial = :pumpSerial) AND (referenceId IS NULL)")
     suspend fun findByPumpEndIds(endPumpId: Long, pumpType: InterfaceIDs.PumpType, pumpSerial: String): ExtendedBolus?
 
-    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (+timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     suspend fun getExtendedBolusActiveAtLegacy(timestamp: Long): ExtendedBolus?
 
-    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (+timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     suspend fun getExtendedBolusActiveAt(timestamp: Long): ExtendedBolus?
 
-    /** [getExtendedBolusActiveAt] restricted to extended boluses that started at or after [minStart]; see
-     *  AppRepository.getExtendedBolusActiveAt for why that is still exact. */
-    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp <= :timestamp) AND (timestamp >= :minStart) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
-    suspend fun getExtendedBolusActiveAtSince(timestamp: Long, minStart: Long): ExtendedBolus?
-
-    /** Whether any current extended bolus lasts longer than [durationMs]. A full scan, so callers cache it. */
-    @Query("SELECT EXISTS(SELECT 1 FROM $TABLE_EXTENDED_BOLUSES WHERE (duration > :durationMs) AND (+referenceId IS NULL) AND (isValid = 1))")
-    suspend fun existsExtendedBolusLongerThan(durationMs: Long): Boolean
+    /** Every entry running at [timestamp], also those that overlap; [getExtendedBolusActiveAt] gives the last started of them. */
+    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (+timestamp <= :timestamp) AND ((timestamp + duration) > :timestamp) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY +timestamp ASC")
+    suspend fun getExtendedBolusesActiveAt(timestamp: Long): List<ExtendedBolus>
 
     @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp >= :timestamp) AND (isValid = 1) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
     suspend fun getExtendedBolusesStartingFromTime(timestamp: Long): List<ExtendedBolus>
 
-    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp BETWEEN :from AND :to) AND (isValid = 1) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
+    @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp BETWEEN :from AND :to) AND (isValid = 1) AND (referenceId IS NULL) ORDER BY timestamp ASC")
     suspend fun getExtendedBolusDataFromTimeToTime(from: Long, to: Long): List<ExtendedBolus>
 
     @Query("SELECT * FROM $TABLE_EXTENDED_BOLUSES WHERE (timestamp >= :timestamp) AND (+referenceId IS NULL) ORDER BY timestamp ASC")

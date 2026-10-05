@@ -25,7 +25,7 @@ internal interface ProfileSwitchDao : ProfileSwitchDaoWorkaround {
     @Query("SELECT id FROM $TABLE_PROFILE_SWITCHES ORDER BY id DESC limit 1")
     suspend fun getLastId(): Long?
 
-    @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE timestamp = :timestamp AND +referenceId IS NULL")
+    @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE timestamp = :timestamp AND referenceId IS NULL")
     suspend fun findByTimestamp(timestamp: Long): ProfileSwitch?
 
     @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE (nightscoutId = :nsId) AND (referenceId IS NULL)")
@@ -37,7 +37,7 @@ internal interface ProfileSwitchDao : ProfileSwitchDaoWorkaround {
     @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE (timestamp <= :timestamp) AND (duration = 0) AND (+referenceId IS NULL) AND (isValid = 1) ORDER BY timestamp DESC LIMIT 1")
     suspend fun getPermanentProfileSwitchActiveAt(timestamp: Long): ProfileSwitch?
 
-    @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE +referenceId IS NULL AND isValid = 1 ORDER BY timestamp DESC LIMIT 1")
+    @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE referenceId IS NULL AND isValid = 1 ORDER BY timestamp DESC LIMIT 1")
     suspend fun getAllProfileSwitches(): List<ProfileSwitch>
 
     @Query("SELECT * FROM $TABLE_PROFILE_SWITCHES WHERE (timestamp >= :timestamp) AND (+referenceId IS NULL) ORDER BY timestamp ASC")
