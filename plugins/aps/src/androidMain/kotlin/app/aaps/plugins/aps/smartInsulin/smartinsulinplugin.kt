@@ -190,6 +190,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var postModeSinceMs      = 0L
     private var lastModeStartSeenMs  = 0L
     private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
+    /** Keeps learning paused after activity stops while BG is still dropping - see ActivityTail. */
+    private val activityTail = ActivityTail()
     private var lastIobSampleMs      = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
@@ -670,7 +672,9 @@ open class SmartInsulinPlugin @Inject constructor(
             currentBgMgdl = glucoseStatusProvider.glucoseStatusData?.glucose ?: 0.0, profileTargetMgdl = cachedProfileTarget,
             lastBasalSignal = circadianLearner.lastBasalSignal, lastAggrNudgeStatus = circadianLearner.lastAggrNudgeStatus,
             lastAccelDebug = circadianLearner.lastAccelDebug, lastPredTrimDebug = circadianLearner.lastPredTrimDebug,
-            inReboundWindow = inReboundWindow, reboundMins = msSinceLastSuspend / 60_000,
+            // Shown only while the recovery taper is actually applied: a meal mode skips it (see
+            // determine_basal's effectiveRebound), so a countdown then would be for nothing.
+            inReboundWindow = inReboundWindow && activeMode == null, reboundMins = msSinceLastSuspend / 60_000,
             reboundWindowMins = sp.getInt(IntKey.ApsSmartInsulinReboundWindowMins.key, IntKey.ApsSmartInsulinReboundWindowMins.defaultValue),
             totalReboundWindowMins = (reboundGuardMs / 60_000).toInt(),
             consecutiveRollercoasters = circadianLearner.consecutiveRollercoasters,
@@ -719,6 +723,7 @@ open class SmartInsulinPlugin @Inject constructor(
         return when {
             !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Disabled"
             activityMonitor.suppressLearning -> "off: Activity"
+            activityTail.paused -> "off: After activity — BG still dropping"
             effectivePostMealLockout -> "off: Post-meal"
             activeMode == MealMode.UAM_PROTEIN_FAT -> "limited: P/F"
             isMealModeActive -> "limited: meal"
@@ -781,9 +786,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val reboundMinsLeft = ((reboundGuardMs - msSinceLastSuspend + 59_999) / 60_000).coerceAtLeast(1)
         val liveLearningState = when {
             bgWentLow && reboundWindowStartMs == 0L  -> "low: guard"
-            inReboundWindow                          -> "low: recovering ${reboundMinsLeft}m left"
+            // Not while a meal mode runs: meal modes skip the recovery taper, so there is nothing
+            // to count down. The low guard itself (the line above) still shows in any mode.
+            inReboundWindow && activeMode == null    -> "low: recovering ${reboundMinsLeft}m left"
             !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Learning disabled"
             activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
+            activityTail.paused                      -> "off: After activity — BG still dropping"
             cachedCgmSuppressLearning                -> "off: CGM warmup"
             effectivePostMealLockout                 -> {
                 val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
@@ -1151,6 +1159,17 @@ open class SmartInsulinPlugin @Inject constructor(
         // one more cycle of exercise-contaminated data before noticing.
         activityMonitor.recompute(now, sp.getDouble(DoubleKey.ApsSmartInsulinRestingHrBpm.key, DoubleKey.ApsSmartInsulinRestingHrBpm.defaultValue))
 
+        // -- Unexplained-drop detection (feeds the learners and the after-activity pause) ----
+        // Measures BG movement not accounted for by insulin activity, so a low caused by
+        // exercise (or missed food) doesn't get blamed on ISF. Uses the profile ISF as the
+        // physiological reference, not a mode's deliberately-aggressive override. Updated here,
+        // before any learner runs, because the after-activity pause below reads it.
+        unexplainedDropTracker.onCycle(glucoseStatus.delta, iobArray.firstOrNull()?.activity ?: 0.0, trueIsfMgdl, now)
+        // Learning pauses during activity, and stays paused after it while BG is still falling
+        // faster than insulin explains - the drop a sprint keeps causing once you have sat down.
+        activityTail.onCycle(now, activityMonitor.level, unexplainedDropTracker.stillDropping(now))
+        val activityPausesLearning = activityMonitor.suppressLearning || activityTail.paused
+
         // -- Whose insulin is behind a post-mode low ---------------------------
         // While a mode runs, keep a live reading of what it has working; once it ends, add up what
         // the loop gives afterwards. Boluses come from the database (SMBs are boluses); the basal
@@ -1212,7 +1231,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cobG                     = mealData.mealCOB,
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = targetBg,
-                suppressAdaptiveLearning = activityMonitor.suppressLearning || cgmState.suppressLearning,
+                suppressAdaptiveLearning = activityPausesLearning || cgmState.suppressLearning,
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
                 inReboundWindow          = inReboundWindow,
@@ -1406,12 +1425,10 @@ open class SmartInsulinPlugin @Inject constructor(
         )
         if (completedMealEpisode != null) mealAbsorptionCsvLogger.log(completedMealEpisode)
 
-        // -- Unexplained-drop detection (feeds both episode-outcome learners) ----
-        // Measures BG movement not accounted for by insulin activity, so a low caused by
-        // exercise (or missed food) doesn't get blamed on the mode's ISF. Uses the profile
-        // ISF as the physiological reference, not the mode's deliberately-aggressive override.
-        unexplainedDropTracker.onCycle(glucoseStatus.delta, iobArray.firstOrNull()?.activity ?: 0.0, trueIsfMgdl, now)
-        val exerciseSuspected = unexplainedDropTracker.exerciseSuspected
+        // Exercise suspected: the drop is bigger than insulin explains, or activity has just ended
+        // and BG is still dropping from it. A low then is learned by the meal learners at a small
+        // step only. (The tracker itself is updated earlier, before the circadian learner.)
+        val exerciseSuspected = unexplainedDropTracker.exerciseSuspected || activityTail.paused
 
         // Two severities of "this mode gave too much", both fed to the episode-outcome learners.
         // lowActive is a frank hypo (or its rebound window); undershootActive is the band just
@@ -1577,7 +1594,7 @@ open class SmartInsulinPlugin @Inject constructor(
         profileLearner.updateInsulinDefaults(diaMins = profile.iCfg.dia * 60.0, peakMins = profile.iCfg.peak.toDouble())
         val oapsProfile = OapsProfile(dia = profile.iCfg.dia, min_5m_carbimpact = 0.0, max_iob = constraintsChecker.getMaxIOBAllowed().value(), max_daily_basal = profile.getMaxDailyBasal(), max_basal = constraintsChecker.getMaxBasalAllowed(profile).value(), min_bg = profile.getTargetLowMgdl(), max_bg = profile.getTargetHighMgdl(), target_bg = stftTargetMgdl, carb_ratio = profile.getIc(), sens = dosingIsfMgdl, autosens_adjust_targets = false, max_daily_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue), current_basal_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue), lgsThreshold = profileUtil.convertToMgdlDetect(sp.getDouble(UnitDoubleKey.ApsLgsThreshold.key, UnitDoubleKey.ApsLgsThreshold.defaultValue)).toInt(), high_temptarget_raises_sensitivity = false, low_temptarget_lowers_sensitivity = false, sensitivity_raises_target = sp.getBoolean(BooleanKey.ApsSensitivityRaisesTarget.key, BooleanKey.ApsSensitivityRaisesTarget.defaultValue), resistance_lowers_target = sp.getBoolean(BooleanKey.ApsResistanceLowersTarget.key, BooleanKey.ApsResistanceLowersTarget.defaultValue), adv_target_adjustments = SMBDefaults.adv_target_adjustments, exercise_mode = SMBDefaults.exercise_mode, half_basal_exercise_target = SMBDefaults.half_basal_exercise_target, maxCOB = SMBDefaults.maxCOB, skip_neutral_temps = activePlugin.activePump.setNeutralTempAtFullHour(), remainingCarbsCap = SMBDefaults.remainingCarbsCap, enableUAM = constraintsChecker.isUAMEnabled().value(), A52_risk_enable = SMBDefaults.A52_risk_enable, SMBInterval = sp.getInt(IntKey.ApsMaxSmbFrequency.key, IntKey.ApsMaxSmbFrequency.defaultValue), enableSMB_with_COB = sp.getBoolean(BooleanKey.ApsUseSmbWithCob.key, BooleanKey.ApsUseSmbWithCob.defaultValue), enableSMB_with_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithLowTt.key, BooleanKey.ApsUseSmbWithLowTt.defaultValue), allowSMB_with_high_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithHighTt.key, BooleanKey.ApsUseSmbWithHighTt.defaultValue), enableSMB_always = sp.getBoolean(BooleanKey.ApsUseSmbAlways.key, BooleanKey.ApsUseSmbAlways.defaultValue), enableSMB_after_carbs = sp.getBoolean(BooleanKey.ApsUseSmbAfterCarbs.key, BooleanKey.ApsUseSmbAfterCarbs.defaultValue), maxSMBBasalMinutes = Int.MAX_VALUE, maxUAMSMBBasalMinutes = Int.MAX_VALUE, bolus_increment = activePlugin.activePump.pumpDescription.bolusStep, carbsReqThreshold = sp.getInt(IntKey.ApsCarbsRequestThreshold.key, IntKey.ApsCarbsRequestThreshold.defaultValue), current_basal = ch.fromPump(activePlugin.activePump.baseBasalRate), temptargetSet = isTempTarget, autosens_max = sp.getDouble(DoubleKey.AutosensMax.key, DoubleKey.AutosensMax.defaultValue), out_units = if (isMmol) "mmol/L" else "mg/dl", variable_sens = 0.0, insulinDivisor = 0, TDD = 0.0)
 
-        aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityMonitor.suppressLearning || cgmState.suppressLearning || inPostMealLockout, now)
+        aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityPausesLearning || cgmState.suppressLearning || inPostMealLockout, now)
         val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute))
 
         // Use last MANUAL bolus only — SMBs fire every 5min during fasting and would permanently

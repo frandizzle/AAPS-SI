@@ -37,6 +37,10 @@ class UnexplainedDropTracker @Inject constructor() {
          *  not-an-ISF-signal. -27 mg/dL ≈ -1.5 mmol — well beyond CGM noise, comfortably
          *  inside what a brisk walk produces. */
         private const val SUSPECT_THRESHOLD_MGDL = -27.0
+        /** "Right now" for [stillDropping]: the last three readings. */
+        private const val RECENT_MS = 15 * 60_000L
+        /** -5.4 mg/dL (0.3 mmol) beyond insulin over [RECENT_MS]: clearly more than CGM noise. */
+        private const val STILL_DROPPING_MGDL = -5.4
     }
 
     /** Call once per loop cycle, before the learners run. */
@@ -54,6 +58,15 @@ class UnexplainedDropTracker @Inject constructor() {
     /** True when the recent drop is too large to blame on insulin — a low right now is more
      *  likely exercise (or missing food) than an ISF that's set too strong. */
     val exerciseSuspected: Boolean get() = unexplainedDropMgdl <= SUSPECT_THRESHOLD_MGDL
+
+    /** Unexplained BG movement over just the last [spanMs] (mg/dL): what is happening now, not
+     *  over the whole 45-minute window, which stays negative long after a drop has ended. */
+    fun recentUnexplainedMgdl(nowMs: Long, spanMs: Long = RECENT_MS): Double =
+        window.filter { nowMs - it.timeMs < spanMs }.sumOf { it.unexplainedMgdl }
+
+    /** BG is still falling faster than insulin explains right now - about 0.3 mmol beyond it over
+     *  the last 15 minutes. What [ActivityTail] waits on after activity stops. */
+    fun stillDropping(nowMs: Long): Boolean = recentUnexplainedMgdl(nowMs) <= STILL_DROPPING_MGDL
 
     fun reset() = window.clear()
 }
