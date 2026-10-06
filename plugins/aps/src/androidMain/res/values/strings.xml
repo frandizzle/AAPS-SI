@@ -127,7 +127,6 @@
     <string name="sensitivity_raises_target_title">Sensitivity raises target</string>
     <string name="sensitivity_raises_target_summary">When sensitivity is detected, raise the target glucose</string>
     <string name="smart_insulin">SmartInsulin</string>
-    <string name="smart_insulin_short">SI</string>
     <string name="smart_insulin_description">Adaptive insulin model with BG prediction and anti-rebound dosing</string>
     <string name="si_prebolus2_default_u_title">Pre-bolus 2: default amount (U)</string>
     <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>

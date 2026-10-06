@@ -133,7 +133,6 @@ open class SmartInsulinPlugin @Inject constructor(
         .mainType(PluginType.APS)
         .icon(IcPluginInsulin)
         .pluginName(ApsStrings.smart_insulin)
-        .shortName(ApsStrings.smart_insulin_short)
         .preferencesVisibleInSimpleMode(false)
         .showInList { config.APS }
         .description(ApsStrings.smart_insulin_description)
