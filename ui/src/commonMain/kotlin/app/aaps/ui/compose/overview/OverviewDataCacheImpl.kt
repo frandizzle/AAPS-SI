@@ -693,15 +693,24 @@ class OverviewDataCacheImpl(
         // which touches activePump and crashes at startup before the pump plugin is selected.
         // Loop will correct mode itself when it next runs; the RM observer will pick it up.
         val now = dateUtil.now()
-        val rmRecord = persistenceLayer.getRunningModeActiveAt(now)
+        // On a client, null when nothing is stored for this moment: a follower that has never synced a
+        // permanent record does not know the master's mode, and RM.DEFAULT_MODE would be drawn as a
+        // definite "loop disabled" - see PersistenceLayer.getRunningModeActiveAtOrNull.
+        // On the master the default is not a guess. With nothing stored the loop really runs in
+        // RM.DEFAULT_MODE (Loop.runningMode() reads getRunningModeActiveAt), so show that mode.
+        val rmRecord =
+            if (config.AAPSCLIENT) persistenceLayer.getRunningModeActiveAtOrNull(now)
+            else persistenceLayer.getRunningModeActiveAt(now)
 
         // Store raw data only - ViewModel computes display text
-        _runningModeFlow.value = RunningModeDisplayData(
-            mode = rmRecord.mode,
-            timestamp = rmRecord.timestamp,
-            duration = rmRecord.duration,
-            recordId = rmRecord.id
-        )
+        _runningModeFlow.value = rmRecord?.let {
+            RunningModeDisplayData(
+                mode = it.mode,
+                timestamp = it.timestamp,
+                duration = it.duration,
+                recordId = it.id
+            )
+        }
     }
 
     // =========================================================================
@@ -1220,9 +1229,9 @@ class OverviewDataCacheImpl(
         _bgInfoFlow.value = null
         _tempTargetFlow.value = null
         _profileFlow.value = null
-        // _runningModeFlow intentionally not nulled: getRunningModeActiveAt() always returns
-        // a non-null value (DEFAULT_MODE fallback for empty table), so callers should use
-        // updateRunningModeFromDatabase() to refresh it rather than forcing a null state.
+        // _runningModeFlow intentionally not nulled here: updateRunningModeFromDatabase() decides it.
+        // On the master it is never null (DEFAULT_MODE fallback for an empty table); on a client null
+        // means "not known", and only the database read may say that.
         _tbrFlow.value = null
         // Secondary graph flows
         _iobGraphFlow.value = IobGraphData(emptyList(), emptyList())
