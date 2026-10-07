@@ -295,7 +295,7 @@ class ModeIsfLearner @Inject constructor(
         pfWindow: PfWindow = PfWindow.NONE,  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
-        newPodBoost: Boolean = false  // the new pod boost is running (or paused under target). An
+        newPodBoost: Boolean = false  // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
         // episode it touches is not judged at all, lows included: the boost changed the dose, and
         // a low already ends the boost for that pod. A tail or low watch still open is dropped.
     ) {

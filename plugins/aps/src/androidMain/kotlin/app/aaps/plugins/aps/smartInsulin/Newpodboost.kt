@@ -31,6 +31,16 @@ class NewPodBoost(private val sp: SP) {
         val multiplier: Double get() = 1.0 + extra
     }
 
+    companion object {
+        /**
+         * Did the boost really add insulin with this decision? Only when it was in use ([dosing]
+         * active with something extra) and the loop gave insulin at all. A zero temp from the low
+         * guard, LGS or the recovery window is zero with or without the boost, so it added nothing.
+         */
+        fun addedInsulin(dosing: State, smbU: Double, basalUPerHour: Double): Boolean =
+            dosing.active && dosing.extra > 0.0 && (smbU > 0.0 || basalUPerHour > 0.0)
+    }
+
     /** Called with a short description when a boost starts or ends - the plugin journals it. */
     var onEvent: ((String) -> Unit)? = null
 

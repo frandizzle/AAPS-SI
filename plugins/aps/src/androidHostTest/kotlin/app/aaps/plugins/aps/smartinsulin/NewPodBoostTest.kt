@@ -146,4 +146,29 @@ class NewPodBoostTest {
         assertFalse(boost.dosing.active)
         assertEquals(null, boost.mealPercent)
     }
+
+    // ── did the boost really add insulin (what marks a meal as touched) ──────
+
+    @Test fun `a boost in use with insulin going in added insulin`() {
+        val s = at(POD)
+        assertTrue(NewPodBoost.addedInsulin(s, smbU = 0.0, basalUPerHour = 0.9))
+        assertTrue(NewPodBoost.addedInsulin(s, smbU = 0.3, basalUPerHour = 0.0))
+    }
+
+    @Test fun `a zero temp with no SMB adds nothing, boost or not`() {
+        // Changing a pod while BG is already crashing: the low guard holds insulin at zero.
+        assertFalse(NewPodBoost.addedInsulin(at(POD), smbU = 0.0, basalUPerHour = 0.0))
+    }
+
+    @Test fun `a boost paused under target or switched off for meals adds nothing`() {
+        at(POD)
+        assertFalse(NewPodBoost.addedInsulin(at(POD + HOUR, below = true), smbU = 0.5, basalUPerHour = 1.0))
+        at(POD + 2 * HOUR)
+        val meal = boost.forMeal(inMeal = true, percent = 0)
+        assertFalse(NewPodBoost.addedInsulin(meal, smbU = 0.5, basalUPerHour = 1.0))
+    }
+
+    @Test fun `no boost adds nothing`() {
+        assertFalse(NewPodBoost.addedInsulin(at(POD, enabled = false), smbU = 0.5, basalUPerHour = 1.0))
+    }
 }

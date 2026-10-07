@@ -221,7 +221,7 @@ class DuraStrengthLearner @Inject constructor(
         learningEnabled:   Boolean = true,   // user switch. Off FREEZES this learner: episodes stop
         // being judged and anything in flight is dropped, but the factor and ceiling already
         // learned keep being applied. Clearing them is the reset button's job.
-        newPodBoost:       Boolean = false   // the new pod boost is running (or paused under target).
+        newPodBoost:       Boolean = false   // the new pod boost really added insulin (see NewPodBoost.addedInsulin).
         // An episode it touches is not judged at all, lows included: the boost changed the dose,
         // and a low already ends the boost for that pod. A tail watch still open is dropped.
     ) {

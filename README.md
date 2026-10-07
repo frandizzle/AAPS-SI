@@ -350,7 +350,8 @@ It is **off by default**. Turn it on in **Settings → First day pod**.
 - **It ends for the rest of that pod if BG goes low** (below the low guard, or while the low recovery window runs). A restart will not bring it back.
 - You can stop it yourself with **End boost for this pod** on the SmartInsulin tab (General card).
 - Learning is paused while it runs, including while it is paused under target.
-- A meal or UAM that the boost touches at any point is **not judged at all** by Meal ISF, UAM entry or DURA, and that includes lows. This holds even if the boost ends during the meal: the boost changed that meal's dose, and a low already ends the boost for the pod. If the boost starts while an earlier meal's tail is still being watched, that tail is dropped too. The learner cards on the SmartInsulin tab show "not scored — new pod boost".
+- A meal or UAM that the boost **added insulin to** at any point is **not judged at all** by Meal ISF, UAM entry or DURA, and that includes lows. This holds even if the boost ends during the meal: the boost changed that meal's dose, and a low already ends the boost for the pod. If the boost adds insulin while an earlier meal's tail is still being watched, that tail is dropped too. The learner cards on the SmartInsulin tab show "not scored — new pod boost".
+- A boost that added nothing does not count. While it is paused under target, or while the loop is giving zero insulin (low guard, LGS, low recovery), the boost changes nothing. So if you change a pod while BG is already falling from a meal's insulin, that meal is still judged and still learns from the low.
 - The next pod gets its own boost.
 
 The overview shows it under **State:**, for example `New pod +18% — 4h20m left`, `New pod +9% (meal, 50%)` during a meal, or `New pod, paused (BG under target)`. Each start and end is written to the Learning Journal.

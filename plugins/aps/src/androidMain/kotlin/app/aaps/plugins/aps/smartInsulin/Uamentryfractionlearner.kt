@@ -279,7 +279,7 @@ class UamEntryFractionLearner @Inject constructor(
         secondWave: Boolean = false,    // more food went in during this episode — see
         // SecondWaveDetector. Nothing after that says anything about how the ENTRY burst was
         // shaped, so the episode is dropped rather than scored.
-        newPodBoost: Boolean = false    // the new pod boost is running (or paused under target). An
+        newPodBoost: Boolean = false    // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
         // episode it touches is not judged at all, early lows included: the boost changed the dose,
         // and a low already ends the boost for that pod. A verdict still waiting is dropped.
     ) {

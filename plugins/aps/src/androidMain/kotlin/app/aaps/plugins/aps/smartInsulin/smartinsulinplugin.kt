@@ -194,6 +194,11 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activityTail = ActivityTail()
     /** Stronger ISF and basal on a new pod, fading out - see NewPodBoost. */
     private val newPodBoost = NewPodBoost(sp)
+    /** The new pod boost really added insulin on the last decision: active (not paused under
+     *  target), and the loop was not giving zero (a zero temp from the low guard, LGS or the
+     *  recovery window is zero with or without the boost). Only this marks a meal as touched by
+     *  the boost, so a boost that gave nothing cannot hide a meal's own low from its learners. */
+    private var podBoostDosedLastCycle = false
     private var lastIobSampleMs      = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
@@ -1548,8 +1553,8 @@ open class SmartInsulinPlugin @Inject constructor(
             // much of a late low is actually its, so a longer watch can't mis-charge one.
             watchMs           = postModeWatchMs(),
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour),
-            // A meal the new pod boost touches is not judged at all, lows included.
-            newPodBoost       = podBoostPausesLearning
+            // A meal the new pod boost really added insulin to is not judged at all, lows included.
+            newPodBoost       = podBoostDosedLastCycle
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -1574,7 +1579,7 @@ open class SmartInsulinPlugin @Inject constructor(
             insulinPeakMins   = mealOverrideManager.activeMealMode
                 ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
             secondWave        = secondWaveNow || carbEpisodeActive,
-            newPodBoost       = podBoostPausesLearning
+            newPodBoost       = podBoostDosedLastCycle
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole
@@ -1607,7 +1612,7 @@ open class SmartInsulinPlugin @Inject constructor(
             modeInsulinShare  = modeInsulinShare,
             watchMs           = postModeWatchMs(),
             learningEnabled   = duraLearningEnabled(),
-            newPodBoost       = podBoostPausesLearning
+            newPodBoost       = podBoostDosedLastCycle
         )
 
         // -- UAM entry SMB fraction --------------------------------------------
@@ -1759,6 +1764,15 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         lastAPSResult = apsResult; lastAPSRun = now; lastRunError = null
+
+        // Did the boost add insulin with this decision? Read by the meal learners next cycle,
+        // when that insulin is on board.
+        val basalNowU = when {
+            apsResult.isTempBasalRequested -> apsResult.rate
+            tb != null                     -> currentTemp.rate
+            else                           -> profile.getBasal()
+        }
+        podBoostDosedLastCycle = NewPodBoost.addedInsulin(podBoostDose, apsResult.smb, basalNowU)
 
         // Increment UAM entry SMB counter if an entry-fraction SMB was delivered
         val fractionUsed = uamSmbFraction
