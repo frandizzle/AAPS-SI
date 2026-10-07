@@ -80,6 +80,7 @@ fun SmartInsulinScreen(
     // Ticks to force a re-read; the plugin's data is plain state, not observable.
     var tick by remember { mutableIntStateOf(0) }
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    var confirmEndBoost by remember { mutableStateOf(false) }
     // Circadian day shown; starts on today each time the tab opens, as in 3.4.
     var circadianDow by remember { mutableIntStateOf(todayDow()) }
     // Start counting straight away on a grant; otherwise it would wait for the next app start.
@@ -113,7 +114,7 @@ fun SmartInsulinScreen(
             SiAction.TOGGLE_FF_DEBUG         -> {
                 cards.showFfDebug = !cards.showFfDebug; tick++
             }
-            SiAction.END_NEW_POD_BOOST       -> { plugin.endNewPodBoost(); tick++ }
+            SiAction.END_NEW_POD_BOOST       -> confirmEndBoost = true
         }
     }
 
@@ -219,6 +220,21 @@ fun SmartInsulinScreen(
                 TextButton(onClick = { action(); confirm = null; tick++ }) { Text("Reset", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } }
+        )
+    }
+
+    // Ending the boost cannot be undone until the next pod, so ask first.
+    if (confirmEndBoost) {
+        AlertDialog(
+            onDismissRequest = { confirmEndBoost = false },
+            title = { Text("End new pod boost") },
+            text = { Text("End the new pod boost for this pod? It won't come back until the next pod change.") },
+            confirmButton = {
+                TextButton(onClick = { plugin.endNewPodBoost(); confirmEndBoost = false; tick++ }) {
+                    Text("End", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmEndBoost = false }) { Text("Cancel") } }
         )
     }
 }
