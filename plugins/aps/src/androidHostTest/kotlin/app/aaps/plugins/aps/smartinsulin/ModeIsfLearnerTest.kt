@@ -37,13 +37,13 @@ class ModeIsfLearnerTest {
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
         pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true,
-        preBolused: Boolean = false
+        preBolused: Boolean = false, boost: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused
+        pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused, newPodBoost = boost
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -762,5 +762,55 @@ class ModeIsfLearnerTest {
         cycle(MealMode.DINNER, t, t, bg = 160.0)
         runQuietTail(t, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    // ── new pod boost ────────────────────────────────────────────────────────
+
+    @Test
+    fun `a meal the boost ran through is not scored, even when it ends high`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, boost = true)
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 160.0, boost = true)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertTrue(learner.lastOutcome.contains("new pod boost"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a low the boost caused does not weaken the meal, even after the boost has ended`() {
+        // The boost runs at the start of the meal; the low ends it, so it is off when the meal ends.
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0, boost = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 80.0, low = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + 2 * CYCLE_MS, bg = 90.0)
+        cycle(null, 0L, BASE_MS + 3 * CYCLE_MS, bg = 90.0)
+        cycle(null, 0L, BASE_MS + 4 * CYCLE_MS, bg = 65.0, low = true)   // and no low watch after
+        assertEquals(1.0, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a boost that starts part way through the meal still stops it being scored`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 100.0, boost = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + 2 * CYCLE_MS, bg = 80.0, low = true)
+        cycle(null, 0L, BASE_MS + 3 * CYCLE_MS, bg = 90.0)
+        assertEquals(1.0, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    @Test
+    fun `a boost that starts in the tail drops the low watch`() {
+        cycle(MealMode.BREAKFAST, BASE_MS, BASE_MS, bg = 120.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 95.0, boost = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 65.0, low = true)
+        assertEquals(1.0, learner.multiplier(MealMode.BREAKFAST), 1e-9)
+    }
+
+    @Test
+    fun `the next meal after a boosted one is scored as normal`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0, boost = true)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 100.0)
+        val t = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.LOW_CARB, t, t, bg = 110.0)
+        cycle(MealMode.LOW_CARB, t, t + CYCLE_MS, bg = 80.0, low = true)
+        cycle(null, 0L, t + 2 * CYCLE_MS, bg = 90.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 }

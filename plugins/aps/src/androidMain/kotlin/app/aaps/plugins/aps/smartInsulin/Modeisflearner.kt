@@ -108,6 +108,7 @@ class ModeIsfLearner @Inject constructor(
     private var episodeShapeRailed = false
     /** The episode started with a pre-bolus - it gets the tighter spike bar, see [LATE_SPIKE_MARGIN_MGDL]. */
     private var episodePreBolused = false
+    private var episodeBoosted = false  // the new pod boost ran at some point in this episode
 
     // Pending post-episode evaluation (settling tail)
     private var pendingScope:     Scope? = null
@@ -291,9 +292,12 @@ class ModeIsfLearner @Inject constructor(
         // it was given, so it is not scored; lows still land, they are a safety signal either way.
         preBolused: Boolean = false,  // a pre-bolus was given when this mode started (Smart Meal
         // PB1). Read when the episode opens; it sets how high a spike may go - see spikeMarginMgdl.
-        pfWindow: PfWindow = PfWindow.NONE  // which P/F ISF window this episode doses from; NONE
+        pfWindow: PfWindow = PfWindow.NONE,  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
+        newPodBoost: Boolean = false  // the new pod boost is running (or paused under target). An
+        // episode it touches is not judged at all, lows included: the boost changed the dose, and
+        // a low already ends the boost for that pod. A tail or low watch still open is dropped.
     ) {
         if (!learningEnabled) {
             // Drop anything in flight rather than leaving it to be judged whenever the switch comes
@@ -306,6 +310,10 @@ class ModeIsfLearner @Inject constructor(
                 aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
             }
             return
+        }
+        if (newPodBoost && (pendingScope != null || watchScope != null)) {
+            (pendingScope ?: watchScope)?.let { tailNotJudged(it, "new pod boost started") }
+            clearWatch()
         }
         if (activeModeNow != null) {
             if (activeScope == null || modeStartMs != activeStartMs) {
@@ -325,7 +333,7 @@ class ModeIsfLearner @Inject constructor(
                 // caused is evidence about its own dose, and would otherwise be discarded along
                 // with the episode. episodeEarlyLow is deliberately not carried forward: the
                 // entry-fraction learner owns entry-window lows.
-                activeScope?.let { superseded ->
+                activeScope?.takeIf { !episodeBoosted }?.let { superseded ->
                     when {
                         episodeLow        ->
                             applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, duraDrove = duraDrove(episodeMaxDura)),
@@ -378,7 +386,9 @@ class ModeIsfLearner @Inject constructor(
                 tailDeltas.clear()
                 episodeShapeRailed = false
                 episodePreBolused = preBolused && !activeModeNow.isUam
+                episodeBoosted = false
             }
+            if (newPodBoost) episodeBoosted = true
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
             if (entryShapeRailed) episodeShapeRailed = true
             tailDeltas.addFirst(deltaMgdl)
@@ -438,7 +448,13 @@ class ModeIsfLearner @Inject constructor(
             activeStartMs = 0L
             val lateSpike    = lateSpikeWithNoShapeLeft(targetMgdl)
             val peakMmol     = BgText.bg(episodePeakMgdl)
-            if (hadLow) {
+            if (episodeBoosted || newPodBoost) {
+                // Nothing at all, not even the low watch: the boost changed this episode's dose.
+                lastOutcome = "${ended.label} not scored — new pod boost"
+                aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+                episodeBoosted = false
+                clearWatch()
+            } else if (hadLow) {
                 // A low during the episode is a definitive outcome — no tail wait needed, and
                 // deliberately NOT skippable by later contamination: weaken signals must land.
                 //

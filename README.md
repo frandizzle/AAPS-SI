@@ -109,6 +109,7 @@ Learning stops when its data would be wrong:
 - During meal modes, and for a set time after a meal ends (post-meal pause)
 - During high temp targets, activity, and CGM warmup
 - **While BG is below target, and for 90 minutes after.** The climb back up from a dip (from held-back basal and your liver) is not "basal too weak", so nothing may make ISF or basal stronger in that time. Making them weaker is still allowed.
+- While a **new pod boost** is running (see [New Pod Boost](#new-pod-boost-first-day-pod)). The boost is a site effect that only happens on pod days, so it must not be learned into your hours.
 
 The overview shows the learning state under **State:**, for example `Learning`, `Post-meal pause — 44m remaining`.
 
@@ -326,12 +327,42 @@ Set your dawn window hours, and how much SMBs are reduced during it.
 
 ---
 
+## New Pod Boost (First day pod)
+
+A new infusion site often runs high for the first few hours: the insulin is absorbed more slowly at a fresh site, and the insertion itself can raise BG. New pod boost makes ISF and basal stronger for a while after a pod change, then fades it away.
+
+It is **off by default**. Turn it on in **Settings → First day pod**.
+
+| Setting | Default | Range | What it does |
+|---------|---------|-------|--------------|
+| **New pod boost** | Off | On / off | Switches the feature on |
+| **Strength at pod change** | 20% | 0–50% | How much stronger ISF and basal are right after the pod change |
+| **Duration** | 6 hours | 0–24 hours | How long it takes to fade to nothing |
+| **Strength during meals and UAM** | 50% | 0–100% | How much of the boost is used while a meal mode or UAM runs |
+
+**How it works:**
+
+- It starts when AAPS records a pod / site change (the pump driver writes this when you change pods).
+- It is strongest at the change and fades evenly to 0% over the duration. With 20% over 6 hours: +20% at the change, +10% after 3 hours, 0% at 6 hours.
+- ISF is divided by the boost and basal is multiplied by it. +20% means ISF ÷ 1.2 and basal × 1.2.
+- **During a meal mode or UAM, only part of the boost is used** — half by default. Meal modes already push hard and bypass the low guard, and a slow new site makes the meal's insulin tail longer, so the full boost there risks a late low. It still fades on the same schedule: with 30% over 12 hours, a meal at hour 6 gets +7.5% (half of the 15% left). Set it to 0% to turn the boost off during meals, or 100% for the full boost. When the meal ends, the full boost comes back.
+- **While BG is under target, it pauses** — nothing extra is given. It picks up again (still fading on schedule) if BG rises back above target. Pods are often changed at or near target, so this keeps the boost for when the site starts to run high.
+- **It ends for the rest of that pod if BG goes low** (below the low guard, or while the low recovery window runs). A restart will not bring it back.
+- You can stop it yourself with **End boost for this pod** on the SmartInsulin tab (General card).
+- Learning is paused while it runs, including while it is paused under target.
+- A meal or UAM that the boost touches at any point is **not judged at all** by Meal ISF, UAM entry or DURA, and that includes lows. This holds even if the boost ends during the meal: the boost changed that meal's dose, and a low already ends the boost for the pod. If the boost starts while an earlier meal's tail is still being watched, that tail is dropped too. The learner cards on the SmartInsulin tab show "not scored — new pod boost".
+- The next pod gets its own boost.
+
+The overview shows it under **State:**, for example `New pod +18% — 4h20m left`, `New pod +9% (meal, 50%)` during a meal, or `New pod, paused (BG under target)`. Each start and end is written to the Learning Journal.
+
+---
+
 ## SmartInsulin Tab
 
 | Section | What it shows |
 |---------|--------------|
 | **Summary** | Current ISF, basal and aggressiveness at a glance |
-| **General** | What the loop is doing this hour: mode, ISF and basal with how each was worked out |
+| **General** | What the loop is doing this hour: mode, ISF and basal with how each was worked out. Shows a running new pod boost, with an **End boost for this pod** button |
 | **Activity / Stress Session** | Start Golf or Gym, and what it has learned |
 | **Time in Range** | Fasting and meal TIR bars, estimated HbA1c and average BG |
 | **Circadian 24h** | ISF (mmol/U), basal (U/h), ceiling and confidence for every hour. Day selector Mon–Sun. Current hour highlighted. |
@@ -391,6 +422,7 @@ Values are shown in your units (mmol/L or mg/dL).
 | **CGM** | CGM warmup protection |
 | **Activity** | Resting heart rate, target raise per activity level |
 | **Dawn phenomenon** | Window hours, SMB reduction |
+| **First day pod** | New pod boost on/off, strength at pod change (%), duration (hours), strength during meals and UAM (%) |
 | **UAM detection** | On/off, trigger levels, burst, wobble tolerance, entry SMBs, day/night hours, UAM DURA |
 | **UAM: Breakfast / Lunch / Afternoon / Dinner / Snack window** | On/off, hours, duration, ISF and entry fraction for each window |
 | **Protein / fat** | On/off, trigger, duration, P/F takeover, overnight/day/night ISF and hours, P/F DURA |

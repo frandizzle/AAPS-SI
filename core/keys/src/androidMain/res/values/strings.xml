@@ -455,6 +455,14 @@
     <string name="si_max_smb_title">Max SMB (U)</string>
     <string name="si_max_tbr_title">SmartInsulin Max TBR (U/h) — inner cap (set equal to Max Basal Rate above)</string>
     <string name="si_mode_isf_learning_summary">Learns a per-mode ISF correction from how each meal or UAM episode lands. Off freezes what has been learned — the multipliers keep being dosed from, nothing new is learned. Use the reset button on the SmartInsulin tab to clear them instead.</string>
+    <string name="si_new_pod_boost_enabled_title">New pod boost</string>
+    <string name="si_new_pod_boost_enabled_summary">A new site often runs high for a few hours. When on, a new pod makes ISF and basal stronger by the strength below, fading to nothing over the duration. It pauses while BG is under target, stops for the rest of the pod if BG goes low, and learning pauses while it runs.</string>
+    <string name="si_new_pod_boost_percent_title">Strength at pod change (%)</string>
+    <string name="si_new_pod_boost_percent_summary">How much stronger ISF and basal are right after the pod change. 20% means basal ×1.20 and ISF ÷1.20, fading to 0% by the end.</string>
+    <string name="si_new_pod_boost_hours_title">Duration (hours)</string>
+    <string name="si_new_pod_boost_hours_summary">How long the boost takes to fade out after the pod change.</string>
+    <string name="si_new_pod_boost_meal_percent_title">Strength during meals and UAM (%)</string>
+    <string name="si_new_pod_boost_meal_percent_summary">How much of the boost is used while a meal mode or UAM is running. 0% turns it off during meals, 50% gives half, 100% gives the full boost. Meal modes bypass the low guard, so less is safer.</string>
     <string name="si_dura_learning_title">Enable DURA strength learning</string>
     <string name="si_dura_learning_summary">Learns each meal/UAM mode\'s DURA strength and ceiling from how its episodes end. Off freezes it: what it has learned is still applied, nothing new is learned.</string>
     <string name="si_mode_isf_learning_title">Enable per-meal/UAM ISF learning</string>

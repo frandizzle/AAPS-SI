@@ -463,6 +463,36 @@ enum class IntKey(
         title = KeysStrings.si_post_mode_lockout_mins_title,
         defaultedBySM = true
     ),
+    ApsSmartInsulinNewPodBoostPercent(
+        key = "si_new_pod_boost_percent",
+        defaultValue = 20,
+        min = 0,
+        max = 50,
+        unitType = UnitType.PERCENT,
+        title = KeysStrings.si_new_pod_boost_percent_title,
+        summary = KeysStrings.si_new_pod_boost_percent_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinNewPodBoostHours(
+        key = "si_new_pod_boost_hours",
+        defaultValue = 6,
+        min = 0,
+        max = 24,
+        unitType = UnitType.HOURS,
+        title = KeysStrings.si_new_pod_boost_hours_title,
+        summary = KeysStrings.si_new_pod_boost_hours_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinNewPodBoostMealPercent(
+        key = "si_new_pod_boost_meal_percent",
+        defaultValue = 50,
+        min = 0,
+        max = 100,
+        unitType = UnitType.PERCENT,
+        title = KeysStrings.si_new_pod_boost_meal_percent_title,
+        summary = KeysStrings.si_new_pod_boost_meal_percent_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinReboundWindowMins(
         key = "si_rebound_window_mins",
         defaultValue = 60,

@@ -31,7 +31,7 @@ sealed interface SiItem {
     data class Action(val text: String, val action: SiAction, val tone: SiTone) : SiItem
 }
 
-enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG }
+enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG, END_NEW_POD_BOOST }
 
 data class SiCardContent(
     val items: List<SiItem>,
@@ -278,6 +278,14 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         addRow("Mode: ${d.mealMode}",
                d.modeRemMins?.let { "${it}min remaining" } ?: "No active meal — fasting rules apply",
                modeColor)
+
+        d.newPodBoost?.let { boost ->
+            addRow(boost,
+                   "ISF and basal stronger for the new site, fading out, reduced during meals and UAM. Stops for this pod if BG goes low. " +
+                       "Learning is paused while it runs.",
+                   SiTone.INFO)
+            addAction("End boost for this pod", SiAction.END_NEW_POD_BOOST)
+        }
 
         val aggrColor = when { d.aggressiveness > 1.05 -> SiTone.WARNING; d.aggressiveness < 0.95 -> SiTone.INFO; else -> SiTone.STRONG }
         val isFasting = d.mealMode == "Fasting"
@@ -527,6 +535,8 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         val (statePrimary, stateColor) = when {
             d.learningState.startsWith("off") || d.learningState == "Not Learning" ->
                 Pair("Learning paused — ${d.learningState.removePrefix("off: ").trim().ifEmpty{"unknown"}}", SiTone.WARNING)
+            d.learningState.startsWith("boost:") ->
+                Pair("Learning paused — ${d.learningState.removePrefix("boost:").trim()}", SiTone.WARNING)
             d.learningState == "limited" || d.learningState.startsWith("Limited") ->
                 Pair("Limited — meal mode active, only learning Peak/DIA", SiTone.WARNING)
             else -> Pair("Learning active", SiTone.GOOD)

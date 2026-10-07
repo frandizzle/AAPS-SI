@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.WbTwilight
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SetMeal
@@ -191,6 +192,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
     /** Keeps learning paused after activity stops while BG is still dropping - see ActivityTail. */
     private val activityTail = ActivityTail()
+    /** Stronger ISF and basal on a new pod, fading out - see NewPodBoost. */
+    private val newPodBoost = NewPodBoost(sp)
     private var lastIobSampleMs      = 0L
     private var nudgeDisplaySessionIsfMgdl: Double = 0.0
     private var nudgeDisplaySessionBasalU: Double = 0.0
@@ -471,6 +474,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val relowCount: Int,
         val minBgDuringLow: Double, val iobAtLowTime: Double, val isMmol: Boolean,
         val learningState: String, val activityLevel: String, val avgHrBpm: Int, val steps5min: Int,
+        /** "New pod +18% — 4h20m left" while the new pod boost runs, else null. */
+        val newPodBoost: String? = null,
         /** Age of the newest steps record from the watch, or null if there is none in range. */
         val stepsAgeMs: Long?,
         val phoneSteps5min: Int, val stepsFromPhone: Boolean,
@@ -682,6 +687,7 @@ open class SmartInsulinPlugin @Inject constructor(
             relowCount = relowTracker.relowCount,
             minBgDuringLow = minBgDuringLow, iobAtLowTime = iobAtLowTime, isMmol = isMmol,
             learningState = getLearningState(), activityLevel = activityMonitor.level.label,
+            newPodBoost = newPodBoostText,
             avgHrBpm = activityMonitor.avgHrBpm.toInt(), steps5min = activityMonitor.lastSteps5min,
             stepsAgeMs = activityMonitor.lastStepsAgeMs,
             phoneSteps5min = activityMonitor.phoneSteps5min,
@@ -723,6 +729,7 @@ open class SmartInsulinPlugin @Inject constructor(
             !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Disabled"
             activityMonitor.suppressLearning -> "off: Activity"
             activityTail.paused -> "off: After activity — BG still dropping"
+            newPodBoost.state.active || newPodBoost.state.paused -> newPodBoostStateText()
             effectivePostMealLockout -> "off: Post-meal"
             activeMode == MealMode.UAM_PROTEIN_FAT -> "limited: P/F"
             isMealModeActive -> "limited: meal"
@@ -791,6 +798,7 @@ open class SmartInsulinPlugin @Inject constructor(
             !sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue) -> "off: Learning disabled"
             activityMonitor.suppressLearning         -> "off: Activity ${activityMonitor.level.label}"
             activityTail.paused                      -> "off: After activity — BG still dropping"
+            newPodBoost.state.active || newPodBoost.state.paused -> newPodBoostStateText()
             cachedCgmSuppressLearning                -> "off: CGM warmup"
             effectivePostMealLockout                 -> {
                 val minsLeft = ((learningDirtyUntilMs - now) / 60_000).coerceAtLeast(1)
@@ -862,6 +870,7 @@ open class SmartInsulinPlugin @Inject constructor(
         duraStrengthLearner.onOutcome     = { learningJournal.note("DURA", it) }
         activitySessionLearner.onOutcome  = { learningJournal.note("Activity", it) }
         profileLearner.onChange           = { learningJournal.note("Insulin profile", it) }
+        newPodBoost.onEvent               = { learningJournal.note("New pod", it) }
     }
 
     /** Learning journal, newest first, for the SI tab. */
@@ -971,6 +980,26 @@ open class SmartInsulinPlugin @Inject constructor(
         val real = data.take(6).takeWhile { !it.filledGap }
         return RiseTurnGuard.apply(smoothedDeltaMgdl, real.map { it.calibratedOrValue }, real.map { it.timestamp })
     }
+
+    /** "boost: New pod +18% — 4h20m left", "+9% (meal, 50%)" during a meal, or paused while BG is
+     *  under target. Learning is paused in every case. */
+    private fun newPodBoostStateText(): String {
+        val st = newPodBoost.dosing
+        val left = "${st.minutesLeft / 60}h${"%02d".format(st.minutesLeft % 60)}m left"
+        val meal = newPodBoost.mealPercent
+        return when {
+            !st.active   -> "boost: New pod, paused (BG under target) — $left"
+            meal == 0    -> "boost: New pod, off during meal — $left"
+            meal != null -> "boost: New pod +${(st.extra * 100).toInt()}% (meal, $meal%) — $left"
+            else         -> "boost: New pod +${(st.extra * 100).toInt()}% — $left"
+        }
+    }
+
+    /** New pod boost for the SI tab: null when not running. */
+    val newPodBoostText: String? get() = if (newPodBoost.state.active || newPodBoost.state.paused) newPodBoostStateText().removePrefix("boost: ") else null
+
+    /** The SI tab's "End boost" button: off for the rest of this pod. */
+    fun endNewPodBoost() = newPodBoost.endNow()
 
     /** Re-arm after the SI tab's permission request comes back granted. */
     fun startPhoneStepCounter() = phoneStepCounter.start()
@@ -1169,6 +1198,27 @@ open class SmartInsulinPlugin @Inject constructor(
         activityTail.onCycle(now, activityMonitor.level, unexplainedDropTracker.stillDropping(now))
         val activityPausesLearning = activityMonitor.suppressLearning || activityTail.paused
 
+        // -- New pod boost -----------------------------------------------------------------
+        // Decided here, before any learner runs, because learning pauses while it is on: the
+        // learners would otherwise make this hour permanently stronger for a site effect that is
+        // only there on pod days. Applied to the dose further down, after every other ISF change.
+        val siteChangeMs = try {
+            persistenceLayer.getLastTherapyRecordUpToNow(TE.Type.CANNULA_CHANGE)?.timestamp
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "SmartInsulin new pod boost: site change read failed: ${e.message}"); null
+        }
+        val podBoost = newPodBoost.evaluate(
+            nowMs        = now,
+            siteChangeMs = siteChangeMs,
+            enabled      = sp.getBoolean(BooleanKey.ApsSmartInsulinNewPodBoostEnabled.key, BooleanKey.ApsSmartInsulinNewPodBoostEnabled.defaultValue),
+            percent      = sp.getInt(IntKey.ApsSmartInsulinNewPodBoostPercent.key, IntKey.ApsSmartInsulinNewPodBoostPercent.defaultValue),
+            hours        = sp.getInt(IntKey.ApsSmartInsulinNewPodBoostHours.key, IntKey.ApsSmartInsulinNewPodBoostHours.defaultValue),
+            belowTarget  = glucoseStatus.glucose < targetBg,
+            lowActive    = bgBelowGuard(glucoseStatus.glucose, spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)) || inReboundWindow
+        )
+        val podBoostPausesLearning = podBoost.active || podBoost.paused
+        val learningPausedThisCycle = activityPausesLearning || podBoostPausesLearning
+
         // -- Whose insulin is behind a post-mode low ---------------------------
         // While a mode runs, keep a live reading of what it has working; once it ends, add up what
         // the loop gives afterwards. Boluses come from the database (SMBs are boluses); the basal
@@ -1230,7 +1280,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 cobG                     = mealData.mealCOB,
                 profileIsfMgdl           = trueIsfMgdl,
                 targetMgdl               = targetBg,
-                suppressAdaptiveLearning = activityPausesLearning || cgmState.suppressLearning,
+                suppressAdaptiveLearning = learningPausedThisCycle || cgmState.suppressLearning,
                 lowGuardMgdl             = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
                 inPostMealLockout        = inPostMealLockout,
                 inReboundWindow          = inReboundWindow,
@@ -1497,7 +1547,9 @@ open class SmartInsulinPlugin @Inject constructor(
             // Watch the mode's own insulin out rather than a fixed window — the share decides how
             // much of a late low is actually its, so a longer watch can't mis-charge one.
             watchMs           = postModeWatchMs(),
-            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour)
+            pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour),
+            // A meal the new pod boost touches is not judged at all, lows included.
+            newPodBoost       = podBoostPausesLearning
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -1521,7 +1573,8 @@ open class SmartInsulinPlugin @Inject constructor(
             // per mode by ProfileLearner, so a short mode isn't judged on its own clock.
             insulinPeakMins   = mealOverrideManager.activeMealMode
                 ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
-            secondWave        = secondWaveNow || carbEpisodeActive
+            secondWave        = secondWaveNow || carbEpisodeActive,
+            newPodBoost       = podBoostPausesLearning
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole
@@ -1553,7 +1606,8 @@ open class SmartInsulinPlugin @Inject constructor(
             duraAtFloor       = duraAtFloorThisCycle,
             modeInsulinShare  = modeInsulinShare,
             watchMs           = postModeWatchMs(),
-            learningEnabled   = duraLearningEnabled()
+            learningEnabled   = duraLearningEnabled(),
+            newPodBoost       = podBoostPausesLearning
         )
 
         // -- UAM entry SMB fraction --------------------------------------------
@@ -1591,9 +1645,20 @@ open class SmartInsulinPlugin @Inject constructor(
         val stftTargetMgdl = if (!isTempTarget) stftAdjusted else targetBg
 
         profileLearner.updateInsulinDefaults(diaMins = profile.iCfg.dia * 60.0, peakMins = profile.iCfg.peak.toDouble())
+        // New pod boost, after every other ISF change so it scales the final value. Basal is scaled
+        // the same way where the basal multiplier is worked out below.
+        // During a meal mode or UAM only part of it is used (setting, half by default).
+        val podBoostDose = newPodBoost.forMeal(
+            inMeal  = mealMode != MealMode.FASTING,
+            percent = sp.getInt(IntKey.ApsSmartInsulinNewPodBoostMealPercent.key, IntKey.ApsSmartInsulinNewPodBoostMealPercent.defaultValue)
+        )
+        if (podBoostDose.active) {
+            dosingIsfMgdl /= podBoostDose.multiplier
+            aapsLogger.debug(LTag.APS, "SmartInsulin new pod boost: ×${"%.2f".format(podBoostDose.multiplier)} → ISF ${"%.1f".format(dosingIsfMgdl)}")
+        }
         val oapsProfile = OapsProfile(dia = profile.iCfg.dia, min_5m_carbimpact = 0.0, max_iob = constraintsChecker.getMaxIOBAllowed().value(), max_daily_basal = profile.getMaxDailyBasal(), max_basal = constraintsChecker.getMaxBasalAllowed(profile).value(), min_bg = profile.getTargetLowMgdl(), max_bg = profile.getTargetHighMgdl(), target_bg = stftTargetMgdl, carb_ratio = profile.getIc(), sens = dosingIsfMgdl, autosens_adjust_targets = false, max_daily_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxDailyMultiplier.key, DoubleKey.ApsMaxDailyMultiplier.defaultValue), current_basal_safety_multiplier = sp.getDouble(DoubleKey.ApsMaxCurrentBasalMultiplier.key, DoubleKey.ApsMaxCurrentBasalMultiplier.defaultValue), lgsThreshold = profileUtil.convertToMgdlDetect(sp.getDouble(UnitDoubleKey.ApsLgsThreshold.key, UnitDoubleKey.ApsLgsThreshold.defaultValue)).toInt(), high_temptarget_raises_sensitivity = false, low_temptarget_lowers_sensitivity = false, sensitivity_raises_target = sp.getBoolean(BooleanKey.ApsSensitivityRaisesTarget.key, BooleanKey.ApsSensitivityRaisesTarget.defaultValue), resistance_lowers_target = sp.getBoolean(BooleanKey.ApsResistanceLowersTarget.key, BooleanKey.ApsResistanceLowersTarget.defaultValue), adv_target_adjustments = SMBDefaults.adv_target_adjustments, exercise_mode = SMBDefaults.exercise_mode, half_basal_exercise_target = SMBDefaults.half_basal_exercise_target, maxCOB = SMBDefaults.maxCOB, skip_neutral_temps = activePlugin.activePump.setNeutralTempAtFullHour(), remainingCarbsCap = SMBDefaults.remainingCarbsCap, enableUAM = constraintsChecker.isUAMEnabled().value(), A52_risk_enable = SMBDefaults.A52_risk_enable, SMBInterval = sp.getInt(IntKey.ApsMaxSmbFrequency.key, IntKey.ApsMaxSmbFrequency.defaultValue), enableSMB_with_COB = sp.getBoolean(BooleanKey.ApsUseSmbWithCob.key, BooleanKey.ApsUseSmbWithCob.defaultValue), enableSMB_with_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithLowTt.key, BooleanKey.ApsUseSmbWithLowTt.defaultValue), allowSMB_with_high_temptarget = sp.getBoolean(BooleanKey.ApsUseSmbWithHighTt.key, BooleanKey.ApsUseSmbWithHighTt.defaultValue), enableSMB_always = sp.getBoolean(BooleanKey.ApsUseSmbAlways.key, BooleanKey.ApsUseSmbAlways.defaultValue), enableSMB_after_carbs = sp.getBoolean(BooleanKey.ApsUseSmbAfterCarbs.key, BooleanKey.ApsUseSmbAfterCarbs.defaultValue), maxSMBBasalMinutes = Int.MAX_VALUE, maxUAMSMBBasalMinutes = Int.MAX_VALUE, bolus_increment = activePlugin.activePump.pumpDescription.bolusStep, carbsReqThreshold = sp.getInt(IntKey.ApsCarbsRequestThreshold.key, IntKey.ApsCarbsRequestThreshold.defaultValue), current_basal = ch.fromPump(activePlugin.activePump.baseBasalRate), temptargetSet = isTempTarget, autosens_max = sp.getDouble(DoubleKey.AutosensMax.key, DoubleKey.AutosensMax.defaultValue), out_units = if (isMmol) "mmol/L" else "mg/dl", variable_sens = 0.0, insulinDivisor = 0, TDD = 0.0)
 
-        aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, activityPausesLearning || cgmState.suppressLearning || inPostMealLockout, now)
+        aggressionLearner.recordBg(glucoseStatus.glucose, 70.0, 180.0, mealMode, learningPausedThisCycle || cgmState.suppressLearning || inPostMealLockout, now)
         val aggressiveness = if (mealMode != MealMode.FASTING) 1.0 else aggressionLearner.aggressiveness.coerceAtMost(circadianLearner.aggrCeiling(currentHour, currentDow, currentMinute))
 
         // Use last MANUAL bolus only — SMBs fire every 5min during fasting and would permanently
@@ -1607,7 +1672,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // place (resettable, still present in settings) in case this needs revisiting, but the
         // toggle no longer has any effect on dosing or display. minsLastManualBolus (the old
         // learner's bolus-recency gate input) is removed too since nothing reads it now.
-        val basalMultiplier = combinedBasalMultiplier(currentHour, currentDow, currentMinute)
+        val basalMultiplier = combinedBasalMultiplier(currentHour, currentDow, currentMinute) *
+            (if (podBoostDose.active) podBoostDose.multiplier else 1.0)
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
@@ -1869,6 +1935,17 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinDawnWindowStartHour,
                     IntKey.ApsSmartInsulinDawnWindowEndHour,
                     DoubleKey.ApsSmartInsulinDawnSmbReduction
+                )
+            ),
+            PreferenceSubScreenDef(
+                key = "si_new_pod_screen",
+                title = ApsStrings.si_cat_new_pod,
+                icon = Icons.Filled.Autorenew,
+                items = listOf(
+                    BooleanKey.ApsSmartInsulinNewPodBoostEnabled,
+                    IntKey.ApsSmartInsulinNewPodBoostPercent,
+                    IntKey.ApsSmartInsulinNewPodBoostHours,
+                    IntKey.ApsSmartInsulinNewPodBoostMealPercent
                 )
             ),
             PreferenceSubScreenDef(

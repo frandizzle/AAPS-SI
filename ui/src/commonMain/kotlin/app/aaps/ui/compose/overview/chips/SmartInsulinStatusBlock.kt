@@ -62,6 +62,7 @@ fun SmartInsulinStatusBlock(state: SmartInsulinOverview.OverviewState, modifier:
 
 private fun learningDisplay(learningState: String): Pair<String, Color> = when {
     learningState == "low: guard"                       -> "Low guard" to SiRed
+    learningState.startsWith("boost: ")                 -> learningState.removePrefix("boost: ") to SiBlue
     learningState.startsWith("low: recovering")         ->
         "Low recovery — ${learningState.removePrefix("low: recovering").trim()}" to SiAmber
     learningState.equals("learning", ignoreCase = true) -> "Learning" to SiGreen

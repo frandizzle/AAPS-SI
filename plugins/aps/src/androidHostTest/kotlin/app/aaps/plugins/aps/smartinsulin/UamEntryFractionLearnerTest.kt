@@ -40,12 +40,13 @@ class UamEntryFractionLearnerTest {
         mode: MealMode?, startMs: Long, nowMs: Long,
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, delta: Double = 0.0, activity: Double = 0.0,
-        baseSig: Double = 0.8, exercise: Boolean = false, peakMins: Double = 55.0
+        baseSig: Double = 0.8, exercise: Boolean = false, peakMins: Double = 55.0,
+        boost: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
-        exerciseSuspected = exercise, insulinPeakMins = peakMins
+        exerciseSuspected = exercise, insulinPeakMins = peakMins, newPodBoost = boost
     )
 
     /** Ends the episode and runs the full 75-min settling tail quietly at [bg] — flat by default,
@@ -515,5 +516,38 @@ class UamEntryFractionLearnerTest {
         assertEquals(0.0, learner.offset(MealMode.UAM_BREAKFAST), 1e-9)
         shortModeHandingOver(peakMins = 30.0, handoverMin = 35)   // 80min after entry
         assertTrue(learner.offset(MealMode.UAM_BREAKFAST) > 0.0)
+    }
+
+    // ── new pod boost ────────────────────────────────────────────────────────
+
+    @Test
+    fun `an early low during a boosted UAM is not blamed on the entry fraction`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 130.0, boost = true)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true)  // low ended the boost
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 80.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_DINNER), 1e-9)
+        assertTrue(learner.lastReason(MealMode.UAM_DINNER).contains("new pod boost"),
+                   learner.lastReason(MealMode.UAM_DINNER))
+    }
+
+    @Test
+    fun `a boost that starts in the tail drops the waiting verdict`() {
+        val peakMs = BASE_MS + 45 * 60_000L
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 100.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 160.0)
+        cycle(null, 0L, peakMs + CYCLE_MS, bg = 120.0, boost = true)
+        runQuietTail(peakMs + CYCLE_MS, bg = 105.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `the next UAM after a boosted one is judged as normal`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 130.0, boost = true)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 100.0)
+        val t = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.UAM_DINNER, t, t, bg = 130.0)
+        cycle(MealMode.UAM_DINNER, t, t + CYCLE_MS, bg = 70.0, low = true)
+        cycle(null, 0L, t + 2 * CYCLE_MS, bg = 80.0)
+        assertEquals(-0.06, learner.offset(MealMode.UAM_DINNER), 1e-9)
     }
 }

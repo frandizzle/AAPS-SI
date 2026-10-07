@@ -359,6 +359,7 @@
     <string name="si_cat_cgm">CGM</string>
     <string name="si_cat_activity">Activity</string>
     <string name="si_cat_dawn">Dawn phenomenon</string>
+    <string name="si_cat_new_pod">First day pod</string>
     <string name="si_cat_uam">UAM detection</string>
     <string name="si_cat_uam_breakfast">UAM: Breakfast window</string>
     <string name="si_cat_uam_lunch">UAM: Lunch window</string>

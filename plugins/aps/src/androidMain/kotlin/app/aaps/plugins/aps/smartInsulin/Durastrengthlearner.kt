@@ -98,6 +98,7 @@ class DuraStrengthLearner @Inject constructor(
     private val runBgs         = ArrayList<Double>()
     /** A low or near-low already happened this episode — it can no longer strengthen DURA. */
     private var episodeWentLow     = false
+    private var episodeBoosted     = false  // the new pod boost ran at some point in this episode
     // BG was already low (or close to it) when the mode opened - not DURA's doing. Not scored until
     // BG comes out of it, or goes clearly lower than [episodeStartBgMgdl]. Same rule as ModeIsfLearner.
     private var episodeCarriedInLow = false
@@ -217,9 +218,12 @@ class DuraStrengthLearner @Inject constructor(
         modeInsulinShare:  Double = 1.0,     // share of the insulin behind a post-mode low that was
         // this mode's rather than the loop's own corrections since (see ModeInsulinShare)
         watchMs:           Long = TAIL_MS,   // how long after the mode ends its insulin is watched
-        learningEnabled:   Boolean = true    // user switch. Off FREEZES this learner: episodes stop
+        learningEnabled:   Boolean = true,   // user switch. Off FREEZES this learner: episodes stop
         // being judged and anything in flight is dropped, but the factor and ceiling already
         // learned keep being applied. Clearing them is the reset button's job.
+        newPodBoost:       Boolean = false   // the new pod boost is running (or paused under target).
+        // An episode it touches is not judged at all, lows included: the boost changed the dose,
+        // and a low already ends the boost for that pod. A tail watch still open is dropped.
     ) {
         if (!learningEnabled) {
             // Drop anything in flight rather than judging it whenever the switch comes back on —
@@ -233,6 +237,11 @@ class DuraStrengthLearner @Inject constructor(
                 aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
             }
             return
+        }
+        if (newPodBoost && pendingScope != null) {
+            lastOutcome = "${pendingScope!!.label} tail not judged — new pod boost started"
+            aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
+            pendingScope = null
         }
         if (activeModeNow != null) {
             if (activeScope == null || modeStartMs != activeStartMs) {
@@ -262,7 +271,9 @@ class DuraStrengthLearner @Inject constructor(
                 episodeWentLow     = false
                 episodeCarriedInLow = lowActive || undershootActive
                 episodeStartBgMgdl  = bgMgdl
+                episodeBoosted      = false
             }
+            if (newPodBoost) episodeBoosted = true
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
             val elevatedAndStuck = targetMgdl > 0.0 && bgMgdl >= targetMgdl + stuckMarginMgdl() && duraStuckMinutes > 0.0
             if (!elevatedAndStuck) closeRun()
@@ -288,7 +299,7 @@ class DuraStrengthLearner @Inject constructor(
             val undershootCounts = undershootActive && (nowMs - activeStartMs) >= UNDERSHOOT_MIN_ELAPSED_MS
             val lowCounts = !episodeCarriedInLow && (lowActive || undershootCounts)
             if (lowCounts) episodeWentLow = true
-            if (lowCounts && episodeMaxDura >= ENGAGED_THRESHOLD) {
+            if (lowCounts && episodeMaxDura >= ENGAGED_THRESHOLD && !episodeBoosted) {
                 reduce(activeScope!!, exerciseSuspected, episodeMaxDura, "during", undershoot = !lowActive)
                 episodeMaxDura = 1.0  // don't fire repeatedly on one low
             }
@@ -308,7 +319,11 @@ class DuraStrengthLearner @Inject constructor(
             // is finished as evidence — its stall must not come back later as "DURA wasn't enough".
             // A long run that failed a check opens it as well, only so the outcome line can say
             // why an hour stuck high changed nothing.
-            if (!episodeWentLow && (maxDura >= ENGAGED_THRESHOLD || episodeStuckMs >= STUCK_LONG_MS || episodeStallNote != null)) {
+            if (episodeBoosted || newPodBoost) {
+                episodeBoosted = false
+                lastOutcome = "${ended.label} not scored — new pod boost"
+                aapsLogger.debug(LTag.APS, "DuraStrengthLearner: $lastOutcome")
+            } else if (!episodeWentLow && (maxDura >= ENGAGED_THRESHOLD || episodeStuckMs >= STUCK_LONG_MS || episodeStallNote != null)) {
                 pendingScope   = ended
                 pendingUntilMs = nowMs + watchMs
                 pendingMaxDura = maxDura

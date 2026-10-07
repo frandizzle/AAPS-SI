@@ -33,10 +33,11 @@ class DuraStrengthLearnerTest {
         mode: MealMode?, startMs: Long, nowMs: Long,
         low: Boolean = false, dura: Double = 1.0,
         exercise: Boolean = false, baseSig: Double = 2.0,
-        pfWindow: PfWindow = PfWindow.NONE
+        pfWindow: PfWindow = PfWindow.NONE, boost: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, lowActive = low, duraMult = dura,
-        exerciseSuspected = exercise, nowMs = nowMs, baseSignature = baseSig, pfWindow = pfWindow
+        exerciseSuspected = exercise, nowMs = nowMs, baseSignature = baseSig, pfWindow = pfWindow,
+        newPodBoost = boost
     )
 
     @Test
@@ -450,5 +451,35 @@ class DuraStrengthLearnerTest {
         cycle(null, 0L, t)
         cycle(null, 0L, t + 106 * 60_000L)
         assertEquals(1.0, learner.factor(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    // ── new pod boost ────────────────────────────────────────────────────────
+
+    @Test
+    fun `a crash during a boosted meal does not cut DURA, even after the low ended the boost`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30, boost = true)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, low = true, dura = 1.30)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS)
+        cycle(null, 0L, BASE_MS + 3 * CYCLE_MS, low = true)
+        assertEquals(1.0, learner.factor(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(DuraStrengthLearner.NO_CEILING, learner.ceiling(MealMode.UAM_DINNER))
+    }
+
+    @Test
+    fun `a boost that starts in the tail drops the tail watch`() {
+        cycle(MealMode.UAM_PROTEIN_FAT, BASE_MS, BASE_MS, dura = 1.40)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, boost = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, low = true)
+        assertEquals(1.0, learner.factor(MealMode.UAM_PROTEIN_FAT), 1e-9)
+    }
+
+    @Test
+    fun `the next meal after a boosted one is judged as normal`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, dura = 1.30, boost = true)
+        cycle(null, 0L, BASE_MS + CYCLE_MS)
+        val t = BASE_MS + 10 * CYCLE_MS
+        cycle(MealMode.UAM_DINNER, t, t, dura = 1.30)
+        cycle(MealMode.UAM_DINNER, t, t + CYCLE_MS, low = true, dura = 1.30)
+        assertEquals(0.90, learner.factor(MealMode.UAM_DINNER), 1e-9)
     }
 }

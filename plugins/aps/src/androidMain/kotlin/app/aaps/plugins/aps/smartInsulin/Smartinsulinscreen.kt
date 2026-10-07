@@ -113,6 +113,7 @@ fun SmartInsulinScreen(
             SiAction.TOGGLE_FF_DEBUG         -> {
                 cards.showFfDebug = !cards.showFfDebug; tick++
             }
+            SiAction.END_NEW_POD_BOOST       -> { plugin.endNewPodBoost(); tick++ }
         }
     }
 
@@ -239,6 +240,7 @@ private fun SummaryCard(d: SmartInsulinPlugin.FragmentData) {
         d.learningState.equals("learning", true)  -> "Learning" to colors.statusNormal
         d.learningState.startsWith("limited")    -> "Learning limited" to colors.statusWarning
         d.learningState.startsWith("off")        -> "Paused · ${d.learningState.removePrefix("off:").trim()}" to colors.statusCritical
+        d.learningState.startsWith("boost:")     -> "Paused · ${d.learningState.removePrefix("boost:").trim()}" to colors.statusWarning
         else                                      -> d.learningState to colors.statusNormal
     }
     val isfUnits = if (d.isMmol) "mmol/U" else "mg/dL/U"

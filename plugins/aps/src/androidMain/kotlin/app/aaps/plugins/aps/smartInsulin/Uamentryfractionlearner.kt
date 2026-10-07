@@ -79,6 +79,7 @@ class UamEntryFractionLearner @Inject constructor(
     private var maxBgOffsetMs       = 0L    // when that peak occurred, relative to entry
     private var earlyLow            = false
     private var earlyLowUnexplained = false // that low came with a drop insulin can't explain
+    private var episodeBoosted      = false // the new pod boost ran at some point in this episode
 
     // Pending post-episode evaluation (settling tail)
     private var pendingMode:          MealMode? = null
@@ -275,10 +276,14 @@ class UamEntryFractionLearner @Inject constructor(
         baseSignature:  Double = 0.0,
         exerciseSuspected: Boolean = false,
         insulinPeakMins: Double = 0.0,  // learned activity peak for this mode
-        secondWave: Boolean = false     // more food went in during this episode — see
+        secondWave: Boolean = false,    // more food went in during this episode — see
         // SecondWaveDetector. Nothing after that says anything about how the ENTRY burst was
         // shaped, so the episode is dropped rather than scored.
+        newPodBoost: Boolean = false    // the new pod boost is running (or paused under target). An
+        // episode it touches is not judged at all, early lows included: the boost changed the dose,
+        // and a low already ends the boost for that pod. A verdict still waiting is dropped.
     ) {
+        if (newPodBoost) pendingMode?.let { skipPending("new pod boost started") }
         if (isEntryMode(activeModeNow)) {
             val mode = activeModeNow!!
             if (activeMode == null || modeStartMs != activeStartMs) {
@@ -304,7 +309,9 @@ class UamEntryFractionLearner @Inject constructor(
                 earlyLow            = false
                 earlyLowUnexplained = false
                 activePeakMins      = 0.0
+                episodeBoosted      = false
             }
+            if (newPodBoost) episodeBoosted = true
             if (insulinPeakMins > 0.0) activePeakMins = insulinPeakMins
             // Only the entry window shapes this learner's evidence — later movement is the
             // ISF learner's territory.
@@ -337,7 +344,10 @@ class UamEntryFractionLearner @Inject constructor(
             val activeStartMsBeforeReset = activeStartMs
             activeMode    = null
             activeStartMs = 0L
-            if (hadEarlyLow) {
+            if (episodeBoosted || newPodBoost) {
+                episodeBoosted = false
+                note(ended, "${ended.label} not scored — new pod boost")
+            } else if (hadEarlyLow) {
                 // Definitive shape evidence — lands immediately, not skippable by later noise.
                 val unexplained = earlyLowUnexplained
                 // Undoing a slow-return run takes a bigger step than the raises that built it, so
