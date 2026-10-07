@@ -197,7 +197,9 @@ jobs:
         with:
           # Java version is defined in .github/versions.env
           java-version: ${{ env.JAVA_VERSION }}
-          distribution: 'temurin'
+          # JetBrains, to match gradle/gradle-daemon-jvm.properties. With any other vendor Gradle
+          # tries to download the JetBrains JDK from foojay, which no longer serves it (HTTP 400).
+          distribution: 'jetbrains'
           cache: gradle
 
       - name: Grant execute permission for gradlew
