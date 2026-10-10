@@ -434,8 +434,11 @@ open class SmartInsulinPlugin @Inject constructor(
 
     fun activitySessionLabel(): SessionLabel? = activitySessionManager.active?.label
     fun activitySessionStatus(): String? = activitySessionManager.statusLine(dateUtil.now())
-    /** label, learned ISF multiplier, learned washout minutes, sessions learned from. */
-    fun activitySessionLearned(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> = activitySessionLearner.rows()
+    /** "Had a snack" on the SI tab: marks or unmarks food in the running session. */
+    fun toggleActivitySessionSnack(): Boolean = activitySessionManager.toggleSnack(dateUtil.now())
+    fun activitySessionSnackMarked(): Boolean = activitySessionManager.snackAtMs != null
+    /** One row per learned path: golf, golf + snack, gym, gym + snack. */
+    fun activitySessionLearned(): List<ActivitySessionLearner.Row> = activitySessionLearner.rows()
     fun activitySessionLastOutcome(): String = activitySessionLearner.lastOutcome
 
     /** Plain-English version of what the bias dial is currently doing, for the SI tab. */

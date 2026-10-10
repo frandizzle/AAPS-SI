@@ -87,6 +87,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         val running = plugin.activitySessionLabel()
         labels["golf"] = if (running == SessionLabel.GOLF) "Stop Golf" else "Golf"
         labels["gym"] = if (running == SessionLabel.GYM)  "Stop Gym"  else "Gym"
+        if (running != null) labels["snack"] = if (plugin.activitySessionSnackMarked()) "Snack marked — undo" else "Had a snack"
 
         plugin.carbEpisodeStatus()?.let {
             addRow(it, "Carbs were entered, so the COB curve doses this meal (profile ISF ÷ CR) and\n" +
@@ -100,7 +101,11 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    SiTone.WARNING)
         }
         plugin.activitySessionStatus()?.let {
-            addRow(it, "UAM and P/F blocked — a flat high here is hormones, not food.",
+            addRow(it, if (plugin.activitySessionSnackMarked())
+                           "Snack marked: this round is learned as its own path, from the snack on.\n" +
+                               "No insulin is given for the snack itself. UAM and P/F stay blocked."
+                       else "UAM and P/F blocked — a flat high here is hormones, not food.\n" +
+                               "Tap \"Had a snack\" if you eat, so the snack is not learned as hormones.",
                    SiTone.WARNING)
         } ?: addRow("No session running",
                     "Start one for a round of golf or a gym session: no food, hormones running the show.",
@@ -112,12 +117,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    "Each finished session teaches it two things: how much extra insulin the\n" +
                        "resistant phase needs, and how early to back off before the late low.")
         } else {
-            learned.forEach { (label, values, n) ->
-                val (isfMult, washout) = values
-                val isfTxt = if (isfMult < 1.0) "ISF ×${"%.2f".format(isfMult)} (stronger)"
-                             else if (isfMult > 1.0) "ISF ×${"%.2f".format(isfMult)} (easier)"
+            learned.forEach { row ->
+                val isfTxt = if (row.isfMult < 1.0) "ISF ×${"%.2f".format(row.isfMult)} (stronger)"
+                             else if (row.isfMult > 1.0) "ISF ×${"%.2f".format(row.isfMult)} (easier)"
                              else "ISF unchanged"
-                addRow("${label.label}: $isfTxt, washout ${washout}min before the end",
+                val n = row.sessions
+                addRow("${row.name}: $isfTxt, washout ${row.washoutMins}min before the end",
                        "Learned from $n session${if (n == 1) "" else "s"}.")
             }
         }

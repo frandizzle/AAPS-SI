@@ -39,11 +39,12 @@ class ActivitySessionTest {
      */
     private fun round(
         label: SessionLabel = SessionLabel.GOLF, plannedMins: Int = 240, stopMin: Int = 240,
-        bgAt: (Int) -> Double = { TARGET }, lowAtMin: Int? = null
+        bgAt: (Int) -> Double = { TARGET }, lowAtMin: Int? = null, snackAtMin: Int? = null
     ) {
         manager.start(label, BASE_MS, plannedMins)
         var m = 0
         while (m <= stopMin) {
+            if (m == snackAtMin) manager.toggleSnack(mins(m))
             manager.onCycle(mins(m), bgAt(m), TARGET, lowActive = (lowAtMin != null && m >= lowAtMin))
             m += 5
         }
@@ -216,5 +217,89 @@ class ActivitySessionTest {
     fun `a round that starts on target and climbs is charged`() {
         round(bgAt = { m -> (TARGET + m * 0.3).coerceAtMost(170.0) })
         assertEquals(0.97, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+    }
+
+    // ── Had a snack: its own learned path ────────────────────────────────────
+
+    private val HIGH = TARGET + 40.0
+
+    @Test
+    fun `a snack round that runs high strengthens golf plus snack, not plain golf`() {
+        round(bgAt = { HIGH }, snackAtMin = 30)
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+        assertEquals(0.97, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertTrue(learner.lastOutcome.startsWith("Golf + snack: ran"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `the snack path starts from what plain golf has learned`() {
+        round(bgAt = { HIGH })                                   // plain golf → 0.97
+        assertEquals(0.97, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        round(bgAt = { HIGH }, snackAtMin = 30)                  // snack path → 0.97 × 0.97
+        assertEquals(0.97 * 0.97, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertEquals(0.97, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+        assertEquals(1, learner.sessionCount(SessionLabel.GOLF, snack = true))
+    }
+
+    @Test
+    fun `after the tap the round doses with the snack path, before it with plain golf`() {
+        round(bgAt = { HIGH })                                   // plain 0.97
+        round(bgAt = { HIGH }, snackAtMin = 0)                   // snack 0.9409
+        manager.start(SessionLabel.GOLF, BASE_MS, 240)
+        assertEquals(0.97, manager.dosing(mins(30)).isfMultiplier, 1e-9)
+        manager.toggleSnack(mins(30))
+        assertEquals(0.97 * 0.97, manager.dosing(mins(35)).isfMultiplier, 1e-9)
+    }
+
+    @Test
+    fun `a snack round is judged only from the snack on`() {
+        // High before the snack (plain golf's part), on target after it.
+        round(bgAt = { m -> if (m < 60) HIGH else TARGET }, snackAtMin = 60)
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+        assertTrue(learner.lastOutcome.startsWith("Golf + snack: tracked target"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a snack after the scored part of the round changes nothing`() {
+        round(bgAt = { HIGH }, snackAtMin = 200)                 // scored part ends at 144min of 240
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+        assertTrue(learner.lastOutcome.contains("snack came after the scored part"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a low in a snack round eases the snack path only`() {
+        round(lowAtMin = 200, snackAtMin = 30)
+        assertEquals(1.06, learner.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertEquals(1.0, learner.isfMultiplier(SessionLabel.GOLF), 1e-9)
+    }
+
+    @Test
+    fun `tapping again takes the snack off and the round is plain golf`() {
+        manager.start(SessionLabel.GOLF, BASE_MS, 240)
+        assertTrue(manager.toggleSnack(mins(30)))
+        assertFalse(manager.toggleSnack(mins(31)))
+        assertNull(manager.snackAtMs)
+    }
+
+    @Test
+    fun `no session means no snack to mark`() {
+        assertFalse(manager.toggleSnack(mins(0)))
+    }
+
+    @Test
+    fun `the snack mark and both paths survive a restart`() {
+        round(bgAt = { HIGH })
+        round(bgAt = { HIGH }, snackAtMin = 0)
+        manager.start(SessionLabel.GOLF, BASE_MS, 240)
+        manager.toggleSnack(mins(30))
+
+        val learner2 = ActivitySessionLearner(sp, FakeAAPSLogger(collect = false))
+        val manager2 = ActivitySessionManager(sp, FakeAAPSLogger(collect = false), learner2)
+        assertEquals(mins(30), manager2.snackAtMs)
+        assertEquals(0.97, learner2.isfMultiplier(SessionLabel.GOLF), 1e-9)
+        assertEquals(0.97 * 0.97, learner2.isfMultiplier(SessionLabel.GOLF, snack = true), 1e-9)
+        assertEquals(listOf("Golf", "Golf + snack"), learner2.rows().map { it.name })
     }
 }

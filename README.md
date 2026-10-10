@@ -317,7 +317,10 @@ SmartInsulin reads heart rate and steps (from a watch, or your phone's own step 
 
 ### Activity sessions — Golf and Gym
 
-On the SmartInsulin tab, start a **Golf** or **Gym** session before you go. During the session, ISF is made easier and insulin is tapered off before the end. SmartInsulin learns from each session how much easier, and when to start the taper.
+On the SmartInsulin tab, start a **Golf** or **Gym** session before you go. During the session, UAM and P/F are blocked (a high here is hormones, not food), ISF follows what the session has learned, and insulin is tapered off before the end. SmartInsulin learns from each session how strong ISF should be, and when to start the taper.
+
+- **Had a snack:** while a session runs, tap **Had a snack** if you eat. Tap it again to undo. It gives no insulin by itself. A round with a snack is learned on its own path (for example "Golf + snack"), so the snack's rise never teaches plain golf that it needs more insulin. From the tap on, the snack path's numbers are used. The first time, the snack path starts from what plain golf has learned.
+- **Automation:** the actions **SmartInsulin: Start activity session** (Golf or Gym) and **SmartInsulin: Stop activity session** can start and stop a session, for example with a location trigger at the golf course. Starting a session that is already running does nothing, so a trigger that fires twice does not stop it.
 
 ---
 

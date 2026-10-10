@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.GolfCourse
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.History
@@ -146,6 +147,14 @@ fun SmartInsulinScreen(
                 }
                 SessionButton(session.labels["gym"] ?: "Gym", Icons.Filled.FitnessCenter, Modifier.weight(1f)) {
                     plugin.toggleActivitySession(SessionLabel.GYM); tick++
+                }
+            }
+            session.labels["snack"]?.let { snackLabel ->
+                SiSpacer(8)
+                OutlinedButton(onClick = { plugin.toggleActivitySessionSnack(); tick++ }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Filled.Fastfood, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(snackLabel)
                 }
             }
         }

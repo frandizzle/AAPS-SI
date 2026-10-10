@@ -73,9 +73,23 @@ class ActivitySessionManager @Inject constructor(
     private var startBg       = 0.0
     private var scoreEndBg    = 0.0
 
+    /**
+     * When the user tapped "Had a snack", or null. A round with a snack in it is learned on its
+     * own path (golf + snack), so the snack's rise never teaches plain golf that it needs more
+     * insulin. From the tap on, that path's numbers are also what doses.
+     */
+    var snackAtMs: Long? = null
+        private set
+    // The same evidence, counted only from the snack on: the part before it was plain golf
+    private var snackSum        = 0.0
+    private var snackN          = 0
+    private var snackStartBg    = 0.0
+    private var snackScoreEndBg = 0.0
+
     // A finished session still being watched for the late low
     private var endedSession:   ActivitySession? = null
     private var endedActualMins = 0
+    private var endedSnack      = false
     private var watchUntilMs    = 0L
 
     init { restore() }
@@ -89,15 +103,35 @@ class ActivitySessionManager @Inject constructor(
         private const val K_LABEL   = "label"
         private const val K_START   = "start"
         private const val K_PLANNED = "planned"
+        private const val K_SNACK   = "snack"
     }
 
     fun start(label: SessionLabel, nowMs: Long, plannedMins: Int = label.defaultMins) {
         active = ActivitySession(label, nowMs, plannedMins * 60_000L)
         resistantSum = 0.0; resistantN = 0; lowAtMins = null
         startBg = 0.0; scoreEndBg = 0.0
+        clearSnack()
         endedSession = null; watchUntilMs = 0L
         persist()
         aapsLogger.debug(LTag.APS, "ActivitySession: ${label.label} started, planned ${plannedMins}min")
+    }
+
+    /**
+     * "Had a snack" on the SI tab. Marks the running session as having food in it, or takes the
+     * mark off again if tapped by mistake. Gives no insulin by itself.
+     * @return true when a snack is now marked
+     */
+    fun toggleSnack(nowMs: Long): Boolean {
+        val s = active ?: return false
+        if (snackAtMs != null) clearSnack() else snackAtMs = nowMs
+        persist()
+        aapsLogger.debug(LTag.APS, "ActivitySession: ${s.label.label} snack ${if (snackAtMs != null) "marked" else "taken off"}")
+        return snackAtMs != null
+    }
+
+    private fun clearSnack() {
+        snackAtMs = null
+        snackSum = 0.0; snackN = 0; snackStartBg = 0.0; snackScoreEndBg = 0.0
     }
 
     /**
@@ -109,6 +143,8 @@ class ActivitySessionManager @Inject constructor(
         active = null
         endedSession    = ending
         endedActualMins = (ending.elapsedMs(nowMs) / 60_000).toInt()
+        endedSnack      = snackAtMs != null
+        snackAtMs       = null
         watchUntilMs    = nowMs + TAIL_WATCH_MS
         persist()
         aapsLogger.debug(LTag.APS, "ActivitySession: ${ending.label.label} ended after ${endedActualMins}min — watching the tail")
@@ -133,6 +169,11 @@ class ActivitySessionManager @Inject constructor(
                 if (resistantN == 0) startBg = bgMgdl
                 resistantSum += bgMgdl; resistantN++
                 scoreEndBg = bgMgdl
+                if (snackAtMs != null) {
+                    if (snackN == 0) snackStartBg = bgMgdl
+                    snackSum += bgMgdl; snackN++
+                    snackScoreEndBg = bgMgdl
+                }
             }
             if (overrun(nowMs)) {
                 aapsLogger.debug(LTag.APS, "ActivitySession: ${s.label.label} ran past its planned end — auto-stopped")
@@ -145,34 +186,40 @@ class ActivitySessionManager @Inject constructor(
         val elapsedMins = ((nowMs - ended.startMs) / 60_000).toInt()
         if (lowActive && lowAtMins == null) lowAtMins = elapsedMins
         if (nowMs < watchUntilMs) return
+        // A snack round is judged only from the snack on: before it, the round was plain golf.
         learner.onSessionEnd(
             label              = ended.label,
             plannedMins        = (ended.plannedMs / 60_000).toInt(),
             actualMins         = endedActualMins,
             lowAtMinsFromStart = lowAtMins,
-            resistantAvgBgMgdl = if (resistantN > 0) resistantSum / resistantN else 0.0,
+            resistantAvgBgMgdl = if (endedSnack) (if (snackN > 0) snackSum / snackN else 0.0)
+                                 else (if (resistantN > 0) resistantSum / resistantN else 0.0),
             targetMgdl         = targetMgdl,
-            startBgMgdl        = startBg,
-            scoreEndBgMgdl     = scoreEndBg
+            startBgMgdl        = if (endedSnack) snackStartBg else startBg,
+            scoreEndBgMgdl     = if (endedSnack) snackScoreEndBg else scoreEndBg,
+            snack              = endedSnack
         )
-        endedSession = null; watchUntilMs = 0L
+        endedSession = null; watchUntilMs = 0L; endedSnack = false
         resistantSum = 0.0; resistantN = 0; lowAtMins = null
         startBg = 0.0; scoreEndBg = 0.0
+        clearSnack()
     }
 
     /** Session state for the SI tab, or null when nothing is running. */
     fun statusLine(nowMs: Long): String? {
         val s = active ?: return null
-        val d = sessionDosing(s, nowMs, learner.isfMultiplier(s.label), learner.washoutMins(s.label))
+        val d = dosing(nowMs)
         val phase = if (d.inWashout) "washout — insulin at ${(d.insulinFraction * 100).toInt()}%"
                     else "resistant phase — ISF ×${"%.2f".format(d.isfMultiplier)}"
-        return "${s.label.label}: ${s.elapsedMs(nowMs) / 60_000}min in, ${d.minsLeft}min left, $phase"
+        return "${ActivitySessionLearner.pathName(s.label, snackAtMs != null)}: ${s.elapsedMs(nowMs) / 60_000}min in, ${d.minsLeft}min left, $phase"
     }
 
-    /** What this cycle's dose should look like. */
+    /** What this cycle's dose should look like: the snack path's numbers once a snack is marked. */
     fun dosing(nowMs: Long): SessionDosing =
-        active?.let { sessionDosing(it, nowMs, learner.isfMultiplier(it.label), learner.washoutMins(it.label)) }
-            ?: SessionDosing.NONE
+        active?.let {
+            val snack = snackAtMs != null
+            sessionDosing(it, nowMs, learner.isfMultiplier(it.label, snack), learner.washoutMins(it.label, snack))
+        } ?: SessionDosing.NONE
 
     private fun persist() {
         try {
@@ -181,6 +228,7 @@ class ActivitySessionManager @Inject constructor(
                     .put(K_LABEL, it.label.name)
                     .put(K_START, it.startMs)
                     .put(K_PLANNED, it.plannedMs)
+                    .apply { snackAtMs?.let { at -> put(K_SNACK, at) } }
                     .toString()
             } ?: ""
             sp.edit { putString(StringNonKey.ApsSmartInsulinActivitySessionState.key, json) }
@@ -196,6 +244,7 @@ class ActivitySessionManager @Inject constructor(
             val json  = JSONObject(raw)
             val label = SessionLabel.of(json.optString(K_LABEL)) ?: return
             active = ActivitySession(label, json.optLong(K_START), json.optLong(K_PLANNED))
+            snackAtMs = json.optLong(K_SNACK, 0L).takeIf { it > 0L }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "ActivitySession: restore failed: ${e.message}")
         }
@@ -205,7 +254,8 @@ class ActivitySessionManager @Inject constructor(
 /**
  * Learns the shape of each [SessionLabel] from how its sessions actually went.
  *
- * Per label:
+ * Per label, and again per label with a snack in the round ("Golf + snack"), so a snack's rise
+ * never teaches plain golf that it needs more insulin:
  *   - [LabelState.isfMult] multiplies the mode ISF during the resistant phase. Below 1.0 is
  *     stronger (dosing ISF = ISF × mult), matching every other learned multiplier here.
  *   - [LabelState.washoutMins] is how long before the planned end insulin starts backing off.
@@ -233,7 +283,12 @@ class ActivitySessionLearner @Inject constructor(
         var sessions:    Int    = 0
     )
 
-    private val states = mutableMapOf<SessionLabel, LabelState>()
+    /** One learned path: a label, plain or with a snack in the round. */
+    private data class Path(val label: SessionLabel, val snack: Boolean) {
+        val key: String get() = if (snack) label.name + SNACK_SUFFIX else label.name
+    }
+
+    private val states = mutableMapOf<Path, LabelState>()
 
     /** Called with each new verdict; the plugin points it at [LearningJournal]. */
     var onOutcome: ((String) -> Unit)? = null
@@ -273,14 +328,28 @@ class ActivitySessionLearner @Inject constructor(
         private const val K_ISF     = "isfMult"
         private const val K_WASHOUT = "washoutMins"
         private const val K_N       = "n"
+        private const val SNACK_SUFFIX = "_SNACK"
+
+        /** "Golf" or "Golf + snack". */
+        fun pathName(label: SessionLabel, snack: Boolean): String = if (snack) "${label.label} + snack" else label.label
     }
 
-    fun isfMultiplier(label: SessionLabel): Double = states[label]?.isfMult ?: 1.0
+    /** One row for the SI tab. */
+    data class Row(val name: String, val isfMult: Double, val washoutMins: Int, val sessions: Int)
 
-    fun washoutMins(label: SessionLabel): Int =
-        states[label]?.washoutMins?.takeIf { it > 0 } ?: DEFAULT_WASHOUT_MINS
+    /**
+     * The snack path falls back to what plain golf has learned until it has learned something
+     * itself, so the first snack round doses exactly like plain golf.
+     */
+    private fun stateFor(label: SessionLabel, snack: Boolean): LabelState? =
+        states[Path(label, snack)] ?: if (snack) states[Path(label, false)] else null
 
-    fun sessionCount(label: SessionLabel): Int = states[label]?.sessions ?: 0
+    fun isfMultiplier(label: SessionLabel, snack: Boolean = false): Double = stateFor(label, snack)?.isfMult ?: 1.0
+
+    fun washoutMins(label: SessionLabel, snack: Boolean = false): Int =
+        stateFor(label, snack)?.washoutMins?.takeIf { it > 0 } ?: DEFAULT_WASHOUT_MINS
+
+    fun sessionCount(label: SessionLabel, snack: Boolean = false): Int = states[Path(label, snack)]?.sessions ?: 0
 
     /**
      * Judge one finished session.
@@ -288,7 +357,9 @@ class ActivitySessionLearner @Inject constructor(
      * @param lowAtMinsFromStart minutes into the session when a low (or near-low) first landed,
      *        or null if none. A low in the tail after the session ended counts too — the hormones
      *        clearing don't stop at the last hole — and arrives as a value past the session length.
-     * @param resistantAvgBgMgdl mean BG over the scored part of the resistant phase.
+     * @param resistantAvgBgMgdl mean BG over the scored part of the resistant phase; 0 when nothing
+     *        was scored (a snack marked after the scored part).
+     * @param snack the round had a snack in it: judged on the snack path, from the snack on.
      */
     fun onSessionEnd(
         label:              SessionLabel,
@@ -298,11 +369,16 @@ class ActivitySessionLearner @Inject constructor(
         resistantAvgBgMgdl: Double,
         targetMgdl:         Double,
         startBgMgdl:        Double = 0.0,   // BG when the session opened
-        scoreEndBgMgdl:     Double = 0.0    // BG at the end of the scored resistant phase
+        scoreEndBgMgdl:     Double = 0.0,   // BG at the end of the scored resistant phase
+        snack:              Boolean = false
     ) {
-        val s = states.getOrPut(label) { LabelState() }
+        val name = pathName(label, snack)
+        val washoutBefore = washoutMins(label, snack)
+        // A new snack path starts from what plain golf has learned, not from nothing.
+        val s = states.getOrPut(Path(label, snack)) {
+            if (snack) states[Path(label, false)]?.copy(sessions = 0) ?: LabelState() else LabelState()
+        }
         s.sessions++
-        val washoutBefore = washoutMins(label)
         when {
             lowAtMinsFromStart != null -> {
                 // Start backing off WASHOUT_LEAD_MINS before the low actually arrived, measured
@@ -312,9 +388,13 @@ class ActivitySessionLearner @Inject constructor(
                     .coerceAtMost(plannedMins / 2)
                     .coerceAtLeast(WASHOUT_MIN_MINS)
                 s.isfMult = (s.isfMult * ISF_EASE_STEP).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                lastOutcome = "${label.label}: low ${lowAtMinsFromStart}min in — washout moved to " +
+                lastOutcome = "$name: low ${lowAtMinsFromStart}min in — washout moved to " +
                     "${s.washoutMins}min before the end (was $washoutBefore), resistant phase eased to ×${"%.2f".format(s.isfMult)}"
             }
+
+            resistantAvgBgMgdl <= 0.0 ->
+                lastOutcome = if (snack) "$name: snack came after the scored part of the round, no low — no change"
+                              else "$name: too short to score, no low — no change"
 
             // Already on its way down when the session opened — the average sits above target
             // because of where it started, not because this phase was under-dosed. Bounded the
@@ -323,18 +403,18 @@ class ActivitySessionLearner @Inject constructor(
             startBgMgdl > 0.0 && scoreEndBgMgdl > 0.0 &&
                 scoreEndBgMgdl <= startBgMgdl - RESOLVING_DROP_MGDL &&
                 resistantAvgBgMgdl > targetMgdl + RESISTANT_HIGH_MARGIN_MGDL ->
-                lastOutcome = "${label.label}: started ${BgText.bg(startBgMgdl)} and came down " +
+                lastOutcome = "$name: started ${BgText.bg(startBgMgdl)} and came down " +
                     "${BgText.bg(startBgMgdl - scoreEndBgMgdl)} through the resistant phase — " +
                     "working through an inherited high, no change"
 
             resistantAvgBgMgdl > targetMgdl + RESISTANT_HIGH_MARGIN_MGDL -> {
                 s.isfMult = (s.isfMult * ISF_STRENGTHEN_STEP).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
-                lastOutcome = "${label.label}: ran ${BgText.bg(resistantAvgBgMgdl - targetMgdl)} over target " +
+                lastOutcome = "$name: ran ${BgText.bg(resistantAvgBgMgdl - targetMgdl)} over target " +
                     "with no low — resistant phase strengthened to ×${"%.2f".format(s.isfMult)}"
             }
 
             else ->
-                lastOutcome = "${label.label}: tracked target with no low — no change"
+                lastOutcome = "$name: tracked target with no low — no change"
         }
         lastOutcome += " (n=${s.sessions}, ${actualMins}min)"
         persist()
@@ -347,18 +427,19 @@ class ActivitySessionLearner @Inject constructor(
         sp.edit { putString(StringNonKey.ApsSmartInsulinActivitySessionLearnerState.key, "") }
     }
 
-    /** Rows for the SI tab: label, learned ISF multiplier, washout, session count. */
-    fun rows(): List<Triple<SessionLabel, Pair<Double, Int>, Int>> =
-        SessionLabel.entries.mapNotNull { l ->
-            val s = states[l] ?: return@mapNotNull null
-            Triple(l, s.isfMult to washoutMins(l), s.sessions)
-        }
+    /** Rows for the SI tab, each label then its snack path. */
+    fun rows(): List<Row> =
+        SessionLabel.entries.flatMap { l -> listOf(false, true).map { snack -> l to snack } }
+            .mapNotNull { (l, snack) ->
+                val s = states[Path(l, snack)] ?: return@mapNotNull null
+                Row(pathName(l, snack), s.isfMult, washoutMins(l, snack), s.sessions)
+            }
 
     private fun persist() {
         try {
             val json = JSONObject()
-            states.forEach { (label, s) ->
-                json.put(label.name, JSONObject()
+            states.forEach { (path, s) ->
+                json.put(path.key, JSONObject()
                     .put(K_ISF, s.isfMult)
                     .put(K_WASHOUT, s.washoutMins)
                     .put(K_N, s.sessions))
@@ -375,9 +456,10 @@ class ActivitySessionLearner @Inject constructor(
         try {
             val json = JSONObject(raw)
             json.keys().forEach { key ->
-                val label = SessionLabel.of(key) ?: return@forEach
+                val snack = key.endsWith(SNACK_SUFFIX)
+                val label = SessionLabel.of(key.removeSuffix(SNACK_SUFFIX)) ?: return@forEach
                 val obj   = json.optJSONObject(key) ?: return@forEach
-                states[label] = LabelState(
+                states[Path(label, snack)] = LabelState(
                     isfMult     = obj.optDouble(K_ISF, 1.0).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX),
                     washoutMins = obj.optInt(K_WASHOUT, 0),
                     sessions    = obj.optInt(K_N, 0)
