@@ -81,7 +81,6 @@ class UamControllerBurstSmbFractionTest {
         currentBgMmol     = bgMmol,
         deltaMmol         = delta,
         shortAvgDeltaMmol = avgDelta,
-        bgiMmol           = 0.0,
         currentHour       = hour,
         bgWentLow         = false,
         inReboundWindow   = false,

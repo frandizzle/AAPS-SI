@@ -76,7 +76,6 @@ class UamPfTakeoverTest {
         currentBgMmol     = bgMmol,
         deltaMmol         = delta,
         shortAvgDeltaMmol = avgDelta,
-        bgiMmol           = 0.0,
         currentHour       = 8,
         bgWentLow         = false,
         inReboundWindow   = false,

@@ -79,7 +79,6 @@ class UamControllerBurstTest {
         currentBgMmol     = bgMmol,
         deltaMmol         = delta,
         shortAvgDeltaMmol = avgDelta,
-        bgiMmol           = 0.0,
         currentHour       = hour,
         bgWentLow         = low,
         inReboundWindow   = rebound,
@@ -325,5 +324,85 @@ class UamControllerBurstTest {
         verify(mealOverrideManager).activateOverride(
             any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
         )
+    }
+
+    // ── Min rise counts what the overview shows ──────────────────────────────
+
+    /** What the settings screen saves for a mmol value (mmol x 18.016). */
+    private fun setRiseMinDeltaFromMmolSlider(mmol: Double) =
+        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta.key), any())).thenReturn(mmol * 18.01559)
+
+    /** A rise of [mmol] as the overview shows it, in the mg/dl / 18 the loop passes in. */
+    private fun rise(mmol: Double) = mmol * 18.01559 / 18.0
+
+    /** [avg] stays under the setting: an average at or over it halves the bar (wobble tolerance). */
+    private fun threeReadings(step: Double, avg: Double) {
+        cycle(bgMmol = 6.0,            tMs = 1_000L,   delta = rise(step), avgDelta = rise(avg))
+        cycle(bgMmol = 6.0 + step,     tMs = 301_000L, delta = rise(step), avgDelta = rise(avg))
+        cycle(bgMmol = 6.0 + 2 * step, tMs = 601_000L, delta = rise(step), avgDelta = rise(avg))
+    }
+
+    @Test
+    fun `with 0 2 set, a 0 16 rise shows as +0 2 and counts`() {
+        setRiseMinDeltaFromMmolSlider(0.2)
+        threeReadings(step = 0.16, avg = 0.18)
+        verifyFired()
+    }
+
+    @Test
+    fun `with 0 2 set, a 0 14 rise shows as +0 1 and does not count`() {
+        setRiseMinDeltaFromMmolSlider(0.2)
+        threeReadings(step = 0.14, avg = 0.16)
+        verifyNotFired()
+        val summary = sut.debugSummary()
+        assert(summary.contains("shows +0.1")) { summary }
+    }
+
+    @Test
+    fun `with 0 2 set, a rise of exactly 0 2 counts`() {
+        setRiseMinDeltaFromMmolSlider(0.2)
+        threeReadings(step = 0.2, avg = 0.18)
+        verifyFired()
+    }
+
+    @Test
+    fun `with 0 3 set, a 0 26 rise shows as +0 3 and counts`() {
+        setRiseMinDeltaFromMmolSlider(0.3)
+        threeReadings(step = 0.26, avg = 0.28)
+        verifyFired()
+    }
+
+    @Test
+    fun `with 0 3 set, a 0 24 rise shows as +0 2 and does not count`() {
+        setRiseMinDeltaFromMmolSlider(0.3)
+        threeReadings(step = 0.24, avg = 0.26)
+        verifyNotFired()
+    }
+
+    @Test
+    fun `in mg per dl a rise that shows as 4 counts for a setting of 4`() {
+        whenever(profileUtil.units).thenReturn(app.aaps.core.data.model.GlucoseUnit.MGDL)
+        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta.key), any())).thenReturn(4.0)
+        // 3.6 mg/dl shows as 4
+        cycle(bgMmol = 6.0, tMs = 1_000L,   delta = 3.6 / 18.0, avgDelta = 3.8 / 18.0)
+        cycle(bgMmol = 6.2, tMs = 301_000L, delta = 3.6 / 18.0, avgDelta = 3.8 / 18.0)
+        cycle(bgMmol = 6.4, tMs = 601_000L, delta = 3.6 / 18.0, avgDelta = 3.8 / 18.0)
+        verifyFired()
+    }
+
+    // ── Why a reading did not count ──────────────────────────────────────────
+
+    @Test
+    fun `a reading under the UAM start BG says so`() {
+        cycle(bgMmol = 5.4, tMs = 1_000L, delta = 0.3, avgDelta = 0.3)
+        val summary = sut.debugSummary()
+        assert(summary.contains("under UAM start BG")) { summary }
+    }
+
+    @Test
+    fun `a reading in the low lockout says so`() {
+        cycle(bgMmol = 6.5, tMs = 1_000L, delta = 0.3, avgDelta = 0.3, low = true)
+        val summary = sut.debugSummary()
+        assert(summary.contains("low lockout")) { summary }
     }
 }

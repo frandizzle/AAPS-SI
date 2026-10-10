@@ -13,7 +13,11 @@ import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.data.configuration.Constants
+import app.aaps.core.data.format.NumberFormat
+import app.aaps.core.data.format.NumberFormatPlatform
 import java.util.Calendar
+import kotlin.math.round
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
@@ -90,9 +94,7 @@ class UamController @Inject constructor(
     }
 
     // Last reject tracking for debug display
-    private data class RejectInfo(val reason: String, val deltaActual: Double, val deltaNeeded: Double,
-                                  val unexpectedActual: Double, val unexpectedNeeded: Double,
-                                  val wasDirtyWindow: Boolean)
+    private data class RejectInfo(val reason: String, val wasDirtyWindow: Boolean)
     private var lastReject: RejectInfo? = null
 
     companion object {
@@ -112,7 +114,6 @@ class UamController @Inject constructor(
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
         private const val WOBBLE_TOLERANCE_MMOL       = 0.3
         private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5
-        private const val DIRTY_WINDOW_UNEXPECTED_MULT    = 1.67
         private const val LAST_UAM_DISPLAY_WINDOW_MS  = 4 * 60 * 60 * 1000L
         private const val STUCK_DELTA_MIN_MMOL        = -0.15
         private const val STUCK_DELTA_MAX_MMOL        = 0.25
@@ -126,6 +127,26 @@ class UamController @Inject constructor(
     private fun mgdlPrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     private fun unitPrefMmol(key: UnitDoubleKey): Double = sp.getDouble(key.key, key.defaultValue) / 18.0
     private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
+
+    /**
+     * Min rise per reading, mmol, rounded to 3 decimals. The settings screen saves mmol times
+     * 18.016 and this divides by 18, so 0.2 came back as 0.2002, and a rise shown as +0.2 failed
+     * the check by a hair.
+     */
+    /**
+     * [deltaMmol] (mg/dl / 18) rounded the way the overview shows the delta: one decimal in mmol,
+     * whole numbers in mg/dl, with the same formats `ProfileUtil.fromMgdlToSignedStringInUnits` uses.
+     * The min rise check compares this, so "what the overview shows" is what counts.
+     * Returned in mmol.
+     */
+    private fun shownDeltaMmol(deltaMmol: Double): Double {
+        val mgdl = deltaMmol * 18.0
+        return if (isMmol) NumberFormat.DECIMAL_1.format(mgdl * Constants.MGDL_TO_MMOLL, NumberFormatPlatform.SEPARATOR_DOT).toDouble()
+        else NumberFormat.INTEGER.format(mgdl, NumberFormatPlatform.SEPARATOR_DOT).toDouble() / 18.0
+    }
+    private fun fmtShownDelta(mmol: Double): String = if (isMmol) String.format("%+.1f", mmol) else String.format("%+.0f", mmol * 18.0)
+
+    private fun riseMinDeltaMmol(): Double = round(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * 1000.0) / 1000.0
 
     // ── Unit-aware display helpers ────────────────────────────────────────────
     private val isMmol: Boolean get() =
@@ -144,7 +165,6 @@ class UamController @Inject constructor(
         currentBgMmol:     Double,
         deltaMmol:         Double,
         shortAvgDeltaMmol: Double,
-        bgiMmol:           Double,
         currentHour:       Int,
         currentMinute:     Int = 0,
         bgWentLow:         Boolean,
@@ -214,7 +234,7 @@ class UamController @Inject constructor(
         currentlyPfTakeoverArmed = pfTakeover
 
         if ((currentMealMode != MealMode.FASTING && !pfTakeover) || highTempTarget || noFoodSession) {
-            if (noFoodSession) lastReject = RejectInfo("activity/stress session running — no food declared", 0.0, 0.0, 0.0, 0.0, false)
+            if (noFoodSession) lastReject = RejectInfo("activity/stress session running — no food declared", false)
             resetStreak(); stuckHighReadings = 0; return
         }
 
@@ -263,6 +283,7 @@ class UamController @Inject constructor(
             // recovery as a meal and dose into it. Keep collecting, but do not let the burst look
             // back past this moment.
             burstEligibleFromMs = bgTimestampMs
+            lastReject = RejectInfo("low lockout (recent low or rebound)", false)
             resetStreak(); return
         }
 
@@ -291,7 +312,7 @@ class UamController @Inject constructor(
         lastBurstDeltaMmol = if (lastBurstRiseMmol > 0.0 && freshCycle && currentBgMmol > burstPrevBgMmol) currentBgMmol - burstPrevBgMmol else 0.0
 
         val uamMode = resolveUamMode(currentHour, currentMinute) ?: run {
-            lastReject = RejectInfo("no meal window active at hour $currentHour", 0.0, 0.0, 0.0, 0.0, dirtyWindow)
+            lastReject = RejectInfo("no meal window active at hour $currentHour", dirtyWindow)
             burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs
             resetStreak(); return
         }
@@ -303,6 +324,7 @@ class UamController @Inject constructor(
         val aboveThreshold = currentBgMmol >= triggerThresholdMmol || (consecutiveRiseReadings > 0 && shortAvgDeltaMmol > 0.0 && currentBgMmol >= triggerThresholdMmol - WOBBLE_TOLERANCE_MMOL)
 
         if (!aboveThreshold) {
+            lastReject = RejectInfo("BG ${fmtBg(currentBgMmol)} under UAM start BG ${fmtBg(triggerThresholdMmol)}", dirtyWindow)
             resetStreak(); burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs; return
         }
 
@@ -335,20 +357,23 @@ class UamController @Inject constructor(
         }
         burstPrevBgMmol = currentBgMmol; burstPrevBgTimestampMs = bgTimestampMs
 
-        val riseMinDeltaBase   = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase   = riseMinDeltaMmol()
         val riseReadingsNeeded = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
         val dirtyMultiplier    = if (dirtyWindow) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
-        val unexpectedMultiplier = if (dirtyWindow) DIRTY_WINDOW_UNEXPECTED_MULT else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
-        val unexpectedMin      = riseMinDeltaBase * SHORT_AVG_DELTA_FRACTION * unexpectedMultiplier
-        val unexpectedDelta = deltaMmol - bgiMmol
-        val unexpectedShort = shortAvgDeltaMmol - bgiMmol
+        // There is no "more than insulin explains" test any more (rise minus the expected insulin
+        // effect). It could only ever block a reading when IOB was negative, after the loop had cut
+        // basal, and a cut alone moves BG far less than the min rise asks for. What it did block was
+        // real meals eaten while BG drifted near target. Rebounds out of real lows are held off by
+        // the low lockout above.
 
         val wobbleEnabled = sp.getBoolean(BooleanKey.ApsSmartInsulinUamWobbleTolerance.key, BooleanKey.ApsSmartInsulinUamWobbleTolerance.defaultValue)
         val trendConfirmedByAvg = wobbleEnabled && shortAvgDeltaMmol >= riseMinDelta
         val deltaMin = if (trendConfirmedByAvg) riseMinDelta * 0.5 else riseMinDelta
-        val risingNow = deltaMmol >= deltaMin && shortAvgDeltaMmol >= shortAvgThreshold && unexpectedDelta >= unexpectedMin && unexpectedShort >= unexpectedMin * SHORT_AVG_DELTA_FRACTION
+        // The rise as the overview shows it, so a reading that shows +0.2 counts for a 0.2 setting.
+        val shownDelta = shownDeltaMmol(deltaMmol)
+        val risingNow = shownDelta >= deltaMin && shortAvgDeltaMmol >= shortAvgThreshold
 
         if (risingNow) {
             if (bgTimestampMs > 0L && bgTimestampMs == lastCountedBgTimestampMs) { /* skip */ }
@@ -360,13 +385,11 @@ class UamController @Inject constructor(
             lastRiseBgMmol = currentBgMmol
         } else {
             val rejectReason = when {
-                deltaMmol < deltaMin                  -> "Δ ${fmtDelta(deltaMmol)} < ${fmtThresh(deltaMin)}"
+                shownDelta < deltaMin                 -> "Δ ${fmtDelta(deltaMmol)} (shows ${fmtShownDelta(shownDelta)}) < ${fmtThresh(deltaMin)}"
                 shortAvgDeltaMmol < shortAvgThreshold -> "avg ${fmtDelta(shortAvgDeltaMmol)} < ${fmtThresh(shortAvgThreshold)}"
-                unexpectedDelta < unexpectedMin       -> "uΔ ${fmtDelta(unexpectedDelta)} < ${fmtThresh(unexpectedMin)}"
-                unexpectedShort < unexpectedMin * SHORT_AVG_DELTA_FRACTION -> "uAvg ${fmtDelta(unexpectedShort)} < ${fmtThresh(unexpectedMin * SHORT_AVG_DELTA_FRACTION)}"
                 else                                  -> "threshold not met"
             }
-            lastReject = RejectInfo(rejectReason, deltaMmol, riseMinDelta, unexpectedDelta, unexpectedMin, dirtyWindow)
+            lastReject = RejectInfo(rejectReason, dirtyWindow)
             val preserveBurst = bgAtStreakStart > 0.0 && currentBgMmol > bgAtStreakStart
             val savedStreakStart = bgAtStreakStart
             resetStreak()
@@ -415,7 +438,7 @@ class UamController @Inject constructor(
     }
 
     fun debugSummary(): String {
-        val riseMinDeltaBase = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta)
+        val riseMinDeltaBase = riseMinDeltaMmol()
         val riseNeeded       = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
         val u                = unitLabel
         return buildString {
@@ -455,7 +478,7 @@ class UamController @Inject constructor(
             }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-                val threshNote = if (dirtyWindow) " δ≥${fmtThresh(mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamRiseMinDelta) * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                val threshNote = if (dirtyWindow) " δ≥${fmtThresh(riseMinDeltaMmol() * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
                 val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
                 // Show burst breakdown once there's a prior accumulated rise (2+ readings)
                 val burstNote = if (burstThreshold > 0.0) {

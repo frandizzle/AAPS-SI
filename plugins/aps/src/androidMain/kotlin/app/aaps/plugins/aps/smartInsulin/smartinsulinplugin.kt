@@ -1386,7 +1386,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val sessionActive = activitySessionManager.active != null
         val sessionStatus = if (sessionActive) activitySessionManager.statusLine(now) ?: "" else ""
 
-        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, -((iobArray.firstOrNull()?.activity ?: 0.0) * dosingIsfMgdl * 5.0) / 18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date, noFoodSession = sessionActive || carbEpisodeActive)
+        uamController.onLoopCycle(mealMode, glucoseStatus.glucose/18.0, glucoseStatus.delta/18.0, glucoseStatus.shortAvgDelta/18.0, currentHour, currentMinute, bgWentLow, inReboundWindow, if (bgWentLow) reboundWindowStartMs else 0L, highTempTarget, cgmState.inWarmup, inPostMealLockout, profile.getTargetMgdl()/18.0, softLandingBypass, glucoseStatus.date, noFoodSession = sessionActive || carbEpisodeActive)
 
         val justFiredMode = uamController.justFiredThisCycle
         val latestMealMode = justFiredMode ?: mealOverrideManager.activeMealMode ?: MealMode.FASTING
