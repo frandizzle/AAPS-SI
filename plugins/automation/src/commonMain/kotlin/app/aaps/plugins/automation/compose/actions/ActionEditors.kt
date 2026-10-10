@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.model.Scene
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.NumberInputRow
 import app.aaps.core.ui.compose.stringResource
@@ -28,6 +29,7 @@ import app.aaps.plugins.automation.actions.ActionRunScene
 import app.aaps.plugins.automation.actions.ActionSMBChange
 import app.aaps.plugins.automation.actions.ActionSendSMS
 import app.aaps.plugins.automation.actions.ActionSettingsExport
+import app.aaps.plugins.automation.actions.ActionSmartInsulinStartSession
 import app.aaps.plugins.automation.actions.ActionSmoothingChange
 import app.aaps.plugins.automation.actions.ActionStartTempTarget
 import app.aaps.plugins.automation.compose.elements.AutomationDropdown
@@ -69,6 +71,7 @@ fun ActionEditor(
             is ActionCarePortalEvent      -> ActionCarePortalEventEditor(action, tick, onChange)
             is ActionSMBChange            -> ActionSMBChangeEditor(action, tick, onChange)
             is ActionSmoothingChange      -> ActionSmoothingChangeEditor(action, tick, onChange)
+            is ActionSmartInsulinStartSession -> ActionSmartInsulinStartSessionEditor(action, tick, onChange)
             is ActionProfileSwitch        -> ActionProfileSwitchEditor(action, profileNames, tick, onChange)
             is ActionProfileSwitchPercent -> ActionProfileSwitchPercentEditor(action, tick, onChange)
             is ActionRunAutotune          -> ActionRunAutotuneEditor(action, profileNames, tick, onChange)
@@ -162,6 +165,23 @@ fun ActionSMBChangeEditor(a: ActionSMBChange, tick: Int = 0, onChange: () -> Uni
             onValueChange = { a.smbState.setValue(it); onChange() }
         )
     }
+}
+
+@Composable
+fun ActionSmartInsulinStartSessionEditor(a: ActionSmartInsulinStartSession, tick: Int = 0, onChange: () -> Unit) {
+    @Suppress("UNUSED_EXPRESSION") tick
+    val names = SmartInsulinSessions.Kind.entries.associateWith { stringResource(ActionSmartInsulinStartSession.kindName(it)) }
+    AutomationDropdown(
+        value = names.getValue(a.kind),
+        options = names.values.toList(),
+        onValueChange = { picked ->
+            names.entries.firstOrNull { it.value == picked }?.let {
+                a.kind = it.key
+                onChange()
+            }
+        },
+        label = stringResource(AutomationStrings.si_session_label)
+    )
 }
 
 @Composable

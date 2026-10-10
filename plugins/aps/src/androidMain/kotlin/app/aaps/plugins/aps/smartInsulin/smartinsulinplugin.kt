@@ -66,6 +66,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
+import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
 import app.aaps.core.interfaces.utils.HardLimits
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
@@ -156,7 +157,7 @@ open class SmartInsulinPlugin @Inject constructor(
         },
     ownPreferences = emptyList(),
     aapsLogger, rh, preferences, notificationManager
-), APS, PluginConstraints, SmartInsulinOverview {
+), APS, PluginConstraints, SmartInsulinOverview, SmartInsulinSessions {
 
     override var lastAPSRun: Long = 0
     override val algorithm = APSResult.Algorithm.SMB
@@ -416,6 +417,19 @@ open class SmartInsulinPlugin @Inject constructor(
                 activitySessionManager.start(label, now); true
             }
         }
+    }
+
+    override fun startSession(kind: SmartInsulinSessions.Kind): Boolean {
+        if (!isEnabled()) return false
+        val label = SessionLabel.of(kind.name) ?: return false
+        if (activitySessionManager.active?.label != label) toggleActivitySession(label)
+        return true
+    }
+
+    override fun stopSession(): Boolean {
+        if (!isEnabled()) return false
+        if (activitySessionManager.active != null) activitySessionManager.stop(dateUtil.now())
+        return true
     }
 
     fun activitySessionLabel(): SessionLabel? = activitySessionManager.active?.label

@@ -175,4 +175,12 @@
 
     <string name="si_reset_action_name">SmartInsulin: Reset Learned Profiles</string>
     <string name="si_reset_action_short">Reset learned DIA and peak to profile defaults</string>
+    <string name="si_session_start_action_name">SmartInsulin: Start activity session</string>
+    <string name="si_session_start_action_short" comment="%1$s=name of the session. Example: Start Golf session">Start %1$s session</string>
+    <string name="si_session_stop_action_name">SmartInsulin: Stop activity session</string>
+    <string name="si_session_stop_action_short">Stop the running activity session</string>
+    <string name="si_session_label">Session</string>
+    <string name="si_session_golf" comment="The sport golf, as a SmartInsulin activity session">Golf</string>
+    <string name="si_session_gym" comment="A workout at the gym, as a SmartInsulin activity session">Gym</string>
+    <string name="si_not_active">SmartInsulin is not the active APS</string>
 </resources>

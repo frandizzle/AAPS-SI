@@ -714,6 +714,8 @@ class AutomationRuntime(
         val actions = mutableListOf(
             actionFactory.actionStopProcessing(),
             actionFactory.actionSmartInsulinReset(),
+            actionFactory.actionSmartInsulinStartSession(),
+            actionFactory.actionSmartInsulinStopSession(),
             actionFactory.actionStartTempTarget(),
             actionFactory.actionStopTempTarget(),
             actionFactory.actionNotification(),
