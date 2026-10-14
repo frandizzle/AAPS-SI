@@ -303,4 +303,91 @@ class CircadianRetroLowAttributionTest {
         assertEquals(isf22, isf(22), 1e-9, "hour 22 carried only meal insulin")
         assertFalse(learner.lastRetroAttribution.contains("h=22"), learner.lastRetroAttribution)
     }
+
+    // -- A rollercoaster that ends in a low --------------------------------------------------------
+
+    /** One fasting cycle at [glucose] in hour 7, with insulin working. */
+    private fun cycleAt(glucose: Double, minute: Int, nowMs: Long) {
+        learner.update(
+            glucoseStatus  = glucoseStatus(glucose = glucose),
+            iobArray       = arrayOf(IobTotal(time = 0, iob = 1.0, activity = 0.02, basaliob = 1.0)),
+            mealMode       = MealMode.FASTING,
+            cobG           = 0.0,
+            profileIsfMgdl = 50.0,
+            targetMgdl     = TARGET,
+            lowGuardMgdl   = GUARD,
+            hour = 7, dow = DOW, minute = minute, nowMs = nowMs
+        )
+    }
+
+    /**
+     * Low, then well over target, then back down: the second low comes 50 min after the first.
+     * Under 45 min with nothing after it, the swing would pass as a sensor compression low.
+     */
+    private fun rollercoasterIntoLow(startMs: Long, peak: Double = 130.0): Long {
+        var t = startMs
+        hardLowAt(hour = 7, minute = 0, nowMs = t)
+        for (m in listOf(5, 10, 15, 20)) { t += CYCLE_MS; cycleAt(100.0, m, t) }
+        for (m in listOf(25, 30)) { t += CYCLE_MS; cycleAt(peak, m, t) }
+        for (m in listOf(35, 40, 45)) { t += CYCLE_MS; cycleAt(100.0, m, t) }
+        t += CYCLE_MS
+        // The 30 min hard-low gate reads the wall clock, not nowMs: clear it so the second low
+        // counts as a new event, as it would 50 min later in real life.
+        learner.lastHardLowPenaltyMs = 0L
+        return t
+    }
+
+    @Test
+    fun `a rollercoaster that ends in a low still charges the low back to the hours that dosed it`() {
+        var t = BASE_MS
+        t = runHour(5, t); t = runHour(6, t)
+        t = rollercoasterIntoLow(t)
+        val isf5 = isf(5); val bas5 = basal(5); val isf7 = isf(7)
+
+        hardLowAt(hour = 7, minute = 50, nowMs = t)
+
+        assertEquals(1, learner.consecutiveRollercoasters, "the swing must be seen as a rollercoaster")
+        assertTrue(isf(5) < isf5 - 1e-6, "hour 5 ISF should be cut: $isf5 -> ${isf(5)}")
+        assertTrue(basal(5) < bas5 - 1e-6, "hour 5 basal should be cut: $bas5 -> ${basal(5)}")
+        assertTrue(isf(7) < isf7 - 1e-6, "hour 7 takes its own hard-low cut: $isf7 -> ${isf(7)}")
+    }
+
+    @Test
+    fun `the hard-low ceiling cut lands on top of the rollercoaster cut, not instead of it`() {
+        // The same day twice: once with a swing well over target, once staying under it. Both end
+        // in the same low. The rollercoaster day must end with the lower ceiling: its own cut plus
+        // the hard-low cut. With the hard-low cut worked out from the ceiling read before the
+        // rollercoaster cut, the two days came out the same.
+        fun ceilingAfterLow(peak: Double): Double {
+            learner = CircadianLearner(logger, FakePreferences())
+            var t = BASE_MS
+            t = runHour(5, t); t = runHour(6, t)
+            t = rollercoasterIntoLow(t, peak)
+            hardLowAt(hour = 7, minute = 50, nowMs = t)
+            return learner.aggrCeiling(hour = 7, dow = DOW, minute = 50)
+        }
+        val plainLow = ceilingAfterLow(peak = 110.0)
+        assertEquals(0, learner.consecutiveRollercoasters, "110 is under target + 18: no rollercoaster")
+        val rollercoaster = ceilingAfterLow(peak = 130.0)
+        assertEquals(1, learner.consecutiveRollercoasters)
+        assertTrue(rollercoaster < plainLow - 0.02, "both cuts should apply: plain low $plainLow, rollercoaster $rollercoaster")
+    }
+
+    @Test
+    fun `a rollercoaster that ends high gets no hard-low penalty`() {
+        var t = BASE_MS
+        t = runHour(5, t); t = runHour(6, t)
+        cycleAt(130.0, 0, t)
+        for (m in listOf(5, 10)) { t += CYCLE_MS; cycleAt(100.0, m, t) }
+        t += CYCLE_MS; hardLowAt(hour = 7, minute = 15, nowMs = t)
+        for (m in listOf(20, 25, 30, 35)) { t += CYCLE_MS; cycleAt(100.0, m, t) }
+        val isf5 = isf(5); val bas5 = basal(5)
+
+        t += CYCLE_MS
+        cycleAt(130.0, 40, t)
+
+        assertTrue(learner.consecutiveRollercoasters >= 1, "high, low, high is a rollercoaster ending high")
+        assertEquals(isf5, isf(5), 1e-9, "nothing new charged back while BG is high")
+        assertEquals(bas5, basal(5), 1e-9, "nothing new charged back while BG is high")
+    }
 }

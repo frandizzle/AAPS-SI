@@ -211,8 +211,10 @@ class CircadianLearner @Inject constructor(
     var nudgeSessionBlendedBasMult: Double = 1.0
         private set
     // Exposed so the plugin/fragment can show "hard low penalty applied" in the UI
+    // The setter is internal for tests only: the 30-min gate reads the wall clock, so a test clears
+    // it to stand in for the time between two lows.
     var lastHardLowPenaltyMs: Long = 0L
-        private set
+        internal set
     // Rollercoaster escalation tracking — exposed to plugin to extend rebound window
     var consecutiveRollercoasters: Int = 0
         private set
@@ -1778,6 +1780,7 @@ class CircadianLearner @Inject constructor(
             if (isLikelyCompression(targetMgdl, lowGuardMgdl)) {
                 aapsLogger.debug(LTag.APS,
                                  "CircadianLearner Aggr h=$hour ROLLERCOASTER detected but shape suggests compression low — skipping learner penalty")
+                return
             } else {
                 val penalised = (currentCeil * AGGR_PENALTY_ROLLER).coerceAtLeast(AGGR_CEIL_MIN)
                 writeAggr(dow, hour, penalised, AGGR_ALPHA_PENALTY)
@@ -1795,7 +1798,10 @@ class CircadianLearner @Inject constructor(
                                  "CircadianLearner Aggr h=$hour ROLLERCOASTER #$consecutiveRollercoasters detected fasting=$isFasting ? ceil=%.3f"
                                      .format(aggrState.get(dow, hour)))
             }
-            return
+            // A rollercoaster that ends in a low also gets the hard-low penalty below: the basal
+            // and ISF cut for this hour, and the charge back to the hours that gave the insulin.
+            // Returning here skipped both, so a bigger swing was penalised less than a plain low.
+            if (!bgBelowGuard(bg, lowGuardMgdl)) return
         }
 
         // -- Penalty signal 2: Hard low — BG below low guard -----------------
@@ -1850,7 +1856,9 @@ class CircadianLearner @Inject constructor(
                 // Using AGGR_ALPHA_PENALTY=0.25 here only moved the ceiling by ~2.5% which
                 // is invisible in the table and has no meaningful effect on dosing.
                 // Direct write ensures the penalty is actually felt this cycle.
-                val penalised = (currentCeil * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
+                // Read again, not currentCeil: a rollercoaster penalty may have just been written
+                // above, and a stale value would overwrite it.
+                val penalised = (aggrState.get(dow, hour) * AGGR_PENALTY_HARD_LOW).coerceAtLeast(AGGR_CEIL_MIN)
                 // Day bucket takes the full cut immediately; the cross-day baseline takes a slow
                 // trickle so a low that repeats at this hour across nights generalises to every
                 // day, while a one-off stays where it happened. See writeAggrHardLow.
