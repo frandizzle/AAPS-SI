@@ -41,12 +41,13 @@ class UamEntryFractionLearnerTest {
         bg: Double = 100.0, target: Double = 100.0,
         low: Boolean = false, delta: Double = 0.0, activity: Double = 0.0,
         baseSig: Double = 0.8, exercise: Boolean = false, peakMins: Double = 55.0,
-        boost: Boolean = false
+        boost: Boolean = false, riseStart: Double = 0.0
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
-        exerciseSuspected = exercise, insulinPeakMins = peakMins, newPodBoost = boost
+        exerciseSuspected = exercise, insulinPeakMins = peakMins, newPodBoost = boost,
+        riseStartMgdl = riseStart
     )
 
     /** Ends the episode and runs the full 75-min settling tail quietly at [bg] — flat by default,
@@ -223,6 +224,44 @@ class UamEntryFractionLearnerTest {
         runQuietTail(peakMs, bg = 105.0, target = 99.0)
         // Graduated off the peak bar: 81/72 = 1.125× → 0.03 × 1.125 = 0.03375
         assertEquals(0.03375, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    // ── The peak bar is measured from where the rise began ───────────────────
+    // The test above passes no rise start, so it also covers the fallback to target.
+
+    @Test
+    fun `BG already high before the meal is not counted as part of its spike`() {
+        // Sitting at 8.0 (144) before eating. UAM fires at 146 and BG tops out at 175 (9.7):
+        // 76 over a 99 target, which target alone counts as too big. But only 31 of it is food,
+        // under the 72 bar, so the entry fraction must not move.
+        val peakMs = BASE_MS + 50 * 60_000L
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 146.0, target = 99.0, riseStart = 144.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 175.0, target = 99.0)
+        runQuietTail(peakMs, bg = 105.0, target = 99.0)
+        assertEquals(0.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a rise that UAM caught late still counts from where it began`() {
+        // Flat on target (99) when eating, UAM only fires at 8.0 (144), peak 180. The whole spike
+        // is this meal's, so it is judged exactly as target alone would judge it.
+        val peakMs = BASE_MS + 50 * 60_000L
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 144.0, target = 99.0, riseStart = 99.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 180.0, target = 99.0)
+        runQuietTail(peakMs, bg = 105.0, target = 99.0)
+        assertEquals(0.03375, learner.offset(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a rise that began below target is still measured from target`() {
+        // Rise began at 80, under a 99 target. Measuring from 80 would make the bar lower than
+        // today; the base never goes under target, so this is judged as before: 175 is 76 over.
+        val peakMs = BASE_MS + 50 * 60_000L
+        cycle(MealMode.UAM_LUNCH, BASE_MS, BASE_MS, bg = 144.0, target = 99.0, riseStart = 80.0)
+        cycle(MealMode.UAM_LUNCH, BASE_MS, peakMs, bg = 175.0, target = 99.0)
+        runQuietTail(peakMs, bg = 105.0, target = 99.0)
+        // 76/72 = 1.0556x the bar -> 0.03 x 1.0556
+        assertEquals(0.03 * 76.0 / 72.0, learner.offset(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test

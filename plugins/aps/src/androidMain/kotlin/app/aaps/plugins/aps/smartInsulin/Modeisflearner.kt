@@ -108,6 +108,9 @@ class ModeIsfLearner @Inject constructor(
     private var episodeShapeRailed = false
     /** The episode started with a pre-bolus - it gets the tighter spike bar, see [LATE_SPIKE_MARGIN_MGDL]. */
     private var episodePreBolused = false
+    /** Where the rise that fired this episode began, 0.0 if unknown. The spike bar is measured
+     *  from it, see `UamEntryFractionLearner.spikeBaseMgdl`. */
+    private var episodeRiseStartMgdl = 0.0
     private var episodeBoosted = false  // the new pod boost ran at some point in this episode
 
     // Pending post-episode evaluation (settling tail)
@@ -295,9 +298,11 @@ class ModeIsfLearner @Inject constructor(
         pfWindow: PfWindow = PfWindow.NONE,  // which P/F ISF window this episode doses from; NONE
         // for every other mode. Resolved once when the episode opens and held for its whole life,
         // so an episode running across a window boundary is still judged as one thing.
-        newPodBoost: Boolean = false  // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
+        newPodBoost: Boolean = false,  // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
         // episode it touches is not judged at all, lows included: the boost changed the dose, and
         // a low already ends the boost for that pod. A tail or low watch still open is dropped.
+        riseStartMgdl: Double = 0.0  // where the rise that fired this mode began, 0.0 if unknown.
+        // Read when the episode opens; the spike bar is measured from it, not only from target.
     ) {
         if (!learningEnabled) {
             // Drop anything in flight rather than leaving it to be judged whenever the switch comes
@@ -386,6 +391,7 @@ class ModeIsfLearner @Inject constructor(
                 tailDeltas.clear()
                 episodeShapeRailed = false
                 episodePreBolused = preBolused && !activeModeNow.isUam
+                episodeRiseStartMgdl = riseStartMgdl
                 episodeBoosted = false
             }
             if (newPodBoost) episodeBoosted = true
@@ -399,7 +405,7 @@ class ModeIsfLearner @Inject constructor(
             // through doesn't add up to a stall it never had.
             // Only inside the spike phase. Past it, BG parked high is a fat/protein stall — DURA's
             // problem — and counting it here would charge the spike knob for it.
-            if (bgMgdl - targetMgdl >= spikeMarginMgdl() && nowMs - activeStartMs <= SPIKE_PHASE_MS) {
+            if (bgMgdl - spikeBaseMgdl(targetMgdl) >= spikeMarginMgdl() && nowMs - activeStartMs <= SPIKE_PHASE_MS) {
                 if (spikeRunStartMs == 0L) spikeRunStartMs = nowMs
                 episodeSpikeMs = maxOf(episodeSpikeMs, nowMs - spikeRunStartMs)
             } else spikeRunStartMs = 0L
@@ -584,7 +590,8 @@ class ModeIsfLearner @Inject constructor(
         when {
             pendingSpikeTooHigh -> {
                 val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} spike held ≥${BgText.bg(spikeMarginMgdl(), 0)} over target for 30min with no front-loading left — strengthened", pendingStartMs)
+                val from = if (spikeBaseMgdl(targetMgdl) > targetMgdl) "where the rise began" else "target"
+                applyOutcome(p, step, "${p.label} spike held ≥${BgText.bg(spikeMarginMgdl(), 0)} over $from for 30min with no front-loading left — strengthened", pendingStartMs)
                 return step
             }
             // Working through a high it inherited: below where it started and still coming
@@ -673,7 +680,7 @@ class ModeIsfLearner @Inject constructor(
         if (mode == MealMode.UAM_PROTEIN_FAT) return false
         val noShapeLeft = if (UamEntryFractionLearner.isEntryMode(mode)) episodeShapeRailed else true
         return noShapeLeft &&
-            (episodePeakMgdl - targetMgdl) >= spikeMarginMgdl() &&
+            (episodePeakMgdl - spikeBaseMgdl(targetMgdl)) >= spikeMarginMgdl() &&
             (episodePeakMgdl - episodeStartBgMgdl) >= MIN_RISE_FOR_SPIKE_MGDL &&
             episodeSpikeMs >= spikeSustainedMs()
     }
@@ -691,7 +698,7 @@ class ModeIsfLearner @Inject constructor(
 
     private fun lateSpikeWithNoShapeLeft(targetMgdl: Double): Boolean =
         episodeShapeRailed &&
-            (episodePeakMgdl - targetMgdl) >= spikeMarginMgdl() &&
+            (episodePeakMgdl - spikeBaseMgdl(targetMgdl)) >= spikeMarginMgdl() &&
             episodeSpikeMs >= spikeSustainedMs()
 
     // -- User bias ------------------------------------------------------------
@@ -700,6 +707,10 @@ class ModeIsfLearner @Inject constructor(
     // ever scale up toward conservative (see LearningBias).
     private fun bias() = LearningBias.from(sp)
     private fun strengthenStep() = scaleStrengthenStep(STRENGTHEN_STEP, bias())
+    /** Target, or where the rise began when that was higher: BG already high before the meal is
+     *  not part of its spike. Same rule as the entry-fraction learner, so the two agree. */
+    private fun spikeBaseMgdl(targetMgdl: Double) = UamEntryFractionLearner.spikeBaseMgdl(targetMgdl, episodeRiseStartMgdl)
+
     private fun spikeMarginMgdl() = (if (episodePreBolused) LATE_SPIKE_MARGIN_MGDL else LATE_SPIKE_MARGIN_NO_PREBOLUS_MGDL) * bias().barScale
     private fun spikeSustainedMs() = (SPIKE_SUSTAINED_MS * bias().barScale).toLong()
     private fun strengthenMarginMgdl() = STRENGTHEN_MARGIN_MGDL * bias().barScale
@@ -809,7 +820,7 @@ class ModeIsfLearner @Inject constructor(
         episodePeakMgdl = 0.0; episodeSpikeMs = 0L; spikeRunStartMs = 0L; episodeShapeRailed = false
         activeScope = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
-        episodeCarriedInLow = false
+        episodeCarriedInLow = false; episodeRiseStartMgdl = 0.0
         pendingScope = null; pendingStartMs = 0L
         lastMovedMode = null; lastMovedStartMs = 0L
         clearWatch()

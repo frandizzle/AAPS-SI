@@ -37,13 +37,14 @@ class ModeIsfLearnerTest {
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
         pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true,
-        preBolused: Boolean = false, boost: Boolean = false
+        preBolused: Boolean = false, boost: Boolean = false, riseStart: Double = 0.0
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
-        pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused, newPodBoost = boost
+        pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused, newPodBoost = boost,
+        riseStartMgdl = riseStart
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -301,11 +302,11 @@ class ModeIsfLearnerTest {
      */
     private fun spikeThenLand(
         peak: Double, railed: Boolean, low: Boolean = false, exercise: Boolean = false,
-        holdCycles: Int = 7
+        holdCycles: Int = 7, startBg: Double = 100.0, riseStart: Double = 0.0
     ) {
         val start = BASE_MS
         var t = start
-        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = 100.0, railed = railed)
+        cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = startBg, railed = railed, riseStart = riseStart)
         repeat(holdCycles) {
             t += CYCLE_MS
             cycle(mode = MealMode.UAM_LUNCH, startMs = start, nowMs = t, bg = peak, railed = railed)
@@ -325,6 +326,21 @@ class ModeIsfLearnerTest {
         spikeThenLand(peak = 180.0, railed = true)   // +80 over target, past the ~4mmol UAM bar
         assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
         assertTrue(learner.lastOutcome.contains("late, not too much"), learner.lastOutcome)
+    }
+
+    @Test
+    fun `a spike held over target is not late when BG was already high before the meal`() {
+        // The rise began at 150 (8.3) and UAM fired at 155. A hold at 190 is 90 over target, but
+        // only 40 over where the rise began, under the ~4 mmol bar. So this is not a late spike,
+        // and the undershoot weakens as it does with no spike at all.
+        spikeThenLand(peak = 190.0, railed = true, startBg = 155.0, riseStart = 150.0)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a spike held over target still counts when the rise began on target`() {
+        spikeThenLand(peak = 180.0, railed = true, riseStart = 100.0)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test

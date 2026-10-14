@@ -17,6 +17,7 @@ import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.format.NumberFormatPlatform
 import java.util.Calendar
+import kotlin.math.abs
 import kotlin.math.round
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
@@ -39,6 +40,12 @@ class UamController @Inject constructor(
     // ── State ─────────────────────────────────────────────────────────────────
     private var consecutiveRiseReadings = 0
     private var bgAtStreakStart:          Double = 0.0
+    /** The reading just before the first rising reading of the streak: where the rise began.
+     *  Kept across a wobble, like [bgAtStreakStart], so it stays at the start of the whole rise. */
+    private var streakBaseMmol:           Double = 0.0
+    /** Where the rise behind the last UAM fire began, and when it fired. See [riseStartMgdlFor]. */
+    private var riseStartMmol:            Double = 0.0
+    private var riseStartAtMs:            Long   = 0L
     private var lastCountedBgTimestampMs: Long   = 0L  // CGM timestamp of last reading that incremented streak
     private var lastStuckBgTimestampMs:   Long   = 0L  // CGM timestamp of last reading that incremented P/F streak
     private var lastUamMode:    MealMode? = null
@@ -114,6 +121,8 @@ class UamController @Inject constructor(
         private const val SHORT_AVG_DELTA_FRACTION   = 0.75
         private const val WOBBLE_TOLERANCE_MMOL       = 0.3
         private const val DIRTY_WINDOW_DELTA_MULTIPLIER   = 1.5
+        /** How far apart a UAM fire and a mode start may be and still be the same episode. */
+        private const val RISE_START_MATCH_MS         = 10 * 60_000L
         private const val LAST_UAM_DISPLAY_WINDOW_MS  = 4 * 60 * 60 * 1000L
         private const val STUCK_DELTA_MIN_MMOL        = -0.15
         private const val STUCK_DELTA_MAX_MMOL        = 0.25
@@ -345,7 +354,8 @@ class UamController @Inject constructor(
         // is the thing a consecutive-reading requirement was really enforcing. Two readings are
         // still required — a lone reading has nothing to have risen FROM.
         if (burstThreshold > 0.0 && eligible.size >= 2 && lastBurstRiseMmol >= burstThreshold - 0.01) {
-            triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol)
+            // The burst measured its rise from the window's low point, so that is where it began.
+            triggerUam(uamMode, currentBgMmol, deltaMmol, lastBurstRiseMmol, riseStartMmol = burstTroughMmol)
             resetStreak()
             // Clear the window so the same rise can't fire again next reading — the trough would
             // otherwise still be sitting in it.
@@ -382,7 +392,11 @@ class UamController @Inject constructor(
         if (risingNow) {
             if (bgTimestampMs > 0L && bgTimestampMs == lastCountedBgTimestampMs) { /* skip */ }
             else {
-                if (consecutiveRiseReadings == 0) bgAtStreakStart = currentBgMmol
+                if (consecutiveRiseReadings == 0) {
+                    bgAtStreakStart = currentBgMmol
+                    // Not after a wobble: then the rise began before it, and that start is kept.
+                    if (streakBaseMmol == 0.0) streakBaseMmol = previousReadingMmol(currentBgMmol, deltaMmol, bgTimestampMs)
+                }
                 consecutiveRiseReadings++
                 lastCountedBgTimestampMs = bgTimestampMs
             }
@@ -396,13 +410,14 @@ class UamController @Inject constructor(
             lastReject = RejectInfo(rejectReason, dirtyWindow)
             val preserveBurst = bgAtStreakStart > 0.0 && currentBgMmol > bgAtStreakStart
             val savedStreakStart = bgAtStreakStart
+            val savedStreakBase = streakBaseMmol
             resetStreak()
-            if (preserveBurst) bgAtStreakStart = savedStreakStart
+            if (preserveBurst) { bgAtStreakStart = savedStreakStart; streakBaseMmol = savedStreakBase }
             return
         }
 
         if (consecutiveRiseReadings >= riseReadingsNeeded) {
-            triggerUam(uamMode, currentBgMmol, deltaMmol, currentBgMmol - bgAtStreakStart)
+            triggerUam(uamMode, currentBgMmol, deltaMmol, currentBgMmol - bgAtStreakStart, riseStartMmol = streakBaseMmol)
             resetStreak()
         }
     }
@@ -531,15 +546,37 @@ class UamController @Inject constructor(
         return listOfNotNull(uamLine, pfLine).joinToString(" | ").ifEmpty { null }
     }
 
-    private fun resetStreak() { consecutiveRiseReadings = 0; bgAtStreakStart = 0.0; lastCountedBgTimestampMs = 0L; lastRiseBgMmol = 0.0; lastBurstRiseMmol = 0.0; lastBurstDeltaMmol = 0.0 }
+    private fun resetStreak() { consecutiveRiseReadings = 0; bgAtStreakStart = 0.0; streakBaseMmol = 0.0; lastCountedBgTimestampMs = 0L; lastRiseBgMmol = 0.0; lastBurstRiseMmol = 0.0; lastBurstDeltaMmol = 0.0 }
 
     var justFiredThisCycle: MealMode? = null
         private set
 
-    private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double) {
+    /**
+     * The BG reading before [currentBgMmol]: the one before it in the burst history when that is a
+     * normal reading gap back, else worked out from the delta.
+     */
+    private fun previousReadingMmol(currentBgMmol: Double, deltaMmol: Double, bgTimestampMs: Long): Double {
+        val prev = burstWindow.getOrNull(burstWindow.size - 2)
+        return if (prev != null && bgTimestampMs - prev.first in 1L..BURST_MAX_CYCLE_GAP_MS) prev.second
+        else currentBgMmol - deltaMmol
+    }
+
+    /**
+     * Where the rise began that fired the UAM mode started at [modeStartMs], in mg/dL, or 0.0 when
+     * that mode was not started by a UAM rise (a meal the user started, P/F, or nothing recorded,
+     * for example after a restart). The spike checks in [UamEntryFractionLearner] and
+     * [ModeIsfLearner] measure from here, so BG that was already high before the meal is not
+     * counted as part of its spike.
+     */
+    fun riseStartMgdlFor(modeStartMs: Long): Double =
+        if (riseStartMmol > 0.0 && abs(modeStartMs - riseStartAtMs) <= RISE_START_MATCH_MS) riseStartMmol * 18.0 else 0.0
+
+    private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double, riseStartMmol: Double = 0.0) {
         justFiredThisCycle = mode
         val durationMins = uamDurationMins(mode)
         val now = System.currentTimeMillis()
+        this.riseStartMmol = riseStartMmol
+        riseStartAtMs = now
         lastUamTriggerCount = if (lastUamMode == mode && now - lastUamTimeMs < 4 * 60 * 60 * 1000L) lastUamTriggerCount + 1 else 1
         lastUamMode = mode; lastUamTimeMs = now
         // DURA config for auto-fired modes comes from Settings (no activation dialog exists).

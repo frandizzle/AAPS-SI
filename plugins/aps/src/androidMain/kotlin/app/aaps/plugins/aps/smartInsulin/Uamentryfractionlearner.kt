@@ -8,6 +8,7 @@ import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
+import kotlin.math.max
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
@@ -80,6 +81,7 @@ class UamEntryFractionLearner @Inject constructor(
     private var earlyLow            = false
     private var earlyLowUnexplained = false // that low came with a drop insulin can't explain
     private var episodeBoosted      = false // the new pod boost ran at some point in this episode
+    private var episodeRiseStartMgdl = 0.0  // where the rise behind this episode began, 0.0 if unknown
 
     // Pending post-episode evaluation (settling tail)
     private var pendingMode:          MealMode? = null
@@ -88,6 +90,7 @@ class UamEntryFractionLearner @Inject constructor(
     private var pendingPeakOffsetMs   = 0L
     private var pendingPeakMgdl       = 0.0
     private var pendingStartMs        = 0L
+    private var pendingRiseStartMgdl  = 0.0
     private var pendingTailGrams      = 0.0
     /** Recent deltas (newest first) for the flat/still-falling test at the check. */
     private val tailDeltas            = ArrayDeque<Double>()
@@ -154,7 +157,24 @@ class UamEntryFractionLearner @Inject constructor(
          */
         // ~4 mmol above target. Was 3: an unannounced meal on Fiasp rises 3 mmol most of the time,
         // since the loop only starts once the rise is under way, so 3 called ordinary meals failures.
+        //
+        // Measured from target, or from where the rise began when that was higher (see
+        // [spikeBaseMgdl]). Target alone counted BG that was already high BEFORE the meal as part
+        // of its spike: sitting at 8.0 and eating, a peak of 9.5 was only +1.5 of food, yet it
+        // read as a spike too big for the entry dose.
         const val PEAK_STRENGTHEN_MARGIN_MGDL = 72.0
+
+        /**
+         * What a spike is measured from: target, or where the rise began if that was higher.
+         *
+         * [riseStartMgdl] is the reading UAM began counting the rise from (see
+         * `UamController.riseStartMgdlFor`), or 0.0 when there is none. Never below target, so
+         * this can only ever make the spike bar higher than target alone, never lower. A rise
+         * that UAM caught late still counts from where it began, so that part of the spike is
+         * still the entry dose's to fix.
+         */
+        fun spikeBaseMgdl(targetMgdl: Double, riseStartMgdl: Double): Double =
+            if (riseStartMgdl > 0.0) max(targetMgdl, riseStartMgdl) else targetMgdl
 
         /**
          * ...but the entry burst must still have had something to blunt. A mode that fired with
@@ -279,9 +299,11 @@ class UamEntryFractionLearner @Inject constructor(
         secondWave: Boolean = false,    // more food went in during this episode — see
         // SecondWaveDetector. Nothing after that says anything about how the ENTRY burst was
         // shaped, so the episode is dropped rather than scored.
-        newPodBoost: Boolean = false    // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
+        newPodBoost: Boolean = false,   // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
         // episode it touches is not judged at all, early lows included: the boost changed the dose,
         // and a low already ends the boost for that pod. A verdict still waiting is dropped.
+        riseStartMgdl: Double = 0.0     // where the rise that fired this mode began, 0.0 if unknown.
+        // Read when the episode opens; the spike is measured from it - see spikeBaseMgdl.
     ) {
         if (newPodBoost) pendingMode?.let { skipPending("new pod boost started") }
         if (isEntryMode(activeModeNow)) {
@@ -310,6 +332,7 @@ class UamEntryFractionLearner @Inject constructor(
                 earlyLowUnexplained = false
                 activePeakMins      = 0.0
                 episodeBoosted      = false
+                episodeRiseStartMgdl = riseStartMgdl
             }
             if (newPodBoost) episodeBoosted = true
             if (insulinPeakMins > 0.0) activePeakMins = insulinPeakMins
@@ -369,6 +392,7 @@ class UamEntryFractionLearner @Inject constructor(
                 pendingPeakOffsetMs = maxBgOffsetMs
                 pendingPeakMgdl     = maxBgInEntryWindow
                 pendingStartMs      = activeStartMsBeforeReset
+                pendingRiseStartMgdl = episodeRiseStartMgdl
                 pendingTailGrams   = 0.0
                 tailDeltas.clear()
                 pendingHandover    = false
@@ -415,12 +439,12 @@ class UamEntryFractionLearner @Inject constructor(
         run {
             val whenTxt         = if (handover) "handed over to P/F at" else "ended"
             val endedOnTarget   = bgMgdl <= targetMgdl + onTargetMarginMgdl()
-            val peakAboveTarget = pendingPeakMgdl - targetMgdl
+            val peakAboveBase   = pendingPeakMgdl - spikeBaseMgdl(targetMgdl, pendingRiseStartMgdl)
             // Two ways to be too slow off the mark: a big rise measured from entry, or a peak
-            // that got well above target at all. The second exists because the first is blind
-            // to however much of the spike happened before the detector could fire.
+            // that got well above where the rise began. The second exists because the first is
+            // blind to however much of the spike happened before the detector could fire.
             val bigExcursion    = pendingExcursion >= excursionBarMgdl() ||
-                (peakAboveTarget >= peakBarMgdl() && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
+                (peakAboveBase >= peakBarMgdl() && pendingExcursion >= MIN_EXCURSION_FOR_PEAK_MGDL)
             val peakWasLate     = pendingPeakOffsetMs >= MIN_PEAK_OFFSET_FOR_STRENGTHEN_MS
             val peakMins        = pendingPeakOffsetMs / 60_000
             val excMmol         = BgText.bg(pendingExcursion)
@@ -433,7 +457,7 @@ class UamEntryFractionLearner @Inject constructor(
                     // episode, front-loading never ratchets up faster than an early low pulls it
                     // back down.
                     val overshoot = maxOf(pendingExcursion / excursionBarMgdl(),
-                                          peakAboveTarget / peakBarMgdl())
+                                          peakAboveBase / peakBarMgdl())
                     val step = (strengthenStep() * overshoot).coerceIn(strengthenStep(), maxStrengthenStep())
                     if (railedHigh(p)) {
                         // Nowhere left to go: the first SMBs already carry the whole computed
@@ -563,7 +587,7 @@ class UamEntryFractionLearner @Inject constructor(
     fun reset() {
         states.clear()
         activeMode = null; activeStartMs = 0L; earlyLow = false; earlyLowUnexplained = false
-        bgAtEntry = 0.0; maxBgInEntryWindow = 0.0; maxBgOffsetMs = 0L
+        bgAtEntry = 0.0; maxBgInEntryWindow = 0.0; maxBgOffsetMs = 0L; episodeRiseStartMgdl = 0.0; pendingRiseStartMgdl = 0.0
         pendingMode = null; pendingPeakMgdl = 0.0; pendingStartMs = 0L; tailDeltas.clear()
         activePeakMins = 0.0; pendingVerdictFromMs = 0L; pendingHandover = false
         magnitudeHandoff = null

@@ -1541,6 +1541,9 @@ open class SmartInsulinPlugin @Inject constructor(
         }
         val secondWaveNow = secondWaveDetector.detected
 
+        // Where the rise that fired a UAM mode began, so both spike checks measure from there
+        // and not only from target. 0.0 for a mode the user started, or P/F.
+        val riseStartMgdl = uamController.riseStartMgdlFor(mealOverrideManager.modeStartMs)
         modeIsfLearner.onCycle(
             activeModeNow  = mealOverrideManager.activeMealMode,
             modeStartMs    = mealOverrideManager.modeStartMs,
@@ -1571,7 +1574,8 @@ open class SmartInsulinPlugin @Inject constructor(
             watchMs           = postModeWatchMs(),
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour),
             // A meal the new pod boost really added insulin to is not judged at all, lows included.
-            newPodBoost       = podBoostDosedLastCycle
+            newPodBoost       = podBoostDosedLastCycle,
+            riseStartMgdl     = riseStartMgdl
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------
@@ -1596,7 +1600,8 @@ open class SmartInsulinPlugin @Inject constructor(
             insulinPeakMins   = mealOverrideManager.activeMealMode
                 ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
             secondWave        = secondWaveNow || carbEpisodeActive,
-            newPodBoost       = podBoostDosedLastCycle
+            newPodBoost       = podBoostDosedLastCycle,
+            riseStartMgdl     = riseStartMgdl
         )
 
         // Shape evidence with nowhere left to go: the entry burst already carries the whole

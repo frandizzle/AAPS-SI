@@ -119,7 +119,7 @@ When a meal mode ends, it is judged on what happened **during the mode**:
 
 | What happened | Result |
 |---------------|--------|
-| A spike held over target for 30 min (see the bar below) | Meal ISF **stronger** |
+| A spike held high for 30 min (see the bar below) | Meal ISF **stronger** |
 | BG still about 1 mmol or more above target when the mode ended | **Stronger** |
 | BG ended near target | No change (but it counts as a meal) |
 | A low during the mode | **Weaker** |
@@ -128,6 +128,8 @@ How high a spike may go before it counts:
 
 - **3 mmol over target** — a Smart Meal **with** a pre-bolus (the pre-bolus should keep it down)
 - **4 mmol over target** — a Smart Meal **without** a pre-bolus, and every UAM meal (an unannounced meal on fast insulin often rises 3 mmol)
+
+For a UAM meal, the spike is measured from **where the rise began** when that was above target, not from target. BG that was already high before you ate is not part of the meal's spike. For example, sitting at 8.0 and eating, BG must reach 12.0 before the spike counts, not 9.5.
 
 Then, for 75 minutes after the mode ends:
 
@@ -208,7 +210,7 @@ After a low, SmartInsulin runs a recovery window (20–90 min, default 60):
 
 ### Pattern safety
 
-* **Rollercoaster detection:** BG crossing your target 2+ times in 90 minutes caps that hour's aggressiveness, so corrections get gentler until things settle.
+* **Rollercoaster detection:** 2 or more swings in 90 minutes between the low guard and about 1 mmol over target lower that hour's aggressiveness, so corrections get gentler until things settle. A rollercoaster that **ends in a low** also gets the full low penalty on top: that hour's basal and ISF are made weaker, and the hours whose insulin caused the low are charged too.
 * **Soft low approach:** BG dropping toward the low guard with insulin on board cuts aggressiveness to soften the landing.
 
 ---
@@ -237,6 +239,8 @@ DURA makes ISF **stronger when BG gets stuck high** after a meal — a plateau t
 
 After a meal mode ends, learning pauses for a set time (default 90 min) so a slow fat/protein tail is not learned as "basal too low".
 
+The pause is only for learning. UAM still uses its normal thresholds during it, so a new meal (for example dinner after an earlier meal mode) is detected just as quickly.
+
 ---
 
 ## UAM Auto-Detection (unannounced meals)
@@ -249,14 +253,13 @@ A meal is detected after a few rising readings in a row (default 3), when:
 
 | Check | Default | Meaning |
 |-------|---------|---------|
-| BG above trigger | 5.5 mmol / 99 mg/dL | Not near target |
-| Each reading rising | 0.15 mmol / 2.7 mg/dL | BG is going up |
-| 15-min trend rising | 0.11 mmol / 2.0 mg/dL | The trend agrees |
-| Rise insulin can't explain | 0.11 mmol / 2.0 mg/dL | It's food, not a basal wobble |
+| BG above trigger | 6.0 mmol / 108 mg/dL | Not near target |
+| Each reading rising | 0.2 mmol / 3.6 mg/dL | BG is going up |
+| 15-min trend rising | 3/4 of the reading rise | The trend agrees |
 
 - **Burst trigger:** a fast rise from the recent low point (default 1.0 mmol / 18 mg/dL) starts UAM straight away.
 - **Wobble tolerance:** one weak reading in the middle doesn't break the streak if the trend still holds.
-- After a meal, thresholds are raised about 1.5× for a while, so a fat/protein tail is not seen as a new meal.
+- While **Protein/Fat mode** is running, each reading must rise about 1.5× as much before a meal mode takes over, so P/F's own slow movement is not seen as a new meal. The burst trigger is not raised.
 
 ### UAM windows
 
@@ -270,7 +273,13 @@ A meal is detected after a few rising readings in a row (default 3), when:
 
 ### UAM entry SMBs
 
-The first few SMBs after UAM starts are given at a fraction (default 0.5, range 0.1–1.0, can be set per window). This softens the start while the insulin catches up. The **UAM entry learner** tunes this fraction from how each meal went.
+The first few SMBs after UAM starts are given at a fraction (default 0.5, range 0.1–1.0, can be set per window). This softens the start while the insulin catches up. The **UAM entry learner** tunes this fraction from how each meal went:
+
+- **Raised** when the spike was too big but BG still came back near target, and the peak came at least 40 min after UAM started. Too big means a rise of 2.5 mmol after UAM started, or a peak 4 mmol above **where the rise began** (never measured from below target).
+- **Not changed** when the peak came sooner than 40 min (fast carbs beat any first SMB), or BG is still coming down by itself.
+- **Lowered** after a low soon after UAM started.
+
+Where the rise began is the reading just before the rising readings that started UAM, or the low point a burst was measured from. If UAM fired at 8.0 because you were already at 8.0 before eating, the spike is counted from 8.0. If you were at target and UAM only caught the rise at 8.0, it is counted from target.
 
 ### Protein/Fat (P/F) mode
 

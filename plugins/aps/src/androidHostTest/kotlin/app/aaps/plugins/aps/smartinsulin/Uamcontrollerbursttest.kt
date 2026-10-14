@@ -8,6 +8,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.*
@@ -404,5 +405,53 @@ class UamControllerBurstTest {
         cycle(bgMmol = 6.5, tMs = 1_000L, delta = 0.3, avgDelta = 0.3, low = true)
         val summary = sut.debugSummary()
         assert(summary.contains("low lockout")) { summary }
+    }
+
+    // ── Where the rise began ──────────────────────────────────────────────────
+    // The spike checks in the learners measure from this, so it must be the reading the
+    // detector started counting from. Values are mg/dL: 6.0 mmol is 108.
+
+    private fun riseStartNow() = sut.riseStartMgdlFor(System.currentTimeMillis())
+
+    @Test
+    fun `a sustained-rise fire records the reading before the first rise`() {
+        cycle(bgMmol = 6.0, tMs = 1_000L)                                      // flat
+        cycle(bgMmol = 6.3, tMs = 301_000L, delta = 0.3, avgDelta = 0.3)       // 1st rise
+        cycle(bgMmol = 6.6, tMs = 601_000L, delta = 0.3, avgDelta = 0.3)
+        cycle(bgMmol = 6.9, tMs = 901_000L, delta = 0.3, avgDelta = 0.3)       // 3rd -> fires
+        verifyFired()
+        assertEquals(108.0, riseStartNow(), 1e-6)
+    }
+
+    @Test
+    fun `a burst fire records the low point the burst measured from`() {
+        cycle(bgMmol = 6.0, tMs = 1_000L)
+        cycle(bgMmol = 6.5, tMs = 301_000L)
+        cycle(bgMmol = 7.1, tMs = 601_000L)                                    // +1.1 -> fires
+        verifyFired()
+        assertEquals(108.0, riseStartNow(), 1e-6)
+    }
+
+    @Test
+    fun `a wobble inside the count keeps the start of the whole rise`() {
+        cycle(bgMmol = 6.0,  tMs = 1_000L)                                     // flat
+        cycle(bgMmol = 6.3,  tMs = 301_000L,   delta = 0.3,  avgDelta = 0.3)   // rise begins
+        cycle(bgMmol = 6.35, tMs = 601_000L,   delta = 0.05, avgDelta = 0.05)  // wobble: count restarts
+        cycle(bgMmol = 6.65, tMs = 901_000L,   delta = 0.3,  avgDelta = 0.3)
+        cycle(bgMmol = 6.95, tMs = 1_201_000L, delta = 0.3,  avgDelta = 0.3)
+        cycle(bgMmol = 7.25, tMs = 1_501_000L, delta = 0.3,  avgDelta = 0.3)   // 3rd -> fires
+        verifyFired()
+        // Not 6.35, the reading before the restarted count.
+        assertEquals(108.0, riseStartNow(), 1e-6)
+    }
+
+    @Test
+    fun `a mode that did not start with the fire gets no rise start`() {
+        assertEquals(0.0, riseStartNow(), 1e-6)                                // nothing fired yet
+        cycle(bgMmol = 6.0, tMs = 1_000L)
+        cycle(bgMmol = 7.1, tMs = 301_000L)                                    // burst fires
+        verifyFired()
+        // A mode started an hour later (a meal the user started) is not this rise.
+        assertEquals(0.0, sut.riseStartMgdlFor(System.currentTimeMillis() + 60 * 60_000L), 1e-6)
     }
 }
