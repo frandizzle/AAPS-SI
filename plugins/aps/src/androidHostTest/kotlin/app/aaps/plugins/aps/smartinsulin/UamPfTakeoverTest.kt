@@ -70,7 +70,8 @@ class UamPfTakeoverTest {
         tMs: Long,
         mode: MealMode = MealMode.UAM_PROTEIN_FAT,
         delta: Double = 0.0,
-        avgDelta: Double = 0.0
+        avgDelta: Double = 0.0,
+        postMealLockout: Boolean = false
     ) = sut.onLoopCycle(
         currentMealMode   = mode,
         currentBgMmol     = bgMmol,
@@ -82,7 +83,7 @@ class UamPfTakeoverTest {
         lastLowTimeMs     = 0L,
         highTempTarget    = false,
         cgmInWarmup       = false,
-        inPostMealLockout = false,
+        inPostMealLockout = postMealLockout,
         profileTargetMmol = 5.0,
         bgTimestampMs     = tMs
     )
@@ -149,6 +150,19 @@ class UamPfTakeoverTest {
         cycle(bgMmol = 7.25, tMs = 301_000L, delta = 0.25, avgDelta = 0.25)
         cycle(bgMmol = 7.5, tMs = 601_000L, delta = 0.25, avgDelta = 0.25)
         verifyNothingFired()
+    }
+
+    // ── Post-meal lockout uses the plain bar ──────────────────────────────────
+
+    @Test
+    fun `a sustained rise in the post-meal lockout fires at the plain delta threshold`() {
+        // 0.28 mmol per reading: over the plain 0.2 bar, under the 0.3 bar a running P/F needs.
+        // The lockout used to hold this to 0.3 too, which made a slow-starting dinner fire late.
+        // 0.28 is also over P/F's flat band (up to 0.25), so P/F cannot fire here instead.
+        cycle(bgMmol = 7.0, tMs = 1_000L,   mode = MealMode.FASTING, delta = 0.28, avgDelta = 0.28, postMealLockout = true)
+        cycle(bgMmol = 7.28, tMs = 301_000L, mode = MealMode.FASTING, delta = 0.28, avgDelta = 0.28, postMealLockout = true)
+        cycle(bgMmol = 7.56, tMs = 601_000L, mode = MealMode.FASTING, delta = 0.28, avgDelta = 0.28, postMealLockout = true)
+        verifyTookOver()
     }
 
     // ── Scope ─────────────────────────────────────────────────────────────────

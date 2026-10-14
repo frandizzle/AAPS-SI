@@ -238,9 +238,8 @@ class UamController @Inject constructor(
             resetStreak(); stuckHighReadings = 0; return
         }
 
-        // Escalating out of P/F is judged on the same terms as a rise inside a post-meal lockout:
-        // P/F insulin is already working, so only a rise clearly bigger than P/F's own residual
-        // movement should promote the episode to a full meal mode.
+        // The dirty window (post-meal lockout or a running P/F) is still tagged on the status line
+        // and in the reject log. Only a running P/F raises the sustained-rise bar, see below.
         val dirtyWindow = inPostMealLockout || pfTakeover
 
         if (cgmInWarmup && sp.getBoolean(BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.key, BooleanKey.ApsSmartInsulinUamCgmWarmupBlock.defaultValue)) {
@@ -359,7 +358,12 @@ class UamController @Inject constructor(
 
         val riseMinDeltaBase   = riseMinDeltaMmol()
         val riseReadingsNeeded = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-        val dirtyMultiplier    = if (dirtyWindow) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
+        // The 1.5x bar is for promoting a running P/F only: a rise of the plain bar sits inside the
+        // flat band P/F is detected in, so P/F's own movement could promote itself to a meal.
+        // It is not used in the post-meal lockout any more. There it only made a slow-starting
+        // meal (a dinner after an earlier meal mode) fire later. A meal tail is P/F's job, and
+        // UAM there is still held by the meal window, the UAM start BG and the low lockouts.
+        val dirtyMultiplier    = if (pfTakeover) DIRTY_WINDOW_DELTA_MULTIPLIER else 1.0
         val riseMinDelta       = riseMinDeltaBase * dirtyMultiplier
         val shortAvgThreshold  = riseMinDelta * SHORT_AVG_DELTA_FRACTION
         // There is no "more than insulin explains" test any more (rise minus the expected insulin
@@ -444,7 +448,7 @@ class UamController @Inject constructor(
         return buildString {
             appendLine("  UAM thresholds:")
             appendLine("    normal: Δ≥${fmtThresh(riseMinDeltaBase)}$u  readings=$riseNeeded")
-            appendLine("    dirty : Δ≥${fmtThresh(riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER)}$u")
+            appendLine("    over P/F: Δ≥${fmtThresh(riseMinDeltaBase * DIRTY_WINDOW_DELTA_MULTIPLIER)}$u")
             lastReject?.let { appendLine("  Last UAM reject${if (it.wasDirtyWindow) " [dirty]" else ""}: ${it.reason}") }
             if (sp.getBoolean(BooleanKey.ApsSmartInsulinUamProteinFatEnabled.key, BooleanKey.ApsSmartInsulinUamProteinFatEnabled.defaultValue)) {
                 val stuckNeeded = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatStuckReadings.key, IntKey.ApsSmartInsulinUamProteinFatStuckReadings.defaultValue)
@@ -478,7 +482,8 @@ class UamController @Inject constructor(
             }
             consecutiveRiseReadings > 0 || bgAtStreakStart > 0.0 -> {
                 val needed = sp.getInt(IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.key, IntKey.ApsSmartInsulinUamRiseConsecutiveReadings.defaultValue)
-                val threshNote = if (dirtyWindow) " δ≥${fmtThresh(riseMinDeltaMmol() * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
+                // The raised bar applies only over a running P/F, so only then is it shown.
+                val threshNote = if (currentlyPfTakeoverArmed) " δ≥${fmtThresh(riseMinDeltaMmol() * DIRTY_WINDOW_DELTA_MULTIPLIER)}" else ""
                 val burstThreshold = mgdlPrefMmol(UnitDoubleKey.ApsSmartInsulinUamBurstThreshold)
                 // Show burst breakdown once there's a prior accumulated rise (2+ readings)
                 val burstNote = if (burstThreshold > 0.0) {
