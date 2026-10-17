@@ -580,7 +580,7 @@ class OmnipodDashPumpPlugin(
                     completionBeeps = false
                 ).filter { podEvent -> podEvent.isCommandSent() }
                     .ignoreElements(),
-                post = waitForBolusDeliveryToComplete(requestedInsulinAmount, bolusType)
+                post = waitForBolusDeliveryToComplete(requestedInsulinAmount)
                     .doOnSuccess { delivered ->
                         aapsLogger.info(LTag.PUMP, "Basal correction delivered: $delivered U")
                     }
@@ -730,7 +730,7 @@ class OmnipodDashPumpPlugin(
                     bolusBeeps
                 ).filter { podEvent -> podEvent.isCommandSent() }
                     .concatMapCompletable { rxCompletable(Dispatchers.IO) { pumpSyncBolusStart(requestedBolusAmount, detailedBolusInfo.bolusType) } },
-                post = waitForBolusDeliveryToComplete(requestedBolusAmount, bolusType)
+                post = waitForBolusDeliveryToComplete(requestedBolusAmount)
                     .map {
                         deliveredBolusAmount = it
                         aapsLogger.info(LTag.PUMP, "deliverTreatment: deliveredBolusAmount=$deliveredBolusAmount")
@@ -784,8 +784,7 @@ class OmnipodDashPumpPlugin(
     }
 
     private fun waitForBolusDeliveryToComplete(
-        requestedBolusAmount: Double,
-        bolusType: BolusType
+        requestedBolusAmount: Double
     ): Single<Double> = Single.defer {
 
         if (bolusCanceled && podStateManager.activeCommand != null) {
@@ -813,21 +812,20 @@ class OmnipodDashPumpPlugin(
         while (waited < estimatedDeliveryTimeSeconds && !bolusCanceled) {
             waited += 1
             Thread.sleep(1000)
-            if (bolusType == BolusType.SMB) {
-                continue
-            }
-            bolusProgressData.updateProgress(
-                delivered = PumpInsulin(
-                    Round.roundTo(
-                        (waited.toFloat() / estimatedDeliveryTimeSeconds) * requestedBolusAmount,
-                        PodConstants.POD_PULSE_BOLUS_UNITS
-                    )
-                )
+            // Only an estimate from the time, for display. The amount that is recorded comes from the pod.
+            // It stops one pulse short of the full amount: the dialog hides Stop at 100 %, and the pod has
+            // not confirmed the end of the bolus yet.
+            val estimated = Round.roundTo(
+                (waited.toFloat() / estimatedDeliveryTimeSeconds) * requestedBolusAmount,
+                PodConstants.POD_PULSE_BOLUS_UNITS
             )
+            val maxShown = (requestedBolusAmount - PodConstants.POD_PULSE_BOLUS_UNITS).coerceAtLeast(0.0)
+            bolusProgressData.updateProgress(delivered = PumpInsulin(estimated.coerceAtMost(maxShown)))
         }
 
         (1..BOLUS_RETRIES).forEach { tryNumber ->
-            updateBolusProgressDialog(rh.gs(R.string.checking_delivery_status), 100)
+            // 99, not 100: the bolus may still run, and the dialog shows Stop only below 100 %.
+            updateBolusProgressDialog(rh.gs(R.string.checking_delivery_status), 99)
 
             val cmd = if (bolusCanceled)
                 cancelBolus()
