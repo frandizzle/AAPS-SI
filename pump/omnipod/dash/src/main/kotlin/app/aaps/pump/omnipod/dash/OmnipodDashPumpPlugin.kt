@@ -783,7 +783,8 @@ class OmnipodDashPumpPlugin(
         bolusProgressData.updateProgress(percent, TextRef.Literal(msg))
     }
 
-    private fun waitForBolusDeliveryToComplete(
+    @VisibleForTesting
+    internal fun waitForBolusDeliveryToComplete(
         requestedBolusAmount: Double
     ): Single<Double> = Single.defer {
 
