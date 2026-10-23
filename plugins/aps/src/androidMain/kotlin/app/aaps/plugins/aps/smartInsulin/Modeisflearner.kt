@@ -167,6 +167,14 @@ class ModeIsfLearner @Inject constructor(
         private const val STRENGTHEN_STEP         = 0.975         // -2.5% per strengthen (lower ISF = more insulin)
         private const val WEAKEN_STEP             = 1.05          // +5% per weaken — asymmetric, safety-biased
         /**
+         * Weaken step for a clear low in a UAM mode: BG went under the low guard, and nothing else
+         * shares the blame (no exercise, no DURA push, no late spike, no food in the tail). +5% was
+         * too small here: UAM lows kept coming back meal after meal while the ISF crept up in
+         * steps of a few hundredths. The smaller cases keep the [WEAKEN_STEP] base, because they
+         * are weaker evidence. A low after the mode ended is still charged by its insulin share.
+         */
+        private const val UAM_CLEAR_LOW_WEAKEN_STEP = 1.10        // +10%
+        /**
          * Fraction of the normal weaken step applied when the low came alongside a BG drop
          * insulin can't account for (see [UnexplainedDropTracker]) — typically exercise.
          *
@@ -341,7 +349,7 @@ class ModeIsfLearner @Inject constructor(
                 activeScope?.takeIf { !episodeBoosted }?.let { superseded ->
                     when {
                         episodeLow        ->
-                            applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, duraDrove = duraDrove(episodeMaxDura)),
+                            applyOutcome(superseded, weakenStep(superseded, episodeLowWasUnexplained, duraDrove = duraDrove(episodeMaxDura)),
                                          weakenText("BG went low during ${superseded.label}, before ${activeModeNow.label} took over", superseded.label, episodeMaxDura,
                                                     listOfNotNull(if (episodeLowWasUnexplained) "BG fell faster than insulin explains (exercise?)" else null)),
                                          activeStartMs)
@@ -353,7 +361,7 @@ class ModeIsfLearner @Inject constructor(
                                              "${superseded.label} peaked ${BgText.bg(episodePeakMgdl)} then settled just under target with entry front-loading maxed — strengthened",
                                              activeStartMs)
                             else
-                                applyOutcome(superseded, weakenStep(episodeLowWasUnexplained, undershoot = true, duraDrove = duraDrove(episodeMaxDura)),
+                                applyOutcome(superseded, weakenStep(superseded, episodeLowWasUnexplained, undershoot = true, duraDrove = duraDrove(episodeMaxDura)),
                                              weakenText("BG dropped near the low guard during ${superseded.label}, before ${activeModeNow.label} took over", superseded.label, episodeMaxDura,
                                                         listOfNotNull("near the low guard, not under it", if (episodeLowWasUnexplained) "BG fell faster than insulin explains (exercise?)" else null)),
                                              activeStartMs)
@@ -468,7 +476,7 @@ class ModeIsfLearner @Inject constructor(
                 // total really was too much, whenever it arrived, and strengthening from there
                 // would deepen the next one. It only softens the step: half the episode's fault
                 // was timing, and the full step would price it all as dose.
-                applyOutcome(ended, weakenStep(unexplained, lateSpike = lateSpike, duraDrove = duraDrove(maxDura)),
+                applyOutcome(ended, weakenStep(ended, unexplained, lateSpike = lateSpike, duraDrove = duraDrove(maxDura)),
                              weakenText("BG went low during ${ended.label}", ended.label, maxDura, listOfNotNull(
                                  if (unexplained) "BG fell faster than insulin explains (exercise?)" else null,
                                  if (lateSpike) "it sat ${episodeSpikeMs / 60_000}min at ${peakMmol} first, so partly late insulin, not only too much" else null)),
@@ -488,13 +496,13 @@ class ModeIsfLearner @Inject constructor(
                 // low at all; calling that over-dosing and weakening is what walks a mode steadily
                 // weaker meal after meal while the spikes get worse. Nothing here is unsafe to
                 // strengthen: BG stayed above the guard the whole way, and any episode that does
-                // reach it still weakens, at twice this step, in the branch above.
+                // reach it still weakens, in the branch above.
                 if (lateSpike && !unexplained) {
                     applyOutcome(ended, strengthenStep(),
                                  "${ended.label} sat ${episodeSpikeMs / 60_000}min at ${peakMmol} then settled just under target with entry front-loading maxed — late, not too much — strengthened",
                                  endedStartMs)
                 } else {
-                    applyOutcome(ended, weakenStep(unexplained, undershoot = true, duraDrove = duraDrove(maxDura)),
+                    applyOutcome(ended, weakenStep(ended, unexplained, undershoot = true, duraDrove = duraDrove(maxDura)),
                                  weakenText("BG dropped near the low guard during ${ended.label}", ended.label, maxDura,
                                             listOfNotNull("near the low guard, not under it", if (unexplained) "BG fell faster than insulin explains (exercise?)" else null)),
                                  endedStartMs)
@@ -547,7 +555,7 @@ class ModeIsfLearner @Inject constructor(
                     if (exerciseSuspected) "BG fell faster than insulin explains (exercise?)" else null,
                     if (watchReduced) "more food in the tail" else null,
                     if (modeInsulinShare < 1.0) ModeInsulinShare.describe(modeInsulinShare, "this meal") else null)
-                applyOutcome(w, undo * weakenStep(exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura), share = modeInsulinShare),
+                applyOutcome(w, undo * weakenStep(w, exerciseSuspected, undershoot = soft, voided = watchReduced, duraDrove = duraDrove(watchMaxDura), share = modeInsulinShare),
                              weakenText(if (soft) "BG dropped near the low guard after ${w.label} ended" else "BG went low after ${w.label} ended",
                                         w.label, watchMaxDura, smaller) +
                                  (if (watchWindowStep != 1.0) ". The stronger ISF from the meal end is undone too" else ""),
@@ -715,9 +723,11 @@ class ModeIsfLearner @Inject constructor(
     private fun spikeSustainedMs() = (SPIKE_SUSTAINED_MS * bias().barScale).toLong()
     private fun strengthenMarginMgdl() = STRENGTHEN_MARGIN_MGDL * bias().barScale
 
-    private fun weakenStep(unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
+    private fun weakenStep(scope: Scope, unexplained: Boolean, undershoot: Boolean = false, voided: Boolean = false,
                            lateSpike: Boolean = false, duraDrove: Boolean = false,
                            share: Double = 1.0): Double {
+        val clearLow = !unexplained && !undershoot && !voided && !lateSpike && !duraDrove
+        val step = if (clearLow && scope.mode.isUam) UAM_CLEAR_LOW_WEAKEN_STEP else WEAKEN_STEP
         var fraction = bias().safetyScale
         if (unexplained) fraction *= UNEXPLAINED_STEP_FRACTION
         if (undershoot)  fraction *= UNDERSHOOT_STEP_FRACTION
@@ -725,7 +735,7 @@ class ModeIsfLearner @Inject constructor(
         if (lateSpike)   fraction *= LATE_SPIKE_STEP_FRACTION
         if (duraDrove)   fraction *= DURA_ATTRIBUTION_STEP_FRACTION
         fraction *= share.coerceIn(0.0, 1.0)
-        return 1.0 + (WEAKEN_STEP - 1.0) * fraction
+        return 1.0 + (step - 1.0) * fraction
     }
 
     private fun openWatch(mode: Scope, nowMs: Long, episodeStartMs: Long, maxDura: Double, watchMs: Long = WATCH_MS,

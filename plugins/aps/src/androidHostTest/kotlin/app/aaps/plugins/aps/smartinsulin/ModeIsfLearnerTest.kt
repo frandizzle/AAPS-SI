@@ -11,7 +11,8 @@ import org.junit.jupiter.api.Test
 /**
  * Tests for [ModeIsfLearner] — episode-outcome per-mode ISF learning.
  * Steps: strengthen ×0.975 (above target at eval, or DURA intervened),
- * weaken ×1.05 (low during episode or tail), skip on contamination. Rails 0.6–1.4.
+ * weaken ×1.05 (low during episode or tail; ×1.10 for a clear low in a UAM mode), skip on
+ * contamination. Rails 0.6–1.4.
  * Settling tail is 75 min → 15 five-minute cycles before the evaluation fires.
  */
 class ModeIsfLearnerTest {
@@ -37,14 +38,15 @@ class ModeIsfLearnerTest {
         baseSig: Double = 0.0, exercise: Boolean = false,
         undershoot: Boolean = false, railed: Boolean = false,
         pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true,
-        preBolused: Boolean = false, boost: Boolean = false, riseStart: Double = 0.0
+        preBolused: Boolean = false, boost: Boolean = false, riseStart: Double = 0.0,
+        share: Double = 1.0
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
         pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused, newPodBoost = boost,
-        riseStartMgdl = riseStart
+        riseStartMgdl = riseStart, modeInsulinShare = share
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -149,7 +151,7 @@ class ModeIsfLearnerTest {
         val lateMs = BASE_MS + 80 * 60_000L
         cycle(MealMode.UAM_DINNER, BASE_MS, lateMs, bg = 68.0, low = true)
         cycle(null, 0L, lateMs + CYCLE_MS, bg = 80.0)
-        assertEquals(1.05, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+        assertEquals(1.10, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
     }
 
     @Test
@@ -368,7 +370,7 @@ class ModeIsfLearnerTest {
     @Test
     fun `a hard low with no spike still takes the full weaken`() {
         spikeThenLand(peak = 110.0, railed = true, low = true)
-        assertEquals(1.05, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+        assertEquals(1.10, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
     }
 
     @Test
@@ -828,5 +830,152 @@ class ModeIsfLearnerTest {
         cycle(MealMode.LOW_CARB, t, t + CYCLE_MS, bg = 80.0, low = true)
         cycle(null, 0L, t + 2 * CYCLE_MS, bg = 90.0)
         assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
+    }
+
+    // ── A clear low in a UAM mode weakens by 10% ─────────────────────────────
+
+    /** UAM episode with a low 80 min in, past the entry window, so this learner owns it. */
+    private fun uamLowAfterEntryWindow(
+        mode: MealMode = MealMode.UAM_DINNER, startMs: Long = BASE_MS,
+        exercise: Boolean = false, dura: Double = 1.0
+    ) {
+        cycle(mode, startMs, startMs, bg = 150.0, dura = dura)
+        val lateMs = startMs + 80 * 60_000L
+        cycle(mode, startMs, lateMs, bg = 68.0, low = true, exercise = exercise, dura = dura)
+        cycle(null, 0L, lateMs + CYCLE_MS, bg = 80.0)
+    }
+
+    /** UAM episode that ends without trouble, then BG goes low in the tail after it. */
+    private fun uamLowAfterModeEnded(mode: MealMode = MealMode.UAM_DINNER, share: Double = 1.0, undershoot: Boolean = false) {
+        cycle(mode, BASE_MS, BASE_MS, bg = 120.0)
+        cycle(null, 0L, BASE_MS + CYCLE_MS, bg = 95.0)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 65.0, low = !undershoot, undershoot = undershoot, share = share)
+    }
+
+    @Test
+    fun `a clear UAM low weakens the ISF by 10 percent`() {
+        uamLowAfterEntryWindow()
+        assertEquals(1.10, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `every UAM mode gets the 10 percent step`() {
+        MealMode.entries.filter { it.isUam }.forEachIndexed { i, mode ->
+            // Hours apart, so each episode is its own.
+            uamLowAfterEntryWindow(mode, startMs = BASE_MS + i * 6 * 60 * 60_000L)
+            assertEquals(1.10, learner.multiplier(mode), 1e-9, mode.name)
+        }
+    }
+
+    @Test
+    fun `a clear low in a manual meal mode keeps the 5 percent step`() {
+        MealMode.entries.filter { !it.isUam }.forEachIndexed { i, mode ->
+            val start = BASE_MS + i * 6 * 60 * 60_000L
+            cycle(mode, start, start, bg = 110.0)
+            cycle(mode, start, start + CYCLE_MS, bg = 80.0, low = true)
+            cycle(null, 0L, start + 2 * CYCLE_MS, bg = 90.0)
+            assertEquals(1.05, learner.multiplier(mode), 1e-9, mode.name)
+        }
+    }
+
+    @Test
+    fun `an ISF of 1_0 mmol goes to 1_1 after a clear UAM low`() {
+        // The multiplier is applied to the mode's ISF, so 1.0 mmol per unit becomes 1.1.
+        uamLowAfterEntryWindow()
+        assertEquals(1.1, 1.0 * learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a clear UAM low after the mode ended also weakens by 10 percent`() {
+        uamLowAfterModeEnded()
+        assertEquals(1.10, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a UAM low after the mode ended is charged by the mode's share of the insulin`() {
+        // Half the insulin behind the low was this mode's: half of the 10% step.
+        uamLowAfterModeEnded(share = 0.5)
+        assertEquals(1.05, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a UAM low with too small an insulin share still changes nothing`() {
+        uamLowAfterModeEnded(share = 0.2)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `an early UAM low still goes to the entry learner, not here`() {
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS, bg = 130.0)
+        cycle(MealMode.UAM_DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 70.0, low = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 85.0)
+        assertEquals(1.0, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    // ── The smaller UAM steps stay as they were ──────────────────────────────
+
+    @Test
+    fun `a UAM low with an unexplained drop keeps the small step`() {
+        // 40% of the 5% base, as before: 1.02.
+        uamLowAfterEntryWindow(exercise = true)
+        assertEquals(1.02, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a UAM low with DURA pushing keeps the small step`() {
+        // 35% of the 5% base, as before: 1.0175.
+        uamLowAfterEntryWindow(dura = 1.25)
+        assertEquals(1.0175, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a UAM low with DURA barely engaged takes the 10 percent step`() {
+        // Below the intervention bar DURA did not drive the low.
+        uamLowAfterEntryWindow(dura = 1.10)
+        assertEquals(1.10, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a UAM near-low after the mode ended keeps the small step`() {
+        // Half of the 5% base, as before: 1.025.
+        uamLowAfterModeEnded(undershoot = true)
+        assertEquals(1.025, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    // ── Learning setting and limits ──────────────────────────────────────────
+
+    @Test
+    fun `Reactive and Neutral give the same 10 percent step`() {
+        listOf(LearningBias.NEUTRAL, LearningBias.REACTIVE, LearningBias.VERY_REACTIVE).forEach { b ->
+            sp = FakePreferences()
+            sp.edit { putInt("si_learning_bias", b.ordinal) }
+            learner = ModeIsfLearner(sp, FakeAAPSLogger(collect = false))
+            uamLowAfterEntryWindow()
+            assertEquals(1.10, learner.multiplier(MealMode.UAM_DINNER), 1e-9, b.label)
+        }
+    }
+
+    @Test
+    fun `Conservative makes the UAM low step bigger still`() {
+        sp.edit { putInt("si_learning_bias", LearningBias.CONSERVATIVE.ordinal) }
+        learner = ModeIsfLearner(sp, FakeAAPSLogger(collect = false))
+        uamLowAfterEntryWindow()
+        // 10% × the conservative safety scale of 1.3.
+        assertEquals(1.13, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `repeated clear UAM lows stop at the weakest limit`() {
+        val sixHours = 6 * 60 * 60_000L
+        repeat(3) { uamLowAfterEntryWindow(startMs = BASE_MS + it * sixHours) }
+        assertEquals(1.1 * 1.1 * 1.1, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+        uamLowAfterEntryWindow(startMs = BASE_MS + 3 * sixHours)
+        assertEquals(1.4, learner.multiplier(MealMode.UAM_DINNER), 1e-9)
+    }
+
+    @Test
+    fun `the outcome line shows the weaker ISF after a clear UAM low`() {
+        uamLowAfterEntryWindow()
+        assertTrue(learner.lastOutcome.contains("BG went low during"), learner.lastOutcome)
     }
 }
