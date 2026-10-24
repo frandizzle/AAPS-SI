@@ -23,7 +23,10 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import app.aaps.core.data.model.GlucoseUnit
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.times
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
@@ -62,17 +65,16 @@ class LearnedProfileApplierTest {
         whenever(running.percentage).thenReturn(100)
         whenever(running.timeshift).thenReturn(0L)
         whenever(running.duration).thenReturn(0L)
+        whenever(running.glucoseUnit).thenReturn(GlucoseUnit.MMOL)
+        whenever(running.icBlocks).thenReturn(listOf(Block(day, 10.0)))
+        whenever(running.isfBlocks).thenReturn(listOf(Block(day, 2.0)))
+        whenever(running.basalBlocks).thenReturn(listOf(Block(day, 1.1)))
+        whenever(running.targetBlocks).thenReturn(listOf(TargetBlock(day, 5.5, 5.5)))
         whenever(profileFunction.getRequestedProfile()).thenReturn(running)
         whenever(profileFunction.getRunningOrRequestedICfg()).thenReturn(mock<ICfg>())
         whenever(profileRepository.profile).thenReturn(MutableStateFlow(store))
         val base: PureProfile = mock()
         whenever(store.getSpecificProfile("Main")).thenReturn(base)
-        whenever(profileRepository.copyFrom(any(), any())).thenAnswer { inv ->
-            SingleProfile(
-                name = inv.getArgument(1), mgdl = false, ic = listOf(Block(day, 10.0)), isf = listOf(Block(day, 2.0)),
-                basal = listOf(Block(day, 1.1)), target = listOf(TargetBlock(day, 5.5, 5.5))
-            )
-        }
         whenever(profileRepository.validateStructured(any())).thenReturn(emptyList())
         whenever(profileRepository.validatePumpCompatibility(any(), eq(100))).thenReturn(emptyList())
         whenever(profileRepository.add(any())).thenReturn(Result.success(Unit))
@@ -102,6 +104,31 @@ class LearnedProfileApplierTest {
         assertEquals("Main", applier.previousName)
         // The pump has not taken it yet.
         assertTrue(applier.switchPending(mainIsf, mainBasal))
+    }
+
+    @Test
+    fun `the new profile keeps the IC and targets of the profile in force`() = runBlocking<Unit> {
+        applier.apply(plan(), mainIsf, mainBasal)
+        val saved = argumentCaptor<SingleProfile>()
+        verify(profileRepository).add(saved.capture())
+        assertEquals(listOf(Block(day, 10.0)), saved.firstValue.ic)
+        assertEquals(listOf(TargetBlock(day, 5.5, 5.5)), saved.firstValue.target)
+        assertFalse(saved.firstValue.mgdl)
+        assertEquals(listOf(Block(day, 2.9)), saved.firstValue.isf)
+        assertEquals(listOf(Block(day, 0.6)), saved.firstValue.basal)
+    }
+
+    @Test
+    fun `a profile in force that is not in the local list is saved too, so undo can go back to it`() = runBlocking<Unit> {
+        // On the phone: the switch in force says "Main", but the local list has no "Main".
+        whenever(store.getSpecificProfile("Main")).thenReturn(null)
+        assertNull(applier.apply(plan(), mainIsf, mainBasal))
+        val saved = argumentCaptor<SingleProfile>()
+        verify(profileRepository, times(2)).add(saved.capture())
+        assertEquals("Main", saved.firstValue.name)
+        assertEquals(listOf(Block(day, 2.0)), saved.firstValue.isf)
+        assertTrue(saved.secondValue.name.startsWith("SI learned"))
+        assertEquals("Main", applier.previousName)
     }
 
     @Test

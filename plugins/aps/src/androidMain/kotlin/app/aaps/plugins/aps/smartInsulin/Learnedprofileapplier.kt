@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.ue.Action
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ue.ValueWithUnit
@@ -8,6 +9,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileRepository
+import app.aaps.core.interfaces.profile.SingleProfile
 import app.aaps.core.interfaces.sharedPreferences.SP
 import app.aaps.core.interfaces.utils.DateUtil
 import dev.zacsweers.metro.AppScope
@@ -87,12 +89,24 @@ class LearnedProfileApplier @Inject constructor(
     suspend fun apply(plan: LearnedProfilePlan.Plan, isfMgdl: DoubleArray, basal: DoubleArray): String? {
         refusal(isfMgdl, basal)?.let { return it }
         val running = profileFunction.getRequestedProfile() ?: return "No profile is active."
-        val base = profileRepository.profile.value?.getSpecificProfile(running.profileName)
-            ?: return "The profile \"${running.profileName}\" is not in your local profiles, so it cannot be copied."
-        val name = "SI learned " + SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(dateUtil.now()))
-        // The copy keeps the unit of the profile it was made from, so ISF is written in that unit.
-        val draft = profileRepository.copyFrom(base, name)
-        val single = draft.copy(isf = plan.isfBlocks(draft.mgdl), basal = plan.basalBlocks())
+        val store = profileRepository.profile.value ?: return "The local profiles could not be read."
+        // The profile switch in force carries its own IC, targets and unit, so the new profile is made
+        // from it, not from the local profile list. The switched-to profile may have been renamed or
+        // removed from that list since, or may have come from Nightscout.
+        val inForce = SingleProfile(
+            name = running.profileName, mgdl = running.glucoseUnit == GlucoseUnit.MGDL,
+            ic = running.icBlocks, isf = running.isfBlocks, basal = running.basalBlocks, target = running.targetBlocks
+        )
+        // Undo switches back by name, so the profile in force must be in the local list.
+        if (store.getSpecificProfile(running.profileName) == null) {
+            profileRepository.add(inForce).exceptionOrNull()?.let { return "Your profile \"${running.profileName}\" could not be saved for undo: ${it.message}" }
+            aapsLogger.debug(LTag.APS, "LearnedProfileApplier: saved the profile in force as ${running.profileName}, so undo can go back to it")
+        }
+        var name = "SI learned " + SimpleDateFormat("d MMM", Locale.getDefault()).format(Date(dateUtil.now()))
+        if (profileRepository.profile.value?.getSpecificProfile(name) != null)
+            name += " " + SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(dateUtil.now()))
+        // ISF is written in the unit of the profile in force.
+        val single = inForce.copy(name = name, isf = plan.isfBlocks(inForce.mgdl), basal = plan.basalBlocks())
         val errors = profileRepository.validateStructured(single) + profileRepository.validatePumpCompatibility(single)
         if (errors.isNotEmpty()) return "The learned profile is not valid: " + errors.joinToString("; ") { it.message }
         profileRepository.add(single).exceptionOrNull()?.let { return "The learned profile could not be saved: ${it.message}" }
