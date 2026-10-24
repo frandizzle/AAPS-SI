@@ -133,7 +133,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val duraStrengthLearner:     DuraStrengthLearner,
     private val phoneStepCounter:        PhoneStepCounter,
     private val ch:                      ConcentrationHelper,
-    private val learningJournal:         LearningJournal
+    private val learningJournal:         LearningJournal,
+    private val learnedProfileApplier:   LearnedProfileApplier
 ) : PluginBaseWithPreferences(
     PluginDescription()
         .mainType(PluginType.APS)
@@ -294,7 +295,8 @@ open class SmartInsulinPlugin @Inject constructor(
         private const val LEARNER_VALUE_W     = 11
         private const val LEARNER_TRAIL_W     = 9
         private const val UAM_LABEL_SUFFIX    = " (UAM)"
-        private const val MIN_TOTAL_BASAL_MULT = 0.5
+        private const val MIN_TOTAL_BASAL_MULT = 0.3
+        private const val DEFAULT_BASAL_STEP = 0.05
         private const val MAX_TOTAL_BASAL_MULT = 1.5
 
         /** Tolerance on the at-target comparison (mg/dL) — ~0.01 mmol, so a reading sitting
@@ -1041,6 +1043,98 @@ open class SmartInsulinPlugin @Inject constructor(
         learningJournal.note("Site check", "Site marked fine for this pod")
     }
 
+    /** What the Circadian card shows about moving the learning into the profile. Null until the first loop cycle. */
+    class LearnedProfileStatus(
+        val plan: LearnedProfilePlan.Plan,
+        val isfHoursAtLimit: Int,
+        val basalHoursAtLimit: Int,
+        val appliedName: String?,
+        val previousName: String?,
+        val appliedAtMs: Long,
+        val switchPending: Boolean,
+        val autoOn: Boolean
+    )
+
+    fun learnedProfileStatus(): LearnedProfileStatus? {
+        val plan = learnedProfilePlan() ?: return null
+        return LearnedProfileStatus(
+            plan = plan,
+            isfHoursAtLimit = circadianLearner.isfHoursAtWeakLimit(),
+            basalHoursAtLimit = circadianLearner.basalHoursAtWeakLimit(),
+            appliedName = learnedProfileApplier.appliedName,
+            previousName = learnedProfileApplier.previousName,
+            appliedAtMs = learnedProfileApplier.appliedAtMs,
+            switchPending = learnedProfileApplier.switchPending(cachedHourIsf, cachedHourBasal),
+            autoOn = learningEnabled()
+        )
+    }
+
+    /** The "Apply learned profile" button. Null when the switch was written, else why not. */
+    suspend fun applyLearnedProfile(): String? {
+        val plan = learnedProfilePlan() ?: return "No profile has been read yet. Wait for the next loop cycle."
+        val result = learnedProfileApplier.apply(plan, cachedHourIsf, cachedHourBasal)
+        if (result == null) learningJournal.note("Circadian", "Learned ISF and basal saved as \"${learnedProfileApplier.appliedName}\" and switched to (by hand)")
+        return result
+    }
+
+    /** The "Undo" button: back to the profile before the last apply. Null when the switch was written. */
+    suspend fun undoLearnedProfile(): String? {
+        val back = learnedProfileApplier.previousName
+        val result = learnedProfileApplier.undo(cachedHourIsf, cachedHourBasal)
+        if (result == null) learningJournal.note("Circadian", "Switched back to \"$back\" (undo of the learned profile)")
+        return result
+    }
+
+    /**
+     * The learned ISF and basal of each hour, from the all-days values. Null until a profile has been read.
+     * ISF is rounded to 0.1 mmol/U (or 1 mg/dL/U), basal to the pump's step.
+     */
+    private fun learnedProfilePlan(): LearnedProfilePlan.Plan? {
+        val isf = cachedHourIsf
+        val basal = cachedHourBasal
+        if (isf.any { it <= 0.0 }) return null
+        val pump = activePlugin.activePump.pumpDescription
+        val hours = (0 until 24).map { h ->
+            LearnedProfilePlan.Hour(
+                hour = h,
+                profileIsfMgdl = isf[h],
+                profileBasal = basal[h],
+                learnedIsfMgdl = isf[h] / circadianLearner.globalIsfMultiplier(h),
+                learnedBasal = basal[h] * circadianLearner.globalBasalMultiplier(h),
+                isfConfidence = circadianLearner.globalIsfConfidence(h),
+                basalConfidence = circadianLearner.globalBasalConfidence(h)
+            )
+        }
+        return LearnedProfilePlan.build(
+            hours,
+            isfStepMgdl = if (isMmol) 0.1 * LearnedProfilePlan.MGDL_PER_MMOL else 1.0,
+            basalStep = pump.basalStep.takeIf { it > 0.0 } ?: DEFAULT_BASAL_STEP,
+            basalMin = pump.basalMinimumRate.takeIf { it > 0.0 } ?: DEFAULT_BASAL_STEP
+        )
+    }
+
+    private fun learningEnabled(): Boolean =
+        sp.getBoolean(BooleanKey.ApsSmartInsulinEnableLearning.key, BooleanKey.ApsSmartInsulinEnableLearning.defaultValue)
+
+    /**
+     * The learned profile goes in by itself once every hour shows 100 % for ISF and basal, and it would
+     * move some hour by 5 % or more. At most once a week. Dosing does not change at the switch, see
+     * [LearnedProfileApplier].
+     */
+    private fun maybeApplyLearnedProfile(now: Long) {
+        if (!learningEnabled() || !learnedProfileApplier.autoAllowed(now)) return
+        if (learnedProfileApplier.switchPending(cachedHourIsf, cachedHourBasal)) return
+        val plan = learnedProfilePlan() ?: return
+        if (!plan.fullConfidence || plan.largestChange < LearnedProfilePlan.MIN_AUTO_CHANGE) return
+        learnedProfileApplier.applyAutomatically(plan, cachedHourIsf.copyOf(), cachedHourBasal.copyOf()) { result ->
+            learningJournal.note(
+                "Circadian",
+                if (result == null) "Every hour reached 100 %: learned ISF and basal saved as \"${learnedProfileApplier.appliedName}\" and switched to"
+                else "Every hour reached 100 %, but the learned profile was not applied: $result"
+            )
+        }
+    }
+
     /** Re-arm after the SI tab's permission request comes back granted. */
     fun startPhoneStepCounter() = phoneStepCounter.start()
 
@@ -1178,6 +1272,13 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         if (!isEnabled()) return
+        // Before anything doses: when a learned profile (or the one before it) has just come into force,
+        // the learning moves onto it so this cycle doses the same as the last one.
+        learnedProfileApplier.onProfileInForce(cachedHourIsf, cachedHourBasal)?.let { r ->
+            circadianLearner.rescaleForProfileChange(r.isfRatio, r.basalRatio)
+            learningJournal.note("Circadian", "Profile \"${r.profileName}\" is now in force. Learning moved onto it, so dosing stays the same.")
+        }
+        maybeApplyLearnedProfile(now)
         val glucoseStatus = glucoseStatusProvider.glucoseStatusData ?: return
         val nowCal = java.util.Calendar.getInstance().also { it.timeInMillis = now }
         val currentHour = nowCal.get(java.util.Calendar.HOUR_OF_DAY)

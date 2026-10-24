@@ -156,18 +156,82 @@ class CircadianLearner @Inject constructor(
     // -- Public outputs --------------------------------------------------------
 
     /**
-     * ISF multiplier for the current moment (0.7–1.5). >1.0 = MORE aggressive
+     * ISF multiplier for the current moment (0.5–1.5). >1.0 = MORE aggressive
      * (dosingISF = profileISF / mult → smaller ISF → more insulin).
      *
      * Interpolated across the hour boundary by [minute] — learning earned late in one hour is
      * already partly in force at the start of the next, instead of being dropped at :00.
+     * Never more than [DAY_MAX_ABOVE_GLOBAL] stronger than the all-days value, see [capDays].
      */
     fun isfMultiplier(hour: Int = currentHour(), dow: Int = currentDow(), minute: Int = currentMinute()): Double =
-        isfState.get(dow, hour, minute).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+        cappedRead(isfState, dow, hour, minute).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
 
-    /** Basal multiplier for the current moment (0.5–1.5). Interpolated across the hour boundary. */
+    /** Basal multiplier for the current moment (0.3–1.5). Interpolated across the hour boundary, capped like ISF. */
     fun basalMultiplier(hour: Int = currentHour(), dow: Int = currentDow(), minute: Int = currentMinute()): Double =
-        basalState.get(dow, hour, minute).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+        cappedRead(basalState, dow, hour, minute).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+
+    /** All-days ISF multiplier of [hour], at the centre of the hour. This is what a learned profile is made from. */
+    fun globalIsfMultiplier(hour: Int): Double = isfState.global.get(hour).coerceIn(ISF_MULT_MIN, ISF_MULT_MAX)
+
+    /** All-days basal multiplier of [hour], at the centre of the hour. */
+    fun globalBasalMultiplier(hour: Int): Double = basalState.global.get(hour).coerceIn(BASAL_MULT_MIN, BASAL_MULT_MAX)
+
+    /** Hours whose all-days ISF multiplier is at the weakest the learner allows. The profile ISF is too strong there. */
+    fun isfHoursAtWeakLimit(): Int = (0..23).count { isfState.global.get(it) <= ISF_MULT_MIN + LIMIT_TOLERANCE }
+
+    /** Hours whose all-days basal multiplier is at the lowest the learner allows. */
+    fun basalHoursAtWeakLimit(): Int = (0..23).count { basalState.global.get(it) <= BASAL_MULT_MIN + LIMIT_TOLERANCE }
+
+    /** How much data backs the all-days ISF value of [hour], 0.0–1.0. */
+    fun globalIsfConfidence(hour: Int): Double = isfState.global.getConfidence(hour)
+
+    /** How much data backs the all-days basal value of [hour], 0.0–1.0. */
+    fun globalBasalConfidence(hour: Int): Double = basalState.global.getConfidence(hour)
+
+    /**
+     * Moves the learning onto a new profile, so the loop doses the same as before the profile changed.
+     * [isfRatio] is new profile ISF ÷ old profile ISF for each hour, [basalRatio] the same for basal.
+     *
+     * dosing ISF = profile ISF ÷ multiplier, so the ISF multiplier is multiplied by the ISF ratio.
+     * dosing basal = profile basal × multiplier, so the basal multiplier is divided by the basal ratio.
+     * Every weekday and the all-days values change; confidence stays, the data behind it is the same.
+     */
+    fun rescaleForProfileChange(isfRatio: DoubleArray, basalRatio: DoubleArray) {
+        fun scale(state: DayOfWeekCircadianState, factor: (Int) -> Double, min: Double, max: Double): DayOfWeekCircadianState {
+            fun one(c: CircadianState) = c.copy(values = DoubleArray(24) { h -> (c.values[h] * factor(h)).coerceIn(min, max) })
+            return DayOfWeekCircadianState(Array(7) { one(state.days[it]) }, one(state.global))
+        }
+        isfState = scale(isfState, { h -> isfRatio[h].takeIf { it > 0.0 } ?: 1.0 }, ISF_MULT_MIN, ISF_MULT_MAX)
+        basalState = scale(basalState, { h -> basalRatio[h].takeIf { it > 0.0 }?.let { 1.0 / it } ?: 1.0 }, BASAL_MULT_MIN, BASAL_MULT_MAX)
+        isfState = capDays(isfState)
+        basalState = capDays(basalState)
+        persist()
+        aapsLogger.debug(LTag.APS, "CircadianLearner rescaled for a profile change")
+    }
+
+    /** The blended read, held to at most [DAY_MAX_ABOVE_GLOBAL] above the all-days value. */
+    private fun cappedRead(state: DayOfWeekCircadianState, dow: Int, hour: Int, minute: Int): Double =
+        minOf(state.get(dow, hour, minute), state.globalValue(hour, minute) * (1.0 + DAY_MAX_ABOVE_GLOBAL))
+
+    /**
+     * [state] with every weekday value held to at most [DAY_MAX_ABOVE_GLOBAL] above the all-days value of
+     * the same hour. A weekday may be weaker than the average by any amount, but not much stronger: one
+     * odd night (a late meal, a missed bolus) must not teach that weekday to dose far more than every
+     * other day. This happened on a Sunday at 00-01 h, which then dosed into a low a week later.
+     */
+    private fun capDays(state: DayOfWeekCircadianState): DayOfWeekCircadianState {
+        var any = false
+        val days = Array(7) { d ->
+            val day = state.days[d]
+            var changed = false
+            val v = DoubleArray(24) { h ->
+                val cap = state.global.values[h] * (1.0 + DAY_MAX_ABOVE_GLOBAL)
+                if (day.values[h] > cap) { changed = true; cap } else day.values[h]
+            }
+            if (changed) { any = true; day.copy(values = v) } else day
+        }
+        return if (any) DayOfWeekCircadianState(days, state.global) else state
+    }
 
     /** Aggressiveness ceiling for the current moment (AGGR_CEIL_MIN–AGGR_CEIL_MAX).
      *  Global aggressiveness should be clamped to min(globalAggr, aggrCeiling).
@@ -562,6 +626,8 @@ class CircadianLearner @Inject constructor(
         // Only persist if any EWMA state was actually updated this cycle
         // insulinPresenceDirty is in the condition because the presence map changes on cycles where
         // no learner wrote anything — without it the map would only ever reach disk by accident.
+        isfState = capDays(isfState)
+        basalState = capDays(basalState)
         if (isfState !== prevIsf || basalState !== prevBasal || aggrState !== prevAggr || insulinPresenceDirty) {
             persist()
         }
@@ -2175,6 +2241,9 @@ class CircadianLearner @Inject constructor(
             isfState   = DayOfWeekCircadianState.fromJson(json.getJSONObject("isf"))
             basalState = DayOfWeekCircadianState.fromJson(json.getJSONObject("basal"))
             aggrState  = DayOfWeekCircadianState.fromJson(json.getJSONObject("aggr"))
+            // A weekday that learned too strong before the cap existed is pulled back at once.
+            isfState   = capDays(isfState)
+            basalState = capDays(basalState)
 
             // optJSONObject, not getJSONObject: state saved before the retro attribution existed
             // has no such key, and that must load normally rather than throwing away the ISF,
@@ -2253,6 +2322,10 @@ class CircadianLearner @Inject constructor(
     // -- Constants -------------------------------------------------------------
 
     companion object {
+        /** How much stronger one weekday may be than the all-days value of the same hour. See [capDays]. */
+        const val DAY_MAX_ABOVE_GLOBAL = 0.15
+        private const val LIMIT_TOLERANCE = 0.005
+
         // Cross-nudge — a signal measured for one quantity (ISF or basal) also nudges the OTHER
         // a smaller amount in the same direction, as a lower-confidence co-movement prior: the
         // most likely cause of a genuine, sustained miscalibration (exercise, illness, hormones,
@@ -2266,7 +2339,9 @@ class CircadianLearner @Inject constructor(
 
         // ISF learner
         private const val ISF_ALPHA              = 0.04   // slow EWMA — each sample moves ~8%
-        private const val ISF_MULT_MIN           = 0.7
+        // Down to 0.5: the profile ISF can be up to twice too strong before learning runs out of room.
+        // Strengthening stays limited at 1.5.
+        private const val ISF_MULT_MIN           = 0.5
         private const val ISF_MULT_MAX           = 1.5
         private const val MIN_ACTIVITY           = 0.005  // min IOB activity to learn from
         // Admission floor for the ISF signal. normDeviation is deviation/expectedDelta, so this
@@ -2283,7 +2358,8 @@ class CircadianLearner @Inject constructor(
 
         // Basal learner — drift window approach (basalIob gate removed, always negative in closed loop)
         private const val BASAL_ALPHA              = 0.06
-        private const val BASAL_MULT_MIN           = 0.5
+        // Down to 0.3, so a basal profile that is far too strong can still be learned down. Max stays 1.5.
+        private const val BASAL_MULT_MIN           = 0.3
         private const val BASAL_MULT_MAX           = 1.5
         private const val BASAL_DRIFT_WINDOW_MS    = 90 * 60 * 1000L  // 90 min window to measure drift
         // As long as the drift window, so no window that holds a sub-target dip can strengthen.

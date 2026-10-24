@@ -56,14 +56,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.ToolbarConfig
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The SmartInsulin tab.
@@ -83,6 +86,11 @@ fun SmartInsulinScreen(
     var tick by remember { mutableIntStateOf(0) }
     var confirm by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     var confirmEndBoost by remember { mutableStateOf(false) }
+    var confirmApply by remember { mutableStateOf(false) }
+    var confirmUndo by remember { mutableStateOf(false) }
+    // Shown after Apply or Undo: what happened, or why the switch was refused.
+    var profileResult by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     // Circadian day shown; starts on today each time the tab opens, as in 3.4.
     var circadianDow by remember { mutableIntStateOf(todayDow()) }
     // Start counting straight away on a grant; otherwise it would wait for the next app start.
@@ -120,6 +128,8 @@ fun SmartInsulinScreen(
             SiAction.SITE_IS_FINE            -> {
                 plugin.markSiteFine(); tick++
             }
+            SiAction.APPLY_LEARNED_PROFILE   -> confirmApply = true
+            SiAction.UNDO_LEARNED_PROFILE    -> confirmUndo = true
         }
     }
 
@@ -188,6 +198,10 @@ fun SmartInsulinScreen(
             SiItems(cards.buildStftCard(d).items, onAction)
         }
         SiSection("Circadian 24h", Icons.Filled.Schedule, subtitle = "Hour-by-hour learned ISF and basal") {
+            plugin.learnedProfileStatus()?.let { status ->
+                SiItems(buildLearnedProfileCard(status, d.isMmol).items, onAction)
+                HorizontalDivider(Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            }
             SiCircadianSection(plugin, circadianDow) { circadianDow = it; tick++ }
         }
         val journal = plugin.learningJournalEntries()
@@ -238,6 +252,55 @@ fun SmartInsulinScreen(
                 TextButton(onClick = { action(); confirm = null; tick++ }) { Text("Reset", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } }
+        )
+    }
+
+    if (confirmApply) {
+        val preview = plugin.learnedProfileStatus()?.let { learnedProfilePreview(it.plan, d.isMmol) }
+        AlertDialog(
+            onDismissRequest = { confirmApply = false },
+            icon = { Icon(Icons.Filled.Schedule, contentDescription = null) },
+            title = { Text("Apply learned profile") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text("A new local profile with these values is saved and switched to at 100 %. The learning moves with it, so dosing does not change at the switch.")
+                    preview?.let {
+                        SiSpacer(8)
+                        Text(it, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmApply = false
+                    scope.launch { profileResult = plugin.applyLearnedProfile() ?: "Done. The new profile is in use when the pump has taken it."; tick++ }
+                }) { Text("Apply") }
+            },
+            dismissButton = { TextButton(onClick = { confirmApply = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (confirmUndo) {
+        AlertDialog(
+            onDismissRequest = { confirmUndo = false },
+            title = { Text("Undo learned profile") },
+            text = { Text("Switch back to \"${plugin.learnedProfileStatus()?.previousName}\" at 100 %? The learning moves back with it.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmUndo = false
+                    scope.launch { profileResult = plugin.undoLearnedProfile() ?: "Done. The old profile is in use when the pump has taken it."; tick++ }
+                }) { Text("Undo") }
+            },
+            dismissButton = { TextButton(onClick = { confirmUndo = false }) { Text("Cancel") } }
+        )
+    }
+
+    profileResult?.let { message ->
+        AlertDialog(
+            onDismissRequest = { profileResult = null },
+            title = { Text("Learned profile") },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { profileResult = null }) { Text("OK") } }
         )
     }
 

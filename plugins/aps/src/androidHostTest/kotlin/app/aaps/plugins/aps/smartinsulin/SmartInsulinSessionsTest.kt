@@ -74,7 +74,8 @@ class SmartInsulinSessionsTest {
             preferences             = mock(),
             notificationManager     = mock(),
             ch                      = mock(),
-            learningJournal         = mock()
+            learningJournal         = mock(),
+            learnedProfileApplier   = mock()
         )
         sut = spy(plugin)
         doReturn(true).whenever(sut).isEnabled()

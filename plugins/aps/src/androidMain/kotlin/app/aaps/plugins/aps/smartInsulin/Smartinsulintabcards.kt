@@ -31,7 +31,7 @@ sealed interface SiItem {
     data class Action(val text: String, val action: SiAction, val tone: SiTone) : SiItem
 }
 
-enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG, END_NEW_POD_BOOST, SITE_IS_FINE }
+enum class SiAction { REQUEST_STEP_PERMISSION, TOGGLE_FF_DEBUG, END_NEW_POD_BOOST, SITE_IS_FINE, APPLY_LEARNED_PROFILE, UNDO_LEARNED_PROFILE }
 
 data class SiCardContent(
     val items: List<SiItem>,

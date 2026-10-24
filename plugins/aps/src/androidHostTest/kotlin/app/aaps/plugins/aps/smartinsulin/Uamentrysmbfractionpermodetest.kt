@@ -96,7 +96,8 @@ class UamEntrySmbFractionPerModeTest {
             preferences             = mock(),
             notificationManager     = mock(),
             ch                      = mock(),
-            learningJournal         = mock()
+            learningJournal         = mock(),
+            learnedProfileApplier   = mock()
         )
     }
 
