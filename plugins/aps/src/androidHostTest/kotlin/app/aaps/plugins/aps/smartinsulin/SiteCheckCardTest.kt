@@ -39,6 +39,13 @@ class SiteCheckCardTest {
     }
 
     @Test
+    fun `one meal is not called meals`() {
+        val items = buildSiteCheckCard(status(listOf(meal())).copy(totalMeals = 1, totalPods = 1), isMmol = true, nowMs = now).items
+        assertTrue((items.first() as SiItem.Row).detail!!.contains("1 meal checked"))
+        assertTrue(items.filterIsInstance<SiItem.Note>().single().text.contains("Log: 1 meal on 1 pod in"))
+    }
+
+    @Test
     fun `new pod waits`() {
         val t = top(status(podAgeHours = 6.5))
         assertEquals("Waiting", t.primary)

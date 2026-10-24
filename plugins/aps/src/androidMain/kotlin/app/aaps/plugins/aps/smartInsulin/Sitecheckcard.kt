@@ -28,7 +28,7 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
             addRow("Site marked fine", "You said the site is fine. No more questions on this pod.", SiTone.MUTED)
         s.notified -> {
             addRow("Check the site",
-                   "$suspectMeals of ${s.meals.size} meals on this pod looked like a leaking or tunnelling site: " +
+                   "$suspectMeals of ${count(s.meals.size, "meal")} on this pod looked like a leaking or tunnelling site: " +
                        "BG kept rising with insulin on board, or did not come down.",
                    SiTone.CRITICAL)
             addAction("Site is fine", SiAction.SITE_IS_FINE)
@@ -42,12 +42,12 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
             addRow("Waiting", "Pod is $age old. Meals are checked from ${SiteCheck.MIN_POD_AGE_HOURS.roundToInt()} h.", SiTone.INFO)
         suspectMeals > 0 ->
             addRow("Watching",
-                   "$suspectMeals of ${s.meals.size} meals on this pod looked slow. Another one and you will be asked to check the site.",
+                   "$suspectMeals of ${count(s.meals.size, "meal")} on this pod looked slow. Another one and you will be asked to check the site.",
                    SiTone.WARNING)
         s.meals.isEmpty() ->
             addRow("No meals checked yet", "Pod is $age old. A meal is checked 2 h after its peak.", SiTone.INFO)
         else ->
-            addRow("Normal", "Pod is $age old · ${s.meals.size} meals checked, none suspect", SiTone.GOOD)
+            addRow("Normal", "Pod is $age old · ${count(s.meals.size, "meal")} checked, none suspect", SiTone.GOOD)
     }
 
     s.live?.let { l ->
@@ -94,9 +94,12 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
     } ?: "Limits are learned from your own meals on finished pods. A pod that asked to have its site checked is left out, unless you said the site was fine."
     addNoteBlock(
         "$limitsText\n" +
-            "Log: ${s.totalMeals} meals on ${s.totalPods} pods in Documents/AAPS/SmartInsulin/site_check_log.csv."
+            "Log: ${count(s.totalMeals, "meal")} on ${count(s.totalPods, "pod")} in Documents/AAPS/SmartInsulin/site_check_log.csv."
     )
 }
+
+/** "1 meal", "2 meals". */
+private fun count(n: Int, word: String) = if (n == 1) "1 $word" else "$n ${word}s"
 
 private fun podAge(hours: Double): String {
     val h = hours.toInt()
