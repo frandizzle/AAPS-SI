@@ -361,6 +361,8 @@
     <string name="si_cat_activity">Activity</string>
     <string name="si_cat_dawn">Dawn phenomenon</string>
     <string name="si_cat_new_pod">First day pod</string>
+    <string name="si_site_check_notification">Insulin seems to act slowly on this pod. After meals, BG kept rising with insulin on board, or did not come down. Check the site for leaking or wetness.</string>
+    <string name="si_site_check_fine">Site is fine</string>
     <string name="si_cat_uam">UAM detection</string>
     <string name="si_cat_uam_breakfast">UAM: Breakfast window</string>
     <string name="si_cat_uam_lunch">UAM: Lunch window</string>

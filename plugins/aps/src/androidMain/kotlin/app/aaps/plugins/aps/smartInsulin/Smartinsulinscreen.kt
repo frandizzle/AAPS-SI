@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Fastfood
 import androidx.compose.material.icons.filled.GolfCourse
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RestartAlt
@@ -116,6 +117,9 @@ fun SmartInsulinScreen(
                 cards.showFfDebug = !cards.showFfDebug; tick++
             }
             SiAction.END_NEW_POD_BOOST       -> confirmEndBoost = true
+            SiAction.SITE_IS_FINE            -> {
+                plugin.markSiteFine(); tick++
+            }
         }
     }
 
@@ -135,6 +139,11 @@ fun SmartInsulinScreen(
 
         SiSection("General", Icons.Filled.Tune, subtitle = "What the loop is doing this hour") {
             SiItems(cards.buildGeneralCard(d).items, onAction)
+        }
+
+        SiSection("Site / Pod Health", Icons.Filled.HealthAndSafety, accent = colors.statusWarning,
+                  subtitle = "Is insulin acting as usual on this pod?") {
+            SiItems(buildSiteCheckCard(plugin.siteCheckStatus(), d.isMmol, System.currentTimeMillis()).items, onAction)
         }
 
         val session = cards.buildSessionCard()

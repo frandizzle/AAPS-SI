@@ -15,6 +15,8 @@ import app.aaps.core.interfaces.insulin.ConcentrationHelper
 import app.aaps.core.ui.CoreUiStrings
 import androidx.compose.runtime.Composable
 import app.aaps.core.interfaces.plugin.PluginBaseWithPreferences
+import app.aaps.core.interfaces.notifications.NotificationAction
+import app.aaps.core.interfaces.notifications.NotificationId
 import app.aaps.core.interfaces.notifications.NotificationManager
 import app.aaps.core.ui.compose.ComposablePluginContent
 import app.aaps.core.ui.compose.ToolbarConfig
@@ -56,6 +58,7 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.keys.interfaces.TextRef
 import app.aaps.plugins.aps.R
 import app.aaps.plugins.aps.events.EventOpenAPSUpdateGui
 import app.aaps.plugins.aps.events.EventResetOpenAPSGui
@@ -119,6 +122,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val duraIsfTracker:   DuraIsfTracker,
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
+    private val siteCheckFiles:          SiteCheckFiles,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
     private val unexplainedDropTracker:  UnexplainedDropTracker,
@@ -195,6 +199,10 @@ open class SmartInsulinPlugin @Inject constructor(
     private val activityTail = ActivityTail()
     /** Stronger ISF and basal on a new pod, fading out - see NewPodBoost. */
     private val newPodBoost = NewPodBoost(sp)
+    /** Asks the user to check the site when insulin acts much more slowly than usual - see SiteCheck. */
+    private val siteCheck = SiteCheck(sp)
+    /** The site check's baseline import file is looked for once per app start. */
+    private var siteCheckImportChecked = false
     /** The new pod boost really added insulin on the last decision: active (not paused under
      *  target), and the loop was not giving zero (a zero temp from the low guard, LGS or the
      *  recovery window is zero with or without the boost). Only this marks a meal as touched by
@@ -1023,6 +1031,16 @@ open class SmartInsulinPlugin @Inject constructor(
     /** The SI tab's "End boost" button: off for the rest of this pod. */
     fun endNewPodBoost() = newPodBoost.endNow()
 
+    /** For the Site / pod health card. */
+    fun siteCheckStatus(): SiteCheck.Status = siteCheck.status(System.currentTimeMillis())
+
+    /** "Site is fine", from the notification or the card: no more questions on this pod. */
+    fun markSiteFine() {
+        siteCheck.markSiteFine()
+        notificationManager.dismiss(NotificationId.SITE_CHECK)
+        learningJournal.note("Site check", "Site marked fine for this pod")
+    }
+
     /** Re-arm after the SI tab's permission request comes back granted. */
     fun startPhoneStepCounter() = phoneStepCounter.start()
 
@@ -1239,6 +1257,42 @@ open class SmartInsulinPlugin @Inject constructor(
             lowActive    = bgBelowGuard(glucoseStatus.glucose, spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)) || inReboundWindow
         )
         val podBoostPausesLearning = podBoost.active || podBoost.paused
+
+        // -- Site check ----------------------------------------------------------------------
+        // Watches meals for insulin acting much more slowly than usual on this pod (a leaking or
+        // tunnelling site) and asks the user to check the site. Never changes the dose.
+        if (!siteCheckImportChecked) {
+            siteCheckImportChecked = true
+            siteCheckFiles.takeBaselineImport()?.let { json ->
+                if (siteCheck.importBaseline(json)) {
+                    val s = siteCheck.status(now)
+                    learningJournal.note("Site check", "Baseline imported: ${s.baselineMeals} meals from ${s.baselinePods} pods")
+                } else {
+                    aapsLogger.error(LTag.APS, "SmartInsulin site check: baseline import file is not usable")
+                }
+            }
+        }
+        siteCheck.onCycle(
+            nowMs          = now,
+            bgMgdl         = glucoseStatus.glucose,
+            deltaMgdl      = glucoseStatus.delta,
+            iobU           = iobArray.firstOrNull()?.iob ?: 0.0,
+            mealModeActive = mealMode != MealMode.FASTING,
+            modeLabel      = mealMode.label,
+            siteChangeMs   = siteChangeMs,
+            unreliable     = activityPausesLearning || unexplainedDropTracker.exerciseSuspected || cgmState.inWarmup
+        )?.let { episode ->
+            siteCheckFiles.log(episode)
+            if (episode.suspect) learningJournal.note("Site check", "${episode.mode}: BG still rising ${episode.risingLoadedMin} min with insulin on board, " +
+                "fell ${BgText.bg(episode.fall2hMgdl)} in 2 h after the peak (${episode.suspectsOnPod} on this pod)")
+            if (episode.notify) {
+                notificationManager.post(
+                    id      = NotificationId.SITE_CHECK,
+                    text    = rh.gs(ApsStrings.si_site_check_notification),
+                    actions = listOf(NotificationAction(TextRef.Literal(rh.gs(ApsStrings.si_site_check_fine))) { markSiteFine() })
+                )
+            }
+        }
         val learningPausedThisCycle = activityPausesLearning || podBoostPausesLearning
 
         // -- Whose insulin is behind a post-mode low ---------------------------

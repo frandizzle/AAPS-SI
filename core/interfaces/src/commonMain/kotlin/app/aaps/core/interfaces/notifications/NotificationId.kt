@@ -241,7 +241,12 @@ enum class NotificationId(
     // The End Scene dialog does not show the result, so without this nothing said so. IMPORTANT: it changes
     // insulin delivery until the user activates a profile, but nothing is delivered wrongly now.
     // Appended at the END for the same reason as above.
-    SCENE_PROFILE_NOT_RESTORED(IMPORTANT, AUTOMATION);
+    SCENE_PROFILE_NOT_RESTORED(IMPORTANT, AUTOMATION),
+
+    // SmartInsulin: insulin acted much more slowly than usual after meals on this pod, which is what a
+    // leaking or tunnelling site looks like. Asks the user to check the site; nothing is delivered
+    // wrongly by it. Appended at the END for the same reason as above.
+    SITE_CHECK(IMPORTANT, PUMP);
 
     companion object {
 
