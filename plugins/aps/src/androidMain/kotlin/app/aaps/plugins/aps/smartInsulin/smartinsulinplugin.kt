@@ -1381,7 +1381,12 @@ open class SmartInsulinPlugin @Inject constructor(
             mealModeActive = mealMode != MealMode.FASTING,
             modeLabel      = mealMode.label,
             siteChangeMs   = siteChangeMs,
-            unreliable     = activityPausesLearning || unexplainedDropTracker.exerciseSuspected || cgmState.inWarmup
+            unreliable     = when {
+                activityPausesLearning                   -> SiteCheck.DropReason.ACTIVITY
+                unexplainedDropTracker.exerciseSuspected -> SiteCheck.DropReason.EXERCISE
+                cgmState.inWarmup                        -> SiteCheck.DropReason.CGM_WARMUP
+                else                                     -> null
+            }
         )?.let { episode ->
             siteCheckFiles.log(episode)
             if (episode.suspect) learningJournal.note("Site check", "${episode.mode}: BG still rising ${episode.risingLoadedMin} min with insulin on board, " +
@@ -1394,6 +1399,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 )
             }
         }
+        siteCheck.takeDropped()?.let { learningJournal.note("Site check", "${it.mode} not checked: ${siteCheckDropText(it, BgText.mmol)}") }
         val learningPausedThisCycle = activityPausesLearning || podBoostPausesLearning
 
         // -- Whose insulin is behind a post-mode low ---------------------------

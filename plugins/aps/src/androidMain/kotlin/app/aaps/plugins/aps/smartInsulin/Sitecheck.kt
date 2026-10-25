@@ -39,7 +39,11 @@ import kotlin.math.abs
  *
  * Meals are not judged in the first [MIN_POD_AGE_HOURS] hours of a pod (a new site often runs high on its
  * own, and new pod boost changes the dose then), with suspected exercise, while the CGM is warming up, or
- * across a gap in the data.
+ * across a gap in the data. A meal that is dropped for one of these reasons is kept as [Dropped], so the
+ * card and the journal can say why it was not checked.
+ *
+ * The meal being watched is saved on every cycle, so an app restart or update does not lose it. A restart
+ * that leaves a gap in the data still drops it, like any other gap.
  */
 class SiteCheck(private val sp: SP) {
 
@@ -80,6 +84,24 @@ class SiteCheck(private val sp: SP) {
                 minutesToPeak = o.getInt("toPeak"), risingLoadedMin = o.getInt("loaded"), extraIobAtPeakU = o.getDouble("iob"),
                 fall2hMgdl = o.getDouble("fall"), slow = o.getBoolean("slow"), noLanding = o.getBoolean("noLanding"),
                 suspectsOnPod = o.getInt("suspects"), notify = o.getBoolean("notify"), learning = o.optBoolean("learning", false)
+            )
+        }
+    }
+
+    /** Why a meal was not checked. */
+    enum class DropReason { DATA_GAP, ACTIVITY, EXERCISE, CGM_WARMUP, NO_POD_CHANGE, NO_RISE, STARTED_HIGH }
+
+    /** A meal that was started but not judged, or a meal mode that was not watched. [gapMin] is only set for a data gap. */
+    data class Dropped(val timeMs: Long, val mode: String, val startMs: Long, val reason: DropReason, val gapMin: Int = 0) {
+
+        internal fun toJson(): JSONObject = JSONObject()
+            .put("time", timeMs).put("mode", mode).put("start", startMs).put("reason", reason.name).put("gap", gapMin)
+
+        internal companion object {
+
+            fun fromJson(o: JSONObject) = Dropped(
+                timeMs = o.getLong("time"), mode = o.getString("mode"), startMs = o.getLong("start"),
+                reason = DropReason.valueOf(o.getString("reason")), gapMin = o.optInt("gap", 0)
             )
         }
     }
@@ -125,7 +147,9 @@ class SiteCheck(private val sp: SP) {
         val totalPods: Int,
         val limits: Limits?,
         val baselineMeals: Int,
-        val baselinePods: Int
+        val baselinePods: Int,
+        /** The last meal on this pod that was not checked, or null. */
+        val lastDropped: Dropped? = null
     ) {
         val waiting: Boolean get() = podAgeHours != null && podAgeHours < MIN_POD_AGE_HOURS
     }
@@ -146,11 +170,55 @@ class SiteCheck(private val sp: SP) {
         var maxIobU = startIobU
         var maxIobAtPeakU = startIobU
         var lowestSincePeakMgdl = startBgMgdl
+
+        fun toJson(): JSONObject = JSONObject()
+            .put("start", startMs).put("bg0", startBgMgdl).put("iob0", startIobU).put("mode", mode).put("pod", siteChangeMs)
+            .put("peak", peakBgMgdl).put("peakAt", peakMs).put("loaded", risingLoadedMin).put("loadedAtPeak", risingLoadedAtPeakMin)
+            .put("maxIob", maxIobU).put("maxIobAtPeak", maxIobAtPeakU).put("lowest", lowestSincePeakMgdl)
+
+        companion object {
+
+            fun fromJson(o: JSONObject) = Open(o.getLong("start"), o.getDouble("bg0"), o.getDouble("iob0"), o.getString("mode"), o.getLong("pod")).apply {
+                peakBgMgdl = o.getDouble("peak")
+                peakMs = o.getLong("peakAt")
+                risingLoadedMin = o.getDouble("loaded")
+                risingLoadedAtPeakMin = o.getDouble("loadedAtPeak")
+                maxIobU = o.getDouble("maxIob")
+                maxIobAtPeakU = o.getDouble("maxIobAtPeak")
+                lowestSincePeakMgdl = o.getDouble("lowest")
+            }
+        }
     }
 
     private val recent = ArrayDeque<Sample>()
+    // The meal being watched and the last cycle time, restored so a restart does not lose the meal.
+    // lastCycleMs comes back with it, so a restart with a long break is still seen as a gap.
     @Volatile private var open: Open? = null
     private var lastCycleMs = 0L
+
+    init {
+        try {
+            val saved = sp.getString(K_OPEN, "")
+            if (saved.isNotEmpty()) {
+                val o = JSONObject(saved)
+                open = Open.fromJson(o.getJSONObject("meal"))
+                lastCycleMs = o.getLong("cycle")
+            }
+        } catch (_: Exception) {
+            open = null
+            lastCycleMs = 0L
+        }
+    }
+
+    // The last meal not checked on this pod, for the card. pendingDrop is handed to the journal once.
+    @Volatile private var lastDropped: Dropped? = try {
+        sp.getString(K_DROPPED, "").takeIf { it.isNotEmpty() }?.let { Dropped.fromJson(JSONObject(it)) }
+    } catch (_: Exception) {
+        null
+    }
+    @Volatile private var pendingDrop: Dropped? = null
+    // So a meal mode that starts too high is reported once, not on every cycle.
+    private var startedHighNoted = false
     @Volatile private var lastBgMgdl = 0.0
     @Volatile private var lastIobU = 0.0
 
@@ -179,8 +247,8 @@ class SiteCheck(private val sp: SP) {
      *
      * [mealModeActive]: any meal or UAM mode is running; meals are only looked for then.
      * [siteChangeMs]: the last pod change; nothing is judged without one.
-     * [unreliable]: suspected exercise, CGM warm-up or anything else that makes this cycle unfit to judge
-     * insulin by. An open meal is dropped.
+     * [unreliable]: why this cycle is unfit to judge insulin by (suspected exercise, CGM warm-up, an activity
+     * session), or null when it is fine. An open meal is dropped.
      */
     fun onCycle(
         nowMs: Long,
@@ -190,34 +258,66 @@ class SiteCheck(private val sp: SP) {
         mealModeActive: Boolean,
         modeLabel: String,
         siteChangeMs: Long?,
-        unreliable: Boolean
+        unreliable: DropReason?
+    ): Episode? {
+        val result = cycle(nowMs, bgMgdl, deltaMgdl, iobU, mealModeActive, modeLabel, siteChangeMs, unreliable)
+        persistOpen()
+        return result
+    }
+
+    /** The meal dropped since the last call, once, for the journal. */
+    fun takeDropped(): Dropped? = pendingDrop.also { pendingDrop = null }
+
+    private fun cycle(
+        nowMs: Long,
+        bgMgdl: Double,
+        deltaMgdl: Double,
+        iobU: Double,
+        mealModeActive: Boolean,
+        modeLabel: String,
+        siteChangeMs: Long?,
+        unreliable: DropReason?
     ): Episode? {
         val minutes = if (lastCycleMs == 0L) 5.0 else (nowMs - lastCycleMs) / 60_000.0
         val gap = lastCycleMs != 0L && nowMs - lastCycleMs > MAX_GAP_MS
+        val gapMin = ((nowMs - lastCycleMs) / 60_000).toInt()
         lastCycleMs = nowMs
         lastBgMgdl = bgMgdl
         lastIobU = iobU
 
         if (siteChangeMs != null && siteChangeMs != podMs) newPod(siteChangeMs)
+        if (!mealModeActive) startedHighNoted = false
 
         recent.addLast(Sample(nowMs, bgMgdl, iobU))
         while (recent.isNotEmpty() && nowMs - recent.first().timeMs > LOOKBACK_MS) recent.removeFirst()
 
-        if (gap || unreliable || siteChangeMs == null) {
-            open = null
+        val skip = when {
+            gap                  -> DropReason.DATA_GAP
+            unreliable != null   -> unreliable
+            siteChangeMs == null -> DropReason.NO_POD_CHANGE
+            else                 -> null
+        }
+        if (skip != null) {
+            drop(nowMs, skip, if (skip == DropReason.DATA_GAP) gapMin else 0)
             if (gap) recent.retainAll { it.timeMs == nowMs }
             return null
         }
+        siteChangeMs!!
 
         val o = open
         if (o == null) {
             val podAgeHours = (nowMs - siteChangeMs) / 3_600_000.0
-            if (mealModeActive && podAgeHours >= MIN_POD_AGE_HOURS && bgMgdl < MAX_START_BG_MGDL) {
-                // Start where the rise began: a UAM mode only fires once BG is already climbing. The latest
-                // low point, so a slow rise is not timed from a flat stretch before it.
-                val lowest = recent.minOf { it.bgMgdl }
-                val start = recent.last { it.bgMgdl == lowest }
-                open = Open(start.timeMs, start.bgMgdl, start.iobU, modeLabel, siteChangeMs)
+            if (mealModeActive && podAgeHours >= MIN_POD_AGE_HOURS) {
+                if (bgMgdl < MAX_START_BG_MGDL) {
+                    // Start where the rise began: a UAM mode only fires once BG is already climbing. The latest
+                    // low point, so a slow rise is not timed from a flat stretch before it.
+                    val lowest = recent.minOf { it.bgMgdl }
+                    val start = recent.last { it.bgMgdl == lowest }
+                    open = Open(start.timeMs, start.bgMgdl, start.iobU, modeLabel, siteChangeMs)
+                } else if (!startedHighNoted) {
+                    startedHighNoted = true
+                    noteDrop(Dropped(nowMs, modeLabel, nowMs, DropReason.STARTED_HIGH))
+                }
             }
             return null
         }
@@ -243,13 +343,26 @@ class SiteCheck(private val sp: SP) {
         val risen = o.peakBgMgdl - o.startBgMgdl >= MIN_RISE_MGDL
         if (!risen) {
             // No meal rise yet. Give up after a while; a new start is looked for on the next cycle.
-            if (sinceStart > RISE_WINDOW_MS) open = null
+            if (sinceStart > RISE_WINDOW_MS) drop(nowMs, DropReason.NO_RISE)
             return null
         }
         if (nowMs - o.peakMs < LANDING_WINDOW_MS) return null
 
         open = null
         return judge(o, nowMs)
+    }
+
+    /** Drops the open meal, if there is one, and remembers why. */
+    private fun drop(nowMs: Long, reason: DropReason, gapMin: Int = 0) {
+        val o = open ?: return
+        open = null
+        noteDrop(Dropped(nowMs, o.mode, o.startMs, reason, gapMin))
+    }
+
+    private fun noteDrop(d: Dropped) {
+        lastDropped = d
+        pendingDrop = d
+        sp.edit { putString(K_DROPPED, d.toJson().toString()) }
     }
 
     /** What the card shows, at [nowMs]. */
@@ -275,7 +388,8 @@ class SiteCheck(private val sp: SP) {
             totalPods = totalPods,
             limits = limits(),
             baselineMeals = synchronized(baseline) { baseline.size },
-            baselinePods = baselinePods
+            baselinePods = baselinePods,
+            lastDropped = lastDropped
         )
     }
 
@@ -370,7 +484,10 @@ class SiteCheck(private val sp: SP) {
         suspectsAtLastNotification = 0
         silenced = false
         open = null
+        lastDropped = null
+        pendingDrop = null
         synchronized(podMeals) { podMeals.clear() }
+        sp.edit { remove(K_DROPPED) }
         persistPod()
         persistMeals()
     }
@@ -454,6 +571,14 @@ class SiteCheck(private val sp: SP) {
         mutableListOf()
     }
 
+    private fun persistOpen() {
+        val o = open
+        sp.edit {
+            if (o == null) remove(K_OPEN)
+            else putString(K_OPEN, JSONObject().put("meal", o.toJson()).put("cycle", lastCycleMs).toString())
+        }
+    }
+
     private fun persistPod() = sp.edit {
         putLong(K_POD, podMs)
         putInt(K_SUSPECTS, suspects)
@@ -519,5 +644,7 @@ class SiteCheck(private val sp: SP) {
         private const val K_TOTAL_MEALS = "si_site_check_total_meals"
         private const val K_TOTAL_PODS = "si_site_check_total_pods"
         private const val K_BASELINE = "si_site_check_baseline"
+        private const val K_OPEN = "si_site_check_open"
+        private const val K_DROPPED = "si_site_check_dropped"
     }
 }

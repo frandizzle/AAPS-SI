@@ -42,7 +42,7 @@ class SiteCheckTest {
         bg = newBg
         iob = newIob
         now += STEP
-        return check.onCycle(now, bg, delta, iob, meal, "Lunch (UAM)", site, unreliable)
+        return check.onCycle(now, bg, delta, iob, meal, "Lunch (UAM)", site, if (unreliable) SiteCheck.DropReason.EXERCISE else null)
     }
 
     /** Quiet time before a meal: no meal mode, flat BG. */
@@ -54,7 +54,7 @@ class SiteCheckTest {
      */
     private fun meal(
         riseSteps: Int, risePerStep: Double, iobSteps: Int, iobPerStep: Double, fallPerStep: Double,
-        unreliableAtStep: Int = -1, gapAtStep: Int = -1, site: Long? = POD
+        unreliableAtStep: Int = -1, gapAtStep: Int = -1, restartAtStep: Int = -1, site: Long? = POD
     ): SiteCheck.Episode? {
         quiet(site = site)
         var step = 0
@@ -64,6 +64,7 @@ class SiteCheckTest {
             b += risePerStep
             if (step < iobSteps) i += iobPerStep
             if (step == gapAtStep) now += 30 * MIN
+            if (step == restartAtStep) check = SiteCheck(sp)
             cycle(b, i, unreliable = step == unreliableAtStep, site = site)?.let { return it }
             step++
         }
@@ -508,6 +509,78 @@ class SiteCheckTest {
         check = SiteCheck(sp)
         assertEquals(30, check.status(now).baselineMeals)
         assertEquals(89.5, check.status(now).limits!!.slowMin, 1e-9)
+    }
+
+    // --- Restarts and why a meal was not checked ---
+
+    @Test
+    fun `a restart in the middle of a meal does not lose it`() {
+        val e = meal(riseSteps = 9, risePerStep = 8.0, iobSteps = 9, iobPerStep = 0.6, fallPerStep = 3.0, restartAtStep = 5)!!
+        assertEquals(110.0, e.startBgMgdl, 1e-9)
+        assertEquals(30, e.risingLoadedMin)
+        assertEquals(5.4, e.extraIobAtPeakU, 1e-6)
+    }
+
+    @Test
+    fun `a restart with a long break drops the meal and says why`() {
+        quiet()
+        repeat(4) { cycle(bg + 8.0, iob + 0.6) }
+        check = SiteCheck(sp)
+        now += 30 * MIN
+        cycle(bg + 8.0, iob)
+        val d = check.takeDropped()!!
+        assertEquals(SiteCheck.DropReason.DATA_GAP, d.reason)
+        assertEquals(35, d.gapMin)
+        assertEquals("Lunch (UAM)", d.mode)
+        assertEquals(d, check.status(now).lastDropped)
+        // Handed to the journal once; the card keeps it, also after a restart.
+        assertNull(check.takeDropped())
+        assertEquals(d, SiteCheck(sp).status(now).lastDropped)
+    }
+
+    @Test
+    fun `exercise during a meal is the reason given`() {
+        quiet()
+        repeat(4) { cycle(bg + 8.0, iob + 0.6) }
+        cycle(bg + 8.0, iob, unreliable = true)
+        assertEquals(SiteCheck.DropReason.EXERCISE, check.takeDropped()!!.reason)
+    }
+
+    @Test
+    fun `an unfit cycle with no meal open reports nothing`() {
+        quiet()
+        cycle(110.0, 0.5, meal = false, unreliable = true)
+        assertNull(check.takeDropped())
+        assertNull(check.status(now).lastDropped)
+    }
+
+    @Test
+    fun `a meal mode with no rise is dropped after 2 h`() {
+        quiet()
+        repeat(30) { cycle(110.0, 0.5) }
+        assertEquals(SiteCheck.DropReason.NO_RISE, check.status(now).lastDropped!!.reason)
+    }
+
+    @Test
+    fun `a meal mode that starts high is reported once per mode`() {
+        quiet()
+        cycle(170.0, 0.5)
+        assertEquals(SiteCheck.DropReason.STARTED_HIGH, check.takeDropped()!!.reason)
+        repeat(5) { cycle(175.0, 0.5) }
+        assertNull(check.takeDropped())
+        cycle(170.0, 0.5, meal = false)
+        cycle(170.0, 0.5)
+        assertNotNull(check.takeDropped())
+    }
+
+    @Test
+    fun `a new pod clears the last drop`() {
+        quiet()
+        cycle(170.0, 0.5)
+        assertNotNull(check.status(now).lastDropped)
+        cycle(110.0, 0.5, meal = false, site = now)
+        assertNull(check.status(now).lastDropped)
+        assertNull(SiteCheck(sp).status(now).lastDropped)
     }
 
     private fun slowNoLandingMeal(site: Long) = meal(riseSteps = 24, risePerStep = 3.0, iobSteps = 10, iobPerStep = 0.5, fallPerStep = 0.5, site = site)

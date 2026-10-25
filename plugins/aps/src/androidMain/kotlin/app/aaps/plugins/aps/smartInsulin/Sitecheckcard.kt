@@ -59,6 +59,11 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
         addRow("Watching now: ${l.mode} since ${time(l.startMs, nowMs)}", detail, SiTone.INFO)
     }
 
+    // Only when it is newer than the last checked meal, so an old reason does not stay up.
+    s.lastDropped?.takeIf { d -> s.meals.none { it.startMs >= d.startMs } }?.let { d ->
+        addRow("Not checked: ${d.mode} ${time(d.startMs, nowMs)}", "${siteCheckDropText(d, isMmol)} (${time(d.timeMs, nowMs)})", SiTone.MUTED)
+    }
+
     if (s.meals.isNotEmpty()) {
         addSectionHeader("Meals on this pod")
         s.meals.asReversed().forEach { e ->
@@ -96,6 +101,21 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
         "$limitsText\n" +
             "Log: ${count(s.totalMeals, "meal")} on ${count(s.totalPods, "pod")} in Documents/AAPS/SmartInsulin/site_check_log.csv."
     )
+}
+
+/** Why a meal was not checked, as one sentence. Also used for the journal. */
+internal fun siteCheckDropText(d: SiteCheck.Dropped, isMmol: Boolean): String = when (d.reason) {
+    SiteCheck.DropReason.DATA_GAP      -> "No CGM data for ${d.gapMin} min"
+    SiteCheck.DropReason.ACTIVITY      -> "An activity session was running"
+    SiteCheck.DropReason.EXERCISE      -> "BG fell more than insulin explains, so exercise was suspected"
+    SiteCheck.DropReason.CGM_WARMUP    -> "The CGM was warming up"
+    SiteCheck.DropReason.NO_POD_CHANGE -> "No pod change on record"
+    SiteCheck.DropReason.NO_RISE       ->
+        "BG did not rise ${if (isMmol) "%.0f mmol".format(SiteCheck.MIN_RISE_MGDL / 18.0) else "%.0f mg/dL".format(SiteCheck.MIN_RISE_MGDL)} " +
+            "within ${SiteCheck.RISE_WINDOW_MS / 3_600_000} h, so it was not a meal"
+    SiteCheck.DropReason.STARTED_HIGH  ->
+        "BG was already ${if (isMmol) "%.0f mmol".format(SiteCheck.MAX_START_BG_MGDL / 18.0) else "%.0f mg/dL".format(SiteCheck.MAX_START_BG_MGDL)} " +
+            "or more when it started"
 }
 
 /** "1 meal", "2 meals". */

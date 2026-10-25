@@ -146,6 +146,23 @@ class SiteCheckCardTest {
         assertTrue(rows[1].detail!!.contains("Rose 70 mg/dL"), rows[1].detail)
     }
 
+    @Test
+    fun `a meal that was not checked says why, until a newer meal is checked`() {
+        val d = SiteCheck.Dropped(now - 2 * HOUR, "Lunch (UAM)", now - 3 * HOUR, SiteCheck.DropReason.DATA_GAP, gapMin = 25)
+        val row = rows(status().copy(lastDropped = d)).filterIsInstance<SiItem.Row>().single { it.primary.startsWith("Not checked: Lunch (UAM)") }
+        assertTrue(row.detail!!.startsWith("No CGM data for 25 min"), row.detail)
+        val later = rows(status(listOf(meal(startMs = now - HOUR))).copy(lastDropped = d))
+        assertTrue(later.filterIsInstance<SiItem.Row>().none { it.primary.startsWith("Not checked") })
+    }
+
+    @Test
+    fun `drop text uses the user's units`() {
+        val d = SiteCheck.Dropped(now, "Lunch (UAM)", now, SiteCheck.DropReason.STARTED_HIGH)
+        assertEquals("BG was already 9 mmol or more when it started", siteCheckDropText(d, isMmol = true))
+        assertEquals("BG was already 162 mg/dL or more when it started", siteCheckDropText(d, isMmol = false))
+        assertEquals("BG did not rise 2 mmol within 2 h, so it was not a meal", siteCheckDropText(d.copy(reason = SiteCheck.DropReason.NO_RISE), isMmol = true))
+    }
+
     private companion object {
 
         const val MIN = 60_000L
