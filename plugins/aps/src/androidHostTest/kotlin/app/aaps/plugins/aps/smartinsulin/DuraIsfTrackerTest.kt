@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -91,5 +92,26 @@ class DuraIsfTrackerTest {
         tracker.onCycle(bgMgdl = 158.2, active = true, deltaMgdl = -1.8, cycleMinutes = 5.0)
         assertTrue(tracker.multiplier(targetMgdl = 100.0) > 1.0,
                    "A gentle -0.1 mmol/cycle drop shouldn't trip the fast-reset cutoff")
+    }
+
+    @Test
+    fun `the BG limit lets DURA work only at or above it`() {
+        assertTrue(duraGateOpen(bgMgdl = 90.0, minBgMgdl = 0.0))      // 0 = no limit
+        assertTrue(duraGateOpen(bgMgdl = 180.0, minBgMgdl = 180.0))
+        assertFalse(duraGateOpen(bgMgdl = 179.0, minBgMgdl = 180.0))
+    }
+
+    @Test
+    fun `under the BG limit DURA stops, and above it again it starts from zero`() {
+        val limit = 180.0   // 10 mmol
+        fun cycle(bg: Double) = tracker.onCycle(bgMgdl = bg, active = duraGateOpen(bg, limit), cycleMinutes = 5.0)
+        repeat(7) { cycle(200.0) }                                  // 30 min stuck at 11.1
+        assertTrue(tracker.multiplier(targetMgdl = 100.0) > 1.0)
+        cycle(175.0)                                                // under 10: off
+        assertEquals(1.0, tracker.multiplier(targetMgdl = 100.0), 1e-9)
+        assertEquals(0.0, tracker.stuckMinutesForDisplay, 1e-9)
+        cycle(190.0)                                                // back above: the count starts again
+        cycle(190.0)
+        assertEquals(5.0, tracker.stuckMinutesForDisplay, 1e-9)
     }
 }

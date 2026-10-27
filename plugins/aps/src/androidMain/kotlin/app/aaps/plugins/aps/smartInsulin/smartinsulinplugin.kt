@@ -477,6 +477,19 @@ open class SmartInsulinPlugin @Inject constructor(
         sp.getBoolean(BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.key, BooleanKey.ApsSmartInsulinModeIsfLearningEnabled.defaultValue)
 
     /** User switch for the DURA strength learner. Off freezes it; what it learned is still applied. */
+    /**
+     * The BG under which DURA is off for [mode], in mg/dL; 0 = no limit. Only UAM modes have one: a
+     * manual meal mode sets DURA in its own dialog. Read live, so a changed setting counts at once.
+     * Stored as mg/dL - read with sp.getDouble, not preferences.get(UnitDoubleKey), see `UamController`.
+     */
+    private fun duraMinBgMgdl(mode: MealMode?): Double = when {
+        mode == null || !mode.isUam      -> 0.0
+        mode == MealMode.UAM_PROTEIN_FAT ->
+            sp.getDouble(UnitDoubleKey.ApsSmartInsulinPfDuraMinBg.key, UnitDoubleKey.ApsSmartInsulinPfDuraMinBg.defaultValue)
+        else                             ->
+            sp.getDouble(UnitDoubleKey.ApsSmartInsulinUamDuraMinBg.key, UnitDoubleKey.ApsSmartInsulinUamDuraMinBg.defaultValue)
+    }
+
     fun duraLearningEnabled(): Boolean =
         sp.getBoolean(BooleanKey.ApsSmartInsulinDuraLearningEnabled.key, BooleanKey.ApsSmartInsulinDuraLearningEnabled.defaultValue)
 
@@ -1599,9 +1612,14 @@ open class SmartInsulinPlugin @Inject constructor(
         // -- DURA_ISF: strengthen ISF the longer BG sits stuck above target during a
         // DURA-enabled meal mode override. Tracker resets itself whenever DURA isn't
         // active (mode ended or toggle off), so a stuck plateau never leaks between activations.
-        val duraActive = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
+        // A UAM mode can limit DURA to BG at or above a set level: under it DURA is off, and the
+        // stuck time starts again from zero when BG is back above it.
+        val duraMinBgMgdl = duraMinBgMgdl(mealOverrideManager.activeMealMode)
+        val duraWanted = mealOverrideManager.activeMealMode != null && mealOverrideManager.activeDuraEnabled
+        val duraActive = duraWanted && duraGateOpen(glucoseStatus.glucose, duraMinBgMgdl)
         duraIsfTracker.onCycle(glucoseStatus.glucose, duraActive, glucoseStatus.delta)
-        var duraStatusText = ""  // stays "" (hidden from reason string) unless DURA is actually strengthening ISF this cycle
+        // stays "" (hidden from reason string) unless DURA is strengthening ISF or is held off by the BG level
+        var duraStatusText = if (duraWanted && !duraActive) "DURA off under ${BgText.bg(duraMinBgMgdl)}" else ""
         var duraMultThisCycle = 1.0  // exposed to ModeIsfLearner — big DURA interventions count as "mode ISF too weak"
         var duraAtCeilingThisCycle = false  // DURA wanted more than its learned ceiling allowed
         var duraAtFloorThisCycle   = false  // DURA's ISF was held at the configured floor
@@ -2161,6 +2179,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamDayStartHour,
                     IntKey.ApsSmartInsulinUamNightCutoffHour,
                     BooleanKey.ApsSmartInsulinUamDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinUamDuraMinBg,
                     UnitDoubleKey.ApsSmartInsulinUamDuraFloor,
                     DoubleKey.ApsSmartInsulinUamDuraStrength
                 )
@@ -2250,6 +2269,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightIsf,
                     BooleanKey.ApsSmartInsulinPfDuraEnabled,
+                    UnitDoubleKey.ApsSmartInsulinPfDuraMinBg,
                     UnitDoubleKey.ApsSmartInsulinPfDuraFloor,
                     DoubleKey.ApsSmartInsulinPfDuraStrength
                 )

@@ -73,3 +73,6 @@ class DuraIsfTracker @Inject constructor() {
     val stuckMinutesForDisplay: Double get() = stuckMinutes
     val stuckAverageMgdlForDisplay: Double get() = anchorMgdl
 }
+
+/** DURA may work at [bgMgdl] when there is no BG limit ([minBgMgdl] 0) or BG is at or above it. */
+internal fun duraGateOpen(bgMgdl: Double, minBgMgdl: Double): Boolean = minBgMgdl <= 0.0 || bgMgdl >= minBgMgdl

@@ -468,6 +468,8 @@
     <string name="si_mode_isf_learning_title">Enable per-meal/UAM ISF learning</string>
     <string name="si_pf_dura_enabled_title">Protein/Fat: DURA enabled (strengthen ISF if BG stuck high)</string>
     <string name="si_pf_dura_floor_title">Protein/Fat: DURA strongest ISF allowed (floor)</string>
+    <string name="si_pf_dura_min_bg_title">Protein/Fat: DURA only above this BG (0 = always)</string>
+    <string name="si_dura_min_bg_summary">DURA only works while BG is at or above this. When BG falls under it, DURA stops. When BG is back above it, DURA starts again from zero.</string>
     <string name="si_pf_dura_strength_title">Protein/Fat: DURA strength</string>
     <string name="si_post_mode_lockout_mins_title">Post-meal learning lockout (min, 0=off)</string>
     <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>
@@ -500,6 +502,7 @@
     <string name="si_uam_dinner_start_title">UAM Dinner window start hour</string>
     <string name="si_uam_dura_enabled_title">UAM: DURA enabled (strengthen ISF if BG stuck high)</string>
     <string name="si_uam_dura_floor_title">UAM: DURA strongest ISF allowed (floor)</string>
+    <string name="si_uam_dura_min_bg_title">UAM: DURA only above this BG (0 = always)</string>
     <string name="si_uam_dura_strength_title">UAM: DURA strength</string>
     <string name="si_uam_enabled_title">UAM auto-detection enabled</string>
     <string name="si_uam_entry_smb_count_title">UAM entry SMB count (apply fraction to first N SMBs)</string>

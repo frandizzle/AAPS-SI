@@ -176,6 +176,26 @@ enum class UnitDoubleKey(
         defaultedBySM = true,
         dependency = BooleanKey.ApsSmartInsulinPfDuraEnabled
     ),
+    ApsSmartInsulinUamDuraMinBg(
+        key = "si_uam_dura_min_bg",
+        defaultValue = 0.0,
+        minMgdl = 0,
+        maxMgdl = 360,
+        title = KeysStrings.si_uam_dura_min_bg_title,
+        summary = KeysStrings.si_dura_min_bg_summary,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamDuraEnabled
+    ),
+    ApsSmartInsulinPfDuraMinBg(
+        key = "si_pf_dura_min_bg",
+        defaultValue = 0.0,
+        minMgdl = 0,
+        maxMgdl = 360,
+        title = KeysStrings.si_pf_dura_min_bg_title,
+        summary = KeysStrings.si_dura_min_bg_summary,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinPfDuraEnabled
+    ),
     ApsSmartInsulinUamBreakfastIsf(
         key = "si_uam_breakfast_isf2",
         defaultValue = 0.0,
