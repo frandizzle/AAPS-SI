@@ -1,6 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.keys.IntKey
 
 /**
@@ -57,7 +57,7 @@ enum class LearningBias(val label: String, val bias: Double) {
     companion object {
         fun of(ordinalValue: Int): LearningBias = entries.getOrElse(ordinalValue) { NEUTRAL }
 
-        fun from(sp: SP): LearningBias =
+        fun from(sp: KeyValueStore): LearningBias =
             of(sp.getInt(IntKey.ApsSmartInsulinLearningBias.key, IntKey.ApsSmartInsulinLearningBias.defaultValue))
     }
 }

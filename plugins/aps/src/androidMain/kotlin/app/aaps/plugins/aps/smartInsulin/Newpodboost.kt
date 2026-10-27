@@ -1,6 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.keys.StringNonKey
 
 /**
@@ -22,7 +22,7 @@ import app.aaps.core.keys.StringNonKey
  *
  * "Ended for this pod" is stored, so a restart cannot bring a boost back that already stopped.
  */
-class NewPodBoost(private val sp: SP) {
+class NewPodBoost(private val sp: KeyValueStore) {
 
     /** [extra] is the boost now, 0.20 for +20%; 0 when inactive. [paused]: in the window, but BG is
      *  under target so nothing extra is given (learning still pauses: the window is not over). */

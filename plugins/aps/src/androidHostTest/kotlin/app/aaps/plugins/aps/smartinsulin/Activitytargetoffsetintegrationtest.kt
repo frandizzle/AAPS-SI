@@ -18,7 +18,7 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
-// Integration: SP read path → targetOffsetMmol
+// Integration: KeyValueStore read path → targetOffsetMmol
 //
 // The original ActivityMonitorTest.targetOffsetMmol tests passed because they
 // called targetOffsetMmol() directly with already-correct mmol values. The real
@@ -35,7 +35,7 @@ class ActivityTargetOffsetIntegrationTest {
 
     private val persistenceLayer: PersistenceLayer = mock()
     private val phoneStepCounter: PhoneStepCounter = mock()
-    private val sp: app.aaps.core.interfaces.sharedPreferences.SP = mock()
+    private val sp: app.aaps.core.interfaces.sharedPreferences.KeyValueStore = mock()
     private val logger = FakeAAPSLogger()
 
     private lateinit var sut: ActivityMonitor
@@ -46,7 +46,7 @@ class ActivityTargetOffsetIntegrationTest {
         sut = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
         wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(emptyList())
         wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenReturn(emptyList())
-        // Default: SP returns whatever default is passed in
+        // Default: KeyValueStore returns whatever default is passed in
         whenever(sp.getDouble(any<String>(), any<Double>())).thenAnswer { it.getArgument<Double>(1) }
     }
 
@@ -86,26 +86,26 @@ class ActivityTargetOffsetIntegrationTest {
         runBlocking { sut.recompute(NOW) }
     }
 
-    // ── Default SP values ────────────────────────────────────────────────────
+    // ── Default KeyValueStore values ────────────────────────────────────────────────────
 
-    @Test fun `SEDENTARY offset is 0 regardless of SP prefs`() {
+    @Test fun `SEDENTARY offset is 0 regardless of KeyValueStore prefs`() {
         setLevel(ActivityMonitor.ActivityLevel.SEDENTARY)
         assertEquals(0.0, readOffsetMmol(), 0.001)
     }
 
-    @Test fun `LIGHT default 9 mgdl in SP produces 0_5 mmol offset`() {
+    @Test fun `LIGHT default 9 mgdl in KeyValueStore produces 0_5 mmol offset`() {
         setLevel(ActivityMonitor.ActivityLevel.LIGHT)
         // 9.0 mg/dL / 18 = 0.5 mmol
         assertEquals(0.5, readOffsetMmol(lightMgdl = 9.0), 0.001)
     }
 
-    @Test fun `MODERATE default 18 mgdl in SP produces 1_0 mmol offset`() {
+    @Test fun `MODERATE default 18 mgdl in KeyValueStore produces 1_0 mmol offset`() {
         setLevel(ActivityMonitor.ActivityLevel.MODERATE)
         // 18.0 mg/dL / 18 = 1.0 mmol
         assertEquals(1.0, readOffsetMmol(moderateMgdl = 18.0), 0.001)
     }
 
-    @Test fun `HEAVY default 27 mgdl in SP produces 1_5 mmol offset`() {
+    @Test fun `HEAVY default 27 mgdl in KeyValueStore produces 1_5 mmol offset`() {
         setLevel(ActivityMonitor.ActivityLevel.HEAVY)
         // 27.0 mg/dL / 18 = 1.5 mmol
         assertEquals(1.5, readOffsetMmol(heavyMgdl = 27.0), 0.001)

@@ -5,7 +5,7 @@ import org.mockito.kotlin.wheneverBlocking
 import app.aaps.core.data.model.HR
 import app.aaps.core.interfaces.db.PersistenceLayer
 import app.aaps.shared.tests.rx.TestAapsSchedulers
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.plugins.aps.smartInsulin.testutil.FakeAAPSLogger
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,7 +29,7 @@ import org.mockito.kotlin.whenever
 @ExtendWith(MockitoExtension::class)
 class SmartInsulinSpReaderTest {
 
-    private val sp: SP = mock()
+    private val sp: KeyValueStore = mock()
     private val persistenceLayer: PersistenceLayer = mock()
     private val phoneStepCounter: PhoneStepCounter = mock()
     private val logger = FakeAAPSLogger()
@@ -42,7 +42,7 @@ class SmartInsulinSpReaderTest {
         monitor = ActivityMonitor(logger, persistenceLayer, TestAapsSchedulers(), phoneStepCounter)
         wheneverBlocking { persistenceLayer.getHeartRatesFromTime(any()) }.thenReturn(emptyList())
         wheneverBlocking { persistenceLayer.getStepsCountFromTime(any()) }.thenReturn(emptyList())
-        // Default: SP returns whatever default value is passed in
+        // Default: KeyValueStore returns whatever default value is passed in
         whenever(sp.getDouble(any<String>(), any<Double>())).thenAnswer { it.getArgument<Double>(1) }
     }
 
@@ -70,13 +70,13 @@ class SmartInsulinSpReaderTest {
 
     // ── spMgdl: direct read, no heuristic ───────────────────────────────────
 
-    @Test fun `spMgdl returns SP value directly without any conversion`() {
+    @Test fun `spMgdl returns KeyValueStore value directly without any conversion`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinActivityLightTarget, 9.0)
         assertEquals(9.0, spMgdl(sp, UnitDoubleKey.ApsSmartInsulinActivityLightTarget), 0.001)
     }
 
-    @Test fun `spMgdl returns default when SP has no stored value`() {
-        // SP mock returns the default (9.0) when no override is set
+    @Test fun `spMgdl returns default when KeyValueStore has no stored value`() {
+        // KeyValueStore mock returns the default (9.0) when no override is set
         assertEquals(
             UnitDoubleKey.ApsSmartInsulinActivityLightTarget.defaultValue,
             spMgdl(sp, UnitDoubleKey.ApsSmartInsulinActivityLightTarget),
@@ -91,28 +91,28 @@ class SmartInsulinSpReaderTest {
         assertTrue(result < 20.0) { "spMgdl returned $result — old heuristic would produce 162.0" }
     }
 
-    // ── activityOffsetMmol: full chain with default SP values ────────────────
+    // ── activityOffsetMmol: full chain with default KeyValueStore values ────────────────
 
-    @Test fun `SEDENTARY produces 0 offset regardless of SP values`() {
+    @Test fun `SEDENTARY produces 0 offset regardless of KeyValueStore values`() {
         setActivityLevel(ActivityMonitor.ActivityLevel.SEDENTARY)
         assertEquals(0.0, activityOffsetMmol(sp, monitor), 0.001)
     }
 
-    @Test fun `LIGHT default 9 mgdl in SP produces 0_5 mmol offset`() {
+    @Test fun `LIGHT default 9 mgdl in KeyValueStore produces 0_5 mmol offset`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinActivityLightTarget, 9.0)
         setActivityLevel(ActivityMonitor.ActivityLevel.LIGHT)
         // 9.0 mg/dL ÷ 18 = 0.5 mmol  →  target = 5.5 + 0.5 = 6.0 mmol
         assertEquals(0.5, activityOffsetMmol(sp, monitor), 0.001)
     }
 
-    @Test fun `MODERATE default 18 mgdl in SP produces 1_0 mmol offset`() {
+    @Test fun `MODERATE default 18 mgdl in KeyValueStore produces 1_0 mmol offset`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinActivityModerateTarget, 18.0)
         setActivityLevel(ActivityMonitor.ActivityLevel.MODERATE)
         // 18.0 mg/dL ÷ 18 = 1.0 mmol  →  target = 5.5 + 1.0 = 6.5 mmol
         assertEquals(1.0, activityOffsetMmol(sp, monitor), 0.001)
     }
 
-    @Test fun `HEAVY default 27 mgdl in SP produces 1_5 mmol offset`() {
+    @Test fun `HEAVY default 27 mgdl in KeyValueStore produces 1_5 mmol offset`() {
         setSpValue(UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget, 27.0)
         setActivityLevel(ActivityMonitor.ActivityLevel.HEAVY)
         // 27.0 mg/dL ÷ 18 = 1.5 mmol  →  target = 5.5 + 1.5 = 7.0 mmol

@@ -12,7 +12,7 @@ import app.aaps.core.keys.StringKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.data.configuration.Constants
 import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.format.NumberFormatPlatform
@@ -31,7 +31,7 @@ import dev.zacsweers.metro.SingleIn
  */
 @SingleIn(AppScope::class)
 class UamController @Inject constructor(
-    private val sp:                  SP,
+    private val sp:                  KeyValueStore,
     private val mealOverrideManager: MealOverrideManager,
     private val profileUtil:         ProfileUtil,
     private val aapsLogger:          AAPSLogger

@@ -2,7 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.profile.ProfileUtil
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.BooleanKey
@@ -23,7 +23,7 @@ import org.mockito.kotlin.*
  */
 class UamPfTakeoverTest {
 
-    private val sp: SP = mock()
+    private val sp: KeyValueStore = mock()
     private val mealOverrideManager: MealOverrideManager = mock()
     private val profileUtil: ProfileUtil = mock()
     private val aapsLogger: AAPSLogger = mock()

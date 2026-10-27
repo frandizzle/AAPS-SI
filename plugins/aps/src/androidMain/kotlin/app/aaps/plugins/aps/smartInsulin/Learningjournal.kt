@@ -2,7 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.keys.StringNonKey
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -24,7 +24,7 @@ import org.json.JSONObject
  */
 @SingleIn(AppScope::class)
 class LearningJournal @Inject constructor(
-    private val sp: SP,
+    private val sp: KeyValueStore,
     private val aapsLogger: AAPSLogger
 ) {
 

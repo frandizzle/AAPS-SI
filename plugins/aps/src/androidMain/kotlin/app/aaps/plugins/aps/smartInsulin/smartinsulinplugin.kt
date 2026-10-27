@@ -71,7 +71,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
 import app.aaps.core.interfaces.utils.HardLimits
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.profile.Profile
 import app.aaps.core.utils.MidnightUtils
@@ -105,7 +105,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val persistenceLayer: PersistenceLayer,
     private val processedTbrEbData: ProcessedTbrEbData,
     private val hardLimits: HardLimits,
-    private val sp: SP,
+    private val sp: KeyValueStore,
     private val constraintsChecker: ConstraintsChecker,
     private val activePlugin: ActivePlugin,
     private val dateUtil: DateUtil,

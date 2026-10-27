@@ -8,7 +8,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.keys.StringKey
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import java.util.Locale
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
@@ -22,7 +22,7 @@ import kotlin.math.max
 @SingleIn(AppScope::class)
 class BolusCurveTracker @Inject constructor(
     private val profileLearner: ProfileLearner,
-    private val sp:             SP,
+    private val sp:             KeyValueStore,
     private val aapsLogger:     AAPSLogger
 ) {
     // ── In-memory state ───────────────────────────────────────────────────────

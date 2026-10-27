@@ -1,6 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.abs
@@ -45,7 +45,7 @@ import kotlin.math.abs
  * The meal being watched is saved on every cycle, so an app restart or update does not lose it. A restart
  * that leaves a gap in the data still drops it, like any other gap.
  */
-class SiteCheck(private val sp: SP) {
+class SiteCheck(private val sp: KeyValueStore) {
 
     /** One judged meal, for the CSV log and the notification. */
     data class Episode(

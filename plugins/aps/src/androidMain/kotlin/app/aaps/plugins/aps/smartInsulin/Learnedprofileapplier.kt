@@ -10,7 +10,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileRepository
 import app.aaps.core.interfaces.profile.SingleProfile
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.utils.DateUtil
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -37,7 +37,7 @@ import java.util.Locale
 @SingleIn(AppScope::class)
 class LearnedProfileApplier @Inject constructor(
     private val aapsLogger: AAPSLogger,
-    private val sp: SP,
+    private val sp: KeyValueStore,
     private val profileFunction: ProfileFunction,
     private val profileRepository: ProfileRepository,
     private val dateUtil: DateUtil,

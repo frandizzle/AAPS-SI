@@ -2,7 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.keys.StringNonKey
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.plugin.ActivePlugin
@@ -23,7 +23,7 @@ import dev.zacsweers.metro.SingleIn
 @SingleIn(AppScope::class)
 class ProfileLearner @Inject constructor(
     private val aapsLogger:      AAPSLogger,
-    private val sp:              SP,
+    private val sp:              KeyValueStore,
     private val profileFunction: ProfileFunction,
     private val activePlugin:    ActivePlugin
 ) : SmartInsulinLearner {

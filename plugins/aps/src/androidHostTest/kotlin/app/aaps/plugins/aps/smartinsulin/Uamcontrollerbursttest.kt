@@ -2,7 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.profile.ProfileUtil
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.BooleanKey
@@ -27,7 +27,7 @@ import org.mockito.kotlin.*
  */
 class UamControllerBurstTest {
 
-    private val sp: SP = mock()
+    private val sp: KeyValueStore = mock()
     private val mealOverrideManager: MealOverrideManager = mock()
     private val profileUtil: ProfileUtil = mock()
     private val aapsLogger: AAPSLogger = mock()
@@ -37,7 +37,7 @@ class UamControllerBurstTest {
     // Burst threshold = 1.0 mmol, trigger threshold = 6.0 mmol
     @BeforeEach
     fun setup() {
-        // Mock default SP behavior to return the provided default values
+        // Mock default KeyValueStore behavior to return the provided default values
         whenever(sp.getBoolean(any<String>(), any<Boolean>())).thenAnswer { invocation -> invocation.getArgument<Boolean>(1) }
         whenever(sp.getInt(any<String>(), any<Int>())).thenAnswer { invocation -> invocation.getArgument<Int>(1) }
         whenever(sp.getString(any<String>(), any<String>())).thenAnswer { invocation -> invocation.getArgument<String>(1) }

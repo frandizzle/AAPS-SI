@@ -4,7 +4,7 @@ import app.aaps.core.keys.StringNonKey
 
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.logging.LTag
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
@@ -58,7 +58,7 @@ data class ActivitySession(
  */
 @SingleIn(AppScope::class)
 class ActivitySessionManager @Inject constructor(
-    private val sp:         SP,
+    private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger,
     private val learner:    ActivitySessionLearner
 ) {
@@ -273,7 +273,7 @@ class ActivitySessionManager @Inject constructor(
  */
 @SingleIn(AppScope::class)
 class ActivitySessionLearner @Inject constructor(
-    private val sp:         SP,
+    private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger
 ) {
 

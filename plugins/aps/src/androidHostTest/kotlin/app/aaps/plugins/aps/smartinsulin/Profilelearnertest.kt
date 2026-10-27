@@ -11,13 +11,13 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.plugin.ActivePlugin
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.profile.ProfileFunction
 
 class ProfileLearnerTest {
 
     private val logger: AAPSLogger = mock()
-    private val sp: SP = mock()
+    private val sp: KeyValueStore = mock()
     private val profileFunction: ProfileFunction = mock()
     private val activePlugin: ActivePlugin = mock()
     private lateinit var learner: ProfileLearner

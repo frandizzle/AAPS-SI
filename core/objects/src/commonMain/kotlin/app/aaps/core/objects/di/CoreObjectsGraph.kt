@@ -1,8 +1,9 @@
 package app.aaps.core.objects.di
 
+import app.aaps.core.interfaces.alerts.EatReminder
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.automation.Automation
-import app.aaps.core.interfaces.bolus.WizardBolusExecutor
+import app.aaps.core.interfaces.bolus.MasterActionExecutor
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -94,15 +95,16 @@ object CoreObjectsGraph {
         cfg: Config,
         entryLogger: UserEntryLogger,
         automationRef: Automation,
+        eatReminder: EatReminder,
         glucose: GlucoseStatusProvider,
         persistence: PersistenceLayer,
         deviceStatus: ProcessedDeviceStatusData,
         guard: RunningModeGuard,
         ch: ConcentrationHelper,
-        executor: WizardBolusExecutor,
+        executor: MasterActionExecutor,
         scope: CoroutineScope
     ): BolusWizard = BolusWizard(
         logger, text, bus, prefs, profile, profileU, constraints, loopRef, iobCob, dates, cfg,
-        entryLogger, automationRef, glucose, persistence, deviceStatus, guard, ch, executor, scope
+        entryLogger, automationRef, eatReminder, glucose, persistence, deviceStatus, guard, ch, executor, scope
     )
 }

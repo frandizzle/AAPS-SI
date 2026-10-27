@@ -2,7 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.keys.StringNonKey
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -31,7 +31,7 @@ import kotlin.math.sign
 @SingleIn(AppScope::class)
 class CircadianLearner @Inject constructor(
     private val aapsLogger: AAPSLogger,
-    private val sp: SP
+    private val sp: KeyValueStore
 ) {
 
     // -- State -----------------------------------------------------------------
@@ -57,7 +57,7 @@ class CircadianLearner @Inject constructor(
      * blame), so the cost is a missed correction that nothing would report.
      */
     private val lastFastingInsulinMs: MutableMap<Int, Long> = HashMap()
-    /** Set when [lastFastingInsulinMs] has moved enough to be worth an SP write. */
+    /** Set when [lastFastingInsulinMs] has moved enough to be worth an KeyValueStore write. */
     private var insulinPresenceDirty = false
 
     init { restore() }
@@ -2546,7 +2546,7 @@ class CircadianLearner @Inject constructor(
         private const val RETRO_MIN_WEIGHT         = 0.15
         /** IOB that counts as "insulin was working in this hour". */
         private const val RETRO_MIN_IOB_U          = 0.05
-        /** How stale a bucket's stamp must be before refreshing it is worth an SP write. Well under
+        /** How stale a bucket's stamp must be before refreshing it is worth an KeyValueStore write. Well under
          *  [RETRO_LOOKBACK_MINS], so a restart can never land on a stamp old enough to have expired
          *  when it should not have. */
         private const val RETRO_PERSIST_INTERVAL_MS = 10 * 60_000L

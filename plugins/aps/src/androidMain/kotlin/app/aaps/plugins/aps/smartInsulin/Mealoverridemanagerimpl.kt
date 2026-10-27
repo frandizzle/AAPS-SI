@@ -6,7 +6,7 @@ import kotlinx.coroutines.launch
 import app.aaps.core.interfaces.notifications.AlarmSound
 import app.aaps.core.keys.StringNonKey
 
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.logging.AAPSLogger
@@ -28,7 +28,7 @@ import dev.zacsweers.metro.SingleIn
 @SingleIn(AppScope::class)
 class MealOverrideManagerImpl @Inject constructor(
     private val aapsLogger:      AAPSLogger,
-    private val sp:              SP,
+    private val sp:              KeyValueStore,
     private val commandQueue:    CommandQueue,
     private val profileFunction: ProfileFunction,
     private val dateUtil:        DateUtil,

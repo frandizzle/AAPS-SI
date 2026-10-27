@@ -1,11 +1,12 @@
 package app.aaps.implementation.wizard
 
 import app.aaps.core.data.pump.defs.PumpDescription
+import app.aaps.core.interfaces.alerts.EatReminder
 import app.aaps.core.interfaces.aps.AutosensDataStore
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.Loop
 import app.aaps.core.interfaces.automation.Automation
-import app.aaps.core.interfaces.bolus.WizardBolusExecutor
+import app.aaps.core.interfaces.bolus.MasterActionExecutor
 import app.aaps.core.interfaces.constraints.Constraint
 import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.db.PersistenceLayer
@@ -44,11 +45,12 @@ class BolusWizardTest : TestBaseWithProfile() {
     @Mock lateinit var openAPSSMBPlugin: OpenAPSSMBPlugin
     @Mock lateinit var uel: UserEntryLogger
     @Mock lateinit var automation: Automation
+    @Mock lateinit var eatReminder: EatReminder
     @Mock lateinit var glucoseStatusProvider: GlucoseStatusProvider
     @Mock lateinit var uiInteraction: UiInteraction
     @Mock lateinit var persistenceLayer: PersistenceLayer
     @Mock lateinit var runningModeGuard: RunningModeGuard
-    @Mock lateinit var wizardBolusExecutor: WizardBolusExecutor
+    @Mock lateinit var masterActionExecutor: MasterActionExecutor
 
     @BeforeEach
     fun prepare() {
@@ -92,9 +94,9 @@ class BolusWizardTest : TestBaseWithProfile() {
     }
 
     private fun createWizard() = BolusWizard(
-        aapsLogger, rh, rxBus, preferences, profileFunction, profileUtil, constraintChecker, loop, iobCobCalculator, dateUtil, config, uel, automation,
+        aapsLogger, rh, rxBus, preferences, profileFunction, profileUtil, constraintChecker, loop, iobCobCalculator, dateUtil, config, uel, automation, eatReminder,
         glucoseStatusProvider, persistenceLayer, processedDeviceStatusData, runningModeGuard,
-        ch, wizardBolusExecutor, CoroutineScope(Dispatchers.Unconfined)
+        ch, masterActionExecutor, CoroutineScope(Dispatchers.Unconfined)
     )
 
     // ==========================================

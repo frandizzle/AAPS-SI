@@ -3,7 +3,7 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
-import app.aaps.core.interfaces.sharedPreferences.SP
+import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.keys.DoubleKey
@@ -15,7 +15,7 @@ import org.mockito.kotlin.*
 
 /**
  * Confirms that [SmartInsulinPlugin.entrySmbFractionForMode] reads the correct
- * per-mode SP key for each UAM meal mode, and falls back to the global default
+ * per-mode KeyValueStore key for each UAM meal mode, and falls back to the global default
  * for non-UAM modes and UAM_PROTEIN_FAT.
  *
  * Each mode gets a distinct stub value so we can prove the right key was read,
@@ -32,7 +32,7 @@ import org.mockito.kotlin.*
  */
 class UamEntrySmbFractionPerModeTest {
 
-    private val sp: SP = mock()
+    private val sp: KeyValueStore = mock()
 
     // Minimal stub — only entrySmbFractionForMode() is called, which only touches SP.
     // All other constructor args are null/mock stubs that are never invoked.
@@ -177,11 +177,11 @@ class UamEntrySmbFractionPerModeTest {
     // ── Default value passthrough ─────────────────────────────────────────────
 
     /**
-     * Confirms that the default value from DoubleKey is passed as the SP fallback,
+     * Confirms that the default value from DoubleKey is passed as the KeyValueStore fallback,
      * so a fresh install with no saved prefs gets the registered default (0.5), not 0.0.
      */
     @Test
-    fun `default value from DoubleKey is passed as SP fallback for each mode`() {
+    fun `default value from DoubleKey is passed as KeyValueStore fallback for each mode`() {
         // Unstub all keys so the thenAnswer default kicks in (returns argument[1] = the default)
         whenever(sp.getDouble(any<String>(), any<Double>())).thenAnswer { it.getArgument<Double>(1) }
 
@@ -193,7 +193,7 @@ class UamEntrySmbFractionPerModeTest {
             MealMode.UAM_AFTERNOON,
         ).forEach { mode ->
             assertEquals(0.5, sut.entrySmbFractionForMode(mode), 0.001,
-                         "Mode $mode: default value should be 0.5 (DoubleKey default) when SP has no saved value")
+                         "Mode $mode: default value should be 0.5 (DoubleKey default) when KeyValueStore has no saved value")
         }
     }
 
