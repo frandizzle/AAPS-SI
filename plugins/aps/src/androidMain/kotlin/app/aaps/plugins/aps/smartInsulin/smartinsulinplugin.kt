@@ -1179,8 +1179,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val overnightStart = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.defaultValue)
         val overnightEnd   = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.defaultValue)
 
-        fun inWindow(start: Int, end: Int) =
-            if (start <= end) hour in start..end else hour >= start || hour <= end
+        fun inWindow(start: Int, end: Int) = PfWindow.hourInWindow(hour, start, end)
 
         val inDay       = inWindow(dayStart, dayEnd)
         val inNight     = inWindow(nightStart, nightEnd)
@@ -1218,6 +1217,20 @@ open class SmartInsulinPlugin @Inject constructor(
      * learners' state slots, so it has to be derived from the same decision [pfWindowFor] makes
      * for dosing or a correction would be filed against a window it was never earned in.
      */
+    /** The user's food fade time for this mode, see `DetermineBasalSmartInsulin.determine_basal`. Fasting has none. */
+    private fun foodFadeMins(mode: MealMode): Int {
+        val key = when (mode) {
+            MealMode.BREAKFAST, MealMode.UAM_BREAKFAST  -> IntKey.ApsSmartInsulinFoodFadeBreakfastMins
+            MealMode.LUNCH, MealMode.UAM_LUNCH          -> IntKey.ApsSmartInsulinFoodFadeLunchMins
+            MealMode.UAM_AFTERNOON, MealMode.UAM_SNACK  -> IntKey.ApsSmartInsulinFoodFadeAfternoonMins
+            MealMode.DINNER, MealMode.UAM_DINNER        -> IntKey.ApsSmartInsulinFoodFadeDinnerMins
+            MealMode.UAM_PROTEIN_FAT                    -> IntKey.ApsSmartInsulinFoodFadeProteinFatMins
+            MealMode.EXTENDED, MealMode.LOW_CARB        -> IntKey.ApsSmartInsulinFoodFadeOtherMins
+            MealMode.FASTING                            -> return DetermineBasalSmartInsulin.DEFAULT_FOOD_FADE_MINS
+        }
+        return sp.getInt(key.key, key.defaultValue)
+    }
+
     private fun pfWindowForMode(mode: MealMode?, hour: Int): PfWindow =
         if (mode == MealMode.UAM_PROTEIN_FAT) pfWindowFor(hour) else PfWindow.NONE
 
@@ -1954,7 +1967,8 @@ open class SmartInsulinPlugin @Inject constructor(
             duraStatusText           = duraStatusText,
             sessionInsulinFraction   = sessionDose.insulinFraction,
             sessionStatusText        = sessionStatus,
-            riseTurn                 = riseTurnNow(glucoseStatus.delta)
+            riseTurn                 = riseTurnNow(glucoseStatus.delta),
+            foodFadeMins             = foodFadeMins(mealMode)
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)
@@ -2090,7 +2104,13 @@ open class SmartInsulinPlugin @Inject constructor(
                     UnitDoubleKey.ApsLgsThreshold,
                     UnitDoubleKey.ApsSmartInsulinLowGuard,
                     UnitDoubleKey.ApsSmartInsulinWarnGuard,
-                    IntKey.ApsSmartInsulinReboundWindowMins
+                    IntKey.ApsSmartInsulinReboundWindowMins,
+                    IntKey.ApsSmartInsulinFoodFadeBreakfastMins,
+                    IntKey.ApsSmartInsulinFoodFadeLunchMins,
+                    IntKey.ApsSmartInsulinFoodFadeAfternoonMins,
+                    IntKey.ApsSmartInsulinFoodFadeDinnerMins,
+                    IntKey.ApsSmartInsulinFoodFadeProteinFatMins,
+                    IntKey.ApsSmartInsulinFoodFadeOtherMins
                 )
             ),
             PreferenceSubScreenDef(
@@ -2255,6 +2275,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 items = listOf(
                     BooleanKey.ApsSmartInsulinUamProteinFatEnabled,
                     UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold,
+                    UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightThreshold,
                     IntKey.ApsSmartInsulinUamProteinFatStuckReadings,
                     IntKey.ApsSmartInsulinUamProteinFatDurationMins,
                     BooleanKey.ApsSmartInsulinUamPfTakeover,

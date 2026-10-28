@@ -138,6 +138,20 @@ class UamController @Inject constructor(
     private fun isfPrefMgdl(key: UnitDoubleKey): Double  = sp.getDouble(key.key, key.defaultValue)
 
     /**
+     * BG that P/F needs to sit at, mmol. In the P/F overnight hours a separate value can be set
+     * (0 = same as the normal one), so a BG only a little above target does not start P/F in sleep.
+     */
+    private fun pfThresholdMmol(hour: Int): Double {
+        val overnight = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightThreshold)
+        val inOvernight = PfWindow.hourInWindow(
+            hour,
+            sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.defaultValue),
+            sp.getInt(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.key, IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.defaultValue)
+        )
+        return if (inOvernight && overnight > 0.0) overnight else unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
+    }
+
+    /**
      * Min rise per reading, mmol, rounded to 3 decimals. The settings screen saves mmol times
      * 18.016 and this divides by 18, so 0.2 came back as 0.2002, and a rise shown as +0.2 failed
      * the check by a hair.
@@ -436,7 +450,7 @@ class UamController @Inject constructor(
         val blockedByLow = if (effectiveBypass) false
         else (bgWentLow || inReboundWindow || msSinceLow < LOW_BLOCK_MINS * 60_000L || (msSincePostRebound < POST_REBOUND_LOCKOUT_MINS * 60_000L))
         if (blockedByLow) { stuckHighReadings = 0; return }
-        val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
+        val triggerThresholdMmol = pfThresholdMmol(currentHour)
         if (stuckHighReadings > 0 && currentBgMmol <= profileTargetMmol) {
             stuckHighReadings = 0; return
         }
@@ -534,7 +548,7 @@ class UamController @Inject constructor(
             currentlyPfTakeoverArmed -> "P/F: running (UAM window may take over)"
             currentlyInMealMode      -> "P/F: armed (after meal expires)"
             else -> {
-                val triggerThresholdMmol = unitPrefMmol(UnitDoubleKey.ApsSmartInsulinUamProteinFatThreshold)
+                val triggerThresholdMmol = pfThresholdMmol(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
                 val stuckNeeded = sp.getInt(IntKey.ApsSmartInsulinUamProteinFatStuckReadings.key, IntKey.ApsSmartInsulinUamProteinFatStuckReadings.defaultValue)
                 if (stuckHighReadings > 0)
                     "P/F: $stuckHighReadings/$stuckNeeded stuck ≥${fmtBg(triggerThresholdMmol)}$unitLabel"

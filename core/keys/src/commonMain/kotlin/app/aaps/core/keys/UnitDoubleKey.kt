@@ -113,6 +113,16 @@ enum class UnitDoubleKey(
         defaultedBySM = true,
         dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
     ),
+    ApsSmartInsulinUamProteinFatOvernightThreshold(
+        key = "si_uam_proteinfat_overnight_threshold",
+        defaultValue = 0.0,
+        minMgdl = 0,
+        maxMgdl = 180,
+        title = KeysStrings.si_uam_proteinfat_overnight_threshold_title,
+        summary = KeysStrings.si_uam_proteinfat_overnight_threshold_summary,
+        defaultedBySM = true,
+        dependency = BooleanKey.ApsSmartInsulinUamProteinFatEnabled
+    ),
     ApsSmartInsulinBreakfastIsf(
         key = "si_breakfast_isf2",
         defaultValue = 0.0,

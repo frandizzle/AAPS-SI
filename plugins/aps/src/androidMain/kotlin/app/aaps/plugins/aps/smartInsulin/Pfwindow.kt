@@ -44,6 +44,10 @@ enum class PfWindow(val label: String) {
         fun label(mode: MealMode, window: PfWindow): String =
             if (mode == MealMode.UAM_PROTEIN_FAT && window != NONE) window.label else mode.label
 
+        /** True if [hour] is inside a window from [start] to [end], both included. The window may run past midnight. */
+        fun hourInWindow(hour: Int, start: Int, end: Int): Boolean =
+            if (start <= end) hour in start..end else hour >= start || hour <= end
+
         /** Every window a P/F row can be filed under, for iterating the SI tab tables. */
         val PF_WINDOWS = listOf(DAY, NIGHT, OVERNIGHT, BASE)
     }

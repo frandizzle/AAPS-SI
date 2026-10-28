@@ -475,6 +475,13 @@
     <string name="si_prebolus2_default_delay_title">Pre-bolus 2: default delay (mins after PB1)</string>
     <string name="si_prebolus2_default_u_title">Pre-bolus 2: default amount (U)</string>
     <string name="si_rebound_window_mins_summary">How long after a low BG event the loop runs in recovery mode — tapering basal from 30% back to 100% and blocking SMBs for the first 75% of the window. Shorter = faster return to normal dosing. Range: 20–90 min.</string>
+    <string name="si_food_fade_summary">In a meal mode the loop sees food still coming in (BG higher than insulin explains). This is how long it expects that food to keep coming before it is gone. Longer lets more insulin in before the low guard stops it, for slow meals. 60 = as before. Fasting always uses 60.</string>
+    <string name="si_food_fade_breakfast_title">Food fade time: Breakfast (min)</string>
+    <string name="si_food_fade_lunch_title">Food fade time: Lunch (min)</string>
+    <string name="si_food_fade_afternoon_title">Food fade time: Afternoon and Snack (min)</string>
+    <string name="si_food_fade_dinner_title">Food fade time: Dinner (min)</string>
+    <string name="si_food_fade_proteinfat_title">Food fade time: Protein/Fat (min)</string>
+    <string name="si_food_fade_other_title">Food fade time: Extended and Low Carb (min)</string>
     <string name="si_rebound_window_mins_title">Low recovery window (min, default 60)</string>
     <string name="si_resting_hr_bpm_title">Resting heart rate (bpm, 0 = use absolute thresholds)</string>
     <string name="si_stft_cgm_warmup_block_title">STFT: disable during CGM warmup</string>
@@ -534,6 +541,8 @@
     <string name="si_uam_proteinfat_overnight_start_title">P/F Overnight window start hour (inclusive)</string>
     <string name="si_uam_proteinfat_stuck_readings_title">UAM Protein/Fat stuck readings to trigger (2-12)</string>
     <string name="si_uam_proteinfat_threshold_title">UAM Protein/Fat trigger threshold</string>
+    <string name="si_uam_proteinfat_overnight_threshold_title">UAM Protein/Fat trigger threshold, overnight hours (0 = same)</string>
+    <string name="si_uam_proteinfat_overnight_threshold_summary">Used instead of the trigger threshold during the Protein/Fat overnight hours. A higher value stops Protein/Fat starting on BG that is only a little above target while you sleep.</string>
     <string name="si_uam_rise_min_delta_title">UAM min rise delta per reading</string>
     <string name="si_uam_rise_readings_title">UAM consecutive rise readings required</string>
     <string name="si_uam_snack_duration_title">UAM Snack mode duration (min)</string>

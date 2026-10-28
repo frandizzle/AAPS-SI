@@ -116,7 +116,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         sessionStatusText:        String = "",
         /** The rise as the raw readings see it, when a smoothing filter is behind - see [RiseTurnGuard].
          *  null, or level NONE, leaves the smoothed delta untouched. */
-        riseTurn:                 RiseTurnGuard.Result? = null
+        riseTurn:                 RiseTurnGuard.Result? = null,
+        /** How long food seen coming in now is expected to keep coming, in a meal mode. 60 = as before.
+         *  Only used while food is coming in (ci > 0); a fall always fades over 60 min. */
+        foodFadeMins:             Int = DEFAULT_FOOD_FADE_MINS
     ): APSResult {
 
         val result = apsResultProvider()
@@ -217,7 +220,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val safeIsfMgdl = dosingIsfMgdl.coerceAtLeast(MIN_DOSING_ISF_MGDL)
 
         val bgiPerTick  = insulinBgiPerTick(iobArray, dosingIsfMgdl)
-        val predictedBg = predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick)
+        // A slow meal (fat, protein, a big dinner) keeps coming in for hours, but a 60 min fade
+        // says it stops within the hour while the insulin keeps working. The forecast then shows a
+        // low that does not come, and the low guard holds insulin back at high BG. The user sets
+        // the fade per meal; Fasting and a fall keep 60 min.
+        val fadeMins = if (mealMode != MealMode.FASTING && ci > 0.0)
+            foodFadeMins.coerceIn(DEFAULT_FOOD_FADE_MINS, MAX_FOOD_FADE_MINS) else DEFAULT_FOOD_FADE_MINS
+        val predictedBg = predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins)
 
         // Carbs on board do not change the forecast: it is insulin plus what BG is doing now. An
         // oref-style carb curve was tried and taken out again - not worth what it added.
@@ -302,6 +311,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
         sb.append(" | IOB=${"%.2f".format(Locale.US, currentIob)}/${"%.0f".format(Locale.US, oapsProfile.max_iob)}")
         sb.append(" | pred_min=${fmt(predictedMinSafety, isMmol)} lo=${fmt(lowGuardMgdl, isMmol)} warn=${fmt(warnGuardMgdl, isMmol)}")
+        // Food the forecast sees coming in now, per 5 min, and how long it expects it to last.
+        if (mealMode != MealMode.FASTING) {
+            val food = if (isMmol) String.format(Locale.US, "%.2f", ci / MMOL_TO_MGDL) else String.format(Locale.US, "%.1f", ci)
+            sb.append(" | food=$food/5m fade=${fadeMins}m")
+        }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
         sb.append(" | ISF=${fmtIsf(dosingIsfMgdl, isMmol)}")
         if (duraStatusText.isNotEmpty()) sb.append(" | $duraStatusText")
@@ -559,10 +573,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         iobArray.map { -(max(0.0, it.activity) * isfMgdl * 5.0) }
 
     /** Stock oref IOBpredBGs: BG now, plus insulin per step, plus ci fading to zero over 60 minutes. */
-    private fun predictBgCurve(startBg: Double, ci: Double, bgiPerTick: List<Double>): List<Double> {
+    private fun predictBgCurve(startBg: Double, ci: Double, bgiPerTick: List<Double>, fadeMins: Int = DEFAULT_FOOD_FADE_MINS): List<Double> {
         var bg = startBg
         return bgiPerTick.mapIndexed { i, bgi ->
-            val predDev = ci * (1.0 - minOf(1.0, (i + 1) / (60.0 / 5.0)))
+            val predDev = ci * (1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0)))
             bg += bgi + predDev
             bg
         }
@@ -583,6 +597,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // ~0.5 mmol/L per unit — an ISF this strong is outside any real profile; this exists
         // purely so a corrupt multiplier can never turn a division into an unbounded dose.
         private const val MIN_DOSING_ISF_MGDL         = 9.0
+        const val DEFAULT_FOOD_FADE_MINS              = 60
+        const val MAX_FOOD_FADE_MINS                  = 180
 
     }
 }

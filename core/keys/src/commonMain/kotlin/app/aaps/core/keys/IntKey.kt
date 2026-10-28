@@ -504,6 +504,60 @@ enum class IntKey(
         summary = KeysStrings.si_rebound_window_mins_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinFoodFadeBreakfastMins(
+        key = "si_food_fade_breakfast_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_breakfast_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodFadeLunchMins(
+        key = "si_food_fade_lunch_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_lunch_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodFadeAfternoonMins(
+        key = "si_food_fade_afternoon_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_afternoon_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodFadeDinnerMins(
+        key = "si_food_fade_dinner_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_dinner_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodFadeProteinFatMins(
+        key = "si_food_fade_proteinfat_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_proteinfat_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodFadeOtherMins(
+        key = "si_food_fade_other_mins",
+        defaultValue = 60,
+        min = 60,
+        max = 180,
+        title = KeysStrings.si_food_fade_other_title,
+        summary = KeysStrings.si_food_fade_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinLearningBias(
         key = "si_learning_bias",
         defaultValue = 2,

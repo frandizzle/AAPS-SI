@@ -177,7 +177,9 @@ class DetermineBasalSmartInsulinTest {
         // behaviour, so the harness turns it off; a future dawn test can pass its own value.
         dawnSmbReduction:  Double               = 1.0,
         msSinceLastSuspend: Long                = 3600_000L,
-        riseTurn:          RiseTurnGuard.Result? = null
+        riseTurn:          RiseTurnGuard.Result? = null,
+        mealMode:          MealMode             = MealMode.FASTING,
+        foodFadeMins:      Int                  = 60
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -187,7 +189,7 @@ class DetermineBasalSmartInsulinTest {
             mealData              = mealData,
             profile               = profile,
             learnedProfile        = learnedProfile,
-            mealMode              = MealMode.FASTING,
+            mealMode              = mealMode,
             lowGuardMmol          = lowGuardMmol,
             warnGuardMmol         = warnGuardMmol,
             maxSmbU               = maxSmbU,
@@ -212,7 +214,8 @@ class DetermineBasalSmartInsulinTest {
             cgmDeltaPlausible     = true,
             cgmWarmupReason       = "",
             uamSmbFraction        = uamSmbFraction,
-            riseTurn              = riseTurn
+            riseTurn              = riseTurn,
+            foodFadeMins          = foodFadeMins
         )
         return fakeResult
     }
@@ -470,6 +473,45 @@ class DetermineBasalSmartInsulinTest {
         // Stock oref fades ci from the first step: 18 * (11/12 + 10/12 + ... + 1/12) = 18 * 5.5.
         assertEquals(150.0 + 18.0 * 5.5, peak, 0.5,
                      "Sub-clamp carb impact should reach the prediction in full, got $peak")
+    }
+
+    // ── Food fade time ───────────────────────────────────────────────────────
+
+    private fun foodComingIn(deltaMgdl: Double) {
+        whenever(glucoseStatus.glucose).thenReturn(150.0)
+        whenever(glucoseStatus.delta).thenReturn(deltaMgdl)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(deltaMgdl)
+    }
+
+    @Test fun `a longer food fade in a meal mode counts more food still to come`() {
+        foodComingIn(18.0)
+        val r = invoke(mealMode = MealMode.UAM_DINNER, foodFadeMins = 120)
+        // 120 min = 24 ticks: 18 * (23/24 + 22/24 + ... + 0/24) = 18 * 11.5.
+        assertEquals(150.0 + 18.0 * 11.5, r.predictionsAsGv.maxOf { it.value }, 0.5)
+        assertTrue(r.reason.contains("fade=120m"), r.reason)
+        assertTrue(r.reason.contains("food=1.00/5m"), r.reason)
+    }
+
+    @Test fun `the default food fade in a meal mode is the old 60 min`() {
+        foodComingIn(18.0)
+        val r = invoke(mealMode = MealMode.UAM_DINNER)
+        assertEquals(150.0 + 18.0 * 5.5, r.predictionsAsGv.maxOf { it.value }, 0.5)
+        assertTrue(r.reason.contains("fade=60m"), r.reason)
+    }
+
+    @Test fun `Fasting ignores the food fade time and does not show it`() {
+        foodComingIn(18.0)
+        val r = invoke(mealMode = MealMode.FASTING, foodFadeMins = 120)
+        assertEquals(150.0 + 18.0 * 5.5, r.predictionsAsGv.maxOf { it.value }, 0.5)
+        assertTrue(!r.reason.contains("fade="), r.reason)
+    }
+
+    @Test fun `a fall in a meal mode still fades over 60 min`() {
+        // No food coming in: a longer fade must not stretch a predicted fall.
+        foodComingIn(-9.0)
+        val r = invoke(mealMode = MealMode.UAM_DINNER, foodFadeMins = 120)
+        assertEquals(150.0 - 9.0 * 5.5, r.predictionsAsGv.minOf { it.value }, 0.5)
+        assertTrue(r.reason.contains("fade=60m"), r.reason)
     }
 
     @Test fun `a degenerate dosing ISF produces finite output`() {

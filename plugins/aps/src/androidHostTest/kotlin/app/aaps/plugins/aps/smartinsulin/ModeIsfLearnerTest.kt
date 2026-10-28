@@ -503,10 +503,39 @@ class ModeIsfLearnerTest {
 
     @Test
     fun `ending high with DURA working the tail is left to DURA`() {
-        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25)
-        runQuietTail(BASE_MS, bg = 130.0)
-        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        // 35 min with DURA engaged: long enough for the DURA learner to judge the stall.
+        var t = BASE_MS
+        repeat(8) {
+            cycle(MealMode.DINNER, BASE_MS, t, bg = 160.0, dura = 1.25)
+            t += CYCLE_MS
+        }
+        cycle(null, 0L, t, bg = 130.0)
         assertTrue(learner.lastOutcome.contains("DURA's to fix"), learner.lastOutcome)
+        runQuietTail(t, bg = 130.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `ending high after only a short DURA push still strengthens`() {
+        // The 28 Oct lunch: DURA was held off by its BG level and worked only 15 min at ×1.15.
+        // The DURA learner needs 30 min to judge, so without this nobody learned from the stall.
+        var t = BASE_MS
+        repeat(6) {
+            cycle(MealMode.UAM_LUNCH, BASE_MS, t, bg = 170.0, dura = if (it >= 3) 1.15 else 1.0)
+            t += CYCLE_MS
+        }
+        cycle(null, 0L, t, bg = 180.0)
+        assertTrue(learner.lastOutcome.contains("DURA worked only 15min"), learner.lastOutcome)
+        assertEquals(0.975, learner.multiplier(MealMode.UAM_LUNCH), 1e-9)
+    }
+
+    @Test
+    fun `a gap in readings does not count as DURA time`() {
+        // Two DURA cycles 60 min apart: at most 10 min of the gap counts, so the stall is not DURA's.
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, dura = 1.25)
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS + 60 * 60_000L, bg = 160.0, dura = 1.25)
+        cycle(null, 0L, BASE_MS + 65 * 60_000L, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
     }
 
     @Test

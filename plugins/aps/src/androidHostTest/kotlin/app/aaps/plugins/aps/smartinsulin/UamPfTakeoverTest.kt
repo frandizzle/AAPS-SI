@@ -71,13 +71,14 @@ class UamPfTakeoverTest {
         mode: MealMode = MealMode.UAM_PROTEIN_FAT,
         delta: Double = 0.0,
         avgDelta: Double = 0.0,
-        postMealLockout: Boolean = false
+        postMealLockout: Boolean = false,
+        hour: Int = 8
     ) = sut.onLoopCycle(
         currentMealMode   = mode,
         currentBgMmol     = bgMmol,
         deltaMmol         = delta,
         shortAvgDeltaMmol = avgDelta,
-        currentHour       = 8,
+        currentHour       = hour,
         bgWentLow         = false,
         inReboundWindow   = false,
         lastLowTimeMs     = 0L,
@@ -97,6 +98,51 @@ class UamPfTakeoverTest {
         verify(mealOverrideManager, never()).activateOverride(
             any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
         )
+
+    private fun verifyPfFired() =
+        verify(mealOverrideManager).activateOverride(
+            eq(MealMode.UAM_PROTEIN_FAT), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+        )
+
+    /** Four flat readings in Fasting at [bgMmol] - one more than the 3 P/F needs. */
+    private fun flatFasting(bgMmol: Double, hour: Int) =
+        repeat(4) { cycle(bgMmol = bgMmol, tMs = 1_000L + it * 300_000L, mode = MealMode.FASTING, hour = hour) }
+
+    private fun overnightThreshold(mgdl: Double) {
+        whenever(sp.getInt(eq(IntKey.ApsSmartInsulinUamProteinFatOvernightStartHour.key), any())).thenReturn(2)
+        whenever(sp.getInt(eq(IntKey.ApsSmartInsulinUamProteinFatOvernightEndHour.key), any())).thenReturn(4)
+        whenever(sp.getDouble(eq(UnitDoubleKey.ApsSmartInsulinUamProteinFatOvernightThreshold.key), any())).thenReturn(mgdl)
+    }
+
+    // ── Overnight P/F threshold ───────────────────────────────────────────────
+
+    @Test
+    fun `overnight a flat BG under the overnight threshold does not start P over F`() {
+        overnightThreshold(135.0)                    // 7.5 mmol
+        flatFasting(bgMmol = 6.8, hour = 3)
+        verifyNothingFired()
+    }
+
+    @Test
+    fun `overnight a flat BG over the overnight threshold still starts P over F`() {
+        overnightThreshold(135.0)
+        flatFasting(bgMmol = 7.8, hour = 3)
+        verifyPfFired()
+    }
+
+    @Test
+    fun `outside the overnight hours the normal threshold is used`() {
+        overnightThreshold(135.0)
+        flatFasting(bgMmol = 6.8, hour = 23)
+        verifyPfFired()
+    }
+
+    @Test
+    fun `overnight threshold 0 keeps the normal threshold`() {
+        overnightThreshold(0.0)
+        flatFasting(bgMmol = 6.8, hour = 3)
+        verifyPfFired()
+    }
 
     // ── Takeover happens ──────────────────────────────────────────────────────
 

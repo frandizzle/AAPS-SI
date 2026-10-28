@@ -92,6 +92,10 @@ class ModeIsfLearner @Inject constructor(
     private var episodeLowWasUnexplained = false  // the low came with a drop insulin can't
     // explain (exercise etc.) — weaken at a reduced step
     private var episodeMaxDura   = 1.0
+    /** How long DURA was engaged (at or above [DURA_ENGAGED_MULT]) in the episode. A short push
+     *  does not make the stall DURA's: see [duraOwnedStall]. */
+    private var episodeDuraEngagedMs = 0L
+    private var episodeLastCycleMs   = 0L
     /** Highest BG seen during the episode — the excursion this learner used to be blind to. */
     private var episodePeakMgdl  = 0.0
     /** BG when the mode opened, so a spike is measured as a RISE rather than as an altitude. */
@@ -117,6 +121,7 @@ class ModeIsfLearner @Inject constructor(
     private var pendingScope:     Scope? = null
     private var pendingEvalAtMs  = 0L
     private var pendingMaxDura   = 1.0
+    private var pendingDuraEngagedMs = 0L
     /** The ended episode's spike was too high for its dose — captured at episode end, before a
      *  new activation can reset the spike tracking it was read from. */
     private var pendingSpikeTooHigh = false
@@ -234,6 +239,8 @@ class ModeIsfLearner @Inject constructor(
         /** DURA at or above this during the episode means DURA was working the tail. Same bar
          *  [DuraStrengthLearner] uses to call DURA engaged. */
         private const val DURA_ENGAGED_MULT         = 1.10
+        /** The most one cycle adds to the DURA engaged time, so a gap in readings does not count as DURA work. */
+        private const val MAX_CYCLE_GAP_MS          = 10 * 60_000L
         /** Weaken-step fraction for a hard low that followed a late spike — half the fault was
          *  timing, so only half the step is charged to dose. */
         private const val LATE_SPIKE_STEP_FRACTION  = 0.5
@@ -391,6 +398,8 @@ class ModeIsfLearner @Inject constructor(
                 episodeUndershoot = false
                 episodeLowWasUnexplained = false
                 episodeMaxDura  = 1.0
+                episodeDuraEngagedMs = 0L
+                episodeLastCycleMs   = nowMs
                 episodePeakMgdl = 0.0
                 episodeSpikeMs  = 0L
                 spikeRunStartMs = 0L
@@ -446,6 +455,9 @@ class ModeIsfLearner @Inject constructor(
                 if (exerciseSuspected) episodeLowWasUnexplained = true
             }
             if (duraMult > episodeMaxDura) episodeMaxDura = duraMult
+            val stepMs = (nowMs - episodeLastCycleMs).coerceIn(0L, MAX_CYCLE_GAP_MS)  // cap a gap in readings
+            if (duraMult >= DURA_ENGAGED_MULT) episodeDuraEngagedMs += stepMs
+            episodeLastCycleMs = nowMs
             return
         }
 
@@ -519,6 +531,7 @@ class ModeIsfLearner @Inject constructor(
                 pendingScope     = ended
                 pendingEvalAtMs  = nowMs + TAIL_MS
                 pendingMaxDura   = maxDura
+                pendingDuraEngagedMs = episodeDuraEngagedMs
                 pendingSpikeTooHigh = spikeTooHigh(ended.mode, targetMgdl)
                 pendingStartBgMgdl  = episodeStartBgMgdl
                 pendingTailGrams = 0.0
@@ -606,12 +619,12 @@ class ModeIsfLearner @Inject constructor(
             // down. Charging this reads someone else's high as this mode's under-dosing.
             endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
                 noChange(p, "${p.label} ended ${aboveMmol} above target but ${BgText.bg(pendingStartBgMgdl - bgMgdl)} below where it started, still falling — working through an inherited high, no change")
-            endedHigh && pendingMaxDura < DURA_ENGAGED_MULT -> {
+            endedHigh && !duraOwnedStall() -> {
                 val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} ended ${aboveMmol} above target — strengthened", pendingStartMs)
+                applyOutcome(p, step, "${p.label} ended ${aboveMmol} above target${shortDuraText()} — strengthened", pendingStartMs)
                 return step
             }
-            endedHigh -> noChange(p, "${p.label} ended ${aboveMmol} above target with DURA working (×${"%.2f".format(pendingMaxDura)}) — a stall is DURA's to fix, no change")
+            endedHigh -> noChange(p, "${p.label} ended ${aboveMmol} above target with DURA working (×${"%.2f".format(pendingMaxDura)} for ${pendingDuraEngagedMs / 60_000}min) — a stall is DURA's to fix, no change")
             else      -> noChange(p, "${p.label} ended on target — no change")
         }
         return 1.0
@@ -625,7 +638,7 @@ class ModeIsfLearner @Inject constructor(
     private fun judgeTailEnd(p: Scope, bgMgdl: Double, targetMgdl: Double) {
         val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
         val inheritedHigh = stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL
-        if (endedHigh && pendingWindowStep == 1.0 && !inheritedHigh && pendingMaxDura < DURA_ENGAGED_MULT) {
+        if (endedHigh && pendingWindowStep == 1.0 && !inheritedHigh && !duraOwnedStall()) {
             val step = strengthenStep()
             applyOutcome(p, step,
                          "${p.label}: BG still ${BgText.bg(bgMgdl - targetMgdl)} above target ${TAIL_MS / 60_000}min after it ended — strengthened",
@@ -634,6 +647,17 @@ class ModeIsfLearner @Inject constructor(
             if (watchScope == p) watchWindowStep = step
         } else aapsLogger.debug(LTag.APS, "ModeIsfLearner: ${p.label} tail ended at ${BgText.bg(bgMgdl)} — window verdict stands")
     }
+
+    /**
+     * DURA owns a stall only when it worked on it long enough for [DuraStrengthLearner] to judge
+     * it. A shorter push (for example DURA held off by its BG level until late) leaves the stall
+     * to this learner. Otherwise each learner waits for the other and neither learns.
+     */
+    private fun duraOwnedStall(): Boolean =
+        pendingMaxDura >= DURA_ENGAGED_MULT && pendingDuraEngagedMs >= DuraStrengthLearner.ENGAGED_MIN_MS
+
+    private fun shortDuraText(): String =
+        if (pendingMaxDura >= DURA_ENGAGED_MULT) " (DURA worked only ${pendingDuraEngagedMs / 60_000}min)" else ""
 
     /** The tail stops early. The window verdict stands; the low watch is handled by the caller. */
     private fun tailNotJudged(p: Scope, reason: String) {
@@ -830,6 +854,7 @@ class ModeIsfLearner @Inject constructor(
         episodePeakMgdl = 0.0; episodeSpikeMs = 0L; spikeRunStartMs = 0L; episodeShapeRailed = false
         activeScope = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
+        episodeDuraEngagedMs = 0L; episodeLastCycleMs = 0L; pendingDuraEngagedMs = 0L
         episodeCarriedInLow = false; episodeRiseStartMgdl = 0.0
         pendingScope = null; pendingStartMs = 0L
         lastMovedMode = null; lastMovedStartMs = 0L
