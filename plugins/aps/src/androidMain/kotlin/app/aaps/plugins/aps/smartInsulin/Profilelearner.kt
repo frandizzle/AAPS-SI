@@ -26,7 +26,7 @@ class ProfileLearner @Inject constructor(
     private val sp:              KeyValueStore,
     private val profileFunction: ProfileFunction,
     private val activePlugin:    ActivePlugin
-) : SmartInsulinLearner {
+) : SmartInsulinLearner, UndoableLearner {
 
     private val profiles: MutableMap<MealMode, LearnedInsulinProfile> = mutableMapOf()
 
@@ -166,6 +166,29 @@ class ProfileLearner @Inject constructor(
 
     /** Called with a description of each learned peak/DIA change; the plugin points it at [LearningJournal]. */
     var onChange: ((String) -> Unit)? = null
+
+    override val undoName = "insulinProfiles"
+
+    /** One entry per meal mode, by mode name. */
+    override fun exportState(): String {
+        val json = JSONObject()
+        MealMode.entries.forEach { mode -> profiles[mode]?.let { json.put(mode.name, it.toJson().toString()) } }
+        return json.toString()
+    }
+
+    override fun importState(state: String) {
+        try {
+            val json = JSONObject(state)
+            MealMode.entries.forEach { mode ->
+                if (json.has(mode.name)) {
+                    sp.edit { putString(prefKeyFor(mode).key, json.getString(mode.name)) }
+                    profiles[mode] = loadProfile(mode)
+                }
+            }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "ProfileLearner: import failed: ${e.message}")
+        }
+    }
 
     fun resetProfile(mode: MealMode) {
         val default = profileSeededDefault(mode)

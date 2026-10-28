@@ -4,16 +4,17 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * The Site / pod health card: what [SiteCheck] thinks of the current pod, the meal it is watching now,
- * and every meal it has judged on this pod.
+ * The Site / pod health card: what [SiteCheck] thinks of the current pod, the meal and night it is watching
+ * now, and every meal and night it has judged on this pod.
  */
-internal fun buildSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean, nowMs: Long): SiCardContent =
-    SiCardBuilder().also { it.fillSiteCheckCard(s, isMmol, nowMs) }.build()
+internal fun buildSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean, nowMs: Long, siteBadPending: Boolean = false): SiCardContent =
+    SiCardBuilder().also { it.fillSiteCheckCard(s, isMmol, nowMs, siteBadPending) }.build()
 
-private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean, nowMs: Long) {
+private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean, nowMs: Long, siteBadPending: Boolean) {
     fun bg(mgdl: Double) = if (isMmol) "%.1f".format(mgdl / 18.0) else "%.0f".format(mgdl)
     fun change(mgdl: Double) = if (isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
     // Falls per unit are kept in mmol; mg/dL users see them in mg/dL.
@@ -24,6 +25,8 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
     when {
         s.siteChangeMs == null ->
             addRow("No pod change recorded", "Meals are checked once AAPS has a pod change on record.", SiTone.MUTED)
+        s.bad ->
+            addRow("Site marked bad", "You said this site was bad. No more questions on this pod, and its meals are not used as normal.", SiTone.CRITICAL)
         s.silenced ->
             addRow("Site marked fine", "You said the site is fine. No more questions on this pod.", SiTone.MUTED)
         s.notified -> {
@@ -50,6 +53,8 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
             addRow("Normal", "Pod is $age old · ${count(s.meals.size, "meal")} checked, none suspect", SiTone.GOOD)
     }
 
+    if (siteBadPending) addRow("Site was bad: waiting for the loop", "The learning is undone on the next loop run, within 5 min.", SiTone.INFO)
+
     s.live?.let { l ->
         val detail = if (l.risen && nowMs - l.peakMs >= 15 * 60_000L)
             "Peaked at ${bg(l.peakBgMgdl)} at ${time(l.peakMs, nowMs)} · checking how it comes down until ${time(l.peakMs + SiteCheck.LANDING_WINDOW_MS, nowMs)}"
@@ -57,6 +62,13 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
             "Up ${change(l.bgMgdl - l.startBgMgdl)} so far · still rising ${l.risingLoadedMin} min with insulin on board " +
                 "(${"%.1f".format(l.extraIobU)} U extra)"
         addRow("Watching now: ${l.mode} since ${time(l.startMs, nowMs)}", detail, SiTone.INFO)
+    }
+
+    s.liveNight?.let { n ->
+        addRow("Watching tonight since ${time(n.startMs, nowMs)}",
+               "${"%.1f".format(n.insulinAboveBasalU)} U above basal so far · BG high ${pct(n.highShare)} of the time · " +
+                   "${if (n.fallMgdl >= 0) "down" else "up"} ${change(abs(n.fallMgdl))}",
+               SiTone.INFO)
     }
 
     // Only when it is newer than the last checked meal, so an old reason does not stay up.
@@ -87,6 +99,19 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
         }
     }
 
+    if (s.nights.isNotEmpty()) {
+        addSectionHeader("Nights on this pod")
+        s.nights.asReversed().forEach { n ->
+            val landing = n.fallPerUnitMmol?.let { "BG ${bg(n.startBgMgdl)} → ${bg(n.endBgMgdl)} (${perU(it)})" }
+                ?: "BG ${bg(n.startBgMgdl)} → ${bg(n.endBgMgdl)}"
+            addRow("Night ${time(n.startMs, nowMs)} — ${if (n.suspect) "insulin did not work as usual" else "normal"}",
+                   "${"%.1f".format(n.insulinAboveBasalU)} U above basal · $landing · high ${pct(n.highShare)} of the night",
+                   if (n.suspect) SiTone.WARNING else SiTone.GOOD)
+        }
+    }
+
+    if (s.siteChangeMs != null || s.previousPodMs != null) addAction("This site was bad", SiAction.SITE_WAS_BAD)
+
     val limitsText = s.limits?.let { l ->
         val landing = if (l.landingPerU != null && l.typicalFallPerU != null && l.fallSpreadPerU != null)
             "Did not come down: ${perU(l.landingPerU)} or less in 2 h (your normal ${perU(l.typicalFallPerU)} ± ${"%.2f".format(if (isMmol) l.fallSpreadPerU else l.fallSpreadPerU * 18.0)})."
@@ -97,9 +122,15 @@ private fun SiCardBuilder.fillSiteCheckCard(s: SiteCheck.Status, isMmol: Boolean
             "(your normal ${l.typicalRisingMin.roundToInt()} ± ${l.risingSpreadMin.roundToInt()} min), " +
             "asks at once from ${l.verySlowMin.roundToInt()} min. $landing"
     } ?: "Limits are learned from your own meals on finished pods. A pod that asked to have its site checked is left out, unless you said the site was fine."
+    val nightText = "Nights from 00:00 to 06:00 are checked too: it asks when the loop gave " +
+        "${"%.0f".format(SiteCheck.NIGHT_MIN_EXTRA_U)} U or more above basal, BG came down ${perU(SiteCheck.NIGHT_FALL_PER_U_MAX)} or less, " +
+        "and BG was ${change(SiteCheck.NIGHT_HIGH_ABOVE_TARGET_MGDL)} or more above target for half the night. " +
+        "These limits are a first guess."
     addNoteBlock(
-        "$limitsText\n" +
-            "Log: ${count(s.totalMeals, "meal")} on ${count(s.totalPods, "pod")} in Documents/AAPS/SmartInsulin/site_check_log.csv."
+        "$limitsText\n$nightText\n" +
+            "\"This site was bad\" undoes the learning since the site went bad, and keeps that pod out of what is normal.\n" +
+            "Log: ${count(s.totalMeals, "meal")} on ${count(s.totalPods, "pod")} in Documents/AAPS/SmartInsulin/site_check_log.csv, " +
+            "nights in site_check_nights.csv."
     )
 }
 
@@ -113,10 +144,14 @@ internal fun siteCheckDropText(d: SiteCheck.Dropped, isMmol: Boolean): String = 
     SiteCheck.DropReason.NO_RISE       ->
         "BG did not rise ${if (isMmol) "%.0f mmol".format(SiteCheck.MIN_RISE_MGDL / 18.0) else "%.0f mg/dL".format(SiteCheck.MIN_RISE_MGDL)} " +
             "within ${SiteCheck.RISE_WINDOW_MS / 3_600_000} h, so it was not a meal"
+    SiteCheck.DropReason.MEAL_AT_NIGHT -> "A meal mode other than P/F ran in the night"
     SiteCheck.DropReason.STARTED_HIGH  ->
         "BG was already ${if (isMmol) "%.0f mmol".format(SiteCheck.MAX_START_BG_MGDL / 18.0) else "%.0f mg/dL".format(SiteCheck.MAX_START_BG_MGDL)} " +
             "or more when it started"
 }
+
+/** "40 %". */
+private fun pct(share: Double) = "${(share * 100).roundToInt()} %"
 
 /** "1 meal", "2 meals". */
 private fun count(n: Int, word: String) = if (n == 1) "1 $word" else "$n ${word}s"

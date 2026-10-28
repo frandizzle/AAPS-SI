@@ -22,7 +22,7 @@ import dev.zacsweers.metro.SingleIn
 class AggressionLearner @Inject constructor(
     private val sp:          KeyValueStore,
     private val aapsLogger:  AAPSLogger
-) {
+) : UndoableLearner {
     /**
      * @param scorable false when the sample was taken while learning was suppressed — post-meal
      *   lockout, CGM warmup, or a detected activity window. Such samples are still kept for
@@ -207,6 +207,19 @@ class AggressionLearner @Inject constructor(
         while (allSamples.isNotEmpty()     && nowMs - allSamples.first().timestampMs     > WINDOW_MS) allSamples.removeFirst()
         while (fastingSamples.isNotEmpty() && nowMs - fastingSamples.first().timestampMs > WINDOW_MS) fastingSamples.removeFirst()
         while (mealSamples.isNotEmpty()    && nowMs - mealSamples.first().timestampMs    > WINDOW_MS) mealSamples.removeFirst()
+    }
+
+    override val undoName = "aggression"
+
+    override fun exportState(): String {
+        saveState()
+        return sp.getString(StringNonKey.ApsSmartInsulinAggressionState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinAggressionState.key, state) }
+        restoreState()
     }
 
     fun reset() {

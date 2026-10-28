@@ -32,7 +32,7 @@ import kotlin.math.sign
 class CircadianLearner @Inject constructor(
     private val aapsLogger: AAPSLogger,
     private val sp: KeyValueStore
-) {
+) : UndoableLearner {
 
     // -- State -----------------------------------------------------------------
 
@@ -2262,6 +2262,19 @@ class CircadianLearner @Inject constructor(
     }
 
     // -- Reset -----------------------------------------------------------------
+
+    override val undoName = "circadian"
+
+    override fun exportState(): String {
+        persist()
+        return sp.getString(StringNonKey.ApsSmartInsulinCircadianState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinCircadianState.key, state) }
+        restore()
+    }
 
     fun reset() {
         isfState   = DayOfWeekCircadianState()

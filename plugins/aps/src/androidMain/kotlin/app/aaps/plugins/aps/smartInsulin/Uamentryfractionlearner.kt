@@ -56,7 +56,7 @@ import dev.zacsweers.metro.SingleIn
 class UamEntryFractionLearner @Inject constructor(
     private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger
-) {
+) : UndoableLearner {
 
     private class ModeState(
         var offset:     Double = 0.0,
@@ -582,6 +582,19 @@ class UamEntryFractionLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "UamEntryFractionLearner: evaluation skipped — $reason")
         lastOutcome = "skipped: $reason"
         pendingMode = null
+    }
+
+    override val undoName = "uamEntryFraction"
+
+    override fun exportState(): String {
+        persist()
+        return sp.getString(StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinUamEntryFractionLearnerState.key, state) }
+        restore()
     }
 
     fun reset() {

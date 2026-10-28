@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -48,6 +49,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -88,6 +90,9 @@ fun SmartInsulinScreen(
     var confirmEndBoost by remember { mutableStateOf(false) }
     var confirmApply by remember { mutableStateOf(false) }
     var confirmUndo by remember { mutableStateOf(false) }
+    // "This site was bad": the times to choose from while the dialog is open, and the one picked.
+    var siteBadChoices by remember { mutableStateOf<List<SmartInsulinPlugin.SiteBadChoice>?>(null) }
+    var siteBadPick by remember { mutableStateOf<SmartInsulinPlugin.SiteBadChoice?>(null) }
     // Shown after Apply or Undo: what happened, or why the switch was refused.
     var profileResult by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -128,6 +133,9 @@ fun SmartInsulinScreen(
             SiAction.SITE_IS_FINE            -> {
                 plugin.markSiteFine(); tick++
             }
+            SiAction.SITE_WAS_BAD            -> {
+                siteBadPick = null; siteBadChoices = plugin.siteBadChoices()
+            }
             SiAction.APPLY_LEARNED_PROFILE   -> confirmApply = true
             SiAction.UNDO_LEARNED_PROFILE    -> confirmUndo = true
         }
@@ -153,7 +161,7 @@ fun SmartInsulinScreen(
 
         SiSection("Site / Pod Health", Icons.Filled.HealthAndSafety, accent = colors.statusWarning,
                   subtitle = "Is insulin acting as usual on this pod?") {
-            SiItems(buildSiteCheckCard(plugin.siteCheckStatus(), d.isMmol, System.currentTimeMillis()).items, onAction)
+            SiItems(buildSiteCheckCard(plugin.siteCheckStatus(), d.isMmol, System.currentTimeMillis(), plugin.siteBadPending).items, onAction)
         }
 
         val session = cards.buildSessionCard()
@@ -292,6 +300,43 @@ fun SmartInsulinScreen(
                 }) { Text("Undo") }
             },
             dismissButton = { TextButton(onClick = { confirmUndo = false }) { Text("Cancel") } }
+        )
+    }
+
+    siteBadChoices?.let { choices ->
+        val close = { siteBadChoices = null; siteBadPick = null }
+        AlertDialog(
+            onDismissRequest = close,
+            icon = { Icon(Icons.Filled.HealthAndSafety, contentDescription = null) },
+            title = { Text("This site was bad") },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        "When did the site start to go bad? The learning goes back to that time. What was learned since then " +
+                            "is lost, also on a newer pod. The pod is kept out of what the site check sees as normal."
+                    )
+                    choices.forEach { c ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(selected = siteBadPick == c, onClick = { siteBadPick = c })
+                                .padding(top = 6.dp)
+                        ) {
+                            RadioButton(selected = siteBadPick == c, onClick = { siteBadPick = c })
+                            Text(c.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = siteBadPick != null, onClick = {
+                    siteBadPick?.let { plugin.markSiteBad(it) }
+                    close()
+                    tick++
+                }) { Text(if (siteBadPick?.snapshotMs == null) "Mark site bad" else "Undo learning") }
+            },
+            dismissButton = { TextButton(onClick = close) { Text("Cancel") } }
         )
     }
 

@@ -55,7 +55,7 @@ import dev.zacsweers.metro.SingleIn
 class DuraStrengthLearner @Inject constructor(
     private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger
-) {
+) : UndoableLearner {
 
     private data class ModeState(
         var factor: Double = 1.0, var episodes: Int = 0, var baseSig: Double = Double.NaN,
@@ -464,6 +464,19 @@ class DuraStrengthLearner @Inject constructor(
     private fun engagedMinMs()    = (ENGAGED_MIN_MS * bias().barScale).toLong()
 
     private fun fmtCeiling(c: Double) = if (c == NO_CEILING) "none" else "×${"%.2f".format(c)}"
+
+    override val undoName = "duraStrength"
+
+    override fun exportState(): String {
+        persist()
+        return sp.getString(StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinDuraStrengthLearnerState.key, state) }
+        restore()
+    }
 
     fun reset() {
         states.clear()

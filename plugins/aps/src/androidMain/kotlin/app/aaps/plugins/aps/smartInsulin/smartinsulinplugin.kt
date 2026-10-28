@@ -83,6 +83,9 @@ import app.aaps.core.objects.extensions.plannedRemainingMinutes
 import app.aaps.core.objects.extensions.target
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
@@ -204,6 +207,16 @@ open class SmartInsulinPlugin @Inject constructor(
     private val siteCheck = SiteCheck(sp)
     /** The site check's baseline import file is looked for once per app start. */
     private var siteCheckImportChecked = false
+    /** Saved copies of the learning, so "This site was bad" can undo what a bad site taught - see LearningSnapshots. */
+    private val learningSnapshots = LearningSnapshots(siteCheckFiles::readSnapshots, siteCheckFiles::writeSnapshots)
+    /** Every learner a bad site can mislead. Its order does not matter. */
+    private val undoableLearners: List<UndoableLearner> = listOf(
+        circadianLearner, basalLearner, aggressionLearner, modeIsfLearner, uamEntryFractionLearner, duraStrengthLearner, profileLearner
+    )
+    /** "This site was bad" from the tab, done on the next loop cycle so no learner is changed while it runs. */
+    @Volatile private var pendingSiteBad: SiteBadChoice? = null
+    /** For the night check: when the insulin given was last added up. */
+    private var lastSiteInsulinMs = 0L
     /** The new pod boost really added insulin on the last decision: active (not paused under
      *  target), and the loop was not giving zero (a zero temp from the low guard, LGS or the
      *  recovery window is zero with or without the boost). Only this marks a meal as touched by
@@ -398,16 +411,20 @@ open class SmartInsulinPlugin @Inject constructor(
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
         relowTracker.reset()
+        learningSnapshots.clear()
         learningJournal.note("Reset", "All learners reset")
     }
 
-    fun resetAggression() { aggressionLearner.reset(); aggressionLearner.recalculate(); learningJournal.note("Reset", "Aggressiveness score reset to 1.0") }
-    fun resetIsf() { circadianLearner.resetIsf(); learningJournal.note("Reset", "Circadian ISF reset to 1.0") }
-    fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal(); learningJournal.note("Reset", "Basal learning reset to 1.0") }
-    fun resetCircadian() { circadianLearner.reset(); learningJournal.note("Reset", "All circadian learning reset") }
-    fun resetProfiles() { profileLearner.resetProfiles(); learningJournal.note("Reset", "Insulin profiles reset to defaults") }
+    // Each reset also deletes the saved copies of the learning: "This site was bad" would otherwise put
+    // back what was just reset.
+    fun resetAggression() { aggressionLearner.reset(); aggressionLearner.recalculate(); learningSnapshots.clear(); learningJournal.note("Reset", "Aggressiveness score reset to 1.0") }
+    fun resetIsf() { circadianLearner.resetIsf(); learningSnapshots.clear(); learningJournal.note("Reset", "Circadian ISF reset to 1.0") }
+    fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal(); learningSnapshots.clear(); learningJournal.note("Reset", "Basal learning reset to 1.0") }
+    fun resetCircadian() { circadianLearner.reset(); learningSnapshots.clear(); learningJournal.note("Reset", "All circadian learning reset") }
+    fun resetProfiles() { profileLearner.resetProfiles(); learningSnapshots.clear(); learningJournal.note("Reset", "Insulin profiles reset to defaults") }
     fun resetModeLearners() {
         modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset()
+        learningSnapshots.clear()
         learningJournal.note("Reset", "Meal/UAM ISF, UAM entry fraction and DURA learning reset")
     }
 
@@ -1049,6 +1066,72 @@ open class SmartInsulinPlugin @Inject constructor(
     /** For the Site / pod health card. */
     fun siteCheckStatus(): SiteCheck.Status = siteCheck.status(System.currentTimeMillis())
 
+    /**
+     * A time the learning can go back to, for "This site was bad". [snapshotMs] is the saved copy to go
+     * back to, or null when none was saved for that pod: then the pod is only marked bad.
+     */
+    data class SiteBadChoice(val podMs: Long, val snapshotMs: Long?, val label: String)
+
+    /** The choices for "This site was bad": the saved copies of this pod and the one before it, oldest first. */
+    fun siteBadChoices(): List<SiteBadChoice> {
+        val s = siteCheck.status(System.currentTimeMillis())
+        val copies = learningSnapshots.list()
+        val format = SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault())
+        return listOfNotNull(s.previousPodMs, s.siteChangeMs).flatMap { pod ->
+            val which = if (pod == s.siteChangeMs) "This pod" else "Last pod"
+            val own = copies.filter { it.podMs == pod }
+            if (own.isEmpty()) listOf(SiteBadChoice(pod, null, "$which (from ${format.format(Date(pod))}): nothing saved, the learning stays"))
+            else own.mapIndexed { i, c ->
+                SiteBadChoice(pod, c.timeMs, if (i == 0) "$which, from its start (${format.format(Date(c.timeMs))})" else "$which, from ${format.format(Date(c.timeMs))}")
+            }
+        }
+    }
+
+    /** True while a "This site was bad" waits for the next loop cycle. */
+    val siteBadPending: Boolean get() = pendingSiteBad != null
+
+    /** "This site was bad", from the card. Done on the next loop cycle. */
+    fun markSiteBad(choice: SiteBadChoice) {
+        pendingSiteBad = choice
+    }
+
+    /** Runs a waiting "This site was bad", before any learner of this cycle. */
+    private fun applySiteBad() {
+        val c = pendingSiteBad ?: return
+        pendingSiteBad = null
+        siteCheck.markSiteBad(c.podMs)
+        notificationManager.dismiss(NotificationId.SITE_CHECK)
+        val format = SimpleDateFormat("EEE d MMM HH:mm", Locale.getDefault())
+        val undone = c.snapshotMs?.let { learningSnapshots.restore(it, undoableLearners) } ?: false
+        learningJournal.note(
+            "Site check",
+            if (undone) "Site was bad: learning since ${format.format(Date(c.snapshotMs!!))} undone"
+            else "Site was bad: pod from ${format.format(Date(c.podMs))} marked, no saved learning to go back to"
+        )
+    }
+
+    /** What the loop gave above profile basal since the last cycle, boluses (SMBs) included, for the night check. */
+    private suspend fun insulinAboveBasalSinceLastCycle(now: Long, rateInForce: Double, profileBasal: Double): Double {
+        val from = lastSiteInsulinMs
+        lastSiteInsulinMs = now
+        if (from == 0L || now <= from) return 0.0
+        val boluses = try {
+            persistenceLayer.getBolusesFromTimeToTime(from + 1, now, true).sumOf { it.amount }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "SmartInsulin site check: bolus read failed: ${e.message}"); 0.0
+        }
+        val hours = (now - from).coerceAtMost(10 * 60_000L) / 3_600_000.0
+        return boluses + (rateInForce - profileBasal) * hours
+    }
+
+    private fun postSiteCheckNotification(text: String) {
+        notificationManager.post(
+            id      = NotificationId.SITE_CHECK,
+            text    = text,
+            actions = listOf(NotificationAction(TextRef.Literal(rh.gs(ApsStrings.si_site_check_fine))) { markSiteFine() })
+        )
+    }
+
     /** "Site is fine", from the notification or the card: no more questions on this pod. */
     fun markSiteFine() {
         siteCheck.markSiteFine()
@@ -1302,6 +1385,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // the learning moves onto it so this cycle doses the same as the last one.
         learnedProfileApplier.onProfileInForce(cachedHourIsf, cachedHourBasal)?.let { r ->
             circadianLearner.rescaleForProfileChange(r.isfRatio, r.basalRatio)
+            // The saved copies fit the old profile; putting one back now would dose differently.
+            learningSnapshots.clear()
             learningJournal.note("Circadian", "Profile \"${r.profileName}\" is now in force. Learning moved onto it, so dosing stays the same.")
         }
         maybeApplyLearnedProfile(now)
@@ -1399,31 +1484,39 @@ open class SmartInsulinPlugin @Inject constructor(
                 }
             }
         }
+        // "This site was bad" first, then a saved copy of the learning, both before any learner runs.
+        applySiteBad()
+        learningSnapshots.onCycle(now, siteChangeMs, undoableLearners)
         siteCheck.onCycle(
-            nowMs          = now,
-            bgMgdl         = glucoseStatus.glucose,
-            deltaMgdl      = glucoseStatus.delta,
-            iobU           = iobArray.firstOrNull()?.iob ?: 0.0,
-            mealModeActive = mealMode != MealMode.FASTING,
-            modeLabel      = mealMode.label,
-            siteChangeMs   = siteChangeMs,
-            unreliable     = when {
+            nowMs              = now,
+            bgMgdl             = glucoseStatus.glucose,
+            deltaMgdl          = glucoseStatus.delta,
+            iobU               = iobArray.firstOrNull()?.iob ?: 0.0,
+            mealModeActive     = mealMode != MealMode.FASTING,
+            modeLabel          = mealMode.label,
+            siteChangeMs       = siteChangeMs,
+            unreliable         = when {
                 activityPausesLearning                   -> SiteCheck.DropReason.ACTIVITY
                 unexplainedDropTracker.exerciseSuspected -> SiteCheck.DropReason.EXERCISE
                 cgmState.inWarmup                        -> SiteCheck.DropReason.CGM_WARMUP
                 else                                     -> null
-            }
+            },
+            minuteOfDay        = currentHour * 60 + currentMinute,
+            targetMgdl         = targetBg,
+            insulinAboveBasalU = insulinAboveBasalSinceLastCycle(now, if (tb != null) currentTemp.rate else profile.getBasal(), profile.getBasal()),
+            quietMode          = mealMode == MealMode.FASTING || mealMode == MealMode.UAM_PROTEIN_FAT
         )?.let { episode ->
             siteCheckFiles.log(episode)
             if (episode.suspect) learningJournal.note("Site check", "${episode.mode}: BG still rising ${episode.risingLoadedMin} min with insulin on board, " +
                 "fell ${BgText.bg(episode.fall2hMgdl)} in 2 h after the peak (${episode.suspectsOnPod} on this pod)")
-            if (episode.notify) {
-                notificationManager.post(
-                    id      = NotificationId.SITE_CHECK,
-                    text    = rh.gs(ApsStrings.si_site_check_notification),
-                    actions = listOf(NotificationAction(TextRef.Literal(rh.gs(ApsStrings.si_site_check_fine))) { markSiteFine() })
-                )
-            }
+            if (episode.notify) postSiteCheckNotification(rh.gs(ApsStrings.si_site_check_notification))
+        }
+        siteCheck.takeNight()?.let { night ->
+            siteCheckFiles.logNight(night)
+            if (night.suspect) learningJournal.note("Site check", "Night: ${"%.1f".format(night.insulinAboveBasalU)} U above basal, " +
+                "BG ${BgText.bg(night.startBgMgdl)} to ${BgText.bg(night.endBgMgdl)}, high ${(night.highShare * 100).roundToInt()} % of the night " +
+                "(${night.suspectsOnPod} on this pod)")
+            if (night.notify) postSiteCheckNotification(rh.gs(ApsStrings.si_site_check_notification_night))
         }
         siteCheck.takeDropped()?.let { learningJournal.note("Site check", "${it.mode} not checked: ${siteCheckDropText(it, BgText.mmol)}") }
         val learningPausedThisCycle = activityPausesLearning || podBoostPausesLearning

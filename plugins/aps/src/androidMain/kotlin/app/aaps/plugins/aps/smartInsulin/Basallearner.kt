@@ -36,7 +36,7 @@ import kotlin.math.abs
 class BasalLearner @Inject constructor(
     private val sp: KeyValueStore,
     private val aapsLogger:  AAPSLogger
-) {
+) : UndoableLearner {
     private data class BgDriftSample(val timestampMs: Long, val bgMgdl: Double)
     private val window          = ArrayDeque<BgDriftSample>()
     private val dayMultipliers  = DoubleArray(7) { 1.0 }
@@ -169,6 +169,19 @@ class BasalLearner @Inject constructor(
                              ))
     }
     // ── Reset ─────────────────────────────────────────────────────────────────
+    override val undoName = "basal"
+
+    override fun exportState(): String {
+        saveState()
+        return sp.getString(StringNonKey.ApsSmartInsulinBasalState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinBasalState.key, state) }
+        restoreState()
+    }
+
     fun reset() {
         window.clear()
         for (i in 0..6) { dayMultipliers[i] = 1.0; daySampleCount[i] = 0 }

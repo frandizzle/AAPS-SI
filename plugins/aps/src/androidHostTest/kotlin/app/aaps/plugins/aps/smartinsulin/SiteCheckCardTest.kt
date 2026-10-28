@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -77,7 +78,7 @@ class SiteCheckCardTest {
     fun `marked fine has no button`() {
         val items = rows(status(listOf(meal(slow = true), meal(slow = true)), notified = true, silenced = true))
         assertEquals("Site marked fine", (items.first() as SiItem.Row).primary)
-        assertTrue(items.none { it is SiItem.Action })
+        assertTrue(items.none { it is SiItem.Action && it.action == SiAction.SITE_IS_FINE })
     }
 
     @Test
@@ -161,6 +162,48 @@ class SiteCheckCardTest {
         assertEquals("BG was already 9 mmol or more when it started", siteCheckDropText(d, isMmol = true))
         assertEquals("BG was already 162 mg/dL or more when it started", siteCheckDropText(d, isMmol = false))
         assertEquals("BG did not rise 2 mmol within 2 h, so it was not a meal", siteCheckDropText(d.copy(reason = SiteCheck.DropReason.NO_RISE), isMmol = true))
+    }
+
+    private fun night(suspect: Boolean) = SiteCheck.Night(
+        startMs = now - 8 * HOUR, siteChangeMs = POD, podAgeHours = 30.0, startBgMgdl = 160.0, endBgMgdl = 144.0,
+        insulinAboveBasalU = 6.1, highShare = 0.74, lowestMgdl = 119.0, suspect = suspect, suspectsOnPod = 1, notify = suspect
+    )
+
+    @Test
+    fun `judged nights are listed`() {
+        val r = rows(status().copy(nights = listOf(night(suspect = false), night(suspect = true)))).filterIsInstance<SiItem.Row>()
+        val first = r.first { it.primary.startsWith("Night") }
+        assertTrue(first.primary.endsWith("insulin did not work as usual"), first.primary)
+        assertEquals(SiTone.WARNING, first.tone)
+        assertTrue(first.detail!!.contains("6.1 U above basal · BG 8.9 → 8.0 (0.15 mmol per U) · high 74 % of the night"), first.detail)
+    }
+
+    @Test
+    fun `the night being watched is shown`() {
+        val r = rows(status().copy(liveNight = SiteCheck.LiveNight(now - 2 * HOUR, 2.4, 0.8, -9.0))).filterIsInstance<SiItem.Row>()
+        val live = r.first { it.primary.startsWith("Watching tonight") }
+        assertEquals("2.4 U above basal so far · BG high 80 % of the time · up 0.5 mmol", live.detail)
+    }
+
+    @Test
+    fun `a site marked bad says so`() {
+        val t = top(status(notified = true).copy(bad = true))
+        assertEquals("Site marked bad", t.primary)
+        assertEquals(SiTone.CRITICAL, t.tone)
+    }
+
+    @Test
+    fun `this site was bad is offered for this pod or the last one`() {
+        fun actions(s: SiteCheck.Status) = rows(s).filterIsInstance<SiItem.Action>().map { it.action }
+        assertTrue(SiAction.SITE_WAS_BAD in actions(status()))
+        assertTrue(SiAction.SITE_WAS_BAD in actions(status(pod = null).copy(previousPodMs = POD)))
+        assertFalse(SiAction.SITE_WAS_BAD in actions(status(pod = null)))
+    }
+
+    @Test
+    fun `a waiting undo is shown`() {
+        val r = buildSiteCheckCard(status(), isMmol = true, nowMs = now, siteBadPending = true).items.filterIsInstance<SiItem.Row>()
+        assertTrue(r.any { it.primary == "Site was bad: waiting for the loop" })
     }
 
     private companion object {

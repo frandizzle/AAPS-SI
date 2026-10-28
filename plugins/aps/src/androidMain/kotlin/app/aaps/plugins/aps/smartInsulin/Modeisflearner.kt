@@ -57,7 +57,7 @@ import dev.zacsweers.metro.SingleIn
 class ModeIsfLearner @Inject constructor(
     private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger
-) {
+) : UndoableLearner {
 
     private data class ModeState(var mult: Double = 1.0, var episodes: Int = 0, var baseSig: Double = Double.NaN)
 
@@ -847,6 +847,19 @@ class ModeIsfLearner @Inject constructor(
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: evaluation skipped — $reason")
         lastOutcome = "skipped: $reason"
         pendingScope = null
+    }
+
+    override val undoName = "modeIsf"
+
+    override fun exportState(): String {
+        persist()
+        return sp.getString(StringNonKey.ApsSmartInsulinModeIsfLearnerState.key, "")
+    }
+
+    override fun importState(state: String) {
+        reset()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinModeIsfLearnerState.key, state) }
+        restore()
     }
 
     fun reset() {
