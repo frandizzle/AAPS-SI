@@ -449,31 +449,31 @@ enum class IntKey(
         sync = SyncSpec(SyncChannel.Cold, SyncDirection.Bidirectional)
     ),
     // ── SmartInsulin ──
-    ApsSmartInsulinMealPlanPb1Pct(
-        key = "si_meal_plan_pb1_pct",
-        defaultValue = 50,
+    ApsSmartInsulinMealPlanCarbPct(
+        key = "si_meal_plan_carb_pct",
+        defaultValue = 80,
         min = 0,
-        max = 80,
-        title = KeysStrings.si_meal_plan_pb1_title,
-        summary = KeysStrings.si_meal_plan_pb1_summary,
+        max = 100,
+        title = KeysStrings.si_meal_plan_carb_title,
+        summary = KeysStrings.si_meal_plan_carb_summary,
         defaultedBySM = true
     ),
-    ApsSmartInsulinMealPlanPb2Pct(
-        key = "si_meal_plan_pb2_pct",
-        defaultValue = 25,
+    ApsSmartInsulinMealPlanFatProteinPct(
+        key = "si_meal_plan_fat_protein_pct",
+        defaultValue = 70,
         min = 0,
-        max = 50,
-        title = KeysStrings.si_meal_plan_pb2_title,
-        summary = KeysStrings.si_meal_plan_pb2_summary,
+        max = 100,
+        title = KeysStrings.si_meal_plan_fat_protein_title,
+        summary = KeysStrings.si_meal_plan_fat_protein_summary,
         defaultedBySM = true
     ),
-    ApsSmartInsulinMealPlanPb3Pct(
-        key = "si_meal_plan_pb3_pct",
+    ApsSmartInsulinMealPlanPb3SharePct(
+        key = "si_meal_plan_pb3_share_pct",
         defaultValue = 40,
         min = 0,
-        max = 80,
-        title = KeysStrings.si_meal_plan_pb3_title,
-        summary = KeysStrings.si_meal_plan_pb3_summary,
+        max = 70,
+        title = KeysStrings.si_meal_plan_pb3_share_title,
+        summary = KeysStrings.si_meal_plan_pb3_share_summary,
         defaultedBySM = true
     ),
     ApsSmartInsulinPreBolus2DefaultDelayMins(

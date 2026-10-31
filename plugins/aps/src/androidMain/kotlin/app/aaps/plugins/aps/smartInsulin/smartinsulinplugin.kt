@@ -2247,9 +2247,9 @@ open class SmartInsulinPlugin @Inject constructor(
                     BooleanKey.ApsSmartInsulinMealAiEnabled,
                     StringKey.ApsSmartInsulinMealAiKey,
                     StringKey.ApsSmartInsulinMealAiModel,
-                    IntKey.ApsSmartInsulinMealPlanPb1Pct,
-                    IntKey.ApsSmartInsulinMealPlanPb2Pct,
-                    IntKey.ApsSmartInsulinMealPlanPb3Pct,
+                    IntKey.ApsSmartInsulinMealPlanCarbPct,
+                    IntKey.ApsSmartInsulinMealPlanFatProteinPct,
+                    IntKey.ApsSmartInsulinMealPlanPb3SharePct,
                     DoubleKey.ApsSmartInsulinMealPlanMaxTotalU
                 )
             ),

@@ -9,7 +9,7 @@ import kotlin.test.assertTrue
 class MealDosePlannerTest {
 
     private val settings = MealPlanSettings(
-        pb1Pct = 50, pb2Pct = 25, pb3Pct = 40,
+        carbPct = 80, fatProteinPct = 70, pb3SharePct = 40,
         maxPreBolusU = 8.0, maxTotalU = 10.0,
         carbRatio = 5.0, factor = 1.0, bolusStep = 0.05
     )
@@ -17,14 +17,13 @@ class MealDosePlannerTest {
     private fun meal(carbs: Double, protein: Double = 0.0, fat: Double = 0.0) = MealTotals(carbs, 0.0, protein, fat)
 
     @Test
-    fun `carbs only are split over pre-bolus 1 and 2`() {
-        // 50 g at 5 g/U = 10 U for the carbs.
+    fun `carbs only are all in pre-bolus 1`() {
+        // 50 g at 5 g/U = 10 U for the carbs, 80 % of it now.
         val p = MealDosePlanner.plan(meal(50.0), settings)
         assertEquals(10.0, p.carbsU, 1e-9)
-        assertEquals(5.0, p.pb1U, 1e-9)
-        assertEquals(2.5, p.pb2U, 1e-9)
+        assertEquals(8.0, p.pb1U, 1e-9)
+        assertEquals(0.0, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
-        assertEquals(MealDosePlanner.PB2_DELAY_MIN, p.pb2DelayMin)
         assertFalse(p.duraEnabled)
         assertFalse(p.pfAfter)
         assertEquals(180, p.durationMin)
@@ -32,24 +31,52 @@ class MealDosePlannerTest {
     }
 
     @Test
-    fun `fat and protein go to pre-bolus 3 and make it a slow meal`() {
+    fun `a little fat and protein gets no pre-bolus 2`() {
+        // 0.85 FPU: the loop covers it.
+        val p = MealDosePlanner.plan(meal(30.0, protein = 10.0, fat = 5.0), settings)
+        assertEquals(0.0, p.pb2U, 1e-9)
+        assertEquals(0.0, p.pb3U, 1e-9)
+    }
+
+    @Test
+    fun `some fat and protein goes in pre-bolus 2 for the wave`() {
+        // 2.1 FPU = 4.2 U, 70 % of it at 90 min.
+        val p = MealDosePlanner.plan(meal(20.0, protein = 30.0, fat = 10.0), settings)
+        assertEquals(3.2, p.pb1U, 1e-9)
+        assertEquals(2.9, p.pb2U, 1e-9)
+        assertEquals(0.0, p.pb3U, 1e-9)
+        assertEquals(MealDosePlanner.PB2_DELAY_MIN, p.pb2DelayMin)
+        assertTrue(p.duraEnabled)
+        assertTrue(p.pfAfter)
+    }
+
+    @Test
+    fun `a heavy meal splits the fat and protein over pre-bolus 2 and 3`() {
         // Last night's dinner: about 60 g carbs, 80 g protein, 25 g fat.
         val t = meal(60.0, protein = 80.0, fat = 25.0)
         assertEquals(5.45, t.fpu, 1e-9)
-        val p = MealDosePlanner.plan(t, settings.copy(maxTotalU = 25.0))
+        val p = MealDosePlanner.plan(t, settings.copy(maxPreBolusU = 10.0, maxTotalU = 25.0))
         assertEquals(10.9, p.fatProteinU, 1e-9)
-        assertEquals(6.0, p.pb1U, 1e-9)
-        assertEquals(3.0, p.pb2U, 1e-9)
-        assertEquals(4.35, p.pb3U, 1e-9)    // 40 % of 10.9, down to the bolus step
-        assertTrue(p.duraEnabled)
-        assertTrue(p.pfAfter)
+        assertEquals(9.6, p.pb1U, 1e-9)     // 80 % of 12 U
+        assertEquals(4.55, p.pb2U, 1e-9)    // 60 % of 7.63 U, down to the bolus step
+        assertEquals(3.05, p.pb3U, 1e-9)    // 40 % of 7.63 U
+        assertEquals(MealDosePlanner.PB3_DELAY_MIN, p.pb3DelayMin)
         assertEquals(300, p.durationMin)
+    }
+
+    @Test
+    fun `a low carb meal with a lot of protein and fat is mostly pre-bolus 2 and 3`() {
+        // 10 g carbs, 60 g protein, 40 g fat: 6 FPU = 12 U, 70 % of it = 8.4 U.
+        val p = MealDosePlanner.plan(meal(10.0, protein = 60.0, fat = 40.0), settings.copy(maxTotalU = 25.0))
+        assertEquals(1.6, p.pb1U, 1e-9)
+        assertEquals(5.0, p.pb2U, 1e-9)
+        assertEquals(3.35, p.pb3U, 1e-9)
     }
 
     @Test
     fun `the total cap cuts the later pre-boluses first`() {
         val p = MealDosePlanner.plan(meal(100.0, protein = 50.0, fat = 20.0), settings)
-        // Wanted 10 + 5 + 3.04 U; the total may be 10.
+        // Wanted 16 + 3.19 + 2.13 U; the total may be 10.
         assertEquals(8.0, p.pb1U, 1e-9)     // also held to the max pre-bolus
         assertEquals(2.0, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
@@ -57,19 +84,19 @@ class MealDosePlannerTest {
     }
 
     @Test
+    fun `without pre-bolus 2 there is no pre-bolus 3`() {
+        // Pre-bolus 3 counts from pre-bolus 2, so on its own it would never fire.
+        val p = MealDosePlanner.plan(meal(50.0, protein = 60.0, fat = 40.0), settings.copy(maxTotalU = 8.0))
+        assertEquals(8.0, p.pb1U, 1e-9)
+        assertEquals(0.0, p.pb2U, 1e-9)
+        assertEquals(0.0, p.pb3U, 1e-9)
+    }
+
+    @Test
     fun `the learned factor scales both parts`() {
         val p = MealDosePlanner.plan(meal(50.0, protein = 50.0), settings.copy(factor = 1.2))
         assertEquals(12.0, p.carbsU, 1e-9)
         assertEquals(4.8, p.fatProteinU, 1e-9)
-    }
-
-    @Test
-    fun `without pre-bolus 2 the fat and protein dose takes its place`() {
-        // Pre-bolus 3 counts from pre-bolus 2, so on its own it would never fire.
-        val p = MealDosePlanner.plan(meal(10.0, protein = 60.0, fat = 20.0), settings.copy(pb2Pct = 0))
-        assertEquals(0.0, p.pb3U, 1e-9)
-        assertEquals(3.35, p.pb2U, 1e-9)    // 40 % of 8.4 U, down to the bolus step
-        assertEquals(MealDosePlanner.SLOW_ONLY_DELAY_MIN, p.pb2DelayMin)
     }
 
     @Test
@@ -81,8 +108,7 @@ class MealDosePlannerTest {
     @Test
     fun `doses are rounded down to the bolus step`() {
         val p = MealDosePlanner.plan(meal(33.0), settings.copy(bolusStep = 0.1))
-        assertEquals(3.3, p.pb1U, 1e-9)     // 3.3 exactly
-        assertEquals(1.6, p.pb2U, 1e-9)     // 1.65 down to 1.6
+        assertEquals(5.2, p.pb1U, 1e-9)     // 5.28 down to 5.2
     }
 
     @Test
@@ -110,11 +136,11 @@ class MealDosePlannerTest {
     private val dinner = RunningMeal(plannedTotalU = 7.5, pb2WaitingU = 2.5, pb3WaitingU = 0.0, minutesLeft = 60, iobRoomU = 10.0, holdNow = false)
 
     @Test
-    fun `a dessert gets its share now and in the waiting pre-bolus 2, without IOB taken off`() {
-        // 25 g at 5 g/U = 5 U.
+    fun `a dessert's carbs are given now, without IOB taken off`() {
+        // 25 g at 5 g/U = 5 U, 80 % of it.
         val a = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner)
-        assertEquals(2.5, a.nowU, 1e-9)
-        assertEquals(1.25, a.pb2AddU, 1e-9)
+        assertEquals(4.0, a.nowU, 1e-9)
+        assertEquals(0.0, a.pb2AddU, 1e-9)
         assertEquals(0.0, a.pb3AddU, 1e-9)
         assertEquals(MealDosePlanner.ADD_MIN_LEFT_MIN, a.minutesLeft)
         assertFalse(a.capped)
@@ -132,39 +158,45 @@ class MealDosePlannerTest {
     }
 
     @Test
-    fun `fat and protein go into pre-bolus 3 while it waits`() {
-        val a = MealDosePlanner.planAddition(meal(0.0, protein = 40.0, fat = 20.0), settings.copy(maxTotalU = 20.0), dinner.copy(pb3WaitingU = 1.0))
-        // 3.4 FPU = 6.8 U, 40 % of it.
-        assertEquals(2.7, a.pb3AddU, 1e-9)
+    fun `fat and protein go into the pre-boluses that still wait`() {
+        // 3.4 FPU = 6.8 U, 70 % of it = 4.76 U.
+        val heavy = meal(0.0, protein = 40.0, fat = 20.0)
+        val both = MealDosePlanner.planAddition(heavy, settings.copy(maxTotalU = 20.0), dinner.copy(pb3WaitingU = 1.0))
+        assertEquals(2.85, both.pb2AddU, 1e-9)
+        assertEquals(1.9, both.pb3AddU, 1e-9)
+        // Pre-bolus 2 has fired: pre-bolus 3 takes all of it.
+        val onlyPb3 = MealDosePlanner.planAddition(heavy, settings.copy(maxTotalU = 20.0), dinner.copy(pb2WaitingU = 0.0, pb3WaitingU = 1.0))
+        assertEquals(0.0, onlyPb3.pb2AddU, 1e-9)
+        assertEquals(4.75, onlyPb3.pb3AddU, 1e-9)
     }
 
     @Test
     fun `the max total counts what the meal already gave`() {
-        // 10 U wanted for carbs; 7.5 U already planned of 10, so 2.5 U are left.
+        // 16 U wanted now; 7.5 U already planned of 10, so 2.5 U are left.
         val a = MealDosePlanner.planAddition(meal(100.0), settings, dinner)
         assertEquals(2.5, a.nowU, 1e-9)
-        assertEquals(0.0, a.pb2AddU, 1e-9)
         assertTrue(a.capped)
     }
 
     @Test
     fun `a waiting pre-bolus does not grow past the max pre-bolus`() {
-        val a = MealDosePlanner.planAddition(meal(100.0), settings.copy(maxTotalU = 50.0), dinner.copy(pb2WaitingU = 7.0))
+        val a = MealDosePlanner.planAddition(meal(0.0, protein = 100.0, fat = 50.0), settings.copy(maxTotalU = 50.0), dinner.copy(pb2WaitingU = 7.0))
         assertEquals(1.0, a.pb2AddU, 1e-9)
     }
 
     @Test
     fun `low or falling BG holds the dose now, and IOB room cuts it`() {
-        val held = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(holdNow = true))
+        val dessert = meal(25.0, protein = 30.0, fat = 10.0)
+        val held = MealDosePlanner.planAddition(dessert, settings.copy(maxTotalU = 20.0), dinner.copy(holdNow = true))
         assertEquals(0.0, held.nowU, 1e-9)
         assertTrue(held.heldForBg)
-        assertEquals(1.25, held.pb2AddU, 1e-9)     // pre-bolus 2 has its own BG check before it fires
+        assertEquals(2.9, held.pb2AddU, 1e-9)     // pre-bolus 2 has its own BG check before it fires
 
-        val cut = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(iobRoomU = 1.0))
+        val cut = MealDosePlanner.planAddition(dessert, settings.copy(maxTotalU = 20.0), dinner.copy(iobRoomU = 1.0))
         assertEquals(1.0, cut.nowU, 1e-9)
         assertTrue(cut.cutForIob)
 
-        val full = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(iobRoomU = -0.5))
+        val full = MealDosePlanner.planAddition(dessert, settings.copy(maxTotalU = 20.0), dinner.copy(iobRoomU = -0.5))
         assertEquals(0.0, full.nowU, 1e-9)
     }
 

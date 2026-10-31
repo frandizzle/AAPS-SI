@@ -460,9 +460,9 @@ class SmartMealDialogViewModel(
             }
             val factor = mealEstimateCalibration.factor
             val settings = MealPlanSettings(
-                pb1Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb1Pct),
-                pb2Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb2Pct),
-                pb3Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3Pct),
+                carbPct = preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct),
+                fatProteinPct = preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct),
+                pb3SharePct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct),
                 maxPreBolusU = state.maxPreBolus,
                 maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
                 carbRatio = carbRatio,

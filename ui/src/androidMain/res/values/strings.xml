@@ -421,7 +421,7 @@
     <string name="si_food_item_detail" comment="%1$s=total grams eaten, %2$s=carbs in grams, %3$s=protein in grams, %4$s=fat in grams. Example: 237 g: 66 g carbs, 6 g protein, 1 g fat">%1$s g: %2$s g carbs, %3$s g protein, %4$s g fat</string>
     <string name="si_food_fill_in">Fill in insulin plan</string>
     <string name="si_food_clear">Clear</string>
-    <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling, and the loop gives the rest from real BG.</string>
+    <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Pre-bolus 1 is for the carbs, pre-bolus 2 for the fat and protein wave, and on a heavy meal pre-bolus 3 for what is left of it. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
     <string name="si_food_plan_summary" comment="%1$s=insulin for carbs, %2$s=insulin for fat and protein, both with unit. Example: Needs about 9.0 U for carbs and 3.2 U for fat and protein">Needs about %1$s for carbs and %2$s for fat and protein</string>
     <string name="si_food_plan_factor" comment="%1$s=learned factor, %2$d=number of meals it is based on. Example: Learned from your meals: ×1.15 (8 meals)">Learned from your meals: ×%1$s (%2$d meals)</string>
     <string name="si_food_plan_learning">Not learned from your meals yet: estimates are used as they are</string>

@@ -494,14 +494,14 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
-    fun `filling in an estimated dessert plans now and adds to the waiting pre-bolus 2`() {
+    fun `filling in an estimated dessert gives its carbs now`() {
         val running = dinnerRunning()
         val profile: EffectiveProfile = mock()
         whenever(profile.getIc()).thenReturn(5.0)
         whenever { profileFunction.getProfile() }.thenReturn(profile)
-        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb1Pct)).thenReturn(50)
-        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb2Pct)).thenReturn(25)
-        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb3Pct)).thenReturn(40)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct)).thenReturn(50)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct)).thenReturn(40)
         whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
         whenever { mealFoodRepository.estimate(any(), anyOrNull()) }.thenReturn(FoodLookupResult.Success(listOf(dessert())))
@@ -511,9 +511,9 @@ internal class SmartMealDialogViewModelTest {
         sut.estimateMeal()
         sut.fillInFromFood()
         with(sut.uiState.value) {
-            // 30 g at 5 g/U = 6 U: half now, a quarter into the waiting pre-bolus 2.
+            // 30 g at 5 g/U = 6 U, half of it now. No fat or protein, so pre-bolus 2 stays as it is.
             assertThat(addNowU).isWithin(1e-9).of(3.0)
-            assertThat(addPb2U).isWithin(1e-9).of(1.5)
+            assertThat(addPb2U).isEqualTo(0.0)
             assertThat(addPb3U).isEqualTo(0.0)
             assertThat(addMinutesLeft).isEqualTo(120)
         }

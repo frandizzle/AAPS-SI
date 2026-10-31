@@ -7,15 +7,19 @@ import kotlin.math.min
 /**
  * The limits and shares a meal plan is made with. Percentages are 0 to 100.
  *
+ * @param carbPct          how much of the carb insulin pre-bolus 1 gives
+ * @param fatProteinPct    how much of the fat and protein insulin (Warsaw method) pre-bolus 2 and 3 give
+ *                         together. The Warsaw method often counts high, so this is usually below 100.
+ * @param pb3SharePct      on a heavy meal, the part of that fat and protein dose that pre-bolus 3 gives
  * @param carbRatio        grams of carbs one unit covers, from the profile
  * @param factor           learned correction from `MealEstimateCalibration`: how this user's meals compare with estimates
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
  */
 data class MealPlanSettings(
-    val pb1Pct: Int,
-    val pb2Pct: Int,
-    val pb3Pct: Int,
+    val carbPct: Int,
+    val fatProteinPct: Int,
+    val pb3SharePct: Int,
     val maxPreBolusU: Double,
     val maxTotalU: Double,
     val carbRatio: Double,
@@ -26,6 +30,8 @@ data class MealPlanSettings(
 /**
  * A plan for the Smart Meal dialog. It is never given by itself: it only fills the dialog's fields.
  *
+ * Each pre-bolus has one job, as when a meal is bolused by hand: pre-bolus 1 covers the carbs, pre-bolus 2
+ * keeps IOB up for the fat and protein wave, and on a heavy meal pre-bolus 3 covers what is left of it.
  * Pre-bolus 2 and 3 only fire later if BG is above target and not falling, so a meal that turns out
  * smaller than estimated does not get them. The loop covers anything above the plan from real BG.
  *
@@ -90,23 +96,26 @@ data class MealAddition(
 
 object MealDosePlanner {
 
-    /** Pre-bolus 2, counted from the start of the mode. */
-    const val PB2_DELAY_MIN = 30
-    /** Pre-bolus 3, counted from when pre-bolus 2 fired, so about 90 min after the start. */
-    const val PB3_DELAY_MIN = 60
-    /** The fat and protein dose alone, when there is no pre-bolus 2 to count from. */
-    const val SLOW_ONLY_DELAY_MIN = 90
+    /** Pre-bolus 2, the fat and protein wave, counted from the start of the mode. */
+    const val PB2_DELAY_MIN = 90
+    /** Pre-bolus 3, what is left of the wave, counted from when pre-bolus 2 fired, so about 3 h after the start. */
+    const val PB3_DELAY_MIN = 90
+    /** Below this many fat-protein units there is no pre-bolus 2: the loop covers so little by itself. */
+    const val FPU_PB2 = 1.0
     /** From this many fat-protein units, DURA is on and Protein/Fat follows the meal. */
     const val FPU_SLOW_MEAL = 2.0
+    /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
+    const val FPU_HEAVY_MEAL = 3.0
 
     fun plan(totals: MealTotals, settings: MealPlanSettings): MealPlan {
         val ratio = settings.carbRatio.takeIf { it > 0.0 } ?: return empty(totals)
         val carbsU = totals.carbsG * settings.factor / ratio
         val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * settings.factor / ratio
 
-        var pb1 = carbsU * settings.pb1Pct / 100.0
-        var pb2 = carbsU * settings.pb2Pct / 100.0
-        var pb3 = fatProteinU * settings.pb3Pct / 100.0
+        var pb1 = carbsU * settings.carbPct / 100.0
+        val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)
+        var pb2 = fp2
+        var pb3 = fp3
         val wanted = pb1 + pb2 + pb3
 
         // Each pre-bolus within its own cap, then all together within the total. The first one is
@@ -123,17 +132,14 @@ object MealDosePlanner {
         pb2 = floorToStep(pb2, settings.bolusStep)
         pb3 = floorToStep(pb3, settings.bolusStep)
 
-        // Pre-bolus 3 counts from pre-bolus 2. Without a pre-bolus 2, the fat and protein dose takes its place.
-        var pb2Delay = PB2_DELAY_MIN
-        if (pb2 <= 0.0 && pb3 > 0.0) {
-            pb2 = pb3; pb3 = 0.0; pb2Delay = SLOW_ONLY_DELAY_MIN
-        }
+        // Pre-bolus 3 counts from pre-bolus 2, so without a pre-bolus 2 it would never fire.
+        if (pb2 <= 0.0) pb3 = 0.0
 
         val slow = totals.fpu >= FPU_SLOW_MEAL
         return MealPlan(
             pb1U = pb1,
             pb2U = pb2,
-            pb2DelayMin = pb2Delay,
+            pb2DelayMin = PB2_DELAY_MIN,
             pb3U = pb3,
             pb3DelayMin = PB3_DELAY_MIN,
             durationMin = durationFor(totals.fpu),
@@ -149,9 +155,9 @@ object MealDosePlanner {
      * Plans food added to a running meal, for example a dessert. IOB is not taken off: it belongs to the
      * first part of the meal, which the plan only partly covered. IOB and BG are used as limits instead.
      *
-     * The share for later goes into pre-bolus 2 and 3 only while they still wait. If they have fired, no
-     * new one is made: the loop is still in meal mode and covers the carbs, and for fat and protein the
-     * mode runs longer, with DURA and Protein/Fat after it.
+     * The carbs are given now. The fat and protein dose goes into pre-bolus 2 and 3 only while they still
+     * wait, split as for a new meal when both wait. If they have fired, no new one is made: for fat and
+     * protein the mode runs longer, with DURA and Protein/Fat after it.
      */
     fun planAddition(totals: MealTotals, settings: MealPlanSettings, running: RunningMeal): MealAddition {
         val slow = totals.fpu >= FPU_SLOW_MEAL
@@ -161,9 +167,21 @@ object MealDosePlanner {
         val carbsU = totals.carbsG * settings.factor / ratio
         val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * settings.factor / ratio
 
-        var now = carbsU * settings.pb1Pct / 100.0
-        var pb2 = if (running.pb2WaitingU > 0.0) carbsU * settings.pb2Pct / 100.0 else 0.0
-        var pb3 = if (running.pb3WaitingU > 0.0) fatProteinU * settings.pb3Pct / 100.0 else 0.0
+        var now = carbsU * settings.carbPct / 100.0
+        val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)
+        val pb2Waits = running.pb2WaitingU > 0.0
+        val pb3Waits = running.pb3WaitingU > 0.0
+        // A pre-bolus that has fired cannot take its part, so the one still waiting takes all of it.
+        var pb2 = when {
+            pb2Waits && pb3Waits -> fp2
+            pb2Waits             -> fp2 + fp3
+            else                 -> 0.0
+        }
+        var pb3 = when {
+            pb3Waits && pb2Waits -> fp3
+            pb3Waits             -> fp2 + fp3
+            else                 -> 0.0
+        }
         val wanted = now + pb2 + pb3
 
         // One pre-bolus may not grow past the max pre-bolus, and the whole meal not past the max total.
@@ -194,6 +212,18 @@ object MealDosePlanner {
             heldForBg = heldForBg,
             cutForIob = cutForIob
         )
+    }
+
+    /**
+     * The fat and protein dose for pre-bolus 2 and pre-bolus 3. A light meal gets none, a heavy one has it
+     * split between the two.
+     */
+    private fun splitFatProtein(fpu: Double, fatProteinU: Double, settings: MealPlanSettings): Pair<Double, Double> {
+        if (fpu < FPU_PB2) return 0.0 to 0.0
+        val dose = fatProteinU * settings.fatProteinPct / 100.0
+        if (fpu < FPU_HEAVY_MEAL) return dose to 0.0
+        val pb3 = dose * settings.pb3SharePct / 100.0
+        return dose - pb3 to pb3
     }
 
     /** Food added to a running meal keeps the mode on for at least this long, so the loop still treats it as a meal. */
