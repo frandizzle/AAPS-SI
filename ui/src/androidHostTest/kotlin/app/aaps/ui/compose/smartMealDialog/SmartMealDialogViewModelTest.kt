@@ -43,6 +43,7 @@ import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
 import app.aaps.ui.compose.smartMealDialog.food.MealFoodRepository
 import app.aaps.ui.compose.smartMealDialog.food.SaveResult
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
@@ -625,7 +626,9 @@ internal class SmartMealDialogViewModelTest {
         whenever(profile.getIc()).thenReturn(5.0)
         whenever { profileFunction.getProfile() }.thenReturn(profile)
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
-        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.2, waveFactor = 0.8, tailFactor = 0.8, meals = 3, ateSoon = 0, recentMeals = 3))
+        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.2, waveFactor = 0.8, tailFactor = 0.8, meals = 3, fpHalfMin = 145))
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
+        whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
         build()
         sut.addManualFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
@@ -638,7 +641,10 @@ internal class SmartMealDialogViewModelTest {
             assertThat(carbsU).isWithin(1e-9).of(20.0 * 1.2 / 5.0)
             // 1.45 FPU = 14.5 g carb equivalent, at its own factor.
             assertThat(fatProteinU).isWithin(1e-9).of(14.5 * 0.8 / 5.0)
+            // Its fat and protein are half in by 145 min, and the insulin peaks at 55 min: pre-bolus 2 at 90 min.
+            assertThat(pb2DelayMin).isEqualTo(90)
         }
+        assertThat(sut.uiState.value.learnedTiming).isEqualTo(90 to MealDosePlanner.PB3_DELAY_MIN)
         sut.prepareAndConfirm()
         sut.commit(null)
         // 1.45 FPU is not heavy: all of it is the wave, and there is no pre-bolus 3.

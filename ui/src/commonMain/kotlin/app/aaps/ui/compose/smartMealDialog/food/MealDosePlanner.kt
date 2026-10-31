@@ -247,6 +247,48 @@ object MealDosePlanner {
         return grams - tail to tail
     }
 
+    /**
+     * Pre-bolus 2 and 3 timed from when this meal's fat and protein really come in, so the insulin is at its
+     * strongest then: pre-bolus 2 at the middle of it, or on a heavy meal pre-bolus 2 at the first quarter and
+     * pre-bolus 3 at the third. Null when the meal has not learned its timing.
+     *
+     * Pre-bolus 2 is never earlier than [MIN_LEARNED_PB2_MIN], so it does not land on top of pre-bolus 1 at its
+     * strongest; both stay within the dialog's limits.
+     *
+     * @param insulinPeakMin when the insulin works hardest after a bolus, from the profile
+     * @param heavy          the meal has a pre-bolus 3
+     * @return pre-bolus 2 minutes from the start, and pre-bolus 3 minutes after pre-bolus 2
+     */
+    fun learnedDelays(quarterMin: Int?, halfMin: Int?, threeQuarterMin: Int?, insulinPeakMin: Int, heavy: Boolean): Pair<Int, Int>? {
+        fun round5(m: Int) = (m + 2) / 5 * 5
+        return if (heavy) {
+            if (quarterMin == null || threeQuarterMin == null) return null
+            val pb2 = round5(quarterMin - insulinPeakMin).coerceIn(MIN_LEARNED_PB2_MIN, MAX_DELAY_MIN)
+            val pb3 = round5(threeQuarterMin - insulinPeakMin - pb2).coerceIn(MIN_PB3_GAP_MIN, MAX_DELAY_MIN)
+            pb2 to pb3
+        } else {
+            if (halfMin == null) return null
+            round5(halfMin - insulinPeakMin).coerceIn(MIN_LEARNED_PB2_MIN, MAX_DELAY_MIN) to PB3_DELAY_MIN
+        }
+    }
+
+    /**
+     * How long to wait after pre-bolus 1 before eating, when BG usually starts to rise sooner than fast insulin
+     * starts to work ([INSULIN_START_MIN]). Null when no wait is needed or the rise is not known.
+     */
+    fun suggestedWait(riseMin: Int?): Int? {
+        riseMin ?: return null
+        if (riseMin >= INSULIN_START_MIN) return null
+        return ((INSULIN_START_MIN - riseMin + 4) / 5 * 5).coerceIn(5, MAX_WAIT_MIN)
+    }
+
+    const val MIN_LEARNED_PB2_MIN = 45
+    const val MIN_PB3_GAP_MIN = 30
+    const val MAX_DELAY_MIN = 120
+    /** Fast insulin starts to lower BG about this long after a bolus. */
+    const val INSULIN_START_MIN = 20
+    const val MAX_WAIT_MIN = 20
+
     /** Food added to a running meal keeps the mode on for at least this long, so the loop still treats it as a meal. */
     const val ADD_MIN_LEFT_MIN = 120
 

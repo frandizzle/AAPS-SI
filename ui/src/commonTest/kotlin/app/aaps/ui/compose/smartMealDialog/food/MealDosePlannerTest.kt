@@ -3,6 +3,7 @@ package app.aaps.ui.compose.smartMealDialog.food
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** The insulin plan made from a food list. It only fills the dialog, so what matters is that it never asks for too much. */
@@ -103,6 +104,26 @@ class MealDosePlannerTest {
         val p = MealDosePlanner.plan(meal(10.0, protein = 60.0, fat = 40.0), settings.copy(maxTotalU = 25.0, waveFactor = 1.0, tailFactor = 0.5))
         assertEquals(5.0, p.pb2U, 1e-9)     // 36 g / 5 × 70 % = 5.04
         assertEquals(1.65, p.pb3U, 1e-9)    // 24 g × 0.5 / 5 × 70 % = 1.68
+    }
+
+    @Test
+    fun `pre-bolus 2 and 3 are timed so the insulin is strongest when the food comes in`() {
+        // Half of the fat and protein in by 145 min, insulin strongest 55 min after a bolus: pre-bolus 2 at 90 min.
+        assertEquals(90 to MealDosePlanner.PB3_DELAY_MIN, MealDosePlanner.learnedDelays(130, 145, 160, 55, heavy = false))
+        // Heavy: pre-bolus 2 at the first quarter, pre-bolus 3 at the third.
+        assertEquals(75 to 30, MealDosePlanner.learnedDelays(130, 145, 160, 55, heavy = true))
+        // Never on top of pre-bolus 1, never past the dialog's limit.
+        assertEquals(MealDosePlanner.MIN_LEARNED_PB2_MIN, MealDosePlanner.learnedDelays(80, 80, 90, 55, heavy = false)!!.first)
+        assertEquals(MealDosePlanner.MAX_DELAY_MIN, MealDosePlanner.learnedDelays(300, 300, 400, 55, heavy = false)!!.first)
+        assertNull(MealDosePlanner.learnedDelays(null, null, null, 55, heavy = false))
+    }
+
+    @Test
+    fun `a wait is suggested only when BG rises before the insulin works`() {
+        assertEquals(15, MealDosePlanner.suggestedWait(5))
+        assertEquals(10, MealDosePlanner.suggestedWait(12))
+        assertNull(MealDosePlanner.suggestedWait(20))
+        assertNull(MealDosePlanner.suggestedWait(null))
     }
 
     @Test

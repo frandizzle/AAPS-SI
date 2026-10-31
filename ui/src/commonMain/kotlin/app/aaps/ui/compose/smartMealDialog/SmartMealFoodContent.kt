@@ -56,6 +56,7 @@ import app.aaps.ui.compose.smartMealDialog.food.BarcodeScanner
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
 import app.aaps.ui.compose.smartMealDialog.food.MealPhotoLauncher
 import app.aaps.ui.compose.smartMealDialog.food.SaveResult
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
@@ -169,8 +170,15 @@ internal fun SmartMealFoodContent(
                     Hint(stringResource(UiStrings.si_food_meal_learned, name, df.to2Decimal(learned.carbFactor), df.to2Decimal(learned.waveFactor), df.to2Decimal(learned.tailFactor), learned.meals))
                 else                   -> Hint(stringResource(UiStrings.si_food_meal_learning, name, learned?.meals ?: 0, LearnedMeal.MIN_MEALS))
             }
-            if (learned != null && learned.recentMeals >= ATE_SOON_MIN_MEALS && learned.ateSoon * 2 > learned.recentMeals)
-                Hint(stringResource(UiStrings.si_food_meal_ate_soon))
+            if (learned?.inUse == true) MealDosePlanner.suggestedWait(learned.riseMin)?.let { wait ->
+                Hint(stringResource(UiStrings.si_food_meal_wait, learned.riseMin ?: 0, wait))
+            }
+            state.learnedTiming?.let { (pb2, pb3) ->
+                Hint(
+                    if (state.plan?.pb3U?.let { it > 0.0 } == true) stringResource(UiStrings.si_food_meal_timing_pb3, pb2, pb3)
+                    else stringResource(UiStrings.si_food_meal_timing, pb2)
+                )
+            }
         }
         if (state.planNoRatio) Text(stringResource(UiStrings.si_food_no_ratio), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         // The insulin the food needs, from a new meal's plan or from food added to the running one.
@@ -234,8 +242,6 @@ internal fun SmartMealFoodContent(
 }
 
 private const val QUICK_CHIPS = 5
-/** The hint to wait after pre-bolus 1 needs this many recent meals. */
-private const val ATE_SOON_MIN_MEALS = 3
 
 /** Half servings for a packet, quarter portions for an estimate. */
 private fun quantityStep(item: FoodItem): Double =

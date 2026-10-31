@@ -91,12 +91,16 @@ class SavedMealLearningTest {
     }
 
     @Test
-    fun `a rise right after the start is noted as eaten without waiting`() {
+    fun `a meal learns when BG starts to rise and when its fat and protein come in`() {
+        // The fat and protein come in evenly from 120 to 175 min.
         meal(T0, 40.0, 20.0, riseAtMin = 10)
         meal(T0 + DAY, 40.0, 20.0, riseAtMin = 30)
+        meal(T0 + 2 * DAY, 40.0, 20.0, riseAtMin = 10)
         val l = learning.learned("Wrap")!!
-        assertEquals(1, l.ateSoon)
-        assertEquals(2, l.recentMeals)
+        assertEquals(10, l.riseMin)
+        assertEquals(130, l.fpQuarterMin)
+        assertEquals(145, l.fpHalfMin)
+        assertEquals(160, l.fpThreeQuarterMin)
     }
 
     @Test

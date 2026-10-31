@@ -35,9 +35,11 @@ import org.json.JSONObject
  *  - A meal that got other food, ended early, was replaced, had a second helping, exercise or the new pod boost
  *    is not learned from.
  *
- * It also notes when BG starts to rise: a rise within [ATE_SOON_MS] of the start means the meal was probably
- * eaten without waiting after pre-bolus 1. That does not change the factors (the grams are the same either way);
- * it is only shown as a hint.
+ * A saved meal also learns its timing, from the last [RECENT_MEALS] meals:
+ *  - when BG starts to rise after pre-bolus 1, to suggest how long to wait before eating;
+ *  - when its fat and protein come in: the times by which a quarter, half and three quarters of the food after
+ *    the first two hours had been absorbed. The dialog times pre-bolus 2 and 3 from these, so their insulin
+ *    works when the food does. The timing does not change the factors.
  */
 @SingleIn(AppScope::class)
 class SavedMealLearningImpl @Inject constructor(
@@ -47,7 +49,14 @@ class SavedMealLearningImpl @Inject constructor(
 
     enum class Part { CARBS, WAVE, TAIL }
 
-    private class State(val factors: DoubleArray = DoubleArray(PARTS) { 1.0 }, var meals: Int = 0, val soon: MutableList<Boolean> = mutableListOf())
+    private class State(
+        val factors: DoubleArray = DoubleArray(PARTS) { 1.0 },
+        var meals: Int = 0,
+        /** Minutes from the start until BG began to rise. */
+        val rises: MutableList<Int> = mutableListOf(),
+        /** Minutes from the start by which a quarter, half and three quarters of the fat and protein had come in. */
+        val fpTimes: Array<MutableList<Int>> = Array(QUANTILES.size) { mutableListOf() }
+    )
 
     private class Watch(
         val name:        String?,
@@ -64,7 +73,9 @@ class SavedMealLearningImpl @Inject constructor(
         var episodeGrams: Double = 0.0,
         var startBgMgdl: Double = 0.0,
         var riseAfterMs: Long = -1L,
-        var dropReason:  String = ""
+        var dropReason:  String = "",
+        /** Grams seen after the carb part, in [BIN_MS] steps from the start, for the timing. */
+        val bins:        DoubleArray = DoubleArray(MAX_BINS)
     )
 
     private val states = mutableMapOf<String, State>()
@@ -80,13 +91,19 @@ class SavedMealLearningImpl @Inject constructor(
     }
 
     override fun learned(name: String): LearnedMeal? = synchronized(this) {
-        states[name]?.let { LearnedMeal(it.factors[0], it.factors[1], it.factors[2], it.meals, it.soon.count { s -> s }, it.soon.size) }
+        states[name]?.let { s ->
+            fun med(list: List<Int>) = if (list.isEmpty()) null else median(list.map { it.toDouble() }).toInt()
+            LearnedMeal(
+                s.factors[0], s.factors[1], s.factors[2], s.meals,
+                riseMin = med(s.rises), fpQuarterMin = med(s.fpTimes[0]), fpHalfMin = med(s.fpTimes[1]), fpThreeQuarterMin = med(s.fpTimes[2])
+            )
+        }
     }
 
     override fun general(): LearnedMeal? = synchronized(this) {
         val meals = general.maxOf { it.size }
         if (meals == 0) null
-        else LearnedMeal(generalFactor(0), generalFactor(1), generalFactor(2), meals, 0, 0, minMeals = GENERAL_MIN_MEALS)
+        else LearnedMeal(generalFactor(0), generalFactor(1), generalFactor(2), meals, minMeals = GENERAL_MIN_MEALS)
     }
 
     /** 1.0 until the part has [GENERAL_MIN_MEALS] meals: a tail is only seen on heavy meals. */
@@ -204,7 +221,10 @@ class SavedMealLearningImpl @Inject constructor(
         val added = if (episodeStartMs == w.episodeStartMs) episodeGrams - w.episodeGrams else episodeGrams
         w.episodeStartMs = episodeStartMs
         w.episodeGrams = episodeGrams
-        if (added > 0.0) w.seen[partAt(w, nowMs)] += added
+        if (added <= 0.0) return
+        w.seen[partAt(w, nowMs)] += added
+        val sinceStart = nowMs - w.startMs
+        if (sinceStart >= CARB_PHASE_MS) w.bins[(sinceStart / BIN_MS).toInt().coerceAtMost(MAX_BINS - 1)] += added
     }
 
     private fun noteRise(w: Watch, nowMs: Long, bgMgdl: Double) {
@@ -247,15 +267,39 @@ class SavedMealLearningImpl @Inject constructor(
             w.name?.let { n ->
                 val s = states.getOrPut(n) { State() }
                 s.meals++
-                if (w.riseAfterMs >= 0L) {
-                    s.soon.add(w.riseAfterMs <= ATE_SOON_MS)
-                    while (s.soon.size > RECENT_MEALS) s.soon.removeAt(0)
+                if (w.riseAfterMs >= 0L) s.rises.addRecent((w.riseAfterMs / 60_000L).toInt())
+                fpTimes(w.bins)?.let { times ->
+                    times.forEachIndexed { i, t -> s.fpTimes[i].addRecent(t) }
+                    parts += "fat and protein in by ${times.joinToString("/")} min"
                 }
                 parts += "${s.meals} meals"
             }
             "$label: ${parts.joinToString("; ")}"
         }
         note(text)
+    }
+
+    private fun MutableList<Int>.addRecent(v: Int) {
+        add(v)
+        while (size > RECENT_MEALS) removeAt(0)
+    }
+
+    /**
+     * Minutes from the start by which each of [QUANTILES] of the fat and protein had come in, or null when too
+     * little came in after the carb part to say.
+     */
+    private fun fpTimes(bins: DoubleArray): List<Int>? {
+        val total = bins.sum()
+        if (total < MIN_PART_G) return null
+        return QUANTILES.map { q ->
+            var sum = 0.0
+            var at = bins.size - 1
+            for (i in bins.indices) {
+                sum += bins[i]
+                if (sum >= q * total) { at = i; break }
+            }
+            (at * BIN_MS / 60_000L).toInt()
+        }
     }
 
     private fun note(text: String) {
@@ -291,11 +335,14 @@ class SavedMealLearningImpl @Inject constructor(
     }
 
     private fun Watch.copyAs(name: String?) =
-        Watch(name, startMs, modeEndMs, windowEndMs, tailFromMs, planned, seen, low, under, episodeStartMs, episodeGrams, startBgMgdl, riseAfterMs, dropReason)
+        Watch(name, startMs, modeEndMs, windowEndMs, tailFromMs, planned, seen, low, under, episodeStartMs, episodeGrams, startBgMgdl, riseAfterMs, dropReason, bins)
 
     private fun learnedJson() = JSONObject()
         .put(K_MEALS, JSONObject().apply {
-            states.forEach { (name, s) -> put(name, JSONObject().put("f", JSONArray(s.factors.toList())).put("n", s.meals).put("soon", JSONArray(s.soon))) }
+            states.forEach { (name, s) ->
+                put(name, JSONObject().put("f", JSONArray(s.factors.toList())).put("n", s.meals).put("rise", JSONArray(s.rises))
+                    .put("fpt", JSONArray().apply { s.fpTimes.forEach { put(JSONArray(it)) } }))
+            }
         })
         .put(K_GENERAL, JSONArray().apply { general.forEach { put(JSONArray(it)) } })
 
@@ -306,9 +353,9 @@ class SavedMealLearningImpl @Inject constructor(
                 // Before the three parts, a meal kept "c" for the carbs and one "f" for all of the fat and protein.
                 val factors = o.optJSONArray("f")?.let { f -> DoubleArray(PARTS) { if (it < f.length()) f.getDouble(it) else 1.0 } }
                     ?: o.optDouble("f", 1.0).let { fp -> doubleArrayOf(o.optDouble("c", 1.0), fp, fp) }
-                val soon = mutableListOf<Boolean>()
-                o.optJSONArray("soon")?.let { a -> for (i in 0 until a.length()) soon.add(a.getBoolean(i)) }
-                states[name] = State(factors, o.getInt("n"), soon)
+                fun ints(a: JSONArray?) = MutableList(a?.length() ?: 0) { a!!.getInt(it) }
+                val fpt = o.optJSONArray("fpt")
+                states[name] = State(factors, o.getInt("n"), ints(o.optJSONArray("rise")), Array(QUANTILES.size) { ints(fpt?.optJSONArray(it)) })
             }
         }
         json.optJSONArray(K_GENERAL)?.let { g ->
@@ -331,7 +378,8 @@ class SavedMealLearningImpl @Inject constructor(
                     put(JSONObject()
                             .put("name", w.name ?: JSONObject.NULL).put("s", w.startMs).put("me", w.modeEndMs).put("e", w.windowEndMs).put("tf", w.tailFromMs)
                             .put("p", w.planned.json()).put("seen", w.seen.json()).put("low", w.low.json()).put("under", w.under.json())
-                            .put("es", w.episodeStartMs).put("eg", w.episodeGrams).put("bg", w.startBgMgdl).put("rise", w.riseAfterMs).put("drop", w.dropReason))
+                            .put("es", w.episodeStartMs).put("eg", w.episodeGrams).put("bg", w.startBgMgdl).put("rise", w.riseAfterMs).put("drop", w.dropReason)
+                            .put("bins", JSONArray(w.bins.toList())))
                 }
             })
         }
@@ -353,7 +401,8 @@ class SavedMealLearningImpl @Inject constructor(
                         Watch(
                             if (o.isNull("name")) null else o.getString("name"), o.getLong("s"), o.getLong("me"), o.getLong("e"), o.optLong("tf", 0L),
                             planned.doubles(), o.getJSONArray("seen").doubles(), o.getJSONArray("low").booleans(), o.getJSONArray("under").booleans(),
-                            o.optLong("es", 0L), o.optDouble("eg", 0.0), o.optDouble("bg", 0.0), o.optLong("rise", -1L), o.optString("drop", "")
+                            o.optLong("es", 0L), o.optDouble("eg", 0.0), o.optDouble("bg", 0.0), o.optLong("rise", -1L), o.optString("drop", ""),
+                            o.optJSONArray("bins")?.let { b -> DoubleArray(MAX_BINS) { if (it < b.length()) b.getDouble(it) else 0.0 } } ?: DoubleArray(MAX_BINS)
                         )
                     )
                 }
@@ -396,8 +445,11 @@ class SavedMealLearningImpl @Inject constructor(
         const val GENERAL_MAX_FACTOR = 1.5
         /** A part of the meal smaller than this is too noisy to learn from. */
         const val MIN_PART_G = 10.0
-        /** A rise this soon after the start means the meal was eaten without waiting. */
-        const val ATE_SOON_MS = 15 * 60_000L
+        /** The fat and protein timing: when a quarter, half and three quarters of it had come in. */
+        val QUANTILES = listOf(0.25, 0.5, 0.75)
+        const val BIN_MS = 5 * 60_000L
+        /** 12 hours of 5 minute steps; later food all counts in the last one. */
+        const val MAX_BINS = 144
         /** How much BG has to go up to count as the start of the rise, and how long to look for it. */
         const val RISE_MGDL = 18.0
         const val RISE_LOOK_MS = 60 * 60_000L

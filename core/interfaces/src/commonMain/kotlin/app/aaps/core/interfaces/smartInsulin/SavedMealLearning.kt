@@ -7,18 +7,21 @@ package app.aaps.core.interfaces.smartInsulin
  * @param waveFactor   for the fat and protein wave, given by pre-bolus 2
  * @param tailFactor   for what is left of the wave on a heavy meal, given by pre-bolus 3
  * @param meals        how many times the meal was judged
- * @param ateSoon      of the last few times, how often BG started to rise right after pre-bolus 1, so the meal
- *                     was probably eaten without waiting
- * @param recentMeals  how many of the last few times [ateSoon] is out of
- * @param minMeals     the factors are used from this many meals
+ * @param riseMin      usual minutes from pre-bolus 1 until BG starts to rise, null when not known
+ * @param fpQuarterMin usual minutes from the start by which a quarter of the fat and protein has come in
+ * @param fpHalfMin    the same for half of it
+ * @param fpThreeQuarterMin the same for three quarters of it
+ * @param minMeals     what was learned is used from this many meals
  */
 data class LearnedMeal(
     val carbFactor: Double,
     val waveFactor: Double,
     val tailFactor: Double,
     val meals: Int,
-    val ateSoon: Int,
-    val recentMeals: Int,
+    val riseMin: Int? = null,
+    val fpQuarterMin: Int? = null,
+    val fpHalfMin: Int? = null,
+    val fpThreeQuarterMin: Int? = null,
     val minMeals: Int = MIN_MEALS
 ) {
 

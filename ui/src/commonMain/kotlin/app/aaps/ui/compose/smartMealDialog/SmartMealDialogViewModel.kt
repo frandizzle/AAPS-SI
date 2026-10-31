@@ -154,6 +154,8 @@ data class SmartMealDialogUiState(
     val learnedMeals: Map<String, LearnedMeal> = emptyMap(),
     /** What all meals together have learned about each part, or null before the first meal. */
     val generalLearned: LearnedMeal? = null,
+    /** Pre-bolus 2 and 3 delays the last Fill in took from the saved meal's learned timing, or null. */
+    val learnedTiming: Pair<Int, Int>? = null,
 
     /** A saved meal opened for editing: its foods are in the list, and "Save changes" saves them back. */
     val editingMeal: String? = null,
@@ -390,7 +392,7 @@ class SmartMealDialogViewModel(
                     is FoodLookupResult.Success -> {
                         savedFoodStore.remember(result.items)
                         val kept = if (replacesEstimate) s.foodItems.filter { it.source != FoodSource.ESTIMATE } else s.foodItems
-                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent, sourceMeal = null, loggedKcal = null)
+                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, learnedTiming = null, recentFoods = savedFoodStore.recent, sourceMeal = null, loggedKcal = null)
                     }
 
                     is FoodLookupResult.Failure -> s.copy(lookupBusy = false, lookupError = result.reason, lookupDetail = result.detail)
@@ -402,17 +404,17 @@ class SmartMealDialogViewModel(
     fun changeQuantity(index: Int, delta: Double) = _uiState.update { s ->
         val item = s.foodItems.getOrNull(index) ?: return@update s
         val q = (item.quantity + delta).coerceIn(MIN_QUANTITY, MAX_QUANTITY)
-        s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(quantity = q) }, plan = null, addition = null)
+        s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(quantity = q) }, plan = null, addition = null, learnedTiming = null)
     }
 
     fun removeFood(index: Int) = _uiState.update { s ->
         if (index !in s.foodItems.indices) s
-        else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null, sourceMeal = null)
+        else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null, learnedTiming = null, sourceMeal = null)
     }
 
     fun clearFood() {
         photoJpeg = null
-        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null, loggedKcal = null, editingMeal = null) }
+        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, learnedTiming = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null, loggedKcal = null, editingMeal = null) }
     }
 
     // ── Food log ─────────────────────────────────────────────────────────────
@@ -536,7 +538,7 @@ class SmartMealDialogViewModel(
     /** @param sourceMeal the saved meal the list now is, or null when it is no longer one saved meal */
     private fun addItems(items: List<FoodItem>, sourceMeal: String?) = _uiState.update {
         it.copy(
-            foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, sourceMeal = sourceMeal, loggedKcal = null,
+            foodItems = it.foodItems + items, plan = null, addition = null, learnedTiming = null, lastSave = null, sourceMeal = sourceMeal, loggedKcal = null,
             savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent, learnedMeals = learnedMeals()
         )
     }
@@ -549,15 +551,24 @@ class SmartMealDialogViewModel(
         appScope.launch {
             val state = uiState.value
             if (state.foodItems.isEmpty()) return@launch
-            val carbRatio = profileFunction.getProfile()?.getIc() ?: 0.0
+            val profile = profileFunction.getProfile()
+            val carbRatio = profile?.getIc() ?: 0.0
             if (carbRatio <= 0.0) {
-                _uiState.update { it.copy(planNoRatio = true, plan = null, addition = null) }
+                _uiState.update { it.copy(planNoRatio = true, plan = null, addition = null, learnedTiming = null) }
                 return@launch
             }
             // What a saved meal learned about itself comes first, then what all meals learned about each part,
             // then the general estimate factor.
-            val learned = state.sourceLearned?.takeIf { it.inUse } ?: savedMealLearning.general()?.takeIf { it.inUse }
+            val own = state.sourceLearned?.takeIf { it.inUse }
+            val learned = own ?: savedMealLearning.general()?.takeIf { it.inUse }
             val factor = learned?.carbFactor ?: mealEstimateCalibration.factor
+            // A saved meal that has learned when its fat and protein come in times pre-bolus 2 and 3 for it.
+            val timing = own?.let {
+                MealDosePlanner.learnedDelays(
+                    it.fpQuarterMin, it.fpHalfMin, it.fpThreeQuarterMin, profile?.iCfg?.peak ?: DEFAULT_INSULIN_PEAK_MIN,
+                    heavy = state.foodTotals.fpu >= MealDosePlanner.FPU_HEAVY_MEAL
+                )
+            }
             val settings = MealPlanSettings(
                 carbPct = preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct),
                 fatProteinPct = preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct),
@@ -568,8 +579,8 @@ class SmartMealDialogViewModel(
                 factor = factor,
                 waveFactor = learned?.waveFactor,
                 tailFactor = learned?.tailFactor,
-                pb2DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
-                pb3DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
+                pb2DelayMin = timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
+                pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep
             )
             if (state.addMode) {
@@ -602,6 +613,7 @@ class SmartMealDialogViewModel(
             _uiState.update {
                 it.copy(
                     plan = plan,
+                    learnedTiming = timing?.takeIf { plan.pb2U > 0.0 },
                     planNoRatio = false,
                     calibrationFactor = factor,
                     calibrationMeals = mealEstimateCalibration.mealsUsed,
@@ -909,6 +921,8 @@ class SmartMealDialogViewModel(
     companion object {
 
         const val QUANTITY_STEP = 0.25
+        /** Used when the profile has no insulin set: the peak of fast insulin such as Fiasp. */
+        private const val DEFAULT_INSULIN_PEAK_MIN = 55
         private const val MAX_LOG_NAME = 120
         private const val MIN_QUANTITY = 0.25
         private const val MAX_QUANTITY = 20.0
