@@ -242,15 +242,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // here; Smart Meal never types carbs in, so the estimate's food is used instead.
         //
         // Only while BG is not falling: a fall says the food is not coming in now, and then the forecast
-        // is the insulin alone, so the low guard works exactly as without food. For dosing the food only
-        // counts above target; under it, it only stops a false suspend.
+        // is the insulin alone, so the low guard works exactly as without food. For extra insulin the food
+        // only counts above target, and the forecast looks [DOSING_AHEAD_MIN] ahead: the food due by then
+        // against the insulin acting by then. Food further off is given for as it comes nearer, not all at
+        // once; and the insulin's long tail is not weighed against an hour of food. Under target, or for
+        // lowering basal, all the food counts.
         val bgNotFalling = delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
         val ciAheadMgdl = if (ci > 0.0) bgiPerTick.indices.sumOf { i -> ci * (1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0))) } else 0.0
         val foodSteps = foodToCome?.takeIf { mealMode != MealMode.FASTING && bgNotFalling }
             ?.let { MealFoodForecast.steps(it, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
         val foodForecast = foodSteps?.let { predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it) }
         val forecast = foodForecast ?: predictedBg
-        val dosingForecast = if (foodForecast != null && currentBg > targetBg) foodForecast else predictedBg
+        val dosingForecast = if (foodSteps != null && currentBg > targetBg) {
+            val steps = DOSING_AHEAD_MIN / 5
+            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick.take(steps), fadeMins = fadeMins, food = foodSteps.take(steps))
+        } else predictedBg
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
         // suspending on the early trough while insulin is still peaking. The +2 tick
@@ -269,10 +275,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Full-curve min for SAFETY — suspends if BG predicted below lowGuard at any point
         val predictedMinSafety = forecast.minOrNull() ?: currentBg
         // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
-        val predictedMin = if (dosingForecast.size > insulinPeakTicks)
-            dosingForecast.drop(insulinPeakTicks).minOrNull() ?: currentBg
-        else
-            dosingForecast.minOrNull() ?: currentBg
+        val predictedMin = postPeakMin(dosingForecast, insulinPeakTicks, currentBg)
+        // For lowering basal under target: all the food still to come, so basal is not cut mid-meal for food
+        // that is further off than the dosing look-ahead.
+        val predictedMinAllFood = postPeakMin(forecast, insulinPeakTicks, currentBg)
 
         // The 30 min point decides "falling into a low", so it stays on the insulin alone.
         val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
@@ -346,7 +352,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(")")
             when {
                 foodForecast == null             -> sb.append(" not used: BG falling")
-                dosingForecast !== foodForecast  -> sb.append(" low guard only: BG not above target")
+                dosingForecast === predictedBg   -> sb.append(" low guard only: BG not above target")
             }
         }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")
@@ -484,8 +490,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     // Uses ISF math so small gaps → tiny reduction, large gaps → zero basal.
                     // Always on. It once sat behind a "target assist" setting that was never wired
                     // up; the setting has been removed rather than left looking like it did something.
-                    predictedMin < targetBg -> {
-                        val missingBgMgdl   = targetBg - predictedMin
+                    predictedMinAllFood < targetBg -> {
+                        val missingBgMgdl   = targetBg - predictedMinAllFood
                         val missingInsulinU = missingBgMgdl / safeIsfMgdl
                         val reducedBasal    = profileBasal - (missingInsulinU / TBR_WINDOW_HOURS)
                         reducedBasal.coerceIn(0.0, profileBasal)
@@ -606,6 +612,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private fun insulinBgiPerTick(iobArray: Array<IobTotal>, isfMgdl: Double): List<Double> =
         iobArray.map { -(max(0.0, it.activity) * isfMgdl * 5.0) }
 
+    /** The lowest point of [curve] after the insulin peak, or of all of it when it is shorter. */
+    private fun postPeakMin(curve: List<Double>, peakTicks: Int, currentBg: Double): Double =
+        (if (curve.size > peakTicks) curve.drop(peakTicks) else curve).minOrNull() ?: currentBg
+
     /**
      * Stock oref IOBpredBGs: BG now, plus insulin per step, plus ci fading to zero over 60 minutes.
      *
@@ -637,6 +647,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         private const val MIN_DOSING_ISF_MGDL         = 9.0
         const val DEFAULT_FOOD_FADE_MINS              = 60
         const val MAX_FOOD_FADE_MINS                  = 180
+        /** In a meal with food still to come, extra insulin weighs the food and insulin of this many minutes ahead. */
+        const val DOSING_AHEAD_MIN                    = 120
 
     }
 }

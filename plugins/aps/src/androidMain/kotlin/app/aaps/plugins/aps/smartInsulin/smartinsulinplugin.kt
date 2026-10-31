@@ -2152,18 +2152,21 @@ open class SmartInsulinPlugin @Inject constructor(
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
 
         // The running meal's food still to come, from its estimate, for the forecast. Pre-boluses still
-        // waiting are taken off: their insulin is coming anyway. Only while a meal mode runs.
-        val foodToCome = if (mealOverrideManager.activeMealMode == null) null
-        else mealEstimateCalibration.stillToCome(now)?.let { still ->
-            val s = mealOverrideManager.activeState?.takeIf { it.triggerTimeMs == still.modeStartMs }
-            MealFoodForecast.foodToCome(
-                still, now,
-                restU = if (s?.preBolus1RestPending == true) s.preBolus1RestU else 0.0,
-                pbU = (if (s?.preBolus2Pending == true) s.preBolus2U else 0.0) + (if (s?.preBolus3Pending == true) s.preBolus3U else 0.0),
-                carbRatio = profile.getIc(),
-                fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
-            )
-        }
+        // waiting are taken off: their insulin is coming anyway. Only in the Smart Meal mode that recorded the
+        // estimate: Protein/Fat and the UAM modes dose from ISF and what BG does, also when Protein/Fat follows
+        // the meal, so they never see it.
+        val foodToCome = mealOverrideManager.activeState
+            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
+            ?.let { s -> mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.let { s to it } }
+            ?.let { (s, still) ->
+                MealFoodForecast.foodToCome(
+                    still, now,
+                    restU = if (s.preBolus1RestPending) s.preBolus1RestU else 0.0,
+                    pbU = (if (s.preBolus2Pending) s.preBolus2U else 0.0) + (if (s.preBolus3Pending) s.preBolus3U else 0.0),
+                    carbRatio = profile.getIc(),
+                    fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
+                )
+            }
         lastFoodToCome = foodToCome
 
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult

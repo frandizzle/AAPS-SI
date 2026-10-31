@@ -119,11 +119,11 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     /**
-     * The food still to come of the estimated meal whose window holds [nowMs], for the loop's forecast; null when
-     * there is none. A following Protein/Fat is inside the window, so the food goes on counting there.
+     * The food still to come of the estimated meal started at [modeStartMs], for the loop's forecast; null when it has
+     * no estimate or its window is over at [nowMs].
      */
-    fun stillToCome(nowMs: Long): StillToCome? {
-        val p = synchronized(this) { pending.filter { nowMs >= it.modeStartMs && nowMs <= it.windowEndMs }.maxByOrNull { it.modeStartMs } } ?: return null
+    fun stillToCome(modeStartMs: Long, nowMs: Long): StillToCome? {
+        val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs && nowMs <= it.windowEndMs } } ?: return null
         return stillToCome(p)
     }
 

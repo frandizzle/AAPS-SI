@@ -46,11 +46,11 @@ class MealEstimateCalibrationTest {
         // 60 g carbs, 20 g fat and protein as carbs; the tracker has seen 70 g.
         cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
         cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.DINNER, T0, 70.0))
-        val s = cal.stillToCome(T0 + 2 * HOUR)!!
+        val s = cal.stillToCome(T0, T0 + 2 * HOUR)!!
         assertEquals(0.0, s.carbsG, 1e-9)
         assertEquals(10.0, s.fatProteinG, 1e-9)
         assertEquals(T0 + 2 * HOUR, s.carbsUntilMs)
-        assertEquals(null, cal.stillToCome(T0 + 5 * HOUR))     // after the window
+        assertEquals(null, cal.stillToCome(T0, T0 + 5 * HOUR))     // after the window
     }
 
     @Test
@@ -64,7 +64,7 @@ class MealEstimateCalibrationTest {
     fun `carbs added later are expected over the 2 hours after they are eaten`() {
         cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
         cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + 3 * HOUR)
-        assertEquals(T0 + 5 * HOUR, cal.stillToCome(T0 + 3 * HOUR)!!.carbsUntilMs)
+        assertEquals(T0 + 5 * HOUR, cal.stillToCome(T0, T0 + 3 * HOUR)!!.carbsUntilMs)
     }
 
     @Test

@@ -568,6 +568,37 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(withFood.smb > 0.0, withFood.reason)
     }
 
+    @Test fun `extra insulin is for the food due in the next 2 hours, not for food hours away`() {
+        midDinner(bg = 130.0)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 3.0, activity = 0.03)
+        val soon = FoodToCome(carbsG = 40.0, carbsUntilMs = now + 60 * 60_000L, fatProteinG = 0.0, fatProteinUntilMs = now, carbRatio = 5.0)
+        val far = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 40.0, fatProteinUntilMs = now + 12 * 60 * 60_000L, carbRatio = 5.0)
+        // invoke returns the same result object each time, so read each result before the next call.
+        val forSoon = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = soon)
+        val soonSmb = forSoon.smb
+        assertTrue(soonSmb > 0.5, forSoon.reason)
+        // The same 40 g spread over 12 hours: only a sixth is due in the next 2 hours. It lands about at
+        // target, so next to nothing extra.
+        val forFar = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = far)
+        assertTrue(forFar.smb <= 0.1, forFar.reason)
+    }
+
+    @Test fun `a heavy steak dinner is dosed for the next 2 hours of it now, the rest later`() {
+        // 60 g of fat and protein (as carbs) over a 6 h meal: about 20 g is due in the next 2 hours.
+        midDinner(bg = 130.0)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 3.0, activity = 0.03)
+        val steak = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 60.0, fatProteinUntilMs = now + 6 * 60 * 60_000L, carbRatio = 5.0)
+        val forSteak = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = steak)
+        val steakSmb = forSteak.smb
+        assertTrue(steakSmb > 0.0, forSteak.reason)
+        // The same 60 g all due within 2 hours asks for more now.
+        val fast = steak.copy(fatProteinUntilMs = now + 2 * 60 * 60_000L)
+        val forFast = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = fast)
+        assertTrue(forFast.smb > steakSmb, "steak $steakSmb, all within 2 h ${forFast.smb}")
+    }
+
     @Test fun `Fasting never uses food still to come`() {
         midDinner()
         val r = invoke(iobArray = flatIobArray(iob = 4.3, activity = 0.04), mealMode = MealMode.FASTING,
