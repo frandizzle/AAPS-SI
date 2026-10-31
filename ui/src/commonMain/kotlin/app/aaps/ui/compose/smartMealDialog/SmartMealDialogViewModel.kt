@@ -46,6 +46,7 @@ import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.InsulinBalance
 import app.aaps.ui.compose.smartMealDialog.food.MealAddition
 import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
 import app.aaps.ui.compose.smartMealDialog.food.MealFoodRepository
@@ -620,6 +621,20 @@ class SmartMealDialogViewModel(
             if (state.addMode) {
                 val running = mealOverrideManager.activeState ?: return@launch
                 val now = readNow()
+                val waitingU = (if (running.preBolus2Pending) running.preBolus2U else 0.0) +
+                    (if (running.preBolus3Pending) running.preBolus3U else 0.0) +
+                    (if (running.preBolus1RestPending) running.preBolus1RestU else 0.0)
+                // Without the running meal's food, or BG, there is nothing to weigh the insulin on board against.
+                val balance = mealEstimateCalibration.foodStillToComeG(running.triggerTimeMs)?.let { food ->
+                    now.bgMgdl?.let { bg ->
+                        profile?.let { p ->
+                            InsulinBalance(
+                                bgMgdl = bg, trendMgdl = now.trendMgdl, targetMgdl = p.getTargetMgdl(), isfMgdl = p.getIsfMgdl("SmartMeal"),
+                                iobU = now.iobU, waitingU = waitingU, foodStillToComeG = food
+                            )
+                        }
+                    }
+                }
                 val addition = MealDosePlanner.planAddition(
                     state.foodTotals, settings,
                     RunningMeal(
@@ -628,7 +643,8 @@ class SmartMealDialogViewModel(
                         pb3WaitingU = if (running.preBolus3Pending) running.preBolus3U else 0.0,
                         minutesLeft = state.activeRemainingMin,
                         iobRoomU = now.maxIobU - now.iobU,
-                        holdNow = now.holdNow
+                        holdNow = now.holdNow,
+                        balance = balance
                     )
                 )
                 _uiState.update {
@@ -661,13 +677,18 @@ class SmartMealDialogViewModel(
         }
     }
 
-    /** BG and IOB right now, as limits for a dose given during a running meal. */
-    private data class NowValues(val iobU: Double, val maxIobU: Double, val holdNow: Boolean)
+    /**
+     * BG and IOB right now, as limits for a dose given during a running meal.
+     *
+     * @param bgMgdl    null when there is no BG reading
+     * @param trendMgdl how far BG moves in the next 15 min if its trend goes on
+     */
+    private data class NowValues(val iobU: Double, val maxIobU: Double, val holdNow: Boolean, val bgMgdl: Double?, val trendMgdl: Double)
 
     /**
      * BG low or falling holds the dose now, with the same limits pre-bolus 2 waits for, except that BG
-     * between that low limit and the target does not hold it: the food is being eaten now. No BG reading
-     * holds it too.
+     * between that low limit and the target does not hold it: the food is being eaten now. BG heading under
+     * that low limit within half an hour holds it too, as does no BG reading.
      */
     private suspend fun readNow(): NowValues {
         val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
@@ -676,8 +697,9 @@ class SmartMealDialogViewModel(
         val hold = gs == null ||
             gs.glucose < MealOverrideManager.MIN_BG_FOR_PB2_MGDL ||
             gs.delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL ||
-            gs.shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-        return NowValues(bolusIob + basalIob, constraintsChecker.getMaxIOBAllowed().value(), hold)
+            gs.shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL ||
+            gs.glucose + gs.shortAvgDelta * HALF_HOUR_STEPS < MealOverrideManager.MIN_BG_FOR_PB2_MGDL
+        return NowValues(bolusIob + basalIob, constraintsChecker.getMaxIOBAllowed().value(), hold, gs?.glucose, (gs?.shortAvgDelta ?: 0.0) * TREND_STEPS)
     }
 
     // ── Cancel what is running ───────────────────────────────────────────────
@@ -979,5 +1001,9 @@ class SmartMealDialogViewModel(
         private const val MAX_LOG_NAME = 120
         private const val MIN_QUANTITY = 0.25
         private const val MAX_QUANTITY = 20.0
+        /** 5-min steps in the BG trend a dose now looks ahead: 15 min, as bolus calculators do. */
+        private const val TREND_STEPS = 3.0
+        /** 5-min steps in which BG heading under the low limit holds a dose now. */
+        private const val HALF_HOUR_STEPS = 6.0
     }
 }

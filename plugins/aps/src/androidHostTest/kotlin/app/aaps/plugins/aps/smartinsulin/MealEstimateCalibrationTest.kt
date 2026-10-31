@@ -29,6 +29,19 @@ class MealEstimateCalibrationTest {
     private fun episode(startMs: Long, grams: Double) = CompletedMealEpisode(startMs, MealMode.DINNER, HOUR, grams)
 
     @Test
+    fun `food still to come is the estimate less what the tracker has seen`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 80.0, 60.0, 30.0, 10.0)
+        assertEquals(80.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        cal.onCycle(T0 + HOUR, InProgressEpisode(MealMode.DINNER, T0, 30.0))
+        assertEquals(50.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        // The episode ends, then a Protein/Fat one starts inside the same window.
+        cal.onEpisode(episode(T0, 60.0))
+        cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.UAM_PROTEIN_FAT, T0 + 2 * HOUR, 30.0))
+        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)    // never below zero
+        assertEquals(null, cal.foodStillToComeG(T0 + DAY))    // a meal without an estimate
+    }
+
+    @Test
     fun `the factor stays 1 until three meals are judged`() {
         meal(T0, 100.0, 140.0)
         meal(T0 + DAY, 100.0, 140.0)

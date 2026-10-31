@@ -207,7 +207,8 @@ class MealOverrideManagerImpl @Inject constructor(
         maxIob:        Double,
         targetMgdl:    Double,
         delta:         Double,
-        shortAvgDelta: Double
+        shortAvgDelta: Double,
+        doseU:         Double
     ): List<String> {
         val reasons = mutableListOf<String>()
         if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL)
@@ -216,6 +217,9 @@ class MealOverrideManagerImpl @Inject constructor(
             reasons += "BG not above target"
         if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO)
             reasons += "IOB too high"
+        // IOB is checked before the dose above; this keeps a big pre-bolus from taking IOB past max.
+        if (iob + doseU > maxIob)
+            reasons += "IOB would go past max"
         if (delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)
             reasons += "BG falling"
         if (shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)
@@ -234,11 +238,12 @@ class MealOverrideManagerImpl @Inject constructor(
      * Why the rest of pre-bolus 1 does not fire yet. Like pre-bolus 2, but BG need not be above target: it
      * must be rising, which is the sign that the food is coming in.
      */
-    private fun restBlockReasons(bgMgdl: Double, iob: Double, maxIob: Double, delta: Double, shortAvgDelta: Double): List<String> {
+    private fun restBlockReasons(bgMgdl: Double, iob: Double, maxIob: Double, delta: Double, shortAvgDelta: Double, doseU: Double): List<String> {
         val reasons = mutableListOf<String>()
         if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL) reasons += "BG too low"
         if (delta < MealOverrideManager.PB1_REST_RISE_MGDL || shortAvgDelta <= 0.0) reasons += "BG not rising yet"
         if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO) reasons += "IOB too high"
+        if (iob + doseU > maxIob) reasons += "IOB would go past max"
         if (loopRestraining) reasons += "Loop restraining insulin"
         return reasons
     }
@@ -276,7 +281,9 @@ class MealOverrideManagerImpl @Inject constructor(
                 maxIobU           = lastMaxIob,
                 iobU              = lastIob,
                 deltaMgdl         = lastDelta,
-                shortAvgDeltaMgdl = lastShortAvgDelta
+                shortAvgDeltaMgdl = lastShortAvgDelta,
+                doseU             = s.preBolus2U,
+                loopRestraining   = loopRestraining
             )
         }
 
@@ -293,7 +300,9 @@ class MealOverrideManagerImpl @Inject constructor(
                 maxIobU           = lastPb3MaxIob,
                 iobU              = lastPb3Iob,
                 deltaMgdl         = lastPb3Delta,
-                shortAvgDeltaMgdl = lastPb3ShortAvgDelta
+                shortAvgDeltaMgdl = lastPb3ShortAvgDelta,
+                doseU             = s.preBolus3U,
+                loopRestraining   = loopRestraining
             )
         }
 
@@ -310,7 +319,7 @@ class MealOverrideManagerImpl @Inject constructor(
             fired != null && fired > 0L -> "PB1 rest: delivered ${(now - fired) / 60_000}min ago"
             now < fromMs -> "$rest: checks BG in ${(fromMs - now + 59_999) / 60_000}min"
             else -> {
-                val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta)
+                val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta, s.preBolus1RestU)
                 val leftMin = (s.triggerTimeMs + MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L - now).coerceAtLeast(0L) / 60_000
                 if (reasons.isEmpty()) "$rest: waiting for next loop cycle"
                 else "$rest waiting: ${reasons.joinToString(", ")} (${leftMin}min left)"
@@ -343,7 +352,7 @@ class MealOverrideManagerImpl @Inject constructor(
             // Time elapsed — show safety block reasons if any
             else -> {
                 val reasons = safetyBlockReasons(
-                    lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta
+                    lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta, s.preBolus2U
                 )
                 if (reasons.isEmpty()) "$pb2: waiting for next loop cycle"
                 else "$pb2 waiting: ${reasons.joinToString(", ")}"
@@ -389,7 +398,7 @@ class MealOverrideManagerImpl @Inject constructor(
                 } else {
                     val reasons = safetyBlockReasons(
                         lastPb3BgMgdl, lastPb3Iob, lastPb3MaxIob, lastPb3TargetMgdl,
-                        lastPb3Delta, lastPb3ShortAvgDelta
+                        lastPb3Delta, lastPb3ShortAvgDelta, s.preBolus3U
                     )
                     if (reasons.isEmpty()) "$pb3: waiting for next loop cycle"
                     else "$pb3 waiting: ${reasons.joinToString(", ")}"
@@ -604,7 +613,7 @@ class MealOverrideManagerImpl @Inject constructor(
             aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest: BG did not rise in time, ${s.preBolus1RestU}U not given")
             return false
         }
-        val reasons = restBlockReasons(glucoseStatus.glucose, currentIob, maxIobU, glucoseStatus.delta, glucoseStatus.shortAvgDelta)
+        val reasons = restBlockReasons(glucoseStatus.glucose, currentIob, maxIobU, glucoseStatus.delta, glucoseStatus.shortAvgDelta, s.preBolus1RestU)
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest BLOCKED: ${reasons.joinToString(", ")}")
             return false
@@ -682,7 +691,8 @@ class MealOverrideManagerImpl @Inject constructor(
             maxIob        = maxIobU,
             targetMgdl    = profileTarget,
             delta         = glucoseStatus.delta,
-            shortAvgDelta = glucoseStatus.shortAvgDelta
+            shortAvgDelta = glucoseStatus.shortAvgDelta,
+            doseU         = s.preBolus2U
         )
 
         if (reasons.isNotEmpty()) {
@@ -812,7 +822,8 @@ class MealOverrideManagerImpl @Inject constructor(
             maxIob        = maxIobU,
             targetMgdl    = profileTarget,
             delta         = glucoseStatus.delta,
-            shortAvgDelta = glucoseStatus.shortAvgDelta
+            shortAvgDelta = glucoseStatus.shortAvgDelta,
+            doseU         = s.preBolus3U
         )
 
         if (reasons.isNotEmpty()) {

@@ -37,4 +37,11 @@ interface MealEstimateCalibration {
 
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */
     fun dropEstimate(modeStartMs: Long)
+
+    /**
+     * The food of the meal started at [modeStartMs] that has not come in yet, as carb equivalent in grams: its
+     * estimate, scaled by [factor], less what the meal tracker has seen so far. Like the carbs on board of a
+     * bolus calculator. Null when that meal has no estimate, so nothing is known about it.
+     */
+    fun foodStillToComeG(modeStartMs: Long): Double?
 }

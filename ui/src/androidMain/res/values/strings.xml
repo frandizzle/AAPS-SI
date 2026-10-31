@@ -505,6 +505,7 @@
     <string name="si_add_hint">Fill in from the food above, or type the insulin yourself. Food without an estimate is not used to learn from this meal.</string>
     <string name="si_add_hint_fired">Pre-bolus 2 and 3 have fired or are not planned, so the loop covers the rest of this food.</string>
     <string name="si_add_plan_held">Nothing now, because BG is low or falling. The loop gives insulin when BG rises.</string>
+    <string name="si_add_plan_balance">Less now: the insulin on board and still to come already covers part of this food and what is left of the meal, as a bolus calculator works it out. The loop gives more if BG rises.</string>
     <string name="si_add_plan_iob">The insulin now was cut so IOB stays within max IOB</string>
     <string name="si_add_plan_capped">Less than the food needs: the plan was cut to your max pre-bolus and to what is left of the max for the whole meal (Smart Insulin settings, meal modes). The loop covers the rest as BG rises.</string>
     <string name="si_add_button" comment="%1$s=name of the running meal mode. Example: Add to Dinner">Add to %1$s</string>

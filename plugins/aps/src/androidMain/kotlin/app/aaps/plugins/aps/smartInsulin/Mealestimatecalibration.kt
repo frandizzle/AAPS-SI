@@ -40,6 +40,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
     )
 
     private val pending = mutableListOf<Pending>()
+    /** The meal episode the tracker is watching now, with its grams so far; null when none. */
+    @Volatile private var live: InProgressEpisode? = null
     private val ratios = mutableListOf<Double>()
 
     init {
@@ -86,14 +88,27 @@ class MealEstimateCalibrationImpl @Inject constructor(
     /** Adds a finished meal episode to the estimated meal it belongs to, if any. */
     fun onEpisode(episode: CompletedMealEpisode) {
         val found = synchronized(this) {
-            pending.firstOrNull { episode.startMs >= it.modeStartMs - MATCH_EARLY_MS && episode.startMs <= it.windowEndMs }
+            pending.firstOrNull { matches(it, episode.startMs) }
                 ?.also { it.trackerG += episode.estimatedGrams; it.episodes++ }
         }
         if (found != null) save()
     }
 
-    /** Judges the estimated meals whose time is over. Call once per loop cycle. */
-    fun onCycle(nowMs: Long) {
+    override fun foodStillToComeG(modeStartMs: Long): Double? {
+        val (p, f) = synchronized(this) { (pending.firstOrNull { it.modeStartMs == modeStartMs } ?: return null) to factor }
+        val now = live?.takeIf { matches(p, it.startMs) }?.estimatedGramsSoFar ?: 0.0
+        return (p.carbEquivG * f - p.trackerG - now).coerceAtLeast(0.0)
+    }
+
+    private fun matches(p: Pending, episodeStartMs: Long) = episodeStartMs >= p.modeStartMs - MATCH_EARLY_MS && episodeStartMs <= p.windowEndMs
+
+    /**
+     * Judges the estimated meals whose time is over. Call once per loop cycle.
+     *
+     * @param inProgress the episode the meal tracker is watching now, for [foodStillToComeG]
+     */
+    fun onCycle(nowMs: Long, inProgress: InProgressEpisode? = null) {
+        live = inProgress
         val done = synchronized(this) {
             pending.filter { nowMs > it.windowEndMs + GRACE_MS }.also { pending.removeAll(it) }
         }

@@ -229,6 +229,40 @@ class MealDosePlannerTest {
         assertTrue(a.capped)
     }
 
+    /** BG 8.3 mmol, slowly falling, profile ISF 1.8 mmol/U, target 5.5, 8.33 U on board. */
+    private val evening = InsulinBalance(
+        bgMgdl = 150.0, trendMgdl = -4.5, targetMgdl = 99.0, isfMgdl = 32.4, iobU = 8.33, waitingU = 0.0, foodStillToComeG = 0.0
+    )
+
+    @Test
+    fun `a dessert on top of a meal the insulin on board already covers gets nothing now`() {
+        // Dinner has all come in; 8.33 U on board is more than 25 g and BG above target need (1.44 + 5 = 6.44 U).
+        val a = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(balance = evening))
+        assertEquals(0.0, a.nowU, 1e-9)
+        assertTrue(a.cutForBalance)
+        assertFalse(a.capped)
+    }
+
+    @Test
+    fun `food still to come is weighed like carbs on board`() {
+        // 30 g of Dinner still to come: 1.44 - 8.33 + (30 + 25) / 5 = 4.11 U needed, more than the 4 U plan, which stays.
+        val b = evening.copy(foodStillToComeG = 30.0)
+        assertEquals(4.11, MealDosePlanner.neededNow(b, 25.0, 5.0), 0.01)
+        val a = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(balance = b))
+        assertEquals(4.0, a.nowU, 1e-9)
+        assertFalse(a.cutForBalance)
+        // 20 g to come: 2.11 U, so the dose now is cut to that, down to the bolus step.
+        val c = MealDosePlanner.planAddition(meal(25.0), settings.copy(maxTotalU = 20.0), dinner.copy(balance = evening.copy(foodStillToComeG = 20.0)))
+        assertEquals(2.1, c.nowU, 1e-9)
+        assertTrue(c.cutForBalance)
+    }
+
+    @Test
+    fun `pre-boluses still to come count as insulin`() {
+        val b = evening.copy(foodStillToComeG = 30.0, waitingU = 2.5)
+        assertEquals(1.61, MealDosePlanner.neededNow(b, 25.0, 5.0), 0.01)
+    }
+
     @Test
     fun `a waiting pre-bolus does not grow past the max pre-bolus`() {
         val a = MealDosePlanner.planAddition(meal(0.0, protein = 100.0, fat = 50.0), settings.copy(maxTotalU = 50.0), dinner.copy(pb2WaitingU = 7.0))

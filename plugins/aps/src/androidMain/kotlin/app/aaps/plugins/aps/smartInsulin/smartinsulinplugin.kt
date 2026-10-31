@@ -1691,7 +1691,10 @@ open class SmartInsulinPlugin @Inject constructor(
             glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
             // Rebound state and the previous decision are both carried over from the last cycle —
             // this call runs before determine_basal, so that is the freshest view available.
-            loopRestraining = inReboundWindow || (previousAPSResult?.let { it.rate == 0.0 && it.duration > 0 } ?: false)
+            // In a meal mode a zero temp does not count: it comes from a prediction that sees the
+            // insulin but not the food still coming, see MealOverrideManager.onLoopCycle.
+            loopRestraining = inReboundWindow ||
+                (mealOverrideManager.activeMealMode == null && previousAPSResult?.let { it.rate == 0.0 && it.duration > 0 } ?: false)
         )
 
         // Auto-cancel an auto-detected (UAM) mode once BG has returned to profile target.
@@ -1856,7 +1859,7 @@ open class SmartInsulinPlugin @Inject constructor(
             mealAbsorptionCsvLogger.log(completedMealEpisode)
             mealEstimateCalibration.onEpisode(completedMealEpisode)
         }
-        mealEstimateCalibration.onCycle(now)
+        mealEstimateCalibration.onCycle(now, mealAbsorptionTracker.inProgress)
 
         // Exercise suspected: the drop is bigger than insulin explains, or activity has just ended
         // and BG is still dropping from it. A low then is learned by the meal learners at a small

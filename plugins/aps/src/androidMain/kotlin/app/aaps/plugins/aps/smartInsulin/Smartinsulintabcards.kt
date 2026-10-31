@@ -432,36 +432,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             }
             addRow(pb2Primary, tone = if (isActive) SiTone.GOOD else SiTone.INFO)
 
-            if (gate != null) {
-                val isMmol = gate.isMmol
-                fun fmtBg(mgdl: Double)    = if (isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
-                fun fmtDelta(mgdl: Double) = if (isMmol) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
-                fun fmtIob(u: Double)      = "%.2fU".format(u)
-
-                val minBgMgdl   = MealOverrideManager.MIN_BG_FOR_PB2_MGDL
-                val targetMgdl  = gate.profileTargetMgdl
-                // BG must be above profile target AND above the hard floor
-                val effectiveMin = maxOf(minBgMgdl, targetMgdl)
-                val bgOk        = gate.bgMgdl > effectiveMin
-                val bgDiff      = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
-                else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
-                addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff",
-                           "Must be above profile target ${fmtBg(targetMgdl)}", bgOk)
-
-                val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
-                val iobOk         = gate.iobU < maxAllowedIob
-                val iobDetail     = if (iobOk) "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (${fmtIob(maxAllowedIob - gate.iobU)} headroom)"
-                else "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (IOB too high — waiting)"
-                addGateRow("IOB: $iobDetail", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob(maxAllowedIob)})", iobOk)
-
-                val deltaOk   = gate.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
-                addGateRow("Delta: ${fmtDelta(gate.deltaMgdl)}  (${if (deltaOk) "not falling fast" else "falling — waiting"})",
-                           "Blocked below ${fmtDelta(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk)
-
-                val shortOk   = gate.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-                addGateRow("15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)}  (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
-                           "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
-            }
+            if (gate != null) addPreBolusGates(gate)
         }
 
         // Pre-bolus 3 — show delivered amount once fired
@@ -489,35 +460,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             addRow(pb3Primary, pb3Sub,
                    tone = if (isActive3) SiTone.GOOD else SiTone.INFO)
 
-            if (gate3 != null) {
-                val isMmol3 = gate3.isMmol
-                fun fmtBg3(mgdl: Double)    = if (isMmol3) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
-                fun fmtDelta3(mgdl: Double) = if (isMmol3) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
-                fun fmtIob3(u: Double)      = "%.2fU".format(u)
-
-                val minBgMgdl3   = MealOverrideManager.MIN_BG_FOR_PB2_MGDL
-                val targetMgdl3  = gate3.profileTargetMgdl
-                val effectiveMin3 = maxOf(minBgMgdl3, targetMgdl3)
-                val bgOk3        = gate3.bgMgdl > effectiveMin3
-                val bgDiff3      = if (bgOk3) "(+${fmtBg3(gate3.bgMgdl - effectiveMin3)} above target)"
-                else "(${fmtBg3(effectiveMin3 - gate3.bgMgdl)} below target — waiting)"
-                addGateRow("BG: ${fmtBg3(gate3.bgMgdl)}  $bgDiff3",
-                           "Must be above profile target ${fmtBg3(targetMgdl3)}", bgOk3)
-
-                val maxAllowedIob3 = gate3.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
-                val iobOk3         = gate3.iobU < maxAllowedIob3
-                val iobDetail3     = if (iobOk3) "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (${fmtIob3(maxAllowedIob3 - gate3.iobU)} headroom)"
-                else "${fmtIob3(gate3.iobU)} / ${fmtIob3(gate3.maxIobU)}  (IOB too high — waiting)"
-                addGateRow("IOB: $iobDetail3", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob3(maxAllowedIob3)})", iobOk3)
-
-                val deltaOk3 = gate3.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
-                addGateRow("Delta: ${fmtDelta3(gate3.deltaMgdl)}  (${if (deltaOk3) "not falling fast" else "falling — waiting"})",
-                           "Blocked below ${fmtDelta3(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk3)
-
-                val shortOk3 = gate3.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-                addGateRow("15min avg: ${fmtDelta3(gate3.shortAvgDeltaMgdl)}  (${if (shortOk3) "trend stable" else "sustained fall — waiting"})",
-                           "Blocked below ${fmtDelta3(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk3)
-            }
+            if (gate3 != null) addPreBolusGates(gate3)
         }
 
         val pfIsf  = if (d.isMmol) d.profileIsfMgdl / 18.0 else d.profileIsfMgdl
@@ -541,6 +484,42 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                "Profile ${fmtBasal(d.profileBasalU)} × multiplier ${"%.3f".format(d.basalMultiplier)} = ${fmtBasal(d.finalBasalU)}\n" +
                    "Background insulin rate keeping BG stable between meals.\n" +
                    "Last basal learning: $basalSignalDisplay")
+    }
+
+    /** The safety gates a waiting pre-bolus 2 or 3 fires through, each with whether it passes now. */
+    private fun SiCardBuilder.addPreBolusGates(gate: MealOverrideManager.Pb2GateData) {
+        fun fmtBg(mgdl: Double)    = if (gate.isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
+        fun fmtDelta(mgdl: Double) = if (gate.isMmol) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
+        fun fmtIob(u: Double)      = "%.2fU".format(u)
+
+        // BG must be above profile target AND above the hard floor
+        val effectiveMin = maxOf(MealOverrideManager.MIN_BG_FOR_PB2_MGDL, gate.profileTargetMgdl)
+        val bgOk   = gate.bgMgdl > effectiveMin
+        val bgDiff = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
+        else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
+        addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff", "Must be above profile target ${fmtBg(gate.profileTargetMgdl)}", bgOk)
+
+        val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
+        val iobOk     = gate.iobU < maxAllowedIob
+        val iobDetail = if (iobOk) "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (${fmtIob(maxAllowedIob - gate.iobU)} headroom)"
+        else "${fmtIob(gate.iobU)} / ${fmtIob(gate.maxIobU)}  (IOB too high — waiting)"
+        addGateRow("IOB: $iobDetail", "Must be below ${(MealOverrideManager.MAX_IOB_HEADROOM_RATIO * 100).toInt()}% of max (${fmtIob(maxAllowedIob)})", iobOk)
+
+        val iobAfter   = gate.iobU + gate.doseU
+        val iobAfterOk = iobAfter <= gate.maxIobU
+        addGateRow("IOB after it: ${fmtIob(iobAfter)} / ${fmtIob(gate.maxIobU)}  (${if (iobAfterOk) "within max" else "past max — waiting"})",
+                   "IOB with this pre-bolus must stay within max IOB", iobAfterOk)
+
+        val deltaOk = gate.deltaMgdl >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL
+        addGateRow("Delta: ${fmtDelta(gate.deltaMgdl)}  (${if (deltaOk) "not falling fast" else "falling — waiting"})",
+                   "Blocked below ${fmtDelta(MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL)}", deltaOk)
+
+        val shortOk = gate.shortAvgDeltaMgdl >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+        addGateRow("15min avg: ${fmtDelta(gate.shortAvgDeltaMgdl)}  (${if (shortOk) "trend stable" else "sustained fall — waiting"})",
+                   "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
+
+        addGateRow(if (gate.loopRestraining) "Loop: holding insulin back — waiting" else "Loop: not holding insulin back",
+                   "Held while BG recovers from a low. Outside a meal mode also while the loop runs a zero temp.", !gate.loopRestraining)
     }
 
     fun buildLearningCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =

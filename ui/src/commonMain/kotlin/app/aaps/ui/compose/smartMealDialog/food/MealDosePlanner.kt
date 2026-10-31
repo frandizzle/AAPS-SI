@@ -77,6 +77,8 @@ data class MealPlan(
  * @param minutesLeft    minutes until the mode ends
  * @param iobRoomU       how much IOB may still grow before max IOB
  * @param holdNow        BG is low or falling, so nothing is given now
+ * @param balance        what a bolus calculator weighs, to check the dose now against; null when the running meal's
+ *                       food is not known (it has no estimate), and only the limits above apply
  */
 data class RunningMeal(
     val plannedTotalU: Double,
@@ -84,7 +86,27 @@ data class RunningMeal(
     val pb3WaitingU: Double,
     val minutesLeft: Int,
     val iobRoomU: Double,
-    val holdNow: Boolean
+    val holdNow: Boolean,
+    val balance: InsulinBalance? = null
+)
+
+/**
+ * BG, insulin and food of a running meal, for the dose now, like Loop's bolus calculator: the dose brings the BG
+ * expected once all of it has acted to target. BG values in mg/dL; the ISF is the profile's, not a meal mode's.
+ *
+ * @param trendMgdl        how far BG moves in the next 15 min if its trend goes on
+ * @param iobU             insulin on board
+ * @param waitingU         pre-boluses of the running meal still to come: insulin for its food that is not on board yet
+ * @param foodStillToComeG the running meal's food that has not come in yet, as carb equivalent in grams
+ */
+data class InsulinBalance(
+    val bgMgdl: Double,
+    val trendMgdl: Double,
+    val targetMgdl: Double,
+    val isfMgdl: Double,
+    val iobU: Double,
+    val waitingU: Double,
+    val foodStillToComeG: Double
 )
 
 /**
@@ -94,6 +116,7 @@ data class RunningMeal(
  * @param capped       cut to the max pre-bolus or to what is left of the max total for the whole meal
  * @param heldForBg    the dose now was left out because BG is low or falling
  * @param cutForIob    the dose now was cut so IOB stays within max IOB
+ * @param cutForBalance the dose now was cut because the insulin on board already covers part of the food, see [InsulinBalance]
  */
 data class MealAddition(
     val nowU: Double,
@@ -104,7 +127,8 @@ data class MealAddition(
     val fatProteinU: Double,
     val capped: Boolean,
     val heldForBg: Boolean,
-    val cutForIob: Boolean
+    val cutForIob: Boolean,
+    val cutForBalance: Boolean = false
 )
 
 object MealDosePlanner {
@@ -212,6 +236,11 @@ object MealDosePlanner {
         pb3 = min(pb3, left)
         val capped = now + pb2 + pb3 + settings.bolusStep < wanted
 
+        // As a bolus calculator: insulin on board and still to come, against BG and all the food still to come.
+        val balanceU = running.balance?.let { neededNow(it, totals.carbsG * settings.factor, ratio) }
+        val cutForBalance = balanceU != null && now > 0.0 && balanceU < now - settings.bolusStep / 2
+        if (cutForBalance) now = max(0.0, balanceU!!)
+
         val heldForBg = running.holdNow && now > 0.0
         if (heldForBg) now = 0.0
         val cutForIob = now > running.iobRoomU
@@ -226,8 +255,21 @@ object MealDosePlanner {
             fatProteinU = fatProteinU,
             capped = capped,
             heldForBg = heldForBg,
-            cutForIob = cutForIob
+            cutForIob = cutForIob,
+            cutForBalance = cutForBalance
         )
+    }
+
+    /**
+     * The insulin needed now so BG ends at target once everything has acted: BG with its trend above target,
+     * plus the food still to come and the new carbs, less the insulin on board and still to come. Can be
+     * negative: there is already more insulin than the food needs.
+     *
+     * @param newCarbsG the carbs of the food added now, with the learned factor
+     */
+    fun neededNow(b: InsulinBalance, newCarbsG: Double, carbRatio: Double): Double {
+        if (b.isfMgdl <= 0.0 || carbRatio <= 0.0) return Double.MAX_VALUE
+        return (b.bgMgdl + b.trendMgdl - b.targetMgdl) / b.isfMgdl - b.iobU - b.waitingU + (b.foodStillToComeG + newCarbsG) / carbRatio
     }
 
     /**

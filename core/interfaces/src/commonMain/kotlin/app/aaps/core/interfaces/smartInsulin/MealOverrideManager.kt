@@ -154,9 +154,12 @@ interface MealOverrideManager {
      */
     /**
      * @param loopRestraining true when the main loop is actively holding insulin back — inside a
-     *   post-low rebound window, or its last decision was a zero temp. A pre-bolus scheduled
-     *   20–40 minutes earlier carries no knowledge of what has happened since, so without this
-     *   it can land as a fixed dose at the moment the loop has decided to deliver nothing.
+     *   post-low rebound window, or, outside a meal mode, its last decision was a zero temp. A
+     *   pre-bolus scheduled earlier carries no knowledge of what has happened since, so without this
+     *   it can land as a fixed dose at the moment the loop has decided to deliver nothing. In a meal
+     *   mode a zero temp does not count: the loop's prediction sees only the insulin, not the food
+     *   still coming, so after any real pre-bolus it predicts a low and would hold pre-bolus 2 and 3
+     *   nearly every time. BG falling is checked by the pre-bolus itself.
      */
     fun onLoopCycle(
         glucoseStatus:   GlucoseStatus,
@@ -173,7 +176,10 @@ interface MealOverrideManager {
         val maxIobU:           Double,
         val iobU:              Double,
         val deltaMgdl:         Double,
-        val shortAvgDeltaMgdl: Double
+        val shortAvgDeltaMgdl: Double,
+        /** The pre-bolus waiting, so IOB after it can be shown against max IOB. */
+        val doseU:             Double  = 0.0,
+        val loopRestraining:   Boolean = false
     )
 
     /** Last known safety-gate values for PB2; null if no active session or no gate check run yet */

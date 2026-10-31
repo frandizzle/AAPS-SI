@@ -190,6 +190,7 @@ internal fun SmartMealFoodContent(
                 val warn = MaterialTheme.colorScheme.error
                 if (a.heldForBg) Text(stringResource(UiStrings.si_add_plan_held), style = MaterialTheme.typography.bodySmall, color = warn)
                 if (a.cutForIob) Text(stringResource(UiStrings.si_add_plan_iob), style = MaterialTheme.typography.bodySmall, color = warn)
+                if (a.cutForBalance) Text(stringResource(UiStrings.si_add_plan_balance), style = MaterialTheme.typography.bodySmall, color = warn)
                 if (a.capped) Text(stringResource(UiStrings.si_add_plan_capped), style = MaterialTheme.typography.bodySmall, color = warn)
             }
             // A saved meal with its own learning says so above.
