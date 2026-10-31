@@ -185,6 +185,13 @@ internal fun SmartMealFoodContent(
         val needU = state.plan?.let { it.carbsU to it.fatProteinU } ?: state.addition?.let { it.carbsU to it.fatProteinU }
         needU?.let { (carbsU, fatProteinU) ->
             Text(stringResource(UiStrings.si_food_plan_summary, fmtU(carbsU), fmtU(fatProteinU)), style = MaterialTheme.typography.bodyMedium)
+            // Right under what the food needs, so a plan that gives less than that says why.
+            state.addition?.let { a ->
+                val warn = MaterialTheme.colorScheme.error
+                if (a.heldForBg) Text(stringResource(UiStrings.si_add_plan_held), style = MaterialTheme.typography.bodySmall, color = warn)
+                if (a.cutForIob) Text(stringResource(UiStrings.si_add_plan_iob), style = MaterialTheme.typography.bodySmall, color = warn)
+                if (a.capped) Text(stringResource(UiStrings.si_add_plan_capped), style = MaterialTheme.typography.bodySmall, color = warn)
+            }
             // A saved meal with its own learning says so above.
             val general = state.generalLearned?.takeIf { it.inUse }
             if (state.sourceLearned?.inUse != true) Hint(

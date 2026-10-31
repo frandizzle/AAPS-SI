@@ -561,12 +561,6 @@ private fun AddToMealSection(
             SwitchRow(stringResource(UiStrings.si_pf_after_title), state.pfAfter, viewModel::updatePfAfter)
             Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_pf_after_hint))
         }
-        state.addition?.let { a ->
-            val warn = MaterialTheme.colorScheme.error
-            if (a.heldForBg) Text(stringResource(UiStrings.si_add_plan_held), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
-            if (a.cutForIob) Text(stringResource(UiStrings.si_add_plan_iob), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
-            if (a.capped) Text(stringResource(UiStrings.si_add_plan_capped), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
-        }
         Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_add_hint))
     }
 }
