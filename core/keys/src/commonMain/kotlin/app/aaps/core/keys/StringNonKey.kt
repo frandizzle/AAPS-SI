@@ -136,6 +136,7 @@ enum class StringNonKey(
     ApsSmartInsulinTrackerState(key = "si_tracker_state", defaultValue = ""),
     ApsSmartInsulinAggressionState(key = "si_aggression_state", defaultValue = ""),
     ApsSmartInsulinMealAbsorptionLog(key = "si_meal_absorption_log", defaultValue = ""),
+    ApsSmartInsulinMealAbsorptionLive(key = "si_meal_absorption_live", defaultValue = "", exportable = false),
     ApsSmartInsulinMealEstimateCalibration(key = "si_meal_estimate_calibration", defaultValue = ""),
     ApsSmartInsulinSavedFoods(key = "si_saved_foods", defaultValue = ""),
     ApsSmartInsulinRecentFoods(key = "si_recent_foods", defaultValue = "", exportable = false),

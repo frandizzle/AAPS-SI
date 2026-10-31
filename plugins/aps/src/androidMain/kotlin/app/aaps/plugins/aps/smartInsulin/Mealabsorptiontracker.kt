@@ -46,10 +46,16 @@ data class CompletedMealEpisode(
     val tailGrams:       Double = 0.0
 )
 
+/**
+ * @param balanceGramsSoFar food the insulin and BG account for since the start: insulin acted x carb ratio plus the BG
+ *                          change in grams. A second count of food seen that does not depend on BG rising, see
+ *                          `MealEstimateCalibrationImpl.stillToCome`.
+ */
 data class InProgressEpisode(
     val mode:                MealMode,
     val startMs:             Long,
-    val estimatedGramsSoFar: Double
+    val estimatedGramsSoFar: Double,
+    val balanceGramsSoFar:   Double = 0.0
 )
 
 @SingleIn(AppScope::class)
@@ -62,6 +68,10 @@ class MealAbsorptionTracker @Inject constructor(
     private var episodeMode:     MealMode? = null
     private var episodeGrams     = 0.0
     private var lastSeenActiveMs = 0L
+    // Insulin acted since the start, as grams of food it covers, and BG at the start: see InProgressEpisode.balanceGramsSoFar.
+    private var episodeInsulinG  = 0.0
+    private var episodeStartBg   = 0.0
+    private var episodeBalanceG  = 0.0
 
     // Phase segmentation state — smoothed absorption rate vs its running peak classifies
     // each cycle as RISE (new smoothed peak), PLATEAU (≥ half peak), or TAIL (below half).
@@ -80,9 +90,12 @@ class MealAbsorptionTracker @Inject constructor(
 
     /** Live snapshot of whatever episode is currently being tracked, or null if none is active. */
     val inProgress: InProgressEpisode?
-        get() = episodeMode?.let { InProgressEpisode(mode = it, startMs = episodeStartMs, estimatedGramsSoFar = episodeGrams) }
+        get() = episodeMode?.let { InProgressEpisode(mode = it, startMs = episodeStartMs, estimatedGramsSoFar = episodeGrams, balanceGramsSoFar = episodeBalanceG) }
 
-    init { restoreHistory() }
+    init {
+        restoreHistory()
+        restoreLive()
+    }
 
     companion object {
         private const val HISTORY_RETENTION_MS = 5L * 24 * 60 * 60 * 1000  // "a few days" for the UI
@@ -107,6 +120,13 @@ class MealAbsorptionTracker @Inject constructor(
         private const val K_RISE_G   = "riseGrams"
         private const val K_PLAT_G   = "plateauGrams"
         private const val K_TAIL_G   = "tailGrams"
+        private const val K_LAST_MS  = "lastMs"
+        private const val K_INSULIN_G = "insulinG"
+        private const val K_START_BG = "startBg"
+        private const val K_BALANCE_G = "balanceG"
+        private const val K_PHASE_RATE = "phaseRate"
+        private const val K_PHASE_PEAK = "phasePeak"
+        private const val K_PHASE_N  = "phaseN"
     }
 
     /**
@@ -137,12 +157,20 @@ class MealAbsorptionTracker @Inject constructor(
             episodeStartMs = modeStartMs
             episodeMode    = activeMode
             episodeGrams   = 0.0
+            episodeInsulinG = 0.0
+            episodeStartBg = bgMgdl
+            episodeBalanceG = 0.0
             resetPhaseState()
         }
 
         lastSeenActiveMs = nowMs
         val g = gramsThisCycle(bgMgdl, targetMgdl, deltaMgdl, activityPerMin, isfMgdl, carbRatio)
         episodeGrams += g
+        // Net insulin action: a zero temp counts as less insulin, as it is.
+        if (carbRatio > 0.0 && isfMgdl > 0.0) {
+            episodeInsulinG += activityPerMin * cycleMinutes * carbRatio
+            episodeBalanceG = (episodeInsulinG + (bgMgdl - episodeStartBg) / (isfMgdl / carbRatio)).coerceAtLeast(0.0)
+        }
 
         // -- Phase segmentation (observational) ---------------------------------
         phaseSmoothedRate = if (phaseSamples == 0) g else PHASE_SMOOTH_KEEP * phaseSmoothedRate + (1.0 - PHASE_SMOOTH_KEEP) * g
@@ -160,6 +188,7 @@ class MealAbsorptionTracker @Inject constructor(
                 tailMins += cycleMinsL; tailGrams += g
             }
         }
+        persistLive()
         return completed
     }
 
@@ -218,8 +247,49 @@ class MealAbsorptionTracker @Inject constructor(
         episodeMode  = null
         episodeStartMs = 0L
         episodeGrams = 0.0
+        episodeInsulinG = 0.0
+        episodeBalanceG = 0.0
         resetPhaseState()
+        persistLive()
         return completed
+    }
+
+    /**
+     * Saves the meal being watched, so a restart (an app update, say) carries on counting instead of starting again
+     * from 0 g: that made a meal look as if none of it had come in yet.
+     */
+    private fun persistLive() {
+        val mode = episodeMode
+        val raw = if (mode == null) "" else JSONObject()
+            .put(K_START_MS, episodeStartMs).put(K_MODE, mode.name).put(K_GRAMS, episodeGrams).put(K_LAST_MS, lastSeenActiveMs)
+            .put(K_INSULIN_G, episodeInsulinG).put(K_START_BG, episodeStartBg).put(K_BALANCE_G, episodeBalanceG)
+            .put(K_RISE_M, riseMins).put(K_PLAT_M, plateauMins).put(K_TAIL_M, tailMins)
+            .put(K_RISE_G, riseGrams).put(K_PLAT_G, plateauGrams).put(K_TAIL_G, tailGrams)
+            .put(K_PHASE_RATE, phaseSmoothedRate).put(K_PHASE_PEAK, phasePeakRate).put(K_PHASE_N, phaseSamples)
+            .toString()
+        sp.edit { putString(StringNonKey.ApsSmartInsulinMealAbsorptionLive.key, raw) }
+    }
+
+    private fun restoreLive() {
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinMealAbsorptionLive.key, "")
+        if (raw.isBlank()) return
+        try {
+            val o = JSONObject(raw)
+            episodeMode       = MealMode.valueOf(o.getString(K_MODE))
+            episodeStartMs    = o.getLong(K_START_MS)
+            episodeGrams      = o.getDouble(K_GRAMS)
+            lastSeenActiveMs  = o.optLong(K_LAST_MS, episodeStartMs)
+            episodeInsulinG   = o.optDouble(K_INSULIN_G, 0.0)
+            episodeStartBg    = o.optDouble(K_START_BG, 0.0)
+            episodeBalanceG   = o.optDouble(K_BALANCE_G, 0.0)
+            riseMins = o.optLong(K_RISE_M, 0L); plateauMins = o.optLong(K_PLAT_M, 0L); tailMins = o.optLong(K_TAIL_M, 0L)
+            riseGrams = o.optDouble(K_RISE_G, 0.0); plateauGrams = o.optDouble(K_PLAT_G, 0.0); tailGrams = o.optDouble(K_TAIL_G, 0.0)
+            phaseSmoothedRate = o.optDouble(K_PHASE_RATE, 0.0); phasePeakRate = o.optDouble(K_PHASE_PEAK, 0.0); phaseSamples = o.optInt(K_PHASE_N, 0)
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "MealAbsorptionTracker: running meal not restored: ${e.message}")
+            episodeMode = null; episodeStartMs = 0L; episodeGrams = 0.0; episodeInsulinG = 0.0; episodeBalanceG = 0.0
+            resetPhaseState()
+        }
     }
 
     private fun trimHistory(nowMs: Long) {

@@ -127,10 +127,14 @@ class MealEstimateCalibrationImpl @Inject constructor(
         return stillToCome(p)
     }
 
-    /** What the tracker has seen is counted against the carbs first: they come in first. */
+    /**
+     * What the tracker has seen is counted against the carbs first: they come in first. For the running episode the
+     * larger of its two counts is used: the BG rise it saw, or the food the insulin and BG account for. The second
+     * keeps food that BG never showed (a flat BG with insulin working) from being counted as still to come.
+     */
     private fun stillToCome(p: Pending): StillToCome {
         val f = factor
-        val seen = p.trackerG + (live?.takeIf { matches(p, it.startMs) }?.estimatedGramsSoFar ?: 0.0)
+        val seen = p.trackerG + (live?.takeIf { matches(p, it.startMs) }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0)
         val carbs = p.carbsG * f
         val fatProtein = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f
         return StillToCome(

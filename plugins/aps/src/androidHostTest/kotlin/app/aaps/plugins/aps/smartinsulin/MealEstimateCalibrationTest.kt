@@ -54,6 +54,13 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `food the insulin accounts for counts as seen when it is more than the rise`() {
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
+        cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.DINNER, T0, estimatedGramsSoFar = 10.0, balanceGramsSoFar = 55.0))
+        assertEquals(25.0, cal.foodStillToComeG(T0)!!, 1e-9)
+    }
+
+    @Test
     fun `carbs added later are expected over the 2 hours after they are eaten`() {
         cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
         cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + 3 * HOUR)

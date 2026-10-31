@@ -189,6 +189,35 @@ class MealAbsorptionTrackerTest {
     }
 
     @Test
+    fun `a restart in the middle of a meal goes on counting, not from zero`() {
+        tracker.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                         deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS)
+        val restarted = MealAbsorptionTracker(sp, FakeAAPSLogger(collect = false))
+        assertEquals(2.6, restarted.inProgress!!.estimatedGramsSoFar, 1e-9)
+        restarted.onCycle(MealMode.DINNER, modeStartMs = BASE_MS, bgMgdl = 100.0, targetMgdl = 100.0,
+                          deltaMgdl = 8.0, activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = BASE_MS + CYCLE_MS)
+        assertEquals(5.2, restarted.inProgress!!.estimatedGramsSoFar, 1e-9)
+        // Once the meal ends, a restart has nothing to carry on.
+        restarted.onCycle(null, 0L, 100.0, 100.0, 0.0, 0.0, 50.0, 10.0, BASE_MS + 2 * CYCLE_MS)
+        assertNull(MealAbsorptionTracker(sp, FakeAAPSLogger(collect = false)).inProgress)
+    }
+
+    @Test
+    fun `food the insulin accounts for is counted even when BG never rises`() {
+        // BG flat at 150 for an hour while 0.02 U/min acts: 0.1 U per cycle, 1 g per cycle at 10 g/U.
+        // Falling 5 mg/dL per cycle would read as no food at all from the rise.
+        var t = BASE_MS
+        repeat(12) {
+            tracker.onCycle(MealMode.DINNER, BASE_MS, bgMgdl = 150.0, targetMgdl = 150.0, deltaMgdl = -5.0,
+                            activityPerMin = 0.02, isfMgdl = 50.0, carbRatio = 10.0, nowMs = t)
+            t += CYCLE_MS
+        }
+        val now = tracker.inProgress!!
+        assertEquals(0.0, now.estimatedGramsSoFar, 1e-9)
+        assertEquals(12.0, now.balanceGramsSoFar, 1e-9)
+    }
+
+    @Test
     fun `restoring drops history entries older than the retention window`() {
         val staleMs = System.currentTimeMillis() - 10L * 24 * 60 * 60 * 1000  // 10 days ago
         val arr = JSONArray().put(
