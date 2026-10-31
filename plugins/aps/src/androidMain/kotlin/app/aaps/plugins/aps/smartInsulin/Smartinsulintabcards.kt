@@ -6,6 +6,7 @@ import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.util.Calendar
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -495,6 +496,26 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    "Last basal learning: $basalSignalDisplay")
     }
 
+    /**
+     * The carb ratio the meals behave like, next to the profile's. Shown only: Fill in already uses the factor, and
+     * a long-lasting difference is the user's sign to change the profile.
+     */
+    private fun SiCardBuilder.addEffectiveCr(cr: SmartInsulinPlugin.EffectiveCr) {
+        if (cr.profileIc <= 0.0) return
+        if (cr.gramsPerUnit <= 0.0) {
+            addRow("Carb ratio from your meals: learning (${cr.meals} of ${cr.minMeals} meals)",
+                   "Meals started from food in Smart Meal show how much insulin your carbs really need.", SiTone.MUTED)
+            return
+        }
+        val off = abs(cr.factor - 1.0) >= EFFECTIVE_CR_NOTE_SHARE
+        val source = if (cr.fromCarbs) "BG after the carbs of your last meals" else "your meal estimates against what the meal tracker saw"
+        addRow("Carb ratio from your meals: ${"%.1f".format(cr.gramsPerUnit)} g/U (profile ${"%.1f".format(cr.profileIc)} g/U)",
+               "Your meals needed ×${"%.2f".format(cr.factor)} the planned carb insulin, from ${cr.meals} meals ($source). " +
+                   "Fill in already uses this." +
+                   (if (off) " If it stays like this for a few weeks, change the carb ratio in your profile; the learning then goes back toward ×1.00." else ""),
+               if (off) SiTone.WARNING else SiTone.INFO)
+    }
+
     /** The safety gates a waiting pre-bolus 2 or 3 fires through, each with whether it passes now. */
     private fun SiCardBuilder.addPreBolusGates(gate: MealOverrideManager.Pb2GateData) {
         fun fmtBg(mgdl: Double)    = if (gate.isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
@@ -590,6 +611,8 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                       SiTone.INFO)
 
         if (d.cgmWarmup) addRow("New sensor — learning paused for first 24h", null, SiTone.WARNING)
+
+        addEffectiveCr(d.effectiveCr)
 
         addDivider()
 
@@ -1025,3 +1048,6 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         }
     }
 }
+
+/** The effective carb ratio is flagged when the meals need this share more or less insulin than the profile plans. */
+private const val EFFECTIVE_CR_NOTE_SHARE = 0.15

@@ -259,6 +259,8 @@ open class SmartInsulinPlugin @Inject constructor(
     // mid-nudge and the "was ? now" comparison loses meaning.
     private var lastSeenNudgeState: String = "INACTIVE"
     @Volatile private var cachedProfileIsf: Double = 0.0
+    /** The profile's carb ratio now, g/U, for the effective carb ratio on the SI tab. */
+    @Volatile private var cachedProfileIc: Double = 0.0
     @Volatile private var cachedProfileBasal: Double = 0.0
     // The profile's own ISF (mg/dL/U) and basal (U/h) for each hour, read at the bucket centre. The
     // per-hour table and the journal need these: the current hour's values are wrong for any hour
@@ -569,6 +571,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb1RestStatus: String,
         /** The running meal's food still to come, or null when there is none. */
         val foodToCome: FoodToCome?,
+        /** What the meals have learned about the carb ratio. */
+        val effectiveCr: EffectiveCr,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
@@ -583,6 +587,32 @@ open class SmartInsulinPlugin @Inject constructor(
         val uamEntryFractionStatus: String,
         val duraStrengthStatus: String
     )
+
+    /**
+     * The carb ratio the meals behave like, from the same factor Fill in uses: the carbs factor all meals learned
+     * from BG, or before that the estimate factor. Shown only; it changes nothing.
+     *
+     * @param profileIc  the profile's carb ratio now, g/U
+     * @param factor     how many times the planned carb insulin the meals needed; 0.0 while still learning
+     * @param fromCarbs  true when [factor] is the carbs factor learned from BG, false for the estimate factor
+     * @param meals      how many meals it is based on
+     * @param minMeals   how many meals it needs before it is used
+     */
+    data class EffectiveCr(val profileIc: Double, val factor: Double, val fromCarbs: Boolean, val meals: Int, val minMeals: Int) {
+
+        /** The carb ratio the meals behave like, g/U; 0.0 while still learning. */
+        val gramsPerUnit: Double get() = if (factor > 0.0) profileIc / factor else 0.0
+    }
+
+    private fun effectiveCr(): EffectiveCr {
+        val general = savedMealLearning.general()
+        return when {
+            general?.inUse == true                 -> EffectiveCr(cachedProfileIc, general.carbFactor, true, general.meals, general.minMeals)
+            mealEstimateCalibration.mealsUsed >= MealEstimateCalibrationImpl.MIN_MEALS ->
+                EffectiveCr(cachedProfileIc, mealEstimateCalibration.factor, false, mealEstimateCalibration.mealsUsed, MealEstimateCalibrationImpl.MIN_MEALS)
+            else                                   -> EffectiveCr(cachedProfileIc, 0.0, true, general?.meals ?: 0, general?.minMeals ?: SavedMealLearningImpl.GENERAL_MIN_MEALS)
+        }
+    }
 
     fun fragmentData(): FragmentData {
         // The tab ticks every 10s while the loop recomputes every 5min, so without this the steps
@@ -791,6 +821,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
             pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
             foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
+            effectiveCr = effectiveCr(),
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
@@ -1414,6 +1445,7 @@ open class SmartInsulinPlugin @Inject constructor(
         cachedHourIsf = DoubleArray(24) { profile.getIsfMgdlTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }
         cachedHourBasal = DoubleArray(24) { profile.getBasalTimeFromMidnight(it * 3600 + TABLE_BUCKET_MINUTE * 60) }
         cachedProfileTarget = profile.getTargetMgdl()
+        cachedProfileIc = profile.getIc()
 
         val now = dateUtil.now()
         if (now - cachedHba1cRefreshedAtMs >= HBA1C_CACHE_REFRESH_MS) {
