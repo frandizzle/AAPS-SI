@@ -12,13 +12,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -129,7 +132,7 @@ private fun NumberField(value: String, onChange: (String) -> Unit, label: String
 
 /**
  * The My foods page: saved foods and meals, most used first, and the recent list below. Tapping an entry
- * adds it to the meal and closes the page.
+ * ticks it; the button at the bottom adds everything ticked at once and closes the page.
  */
 @Composable
 internal fun MyFoodsDialog(
@@ -138,10 +141,10 @@ internal fun MyFoodsDialog(
     recent: List<FoodItem>,
     df: (Double) -> String,
     factor: (Double) -> String,
-    onAdd: (SavedFood) -> Unit,
-    onAddRecent: (FoodItem) -> Unit,
+    onAddSelected: (List<SavedFood>, List<FoodItem>) -> Unit,
     onSaveRecent: (FoodItem, String) -> Unit,
     onRename: (String, String) -> Unit,
+    onEdit: (SavedFood) -> Unit,
     onDelete: (String) -> Unit,
     onForgetLearning: (String) -> Unit,
     onDismiss: () -> Unit
@@ -150,6 +153,10 @@ internal fun MyFoodsDialog(
     var renaming by remember { mutableStateOf<SavedFood?>(null) }
     var deleting by remember { mutableStateOf<SavedFood?>(null) }
     var savingRecent by remember { mutableStateOf<FoodItem?>(null) }
+    // What is ticked, in the order it was tapped. Saved entries by name.
+    var pickedSaved by remember { mutableStateOf(listOf<String>()) }
+    var pickedRecent by remember { mutableStateOf(listOf<FoodItem>()) }
+    val picked = pickedSaved.size + pickedRecent.size
     val shown = SavedFoodList.search(foods, query)
     val shownRecent = recent.filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
 
@@ -175,12 +182,14 @@ internal fun MyFoodsDialog(
                         EntryRow(
                             title = food.name,
                             detail = stringResource(UiStrings.si_food_subtitle_totals, df(t.carbsG), df(t.proteinG), df(t.fatG)),
-                            learnedText = l?.let { stringResource(UiStrings.si_food_learned_short, factor(it.carbFactor), factor(it.fatProteinFactor), it.meals) },
-                            onClick = { onAdd(food) }
+                            learnedText = l?.let { stringResource(UiStrings.si_food_learned_short, factor(it.carbFactor), factor(it.waveFactor), factor(it.tailFactor), it.meals) },
+                            selected = food.name in pickedSaved,
+                            onClick = { pickedSaved = if (food.name in pickedSaved) pickedSaved - food.name else pickedSaved + food.name }
                         ) {
                             if (l != null)
                                 IconButton(onClick = { onForgetLearning(food.name) }) { Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(UiStrings.si_food_learning_reset)) }
-                            IconButton(onClick = { renaming = food }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(UiStrings.si_food_rename)) }
+                            IconButton(onClick = { onEdit(food) }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(UiStrings.si_food_edit)) }
+                            IconButton(onClick = { renaming = food }) { Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = stringResource(UiStrings.si_food_rename)) }
                             IconButton(onClick = { deleting = food }) { Icon(Icons.Filled.Delete, contentDescription = stringResource(CoreUiStrings.delete)) }
                         }
                     }
@@ -195,12 +204,22 @@ internal fun MyFoodsDialog(
                             EntryRow(
                                 title = item.name,
                                 detail = stringResource(UiStrings.si_food_item_detail, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG)),
-                                onClick = { onAddRecent(item) }
+                                selected = item in pickedRecent,
+                                onClick = { pickedRecent = if (item in pickedRecent) pickedRecent - item else pickedRecent + item }
                             ) {
                                 IconButton(onClick = { savingRecent = item }) { Icon(Icons.Outlined.StarBorder, contentDescription = stringResource(UiStrings.si_food_save_item)) }
                             }
                         }
                     }
+                }
+                Button(
+                    onClick = {
+                        if (picked == 0) onDismiss()
+                        else onAddSelected(pickedSaved.mapNotNull { n -> foods.firstOrNull { it.name == n } }, pickedRecent)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (picked == 0) stringResource(CoreUiStrings.close) else stringResource(UiStrings.si_food_add_selected, picked))
                 }
             }
         }
@@ -210,7 +229,7 @@ internal fun MyFoodsDialog(
         SaveNameDialog(
             title = stringResource(UiStrings.si_food_rename),
             initialName = food.name,
-            onSave = { onRename(food.name, it); renaming = null },
+            onSave = { onRename(food.name, it); pickedSaved = pickedSaved - food.name; renaming = null },
             onDismiss = { renaming = null }
         )
     }
@@ -226,16 +245,23 @@ internal fun MyFoodsDialog(
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text(stringResource(UiStrings.si_food_delete_title, food.name)) },
-            confirmButton = { TextButton(onClick = { onDelete(food.name); deleting = null }) { Text(stringResource(CoreUiStrings.delete)) } },
+            confirmButton = { TextButton(onClick = { onDelete(food.name); pickedSaved = pickedSaved - food.name; deleting = null }) { Text(stringResource(CoreUiStrings.delete)) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(CoreUiStrings.cancel)) } }
         )
     }
 }
 
 @Composable
-private fun EntryRow(title: String, detail: String, onClick: () -> Unit, learnedText: String? = null, actions: @Composable () -> Unit) {
-    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(AapsSpacing.large), modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+private fun EntryRow(
+    title: String, detail: String, onClick: () -> Unit, learnedText: String? = null, selected: Boolean = false, actions: @Composable () -> Unit
+) {
+    Surface(
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(AapsSpacing.large),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+    ) {
         Row(Modifier.padding(start = AapsSpacing.large, top = AapsSpacing.small, bottom = AapsSpacing.small), verticalAlignment = Alignment.CenterVertically) {
+            if (selected) Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(end = AapsSpacing.medium))
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

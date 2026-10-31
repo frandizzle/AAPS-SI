@@ -18,6 +18,9 @@ sealed class FoodLookupResult {
         /** Too many requests, or the free daily amount is used up. */
         LIMIT_REACHED,
 
+        /** The service is too busy right now, also after trying again. */
+        BUSY,
+
         /** The photo or text did not show food. */
         NOT_FOOD,
 

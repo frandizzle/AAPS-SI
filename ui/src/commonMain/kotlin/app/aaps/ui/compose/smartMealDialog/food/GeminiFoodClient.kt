@@ -8,6 +8,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.TextContent
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -39,16 +40,33 @@ internal class GeminiFoodClient(private val http: HttpClient) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** @param region the user's country, for local foods and portion sizes, for example "AU". May be empty. */
-    suspend fun estimate(apiKey: String, model: String, description: String, photoJpeg: ByteArray?, region: String): FoodLookupResult =
+    /**
+     * Asks once, and again after [RETRY_DELAYS_MS] while the service says it is busy (500, 502, 503, 504):
+     * these pass within seconds most of the time.
+     *
+     * @param region the user's country, for local foods and portion sizes, for example "AU". May be empty.
+     */
+    suspend fun estimate(apiKey: String, model: String, description: String, photoJpeg: ByteArray?, region: String): FoodLookupResult {
+        val body = requestBody(description, photoJpeg, region)
+        var result = ask(apiKey, model, body)
+        for (wait in RETRY_DELAYS_MS) {
+            if ((result as? FoodLookupResult.Failure)?.reason != FoodLookupResult.Reason.BUSY) break
+            delay(wait)
+            result = ask(apiKey, model, body)
+        }
+        return result
+    }
+
+    private suspend fun ask(apiKey: String, model: String, body: String): FoodLookupResult =
         try {
             val response = http.post(URL.replace("{model}", model.trim())) {
                 header("x-goog-api-key", apiKey.trim())
-                setBody(TextContent(requestBody(description, photoJpeg, region), ContentType.Application.Json))
+                setBody(TextContent(body, ContentType.Application.Json))
             }
             val text = response.bodyAsText()
             when (response.status.value) {
                 200       -> parseResponse(text)
+                500, 502, 503, 504 -> FoodLookupResult.Failure(FoodLookupResult.Reason.BUSY, errorMessage(text))
                 400, 403  ->
                     if (text.contains("API_KEY_INVALID") || text.contains("PERMISSION_DENIED") || text.contains("API key not valid"))
                         FoodLookupResult.Failure(FoodLookupResult.Reason.INVALID_KEY, errorMessage(text))
@@ -154,6 +172,9 @@ internal class GeminiFoodClient(private val http: HttpClient) {
 
         /** A single food above this is a misread answer, not a meal. */
         const val MAX_PORTION_G = 3000.0
+
+        /** Waits before asking again while the service is busy. */
+        val RETRY_DELAYS_MS = listOf(2_000L, 6_000L)
 
         private val NUMBER = buildJsonObject { put("type", "NUMBER") }
         private val STRING = buildJsonObject { put("type", "STRING") }

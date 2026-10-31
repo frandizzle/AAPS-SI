@@ -32,7 +32,6 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
-import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
@@ -220,16 +219,15 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
-    fun `switching mode loads that mode's ISF and DURA settings`() {
+    fun `switching mode loads that mode's ISF and DURA settings, with DURA off`() {
         whenever(preferences.getRaw(UnitDoubleKey.ApsSmartInsulinDinnerIsf)).thenReturn(54.0)
-        whenever(preferences.get(BooleanNonKey.ApsSmartInsulinDinnerDuraEnabled)).thenReturn(true)
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinDinnerDuraFloor)).thenReturn(27.0)
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinDinnerDuraStrength)).thenReturn(1.5)
         build()
         sut.selectMode(MealMode.DINNER)
         with(sut.uiState.value) {
             assertThat(isf).isWithin(1e-9).of(3.0)
-            assertThat(duraEnabled).isTrue()
+            assertThat(duraEnabled).isFalse()
             assertThat(duraFloor).isWithin(1e-9).of(1.5)
             assertThat(duraStrength).isEqualTo(1.5)
         }
@@ -245,7 +243,6 @@ internal class SmartMealDialogViewModelTest {
         sut.prepareAndConfirm()
         sut.commit(null)
         verify(preferences).put(UnitDoubleKey.ApsSmartInsulinLunchIsf, 36.0)
-        verify(preferences).put(BooleanNonKey.ApsSmartInsulinLunchDuraEnabled, true)
         verify(preferences).put(DoubleNonKey.ApsSmartInsulinLunchDuraFloor, 27.0)
         verify(preferences).put(DoubleNonKey.ApsSmartInsulinLunchDuraStrength, 1.4)
         with(activateCaptured()) {
@@ -274,14 +271,14 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
-    fun `DURA off saves no floor even if one was entered`() {
+    fun `a meal without DURA keeps the remembered floor and strength`() {
         build()
         sut.updateDuraFloor(1.5)
         sut.updateDuraEnabled(false)
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(preferences).put(BooleanNonKey.ApsSmartInsulinLunchDuraEnabled, false)
-        verify(preferences).put(DoubleNonKey.ApsSmartInsulinLunchDuraFloor, 0.0)
+        verify(preferences, never()).put(eq(DoubleNonKey.ApsSmartInsulinLunchDuraFloor), any<Double>())
+        verify(preferences, never()).put(eq(DoubleNonKey.ApsSmartInsulinLunchDuraStrength), any<Double>())
         assertThat(activateCaptured().duraOn).isFalse()
     }
 
@@ -628,7 +625,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(profile.getIc()).thenReturn(5.0)
         whenever { profileFunction.getProfile() }.thenReturn(profile)
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
-        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.2, fatProteinFactor = 0.8, meals = 3, ateSoon = 0, recentMeals = 3))
+        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.2, waveFactor = 0.8, tailFactor = 0.8, meals = 3, ateSoon = 0, recentMeals = 3))
         build()
         sut.addManualFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
@@ -644,11 +641,12 @@ internal class SmartMealDialogViewModelTest {
         }
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(savedMealLearning).recordMeal(eq("Turkey wrap"), eq(NOW), any(), any(), eq(20.0), eq(14.5))
+        // 1.45 FPU is not heavy: all of it is the wave, and there is no pre-bolus 3.
+        verify(savedMealLearning).recordMeal(eq("Turkey wrap"), eq(NOW), any(), any(), eq(0L), eq(20.0), eq(14.5), eq(0.0))
     }
 
     @Test
-    fun `a saved meal with other food added is not learned as that meal`() {
+    fun `a saved meal with other food added is only learned as any meal`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
         sut.addManualFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
@@ -659,7 +657,8 @@ internal class SmartMealDialogViewModelTest {
         assertThat(sut.uiState.value.sourceMeal).isNull()
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(savedMealLearning, never()).recordMeal(any(), any(), any(), any(), any(), any())
+        // Still watched for the general factors, but not as the saved meal.
+        verify(savedMealLearning).recordMeal(eq(null), any(), any(), any(), any(), any(), any(), any())
     }
 
     @Test
@@ -672,6 +671,67 @@ internal class SmartMealDialogViewModelTest {
         verify(savedMealLearning).rename("Wrap", "Turkey wrap")
         sut.deleteSavedFood("Turkey wrap")
         verify(savedMealLearning).forget("Turkey wrap")
+    }
+
+    @Test
+    fun `foods ticked together are added at once, and only one saved meal alone learns`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        listOf("Wrap", "Turkey", "Cheese").forEach { n ->
+            sut.addManualFood(dessert().copy(name = n, source = FoodSource.MANUAL))
+            sut.saveFood(0, n)
+            sut.clearFood()
+        }
+        val saved = sut.uiState.value.savedFoods
+        val recentCheese = sut.uiState.value.recentFoods.first { it.name == "Cheese" }
+        sut.addSelected(listOf(saved.first { it.name == "Wrap" }, saved.first { it.name == "Turkey" }), listOf(recentCheese))
+        with(sut.uiState.value) {
+            assertThat(foodItems.map { it.name }).containsExactly("Wrap", "Turkey", "Cheese").inOrder()
+            assertThat(sourceMeal).isNull()
+            assertThat(savedFoods.first { it.name == "Wrap" }.uses).isEqualTo(1)
+        }
+        sut.clearFood()
+        sut.addSelected(listOf(saved.first { it.name == "Wrap" }), emptyList())
+        assertThat(sut.uiState.value.sourceMeal).isEqualTo("Wrap")
+    }
+
+    @Test
+    fun `changing a saved meal keeps its learning only for a small change`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert(carbs = 40.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.saveMeal("Turkey wrap")
+        sut.clearFood()
+
+        sut.editSavedFood(sut.uiState.value.savedFoods.single())
+        assertThat(sut.uiState.value.editingMeal).isEqualTo("Turkey wrap")
+        sut.changeQuantity(0, 0.1)
+        sut.saveChanges()
+        verify(savedMealLearning, never()).forget(any())
+        assertThat(sut.uiState.value.editingMeal).isNull()
+
+        sut.editSavedFood(sut.uiState.value.savedFoods.single())
+        sut.addManualFood(dessert(carbs = 60.0).copy(name = "Chips", source = FoodSource.MANUAL))
+        sut.saveChanges()
+        verify(savedMealLearning).forget("Turkey wrap")
+        assertThat(sut.uiState.value.savedFoods.single().items.map { it.name }).containsExactly("Wrap", "Chips")
+    }
+
+    @Test
+    fun `filling in a heavy meal leaves DURA and Protein-Fat off and makes the mode long enough`() {
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        build()
+        // 60 g protein and 40 g fat: 6 FPU.
+        sut.addManualFood(dessert(carbs = 10.0, protein = 60.0, fat = 40.0).copy(name = "Steak", source = FoodSource.MANUAL))
+        sut.fillInFromFood()
+        with(sut.uiState.value) {
+            assertThat(duraEnabled).isFalse()
+            assertThat(pfAfter).isFalse()
+            assertThat(durationMinutes).isEqualTo(360)
+        }
     }
 
     // --- Food log ---

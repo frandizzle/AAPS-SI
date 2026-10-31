@@ -405,7 +405,7 @@
     <string name="si_food_title">What are you eating?</string>
     <string name="si_food_subtitle">Describe, photograph, scan, type in or pick it to plan the insulin</string>
     <string name="si_food_subtitle_totals" comment="%1$s=carbs in grams, %2$s=protein in grams, %3$s=fat in grams. Example: 45 g carbs · 40 g protein · 15 g fat">%1$s g carbs · %2$s g protein · %3$s g fat</string>
-    <string name="si_food_describe_hint">For example: 1 cup of cooked rice, 2 chicken drumsticks, vegetables</string>
+    <string name="si_food_describe_hint">Describe the meal, then tap Estimate. For example: 1 cup of cooked rice, 2 chicken drumsticks, vegetables</string>
     <string name="si_food_take_photo">Photo</string>
     <string name="si_food_pick_photo">Gallery</string>
     <string name="si_food_scan">Barcode</string>
@@ -424,6 +424,7 @@
     <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Pre-bolus 1 is for the carbs, pre-bolus 2 for the fat and protein wave (1 hour in), and on a heavy meal pre-bolus 3 for what is left of it. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
     <string name="si_food_plan_summary" comment="%1$s=insulin for carbs, %2$s=insulin for fat and protein, both with unit. Example: Needs about 9.0 U for carbs and 3.2 U for fat and protein">Needs about %1$s for carbs and %2$s for fat and protein</string>
     <string name="si_food_plan_factor" comment="%1$s=learned factor, %2$d=number of meals it is based on. Example: Learned from your meals: ×1.15 (8 meals)">Learned from your meals: ×%1$s (%2$d meals)</string>
+    <string name="si_food_plan_parts" comment="%1$s=factor for carbs, %2$s=factor for the fat and protein wave, %3$s=factor for the tail, %4$d=number of meals. Example: Learned from your meals: carbs ×1.05, fat and protein ×1.20, tail ×0.90 (8 meals)">Learned from your meals: carbs ×%1$s, fat and protein ×%2$s, tail ×%3$s (%4$d meals)</string>
     <string name="si_food_plan_learning">Not learned from your meals yet: estimates are used as they are</string>
     <string name="si_food_plan_capped">The plan was cut to your max pre-bolus settings</string>
     <string name="si_food_no_ratio">There is no carb ratio in the profile, so no plan could be made</string>
@@ -437,14 +438,18 @@
     <string name="si_food_save_replaced">Updated in My foods</string>
     <string name="si_food_save_full" comment="%1$d=most entries My foods can hold. Example: My foods is full (100). Delete one first.">My foods is full (%1$d). Delete one first.</string>
     <string name="si_food_my_foods_empty">Nothing saved yet. Tap the star on a food, or Save as meal, to keep it here.</string>
+    <string name="si_food_add_selected" comment="%1$d=how many foods are ticked. Example: Add selected (3)">Add selected (%1$d)</string>
     <string name="si_food_recent">Recent</string>
     <string name="si_food_recent_hint">Your last looked up foods. Tap the star to save one.</string>
     <string name="si_food_rename">Rename</string>
+    <string name="si_food_edit">Change foods and amounts</string>
+    <string name="si_food_editing" comment="%1$s=name of a saved meal. Example: Changing Turkey wrap. Add, remove or change the foods, then tap Save changes.">Changing %1$s. Add, remove or change the foods, then tap Save changes. A small change keeps what the meal has learned.</string>
+    <string name="si_food_save_changes">Save changes</string>
     <string name="si_food_delete_title" comment="%1$s=name of a saved food or meal. Example: Delete Turkey wrap?">Delete %1$s?</string>
-    <string name="si_food_meal_learned" comment="%1$s=name of a saved meal, %2$s=factor for its carbs, %3$s=factor for its fat and protein, %4$d=number of meals. Example: Learned for Turkey wrap: carbs ×1.12, fat and protein ×0.95 (4 meals)">Learned for %1$s: carbs ×%2$s, fat and protein ×%3$s (%4$d meals)</string>
+    <string name="si_food_meal_learned" comment="%1$s=name of a saved meal, %2$s=factor for its carbs (pre-bolus 1), %3$s=factor for its fat and protein wave (pre-bolus 2), %4$s=factor for the tail (pre-bolus 3), %5$d=number of meals. Example: Learned for Turkey wrap: carbs ×1.12, fat and protein ×0.95, tail ×1.00 (4 meals)">Learned for %1$s: carbs ×%2$s, fat and protein ×%3$s, tail ×%4$s (%5$d meals)</string>
     <string name="si_food_meal_learning" comment="%1$s=name of a saved meal, %2$d=meals judged so far, %3$d=meals needed. Example: Turkey wrap is learning its own insulin: 1 of 2 meals">%1$s is learning its own insulin: %2$d of %3$d meals</string>
     <string name="si_food_meal_ate_soon">Most times BG started to rise soon after pre-bolus 1. Waiting about 15 min before eating may lower the spike.</string>
-    <string name="si_food_learned_short" comment="%1$s=factor for carbs, %2$s=factor for fat and protein, %3$d=number of meals. Example: Learned: carbs ×1.12, fat and protein ×0.95 (4 meals)">Learned: carbs ×%1$s, fat and protein ×%2$s (%3$d meals)</string>
+    <string name="si_food_learned_short" comment="%1$s=factor for carbs, %2$s=factor for the fat and protein wave, %3$s=factor for the tail, %4$d=number of meals. Example: Learned: carbs ×1.12, fat and protein ×0.95, tail ×1.00 (4 meals)">Learned: carbs ×%1$s, fat and protein ×%2$s, tail ×%3$s (%4$d meals)</string>
     <string name="si_food_learning_reset">Forget what this meal learned</string>
     <string name="si_food_log_only">Log only</string>
     <string name="si_food_log_only_hint">Log only counts the food for today\'s calories, without a meal mode or insulin.</string>
@@ -467,6 +472,7 @@
     <string name="si_food_err_offline">No internet connection</string>
     <string name="si_food_err_invalid_key">The Gemini API key was refused. Check it in the settings.</string>
     <string name="si_food_err_limit">The free limit is reached. Try again later.</string>
+    <string name="si_food_err_busy">Google\'s servers are busy right now. Try again in a few minutes, or use Barcode, Type in or My foods.</string>
     <string name="si_food_err_not_food">No food was found</string>
     <string name="si_food_err_not_found">This product is not in Open Food Facts, or it has no nutrition values</string>
     <string name="si_food_err_bad">The answer could not be read. Try again.</string>

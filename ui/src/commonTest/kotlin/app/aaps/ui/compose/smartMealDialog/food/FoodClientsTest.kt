@@ -112,6 +112,24 @@ class FoodClientsTest {
         assertEquals(FoodLookupResult.Reason.LIMIT_REACHED, assertIs<FoodLookupResult.Failure>(r2).reason)
     }
 
+    @Test
+    fun `a busy service is asked again, and said so when it stays busy`() = runTest {
+        var calls = 0
+        val busyOnce = HttpClient(MockEngine {
+            calls++
+            if (calls == 1) respond(ByteReadChannel("""{"error":{"message":"high demand"}}"""), HttpStatusCode.ServiceUnavailable, json)
+            else respond(ByteReadChannel(gemini(dinner)), HttpStatusCode.OK, json)
+        })
+        assertIs<FoodLookupResult.Success>(GeminiFoodClient(busyOnce).estimate("k", "m", "x", null, ""))
+        assertEquals(2, calls)
+
+        calls = 0
+        val alwaysBusy = HttpClient(MockEngine { calls++; respond(ByteReadChannel("{}"), HttpStatusCode.ServiceUnavailable, json) })
+        val r = GeminiFoodClient(alwaysBusy).estimate("k", "m", "x", null, "")
+        assertEquals(FoodLookupResult.Reason.BUSY, assertIs<FoodLookupResult.Failure>(r).reason)
+        assertEquals(1 + GeminiFoodClient.RETRY_DELAYS_MS.size, calls)
+    }
+
     // --- Open Food Facts ---
 
     private val yoghurt = """{"status":1,"product":{"product_name":"Greek yoghurt","brands":"Chobani, Mondelez",

@@ -28,7 +28,6 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.Round
-import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
@@ -153,7 +152,11 @@ data class SmartMealDialogUiState(
     val sourceMeal: String? = null,
     /** What the saved meals have learned, by name. */
     val learnedMeals: Map<String, LearnedMeal> = emptyMap(),
+    /** What all meals together have learned about each part, or null before the first meal. */
+    val generalLearned: LearnedMeal? = null,
 
+    /** A saved meal opened for editing: its foods are in the list, and "Save changes" saves them back. */
+    val editingMeal: String? = null,
     /** The food list was logged without a meal, this many kcal. Shown until the list changes. */
     val loggedKcal: Double? = null,
     /** Log only was asked for a list that looks wrong: its kcal, while the user is asked to check. */
@@ -241,7 +244,8 @@ class SmartMealDialogViewModel(
                 calibrationMeals = mealEstimateCalibration.mealsUsed,
                 savedFoods = savedFoodStore.foods,
                 recentFoods = savedFoodStore.recent,
-                learnedMeals = learnedMeals()
+                learnedMeals = learnedMeals(),
+                generalLearned = savedMealLearning.general()
             )
         }
         loadMode(MealMode.LUNCH)
@@ -282,15 +286,6 @@ class SmartMealDialogViewModel(
         else               -> null
     }
 
-    private fun duraEnabledKeyFor(mode: MealMode): BooleanNonKey? = when (mode) {
-        MealMode.BREAKFAST -> BooleanNonKey.ApsSmartInsulinBreakfastDuraEnabled
-        MealMode.LUNCH     -> BooleanNonKey.ApsSmartInsulinLunchDuraEnabled
-        MealMode.DINNER    -> BooleanNonKey.ApsSmartInsulinDinnerDuraEnabled
-        MealMode.LOW_CARB  -> BooleanNonKey.ApsSmartInsulinLowCarbDuraEnabled
-        MealMode.EXTENDED  -> BooleanNonKey.ApsSmartInsulinExtendedDuraEnabled
-        else               -> null
-    }
-
     private fun duraFloorKeyFor(mode: MealMode): DoubleNonKey? = when (mode) {
         MealMode.BREAKFAST -> DoubleNonKey.ApsSmartInsulinBreakfastDuraFloor
         MealMode.LUNCH     -> DoubleNonKey.ApsSmartInsulinLunchDuraFloor
@@ -314,10 +309,11 @@ class SmartMealDialogViewModel(
 
     private fun loadMode(mode: MealMode) {
         val isf = isfKeyFor(mode)?.let { toDisplay(preferences.getRaw(it)) } ?: 0.0
-        val duraEnabled = duraEnabledKeyFor(mode)?.let { preferences.get(it) } ?: false
         val duraFloor = duraFloorKeyFor(mode)?.let { toDisplay(preferences.get(it)) } ?: 0.0
         val duraStrength = duraStrengthKeyFor(mode)?.let { preferences.get(it) } ?: 1.0
-        _uiState.update { it.copy(mode = mode, isf = isf, duraEnabled = duraEnabled, duraFloor = duraFloor, duraStrength = duraStrength) }
+        // DURA starts off for every meal: the pre-boluses and the mode length cover it. Its floor and strength
+        // are remembered, so switching it on is one tap.
+        _uiState.update { it.copy(mode = mode, isf = isf, duraEnabled = false, duraFloor = duraFloor, duraStrength = duraStrength) }
     }
 
     // ── Input ────────────────────────────────────────────────────────────────
@@ -416,7 +412,7 @@ class SmartMealDialogViewModel(
 
     fun clearFood() {
         photoJpeg = null
-        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null, loggedKcal = null) }
+        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null, loggedKcal = null, editingMeal = null) }
     }
 
     // ── Food log ─────────────────────────────────────────────────────────────
@@ -465,12 +461,20 @@ class SmartMealDialogViewModel(
      * Adds every food of a saved entry, with the amounts it was saved with. Added to an empty list, the meal
      * is that saved meal and learns about itself.
      */
-    fun addSavedFood(food: SavedFood) {
-        savedFoodStore.markUsed(food.name, dateUtil.now())
-        addItems(food.items.map { SavedFoodList.forMeal(it) }, food.name.takeIf { uiState.value.foodItems.isEmpty() })
-    }
+    fun addSavedFood(food: SavedFood) = addSelected(listOf(food), emptyList())
 
-    fun addRecentFood(item: FoodItem) = addItems(listOf(SavedFoodList.forMeal(item)), null)
+    /**
+     * Adds everything ticked on the My foods page at once: saved entries with their amounts, then recent
+     * foods. Only one saved entry on its own, added to an empty list, makes the meal that saved meal.
+     */
+    fun addSelected(foods: List<SavedFood>, recent: List<FoodItem>) {
+        if (foods.isEmpty() && recent.isEmpty()) return
+        val now = dateUtil.now()
+        foods.forEach { savedFoodStore.markUsed(it.name, now) }
+        val items = foods.flatMap { f -> f.items.map { SavedFoodList.forMeal(it) } } + recent.map { SavedFoodList.forMeal(it) }
+        val single = foods.singleOrNull()?.takeIf { recent.isEmpty() && uiState.value.foodItems.isEmpty() }
+        addItems(items, single?.name)
+    }
 
     /** Saves the whole food list as one entry, for example a wrap with all that is in it. */
     fun saveMeal(name: String) = save(name, uiState.value.foodItems)
@@ -502,15 +506,29 @@ class SmartMealDialogViewModel(
         refreshSaved()
     }
 
+    /** Puts a saved meal's foods in the list to change them; "Save changes" then saves them back under its name. */
+    fun editSavedFood(food: SavedFood) {
+        clearFood()
+        addItems(food.items.map { SavedFoodList.forMeal(it) }, food.name)
+        _uiState.update { it.copy(editingMeal = food.name) }
+    }
+
+    fun saveChanges() {
+        val name = uiState.value.editingMeal ?: return
+        save(name, uiState.value.foodItems)
+        _uiState.update { it.copy(editingMeal = null) }
+    }
+
     private fun save(name: String, items: List<FoodItem>) {
+        val old = savedFoodStore.foods.firstOrNull { it.name.equals(name.trim(), ignoreCase = true) }
         val result = savedFoodStore.save(name, items, dateUtil.now())
-        // New contents under an old name: what the old meal learned does not fit it.
-        if (result == SaveResult.REPLACED) savedMealLearning.forget(name.trim())
+        // New contents under an old name: what the old meal learned only still fits a small change.
+        if (result == SaveResult.REPLACED && old != null && !SavedFoodList.similar(old.items, items)) savedMealLearning.forget(old.name)
         refreshSaved()
         _uiState.update { it.copy(lastSave = result) }
     }
 
-    private fun refreshSaved() = _uiState.update { it.copy(savedFoods = savedFoodStore.foods, learnedMeals = learnedMeals()) }
+    private fun refreshSaved() = _uiState.update { it.copy(savedFoods = savedFoodStore.foods, learnedMeals = learnedMeals(), generalLearned = savedMealLearning.general()) }
 
     private fun learnedMeals(): Map<String, LearnedMeal> =
         savedFoodStore.foods.mapNotNull { f -> savedMealLearning.learned(f.name)?.let { f.name to it } }.toMap()
@@ -536,9 +554,10 @@ class SmartMealDialogViewModel(
                 _uiState.update { it.copy(planNoRatio = true, plan = null, addition = null) }
                 return@launch
             }
-            // A saved meal that has learned about itself uses that instead of the general estimate factor.
-            val own = state.sourceLearned?.takeIf { it.inUse }
-            val factor = own?.carbFactor ?: mealEstimateCalibration.factor
+            // What a saved meal learned about itself comes first, then what all meals learned about each part,
+            // then the general estimate factor.
+            val learned = state.sourceLearned?.takeIf { it.inUse } ?: savedMealLearning.general()?.takeIf { it.inUse }
+            val factor = learned?.carbFactor ?: mealEstimateCalibration.factor
             val settings = MealPlanSettings(
                 carbPct = preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct),
                 fatProteinPct = preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct),
@@ -547,7 +566,8 @@ class SmartMealDialogViewModel(
                 maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
                 carbRatio = carbRatio,
                 factor = factor,
-                fatProteinFactor = own?.fatProteinFactor,
+                waveFactor = learned?.waveFactor,
+                tailFactor = learned?.tailFactor,
                 pb2DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
                 pb3DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep
@@ -573,9 +593,7 @@ class SmartMealDialogViewModel(
                         calibrationFactor = factor,
                         calibrationMeals = mealEstimateCalibration.mealsUsed,
                         addNowU = addition.nowU, addPb2U = addition.pb2AddU, addPb3U = addition.pb3AddU,
-                        addMinutesLeft = addition.minutesLeft,
-                        addDura = addition.duraEnabled,
-                        pfAfter = addition.pfAfter
+                        addMinutesLeft = addition.minutesLeft
                     )
                 }
                 return@launch
@@ -590,10 +608,8 @@ class SmartMealDialogViewModel(
                     durationMinutes = plan.durationMin,
                     pb1Enabled = plan.pb1U > 0.0, pb1U = plan.pb1U,
                     pb2Enabled = plan.pb2U > 0.0, pb2U = plan.pb2U, pb2DelayMinutes = plan.pb2DelayMin,
-                    pb3Enabled = plan.pb3U > 0.0, pb3U = plan.pb3U, pb3DelayMinutes = plan.pb3DelayMin,
-                    // A slow meal turns DURA on; a quick one leaves the mode's own choice alone.
-                    duraEnabled = it.duraEnabled || plan.duraEnabled,
-                    pfAfter = plan.pfAfter
+                    pb3Enabled = plan.pb3U > 0.0, pb3U = plan.pb3U, pb3DelayMinutes = plan.pb3DelayMin
+                    // DURA and Protein/Fat are left as the user set them.
                 )
             }
         }
@@ -796,14 +812,19 @@ class SmartMealDialogViewModel(
         )
     }
 
-    /** A meal started from one saved meal is watched, so that meal learns its own insulin. */
-    private fun recordSavedMeal(state: SmartMealDialogUiState) {
-        val name = state.sourceMeal ?: return
+    /**
+     * Every meal started with food is watched, so each part of it (carbs, wave, tail) can be learned. A meal
+     * that is one saved meal also learns for that meal.
+     */
+    private fun recordMealLearning(state: SmartMealDialogUiState) {
+        if (state.foodItems.isEmpty()) return
         val startMs = mealOverrideManager.modeStartMs.takeIf { it > 0L } ?: dateUtil.now()
         val modeEndMs = startMs + state.durationMinutes * 60_000L
         val pfMin = if (state.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
+        val pb3DueMs = if (state.pb2() > 0.0 && state.pb3() > 0.0) startMs + (state.pb2DelayMinutes + state.pb3DelayMinutes) * 60_000L else 0L
         val t = state.foodTotals
-        savedMealLearning.recordMeal(name, startMs, modeEndMs, modeEndMs + pfMin * 60_000L, t.carbsG, t.fpu * MealTotals.FPU_CARB_G)
+        val (waveG, tailG) = MealDosePlanner.fatProteinGrams(t.fpu, preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct))
+        savedMealLearning.recordMeal(state.sourceMeal, startMs, modeEndMs, modeEndMs + pfMin * 60_000L, pb3DueMs, t.carbsG, waveG, tailG)
     }
 
     /**
@@ -847,9 +868,11 @@ class SmartMealDialogViewModel(
             val mode = state.mode
             isfKeyFor(mode)?.let { preferences.put(it, toMgdl(state.isf)) }
             val duraFloorMgdl = if (state.duraEnabled) toMgdl(state.duraFloor) else 0.0
-            duraEnabledKeyFor(mode)?.let { preferences.put(it, state.duraEnabled) }
-            duraFloorKeyFor(mode)?.let { preferences.put(it, duraFloorMgdl) }
-            duraStrengthKeyFor(mode)?.let { preferences.put(it, state.duraStrength) }
+            // Remembered only when DURA is used, so a meal without it keeps the floor and strength for next time.
+            if (state.duraEnabled) {
+                duraFloorKeyFor(mode)?.let { preferences.put(it, duraFloorMgdl) }
+                duraStrengthKeyFor(mode)?.let { preferences.put(it, state.duraStrength) }
+            }
 
             val pb1 = if (bolusId != null) state.pb1() else 0.0
             mealOverrideManager.activateOverride(
@@ -867,7 +890,7 @@ class SmartMealDialogViewModel(
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             recordEstimate(state)
-            recordSavedMeal(state)
+            recordMealLearning(state)
             logEntry(state)?.let { foodLog.add(it) }
             deliver(bolusId)
         }

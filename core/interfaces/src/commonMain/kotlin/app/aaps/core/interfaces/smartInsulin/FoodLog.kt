@@ -30,6 +30,9 @@ interface FoodLog {
     /** What was logged from [fromMs] (included) to [toMs] (not included), oldest first. */
     fun entries(fromMs: Long, toMs: Long): List<FoodLogEntry>
 
+    /** Replaces the entry logged at the same time, for example with a smaller amount eaten. */
+    fun update(entry: FoodLogEntry)
+
     /** Removes the entry logged at [timeMs], for example one logged twice. */
     fun delete(timeMs: Long)
 

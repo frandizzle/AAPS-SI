@@ -41,6 +41,13 @@ class FoodLogTest {
     }
 
     @Test
+    fun `an entry can be changed, for example to half`() {
+        foodLog.add(entry(T0))
+        foodLog.update(entry(T0).copy(carbsG = 20.0))
+        assertEquals(20.0, foodLog.entries(T0, T0 + DAY).single().carbsG, 1e-9)
+    }
+
+    @Test
     fun `old days are removed and the rest survives a restart`() {
         foodLog.add(entry(T0, "Old"))
         foodLog.add(entry(T0 + (FoodLog.DAYS_KEPT + 2) * DAY, "New"))

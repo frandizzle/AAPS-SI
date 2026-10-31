@@ -24,8 +24,6 @@ class MealDosePlannerTest {
         assertEquals(8.0, p.pb1U, 1e-9)
         assertEquals(0.0, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
-        assertFalse(p.duraEnabled)
-        assertFalse(p.pfAfter)
         assertEquals(180, p.durationMin)
         assertFalse(p.capped)
     }
@@ -46,8 +44,7 @@ class MealDosePlannerTest {
         assertEquals(2.9, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
         assertEquals(MealDosePlanner.PB2_DELAY_MIN, p.pb2DelayMin)
-        assertTrue(p.duraEnabled)
-        assertTrue(p.pfAfter)
+        assertEquals(240, p.durationMin)
     }
 
     @Test
@@ -61,7 +58,7 @@ class MealDosePlannerTest {
         assertEquals(4.55, p.pb2U, 1e-9)    // 60 % of 7.63 U, down to the bolus step
         assertEquals(3.05, p.pb3U, 1e-9)    // 40 % of 7.63 U
         assertEquals(MealDosePlanner.PB3_DELAY_MIN, p.pb3DelayMin)
-        assertEquals(300, p.durationMin)
+        assertEquals(360, p.durationMin)
     }
 
     @Test
@@ -100,6 +97,15 @@ class MealDosePlannerTest {
     }
 
     @Test
+    fun `pre-bolus 2 and 3 each use their own learned factor`() {
+        // 10 g carbs, 60 g protein, 40 g fat: 6 FPU = 60 g, 36 g for the wave and 24 g for the tail.
+        assertEquals(36.0 to 24.0, MealDosePlanner.fatProteinGrams(6.0, 40).let { (w, t) -> Math.round(w * 1e6) / 1e6 to Math.round(t * 1e6) / 1e6 })
+        val p = MealDosePlanner.plan(meal(10.0, protein = 60.0, fat = 40.0), settings.copy(maxTotalU = 25.0, waveFactor = 1.0, tailFactor = 0.5))
+        assertEquals(5.0, p.pb2U, 1e-9)     // 36 g / 5 × 70 % = 5.04
+        assertEquals(1.65, p.pb3U, 1e-9)    // 24 g × 0.5 / 5 × 70 % = 1.68
+    }
+
+    @Test
     fun `no carb ratio plans nothing`() {
         val p = MealDosePlanner.plan(meal(50.0), settings.copy(carbRatio = 0.0))
         assertEquals(0.0, p.pb1U + p.pb2U + p.pb3U, 1e-9)
@@ -116,6 +122,7 @@ class MealDosePlannerTest {
         assertEquals(180, MealDosePlanner.durationFor(1.9))
         assertEquals(240, MealDosePlanner.durationFor(2.0))
         assertEquals(300, MealDosePlanner.durationFor(3.0))
+        assertEquals(360, MealDosePlanner.durationFor(4.0))
     }
 
     @Test
@@ -152,8 +159,6 @@ class MealDosePlannerTest {
         val a = MealDosePlanner.planAddition(meal(20.0, protein = 20.0, fat = 15.0), settings.copy(maxTotalU = 20.0), fired)
         assertEquals(0.0, a.pb2AddU, 1e-9)
         assertEquals(0.0, a.pb3AddU, 1e-9)
-        assertTrue(a.duraEnabled)
-        assertTrue(a.pfAfter)
         assertEquals(240, a.minutesLeft)
     }
 

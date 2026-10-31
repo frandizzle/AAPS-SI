@@ -142,8 +142,12 @@ internal fun SmartMealFoodContent(
                 Button(onClick = viewModel::fillInFromFood, modifier = Modifier.weight(1f)) { Text(stringResource(UiStrings.si_food_fill_in)) }
                 TextButton(onClick = viewModel::clearFood) { Text(stringResource(UiStrings.si_food_clear)) }
             }
+            state.editingMeal?.let { name ->
+                Hint(stringResource(UiStrings.si_food_editing, name))
+                Button(onClick = viewModel::saveChanges, modifier = Modifier.fillMaxWidth()) { Text(stringResource(UiStrings.si_food_save_changes)) }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { savingMeal = true }) { Text(stringResource(UiStrings.si_food_save_meal)) }
+                if (state.editingMeal == null) TextButton(onClick = { savingMeal = true }) { Text(stringResource(UiStrings.si_food_save_meal)) }
                 OutlinedButton(onClick = { viewModel.logOnly() }) { Text(stringResource(UiStrings.si_food_log_only)) }
             }
             Hint(stringResource(UiStrings.si_food_log_only_hint))
@@ -162,7 +166,7 @@ internal fun SmartMealFoodContent(
             val learned = state.sourceLearned
             when {
                 learned?.inUse == true ->
-                    Hint(stringResource(UiStrings.si_food_meal_learned, name, df.to2Decimal(learned.carbFactor), df.to2Decimal(learned.fatProteinFactor), learned.meals))
+                    Hint(stringResource(UiStrings.si_food_meal_learned, name, df.to2Decimal(learned.carbFactor), df.to2Decimal(learned.waveFactor), df.to2Decimal(learned.tailFactor), learned.meals))
                 else                   -> Hint(stringResource(UiStrings.si_food_meal_learning, name, learned?.meals ?: 0, LearnedMeal.MIN_MEALS))
             }
             if (learned != null && learned.recentMeals >= ATE_SOON_MIN_MEALS && learned.ateSoon * 2 > learned.recentMeals)
@@ -174,8 +178,11 @@ internal fun SmartMealFoodContent(
         needU?.let { (carbsU, fatProteinU) ->
             Text(stringResource(UiStrings.si_food_plan_summary, fmtU(carbsU), fmtU(fatProteinU)), style = MaterialTheme.typography.bodyMedium)
             // A saved meal with its own learning says so above.
+            val general = state.generalLearned?.takeIf { it.inUse }
             if (state.sourceLearned?.inUse != true) Hint(
-                if (state.calibrationMeals > 0 && state.calibrationFactor != 1.0)
+                if (general != null)
+                    stringResource(UiStrings.si_food_plan_parts, df.to2Decimal(general.carbFactor), df.to2Decimal(general.waveFactor), df.to2Decimal(general.tailFactor), general.meals)
+                else if (state.calibrationMeals > 0 && state.calibrationFactor != 1.0)
                     stringResource(UiStrings.si_food_plan_factor, df.to2Decimal(state.calibrationFactor), state.calibrationMeals)
                 else stringResource(UiStrings.si_food_plan_learning)
             )
@@ -190,10 +197,10 @@ internal fun SmartMealFoodContent(
             recent = state.recentFoods,
             df = { df.to0Decimal(it) },
             factor = { df.to2Decimal(it) },
-            onAdd = { viewModel.addSavedFood(it); showMyFoods = false },
-            onAddRecent = { viewModel.addRecentFood(it); showMyFoods = false },
+            onAddSelected = { foods, recent -> viewModel.addSelected(foods, recent); showMyFoods = false },
             onSaveRecent = viewModel::saveRecentFood,
             onRename = viewModel::renameSavedFood,
+            onEdit = { viewModel.editSavedFood(it); showMyFoods = false },
             onDelete = viewModel::deleteSavedFood,
             onForgetLearning = viewModel::forgetMealLearning,
             onDismiss = { showMyFoods = false }
@@ -281,6 +288,7 @@ private fun lookupErrorText(reason: FoodLookupResult.Reason, detail: String): St
     FoodLookupResult.Reason.OFFLINE       -> stringResource(UiStrings.si_food_err_offline)
     FoodLookupResult.Reason.INVALID_KEY   -> stringResource(UiStrings.si_food_err_invalid_key)
     FoodLookupResult.Reason.LIMIT_REACHED -> stringResource(UiStrings.si_food_err_limit)
+    FoodLookupResult.Reason.BUSY          -> stringResource(UiStrings.si_food_err_busy)
     FoodLookupResult.Reason.NOT_FOOD      -> stringResource(UiStrings.si_food_err_not_food)
     FoodLookupResult.Reason.NOT_FOUND     -> stringResource(UiStrings.si_food_err_not_found)
     FoodLookupResult.Reason.BAD_RESPONSE  -> stringResource(UiStrings.si_food_err_bad)

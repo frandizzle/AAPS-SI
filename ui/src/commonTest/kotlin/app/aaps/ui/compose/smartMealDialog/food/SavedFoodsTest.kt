@@ -2,6 +2,7 @@ package app.aaps.ui.compose.smartMealDialog.food
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -90,6 +91,13 @@ class SavedFoodsTest {
         assertTrue(SavedFoodCodec.decodeFoods("not json").isEmpty())
         assertTrue(SavedFoodCodec.decodeFoods("").isEmpty())
         assertTrue(SavedFoodCodec.decodeItems("{}").isEmpty())
+    }
+
+    @Test
+    fun `a small change is similar, a big one is not`() {
+        val more = wrap.map { if (it.name == "Cheese") it.copy(quantity = 2.0) else it }
+        assertTrue(SavedFoodList.similar(wrap, more))
+        assertFalse(SavedFoodList.similar(wrap, wrap + food("Chips", grams = 60.0, carbs = 55.0)))
     }
 
     @Test

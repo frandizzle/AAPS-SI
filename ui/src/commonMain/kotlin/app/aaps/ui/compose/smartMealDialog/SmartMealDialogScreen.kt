@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cookie
 import androidx.compose.material.icons.filled.DinnerDining
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.FreeBreakfast
@@ -566,7 +567,7 @@ private fun modeIcon(mode: MealMode): ImageVector = when (mode) {
     MealMode.LUNCH, MealMode.UAM_LUNCH         -> Icons.Filled.LunchDining
     MealMode.DINNER, MealMode.UAM_DINNER       -> Icons.Filled.DinnerDining
     MealMode.LOW_CARB                          -> Icons.Filled.Eco
-    MealMode.EXTENDED                          -> Icons.Filled.HourglassBottom
+    MealMode.EXTENDED                          -> Icons.Filled.Cookie
     else                                       -> Icons.Filled.LunchDining
 }
 

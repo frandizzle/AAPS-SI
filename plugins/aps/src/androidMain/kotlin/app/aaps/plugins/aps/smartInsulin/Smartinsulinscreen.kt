@@ -171,7 +171,8 @@ fun SmartInsulinScreen(
             FoodLogSection(
                 day = foodDay, daysBack = foodDaysBack,
                 onDaysBack = { foodDaysBack = it; tick++ },
-                onDelete = { timeMs, name -> deleteFood = timeMs to name }
+                onDelete = { timeMs, name -> deleteFood = timeMs to name },
+                onScale = { entry, factor -> plugin.scaleFoodLogEntry(entry, factor); tick++ }
             )
         }
 

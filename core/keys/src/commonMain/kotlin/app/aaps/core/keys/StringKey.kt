@@ -228,7 +228,7 @@ enum class StringKey(
     ),
     ApsSmartInsulinMealAiModel(
         key = "si_meal_ai_model",
-        defaultValue = "gemini-2.5-flash",
+        defaultValue = "gemini-3.5-flash",
         title = KeysStrings.si_meal_ai_model_title,
         summary = KeysStrings.si_meal_ai_model_summary,
         dependency = BooleanKey.ApsSmartInsulinMealAiEnabled

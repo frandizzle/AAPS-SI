@@ -31,8 +31,9 @@ enum class MealMode(
         diaLearningEnabled = true,
         learningWeight     = 0.5
     ),
+    // Shown as "Snack". The name stays EXTENDED, so settings and learning saved under it are kept.
     EXTENDED(
-        label              = "Extended",
+        label              = "Snack",
         diaLearningEnabled = false,
         learningWeight     = 0.2
     ),

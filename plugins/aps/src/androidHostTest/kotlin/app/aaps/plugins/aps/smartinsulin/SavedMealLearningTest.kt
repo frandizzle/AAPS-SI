@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 
-/** [SavedMealLearningImpl]: each saved meal learns its own carb and fat/protein insulin. */
+/** [SavedMealLearningImpl]: each part of a meal (carbs, wave, tail) learns how much insulin it needs. */
 class SavedMealLearningTest {
 
     private val sp = FakePreferences()
@@ -26,7 +26,7 @@ class SavedMealLearningTest {
      * @param endAtMin  the mode stops at this minute
      */
     private fun meal(start: Long, carbsSeen: Double, fpSeen: Double, lowAtMin: Int? = null, riseAtMin: Int = 30, endAtMin: Int = 180) {
-        learning.recordMeal("Wrap", start, start + 180 * MIN, start + 180 * MIN, carbsG = 40.0, fatProteinG = 20.0)
+        learning.recordMeal("Wrap", start, start + 180 * MIN, start + 180 * MIN, pb3DueMs = 0L, carbsG = 40.0, waveG = 20.0, tailG = 0.0)
         var grams = 0.0
         var m = 0
         while (m <= 180 + 60 + 10) {
@@ -52,7 +52,7 @@ class SavedMealLearningTest {
         meal(T0, carbsSeen = 60.0, fpSeen = 20.0)
         val l = learning.learned("Wrap")!!
         assertEquals(1.12, l.carbFactor, 1e-9)          // wanted 1.5, one step at most
-        assertEquals(1.0, l.fatProteinFactor, 1e-9)
+        assertEquals(1.0, l.waveFactor, 1e-9)
         assertEquals(1, l.meals)
         assertFalse(l.inUse)
         meal(T0 + DAY, carbsSeen = 60.0, fpSeen = 20.0)
@@ -65,7 +65,7 @@ class SavedMealLearningTest {
         meal(T0, carbsSeen = 60.0, fpSeen = 30.0, lowAtMin = 60)
         val l = learning.learned("Wrap")!!
         assertEquals(0.85, l.carbFactor, 1e-9)
-        assertEquals(1.0, l.fatProteinFactor, 1e-9)     // saw 1.5 times the plan, but a low came first
+        assertEquals(1.0, l.waveFactor, 1e-9)     // saw 1.5 times the plan, but a low came first
     }
 
     @Test
@@ -73,7 +73,7 @@ class SavedMealLearningTest {
         meal(T0, carbsSeen = 40.0, fpSeen = 20.0, lowAtMin = 200)
         val l = learning.learned("Wrap")!!
         assertEquals(1.0, l.carbFactor, 1e-9)
-        assertEquals(0.85, l.fatProteinFactor, 1e-9)
+        assertEquals(0.85, l.waveFactor, 1e-9)
     }
 
     @Test
@@ -84,7 +84,7 @@ class SavedMealLearningTest {
 
     @Test
     fun `a meal that got other food is not learned from`() {
-        learning.recordMeal("Wrap", T0, T0 + 180 * MIN, T0 + 180 * MIN, 40.0, 20.0)
+        learning.recordMeal("Wrap", T0, T0 + 180 * MIN, T0 + 180 * MIN, 0L, 40.0, 20.0, 0.0)
         learning.dropMeal(T0)
         learning.onCycle(T0 + 5 * HOUR, null, 0L, 0L, 0.0, 100.0, lowActive = false, undershootActive = false, contaminated = false)
         assertNull(learning.learned("Wrap"))
@@ -101,7 +101,7 @@ class SavedMealLearningTest {
 
     @Test
     fun `the other meal learners sit out a watched meal`() {
-        learning.recordMeal("Wrap", T0, T0 + 180 * MIN, T0 + 180 * MIN, 40.0, 20.0)
+        learning.recordMeal("Wrap", T0, T0 + 180 * MIN, T0 + 180 * MIN, 0L, 40.0, 20.0, 0.0)
         assertFalse(learning.watching(T0 - MIN))
         assertTrue(learning.watching(T0 + 200 * MIN))    // the low watch after the window
         assertFalse(learning.watching(T0 + 300 * MIN))
@@ -117,6 +117,74 @@ class SavedMealLearningTest {
         assertEquals(1.12, learning.learned("Turkey wrap")!!.carbFactor, 1e-9)
         learning.forget("Turkey wrap")
         assertNull(learning.learned("Turkey wrap"))
+    }
+
+    @Test
+    fun `a bad site's learning can be undone`() {
+        meal(T0, carbsSeen = 60.0, fpSeen = 20.0)
+        val before = learning.exportState()
+        meal(T0 + DAY, carbsSeen = 60.0, fpSeen = 20.0)
+        learning.recordMeal("Wrap", T0 + 2 * DAY, T0 + 2 * DAY + 3 * HOUR, T0 + 2 * DAY + 3 * HOUR, 0L, 40.0, 20.0, 0.0)
+        learning.importState(before)
+        assertEquals(1.12, learning.learned("Wrap")!!.carbFactor, 1e-9)
+        assertEquals(1, learning.learned("Wrap")!!.meals)
+        assertFalse(learning.watching(T0 + 2 * DAY + HOUR))
+    }
+
+    /**
+     * A heavy 5 h meal: 40 g carbs, 30 g for the wave, 20 g for the tail. Pre-bolus 3 is due at 150 min, so the tail
+     * starts at 210 min. Grams come in evenly within each part.
+     */
+    private fun heavy(start: Long, name: String?, carbs: Double, wave: Double, tail: Double, lowAtMin: Int? = null) {
+        learning.recordMeal(name, start, start + 300 * MIN, start + 300 * MIN, start + 150 * MIN, carbsG = 40.0, waveG = 30.0, tailG = 20.0)
+        var grams = 0.0
+        var m = 0
+        while (m <= 300 + 60 + 10) {
+            val active = m < 300
+            if (active) grams += when {
+                m < 120 -> carbs / 24.0
+                m < 210 -> wave / 18.0
+                else    -> tail / 18.0
+            }
+            learning.onCycle(
+                start + m * MIN, if (active) MealMode.DINNER else null, if (active) start else 0L, if (active) start else 0L,
+                if (active) grams else 0.0, 120.0, lowActive = m == lowAtMin, undershootActive = false, contaminated = false
+            )
+            m += 5
+        }
+    }
+
+    @Test
+    fun `the tail of a heavy meal is learned on its own`() {
+        heavy(T0, "Steak", carbs = 40.0, wave = 30.0, tail = 30.0)
+        val l = learning.learned("Steak")!!
+        assertEquals(1.0, l.carbFactor, 1e-9)
+        assertEquals(1.0, l.waveFactor, 1e-9)
+        assertEquals(1.12, l.tailFactor, 1e-9)       // wanted 1.5, one step
+    }
+
+    @Test
+    fun `a late low cuts only the tail`() {
+        heavy(T0, "Steak", carbs = 40.0, wave = 30.0, tail = 20.0, lowAtMin = 280)
+        val l = learning.learned("Steak")!!
+        assertEquals(1.0, l.waveFactor, 1e-9)
+        assertEquals(0.85, l.tailFactor, 1e-9)
+    }
+
+    @Test
+    fun `every meal adds to the general factors, used from the third`() {
+        heavy(T0, null, carbs = 40.0, wave = 36.0, tail = 20.0)
+        heavy(T0 + DAY, null, carbs = 40.0, wave = 36.0, tail = 20.0)
+        assertFalse(learning.general()!!.inUse)
+        heavy(T0 + 2 * DAY, null, carbs = 40.0, wave = 36.0, tail = 20.0)
+        val g = learning.general()!!
+        assertTrue(g.inUse)
+        assertEquals(1.0, g.carbFactor, 1e-9)
+        assertEquals(1.2, g.waveFactor, 1e-9)
+        assertEquals(1.0, g.tailFactor, 1e-9)
+        // A meal that is not saved leaves the other learners judging it.
+        learning.recordMeal(null, T0 + 3 * DAY, T0 + 3 * DAY + 3 * HOUR, T0 + 3 * DAY + 3 * HOUR, 0L, 40.0, 20.0, 0.0)
+        assertFalse(learning.watching(T0 + 3 * DAY + HOUR))
     }
 
     @Test

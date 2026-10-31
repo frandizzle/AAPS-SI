@@ -14,53 +14,63 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Learns each saved meal on its own: how much food BG showed compared with what the meal was planned
- * with, split into the carbs (the first [CARB_PHASE_MS]) and the fat and protein (after that).
+ * Learns how much insulin each part of a meal needs: how much food BG showed compared with what the meal was
+ * planned with, in three parts that match the three pre-boluses:
+ *  - [Part.CARBS], the first [CARB_PHASE_MS]: pre-bolus 1
+ *  - [Part.WAVE], the fat and protein wave after that: pre-bolus 2
+ *  - [Part.TAIL], from [TAIL_AFTER_PB3_MS] after pre-bolus 3 is due: pre-bolus 3. Only a meal with a pre-bolus 3 has a tail.
  *
- * The grams come from [MealAbsorptionTracker], the same as for `MealEstimateCalibrationImpl`, so the
- * factors are in the same unit as the plan: "this meal acts like this many times what was planned".
+ * Every meal planned from food is watched. A saved meal (an entry in My foods) learns its own factors, one
+ * bounded step per meal. Every meal also adds to the general factors, the median of the last [GENERAL_MEALS]
+ * meals, for meals that have learned nothing of their own.
  *
- * Rules, one bounded step per meal:
- *  - A low in a part of the meal cuts that part by [LOW_STEP]; BG just above the low guard by [UNDERSHOOT_STEP].
+ * The grams come from [MealAbsorptionTracker], the same as for `MealEstimateCalibrationImpl`, so the factors are
+ * in the same unit as the plan: "this part acts like this many times what was planned".
+ *
+ * Rules for a saved meal:
+ *  - A low in a part cuts that part by [LOW_STEP]; BG just above the low guard by [UNDERSHOOT_STEP]. A part too
+ *    small to learn from passes its low on to the part before it.
  *  - Without a low, each part moves toward what BG showed, by at most [MAX_STEP]. After a low anywhere in the
  *    meal, nothing grows.
- *  - A meal that got other food, ended early, was replaced, had a second helping, exercise or the new pod
- *    boost is not learned from.
+ *  - A meal that got other food, ended early, was replaced, had a second helping, exercise or the new pod boost
+ *    is not learned from.
  *
  * It also notes when BG starts to rise: a rise within [ATE_SOON_MS] of the start means the meal was probably
- * eaten without waiting after pre-bolus 1. That does not change the factors (the grams are the same either
- * way); it is only shown as a hint.
+ * eaten without waiting after pre-bolus 1. That does not change the factors (the grams are the same either way);
+ * it is only shown as a hint.
  */
 @SingleIn(AppScope::class)
 class SavedMealLearningImpl @Inject constructor(
     private val sp:         KeyValueStore,
     private val aapsLogger: AAPSLogger
-) : SavedMealLearning {
+) : SavedMealLearning, UndoableLearner {
 
-    private class State(var carbFactor: Double = 1.0, var fatProteinFactor: Double = 1.0, var meals: Int = 0, val soon: MutableList<Boolean> = mutableListOf())
+    enum class Part { CARBS, WAVE, TAIL }
+
+    private class State(val factors: DoubleArray = DoubleArray(PARTS) { 1.0 }, var meals: Int = 0, val soon: MutableList<Boolean> = mutableListOf())
 
     private class Watch(
-        val name:        String,
+        val name:        String?,
         val startMs:     Long,
         val modeEndMs:   Long,
         var windowEndMs: Long,
-        val carbsG:      Double,
-        val fatProteinG: Double,
-        var carbSeenG:   Double = 0.0,
-        var fpSeenG:     Double = 0.0,
+        /** When the tail starts, 0 when the meal has no pre-bolus 3. */
+        val tailFromMs:  Long,
+        val planned:     DoubleArray,
+        val seen:        DoubleArray = DoubleArray(PARTS),
+        val low:         BooleanArray = BooleanArray(PARTS),
+        val under:       BooleanArray = BooleanArray(PARTS),
         var episodeStartMs: Long = 0L,
         var episodeGrams: Double = 0.0,
         var startBgMgdl: Double = 0.0,
         var riseAfterMs: Long = -1L,
-        var carbLow:     Boolean = false,
-        var fpLow:       Boolean = false,
-        var carbUnder:   Boolean = false,
-        var fpUnder:     Boolean = false,
         var dropReason:  String = ""
     )
 
     private val states = mutableMapOf<String, State>()
     private val watches = mutableListOf<Watch>()
+    /** Seen ÷ planned of the last meals, one list for each part. */
+    private val general = Array(PARTS) { mutableListOf<Double>() }
 
     /** Called with one line for the learning journal each time a meal is judged. */
     var onOutcome: ((String) -> Unit)? = null
@@ -70,17 +80,28 @@ class SavedMealLearningImpl @Inject constructor(
     }
 
     override fun learned(name: String): LearnedMeal? = synchronized(this) {
-        states[name]?.let { LearnedMeal(it.carbFactor, it.fatProteinFactor, it.meals, it.soon.count { s -> s }, it.soon.size) }
+        states[name]?.let { LearnedMeal(it.factors[0], it.factors[1], it.factors[2], it.meals, it.soon.count { s -> s }, it.soon.size) }
     }
 
-    override fun recordMeal(name: String, modeStartMs: Long, modeEndMs: Long, windowEndMs: Long, carbsG: Double, fatProteinG: Double) {
+    override fun general(): LearnedMeal? = synchronized(this) {
+        val meals = general.maxOf { it.size }
+        if (meals == 0) null
+        else LearnedMeal(generalFactor(0), generalFactor(1), generalFactor(2), meals, 0, 0, minMeals = GENERAL_MIN_MEALS)
+    }
+
+    /** 1.0 until the part has [GENERAL_MIN_MEALS] meals: a tail is only seen on heavy meals. */
+    private fun generalFactor(part: Int): Double =
+        if (general[part].size < GENERAL_MIN_MEALS) 1.0 else median(general[part]).coerceIn(GENERAL_MIN_FACTOR, GENERAL_MAX_FACTOR)
+
+    override fun recordMeal(name: String?, modeStartMs: Long, modeEndMs: Long, windowEndMs: Long, pb3DueMs: Long, carbsG: Double, waveG: Double, tailG: Double) {
         synchronized(this) {
             watches.removeAll { it.startMs == modeStartMs }
-            watches.add(Watch(name, modeStartMs, modeEndMs, windowEndMs, carbsG, fatProteinG))
+            val tailFrom = if (pb3DueMs > 0L && tailG > 0.0) pb3DueMs + TAIL_AFTER_PB3_MS else 0L
+            watches.add(Watch(name, modeStartMs, modeEndMs, windowEndMs, tailFrom, doubleArrayOf(carbsG, waveG, if (tailFrom > 0L) tailG else 0.0)))
             while (watches.size > MAX_WATCHES) watches.removeAt(0)
         }
         save()
-        aapsLogger.debug(LTag.APS, "SavedMealLearning: watching $name")
+        aapsLogger.debug(LTag.APS, "SavedMealLearning: watching ${name ?: "a meal"}")
     }
 
     override fun dropMeal(modeStartMs: Long) {
@@ -92,7 +113,7 @@ class SavedMealLearningImpl @Inject constructor(
         if (name == newName) return
         synchronized(this) {
             states.remove(name)?.let { states[newName] = it }
-            watches.replaceAll { w -> if (w.name == name) copyWatch(w, newName) else w }
+            watches.replaceAll { w -> if (w.name == name) w.copyAs(newName) else w }
         }
         save()
     }
@@ -100,16 +121,18 @@ class SavedMealLearningImpl @Inject constructor(
     override fun forget(name: String) {
         synchronized(this) {
             states.remove(name)
-            watches.removeAll { it.name == name }
+            // Still counts for the general factors, just not for the meal.
+            watches.replaceAll { w -> if (w.name == name) w.copyAs(null) else w }
         }
         save()
     }
 
     /**
      * True while a saved meal is being watched at [nowMs]. The mode ISF and DURA learners then sit the episode
-     * out, so a spike is not corrected by two learners.
+     * out, so a spike is not corrected by two learners. Meals that are not saved leave them learning: the general
+     * factors move slowly, over many meals.
      */
-    fun watching(nowMs: Long): Boolean = synchronized(this) { watches.any { nowMs >= it.startMs && nowMs <= it.windowEndMs + LOW_WATCH_MS } }
+    fun watching(nowMs: Long): Boolean = synchronized(this) { watches.any { it.name != null && nowMs >= it.startMs && nowMs <= it.windowEndMs + LOW_WATCH_MS } }
 
     /**
      * Call once per loop cycle.
@@ -136,8 +159,7 @@ class SavedMealLearningImpl @Inject constructor(
         val done = synchronized(this) {
             for (w in watches) {
                 if (nowMs < w.startMs || w.dropReason.isNotEmpty()) continue
-                val inWindow = nowMs <= w.windowEndMs
-                if (inWindow) {
+                if (nowMs <= w.windowEndMs) {
                     watchMode(w, nowMs, activeMode, modeStartMs)
                     if (contaminated && w.dropReason.isEmpty()) w.dropReason = "second helping, exercise, pod boost or carbs"
                     if (w.dropReason.isNotEmpty()) continue
@@ -145,19 +167,21 @@ class SavedMealLearningImpl @Inject constructor(
                     noteRise(w, nowMs, bgMgdl)
                 }
                 if (nowMs <= w.windowEndMs + LOW_WATCH_MS) {
-                    val carbPart = nowMs - w.startMs < CARB_PHASE_MS
-                    when {
-                        lowActive && carbPart        -> w.carbLow = true
-                        lowActive                    -> w.fpLow = true
-                        undershootActive && carbPart -> w.carbUnder = true
-                        undershootActive             -> w.fpUnder = true
-                    }
+                    val part = partAt(w, nowMs)
+                    if (lowActive) w.low[part] = true
+                    else if (undershootActive) w.under[part] = true
                 }
             }
             watches.filter { nowMs > it.windowEndMs + LOW_WATCH_MS }.also { watches.removeAll(it) }
         }
         done.forEach { judge(it) }
         save()
+    }
+
+    private fun partAt(w: Watch, nowMs: Long): Int = when {
+        nowMs - w.startMs < CARB_PHASE_MS       -> Part.CARBS.ordinal
+        w.tailFromMs > 0L && nowMs >= w.tailFromMs -> Part.TAIL.ordinal
+        else                                    -> Part.WAVE.ordinal
     }
 
     /** The meal must still be this mode, or the Protein/Fat that follows it. */
@@ -180,8 +204,7 @@ class SavedMealLearningImpl @Inject constructor(
         val added = if (episodeStartMs == w.episodeStartMs) episodeGrams - w.episodeGrams else episodeGrams
         w.episodeStartMs = episodeStartMs
         w.episodeGrams = episodeGrams
-        if (added <= 0.0) return
-        if (nowMs - w.startMs < CARB_PHASE_MS) w.carbSeenG += added else w.fpSeenG += added
+        if (added > 0.0) w.seen[partAt(w, nowMs)] += added
     }
 
     private fun noteRise(w: Watch, nowMs: Long, bgMgdl: Double) {
@@ -191,28 +214,46 @@ class SavedMealLearningImpl @Inject constructor(
     }
 
     private fun judge(w: Watch) {
+        val label = w.name ?: "Meal"
         if (w.dropReason.isNotEmpty()) {
-            note("${w.name}: not learned from, ${w.dropReason}")
+            note("$label: not learned from, ${w.dropReason}")
             return
         }
+        // A part too small to learn from passes its low on to the part before it.
+        val low = w.low.copyOf()
+        val under = w.under.copyOf()
+        for (p in PARTS - 1 downTo 1) if (w.planned[p] < MIN_PART_G) {
+            low[p - 1] = low[p - 1] || low[p]; under[p - 1] = under[p - 1] || under[p]
+        }
+        val anyLow = low.any { it }
         val text = synchronized(this) {
-            val s = states.getOrPut(w.name) { State() }
-            val anyLow = w.carbLow || w.fpLow
-            // Without fat and protein to blame, a late low is the carbs' too.
-            val hasFp = w.fatProteinG >= MIN_PART_G
-            val carbLow = w.carbLow || (!hasFp && w.fpLow)
-            val carbUnder = w.carbUnder || (!hasFp && w.fpUnder)
-            val carbBefore = s.carbFactor
-            val fpBefore = s.fatProteinFactor
-            if (w.carbsG >= MIN_PART_G) s.carbFactor = step(s.carbFactor, w.carbSeenG / w.carbsG, carbLow, carbUnder, anyLow)
-            if (hasFp) s.fatProteinFactor = step(s.fatProteinFactor, w.fpSeenG / w.fatProteinG, w.fpLow, w.fpUnder, anyLow)
-            s.meals++
-            if (w.riseAfterMs >= 0L) {
-                s.soon.add(w.riseAfterMs <= ATE_SOON_MS)
-                while (s.soon.size > RECENT_MEALS) s.soon.removeAt(0)
+            val parts = mutableListOf<String>()
+            for (p in 0 until PARTS) {
+                if (w.planned[p] < MIN_PART_G) continue
+                val ratio = (w.seen[p] / w.planned[p]).coerceIn(MIN_RATIO, MAX_RATIO)
+                // General: a low counts as less than this part's factor now, so lows pull the median down.
+                val now = generalFactor(p)
+                general[p].add(if (low[p]) minOf(ratio, now * (1.0 - LOW_STEP)) else ratio)
+                while (general[p].size > GENERAL_MEALS) general[p].removeAt(0)
+                val name = PART_NAMES[p]
+                val seen = "%.0f/%.0f g".format(w.seen[p], w.planned[p]) + if (low[p]) " low" else ""
+                if (w.name != null) {
+                    val s = states.getOrPut(w.name) { State() }
+                    val before = s.factors[p]
+                    s.factors[p] = step(before, ratio, low[p], under[p], anyLow)
+                    parts += "$name $seen, ×${"%.2f".format(before)}→${"%.2f".format(s.factors[p])}"
+                } else parts += "$name $seen"
             }
-            "${w.name}: carbs ${"%.0f".format(w.carbSeenG)}/${"%.0f".format(w.carbsG)} g${if (w.carbLow) " low" else ""}, ×${"%.2f".format(carbBefore)}→${"%.2f".format(s.carbFactor)}; " +
-                "fat/protein ${"%.0f".format(w.fpSeenG)}/${"%.0f".format(w.fatProteinG)} g${if (w.fpLow) " low" else ""}, ×${"%.2f".format(fpBefore)}→${"%.2f".format(s.fatProteinFactor)} (${s.meals} meals)"
+            w.name?.let { n ->
+                val s = states.getOrPut(n) { State() }
+                s.meals++
+                if (w.riseAfterMs >= 0L) {
+                    s.soon.add(w.riseAfterMs <= ATE_SOON_MS)
+                    while (s.soon.size > RECENT_MEALS) s.soon.removeAt(0)
+                }
+                parts += "${s.meals} meals"
+            }
+            "$label: ${parts.joinToString("; ")}"
         }
         note(text)
     }
@@ -222,34 +263,77 @@ class SavedMealLearningImpl @Inject constructor(
         onOutcome?.invoke(text)
     }
 
-    /** Forgets everything learned. */
-    fun reset() {
-        synchronized(this) { states.clear(); watches.clear() }
+    override val undoName = "savedMeal"
+
+    override fun exportState(): String {
+        save()
+        return synchronized(this) { learnedJson().toString() }
+    }
+
+    /** Puts back what was learned. Meals being watched now are dropped: they ate on the bad site too. */
+    override fun importState(state: String) {
+        synchronized(this) {
+            states.clear(); watches.clear(); general.forEach { it.clear() }
+            try {
+                readLearned(JSONObject(state))
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SavedMealLearning: could not read restored state: ${e.message}")
+                states.clear(); general.forEach { it.clear() }
+            }
+        }
         save()
     }
 
-    private fun copyWatch(w: Watch, name: String) = Watch(
-        name, w.startMs, w.modeEndMs, w.windowEndMs, w.carbsG, w.fatProteinG, w.carbSeenG, w.fpSeenG, w.episodeStartMs, w.episodeGrams,
-        w.startBgMgdl, w.riseAfterMs, w.carbLow, w.fpLow, w.carbUnder, w.fpUnder, w.dropReason
-    )
+    /** Forgets everything learned. */
+    fun reset() {
+        synchronized(this) { states.clear(); watches.clear(); general.forEach { it.clear() } }
+        save()
+    }
+
+    private fun Watch.copyAs(name: String?) =
+        Watch(name, startMs, modeEndMs, windowEndMs, tailFromMs, planned, seen, low, under, episodeStartMs, episodeGrams, startBgMgdl, riseAfterMs, dropReason)
+
+    private fun learnedJson() = JSONObject()
+        .put(K_MEALS, JSONObject().apply {
+            states.forEach { (name, s) -> put(name, JSONObject().put("f", JSONArray(s.factors.toList())).put("n", s.meals).put("soon", JSONArray(s.soon))) }
+        })
+        .put(K_GENERAL, JSONArray().apply { general.forEach { put(JSONArray(it)) } })
+
+    private fun readLearned(json: JSONObject) {
+        json.optJSONObject(K_MEALS)?.let { meals ->
+            meals.keys().forEach { name ->
+                val o = meals.getJSONObject(name)
+                // Before the three parts, a meal kept "c" for the carbs and one "f" for all of the fat and protein.
+                val factors = o.optJSONArray("f")?.let { f -> DoubleArray(PARTS) { if (it < f.length()) f.getDouble(it) else 1.0 } }
+                    ?: o.optDouble("f", 1.0).let { fp -> doubleArrayOf(o.optDouble("c", 1.0), fp, fp) }
+                val soon = mutableListOf<Boolean>()
+                o.optJSONArray("soon")?.let { a -> for (i in 0 until a.length()) soon.add(a.getBoolean(i)) }
+                states[name] = State(factors, o.getInt("n"), soon)
+            }
+        }
+        json.optJSONArray(K_GENERAL)?.let { g ->
+            for (p in 0 until minOf(PARTS, g.length())) {
+                val a = g.getJSONArray(p)
+                for (i in 0 until a.length()) general[p].add(a.getDouble(i))
+            }
+        }
+    }
+
+    private fun DoubleArray.json() = JSONArray(toList())
+    private fun BooleanArray.json() = JSONArray(toList())
+    private fun JSONArray.doubles() = DoubleArray(PARTS) { if (it < length()) getDouble(it) else 0.0 }
+    private fun JSONArray.booleans() = BooleanArray(PARTS) { it < length() && getBoolean(it) }
 
     private fun save() {
         val json = synchronized(this) {
-            JSONObject()
-                .put(K_MEALS, JSONObject().apply {
-                    states.forEach { (name, s) ->
-                        put(name, JSONObject().put("c", s.carbFactor).put("f", s.fatProteinFactor).put("n", s.meals).put("soon", JSONArray(s.soon)))
-                    }
-                })
-                .put(K_WATCHES, JSONArray().apply {
-                    watches.forEach { w ->
-                        put(JSONObject()
-                                .put("name", w.name).put("s", w.startMs).put("me", w.modeEndMs).put("e", w.windowEndMs)
-                                .put("c", w.carbsG).put("f", w.fatProteinG).put("cs", w.carbSeenG).put("fs", w.fpSeenG)
-                                .put("es", w.episodeStartMs).put("eg", w.episodeGrams).put("bg", w.startBgMgdl).put("rise", w.riseAfterMs)
-                                .put("cl", w.carbLow).put("fl", w.fpLow).put("cu", w.carbUnder).put("fu", w.fpUnder).put("drop", w.dropReason))
-                    }
-                })
+            learnedJson().put(K_WATCHES, JSONArray().apply {
+                watches.forEach { w ->
+                    put(JSONObject()
+                            .put("name", w.name ?: JSONObject.NULL).put("s", w.startMs).put("me", w.modeEndMs).put("e", w.windowEndMs).put("tf", w.tailFromMs)
+                            .put("p", w.planned.json()).put("seen", w.seen.json()).put("low", w.low.json()).put("under", w.under.json())
+                            .put("es", w.episodeStartMs).put("eg", w.episodeGrams).put("bg", w.startBgMgdl).put("rise", w.riseAfterMs).put("drop", w.dropReason))
+                }
+            })
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinSavedMealLearning.key, json.toString()) }
     }
@@ -259,45 +343,57 @@ class SavedMealLearningImpl @Inject constructor(
         if (raw.isBlank()) return
         try {
             val json = JSONObject(raw)
-            json.optJSONObject(K_MEALS)?.let { meals ->
-                meals.keys().forEach { name ->
-                    val o = meals.getJSONObject(name)
-                    val soon = mutableListOf<Boolean>()
-                    o.optJSONArray("soon")?.let { a -> for (i in 0 until a.length()) soon.add(a.getBoolean(i)) }
-                    states[name] = State(o.getDouble("c"), o.getDouble("f"), o.getInt("n"), soon)
-                }
-            }
+            readLearned(json)
             json.optJSONArray(K_WATCHES)?.let { a ->
                 for (i in 0 until a.length()) {
                     val o = a.getJSONObject(i)
+                    // A watch saved before the three parts existed is dropped; it is at most one meal.
+                    val planned = o.optJSONArray("p") ?: continue
                     watches.add(
                         Watch(
-                            o.getString("name"), o.getLong("s"), o.getLong("me"), o.getLong("e"), o.getDouble("c"), o.getDouble("f"),
-                            o.optDouble("cs", 0.0), o.optDouble("fs", 0.0), o.optLong("es", 0L), o.optDouble("eg", 0.0),
-                            o.optDouble("bg", 0.0), o.optLong("rise", -1L), o.optBoolean("cl"), o.optBoolean("fl"),
-                            o.optBoolean("cu"), o.optBoolean("fu"), o.optString("drop", "")
+                            if (o.isNull("name")) null else o.getString("name"), o.getLong("s"), o.getLong("me"), o.getLong("e"), o.optLong("tf", 0L),
+                            planned.doubles(), o.getJSONArray("seen").doubles(), o.getJSONArray("low").booleans(), o.getJSONArray("under").booleans(),
+                            o.optLong("es", 0L), o.optDouble("eg", 0.0), o.optDouble("bg", 0.0), o.optLong("rise", -1L), o.optString("drop", "")
                         )
                     )
                 }
             }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SavedMealLearning: could not read saved state: ${e.message}")
-            states.clear(); watches.clear()
+            states.clear(); watches.clear(); general.forEach { it.clear() }
         }
+    }
+
+    private fun median(values: List<Double>): Double {
+        val s = values.sorted()
+        return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2.0
     }
 
     companion object {
 
+        private val PARTS = Part.entries.size
+        private val PART_NAMES = listOf("carbs", "wave", "tail")
+
         /** The first part of a meal counts as its carbs; what comes after, as its fat and protein. */
         const val CARB_PHASE_MS = 120 * 60_000L
+        /** The tail starts when pre-bolus 3 has had about an hour to work. */
+        const val TAIL_AFTER_PB3_MS = 60 * 60_000L
         /** Lows are still charged to the meal this long after its window. */
         const val LOW_WATCH_MS = 60 * 60_000L
         const val LOW_STEP = 0.15
         const val UNDERSHOOT_STEP = 0.07
-        /** The most one meal can move a factor, up or down, without a low. */
+        /** The most one meal can move a saved meal's factor, up or down, without a low. */
         const val MAX_STEP = 0.12
         const val MIN_FACTOR = 0.6
         const val MAX_FACTOR = 1.5
+        /** One odd meal (half of it left, a site problem) may not count as more than this. */
+        const val MIN_RATIO = 0.3
+        const val MAX_RATIO = 3.0
+        /** The general factors use the last this many meals, and only from this many. */
+        const val GENERAL_MEALS = 20
+        const val GENERAL_MIN_MEALS = 3
+        const val GENERAL_MIN_FACTOR = 0.7
+        const val GENERAL_MAX_FACTOR = 1.5
         /** A part of the meal smaller than this is too noisy to learn from. */
         const val MIN_PART_G = 10.0
         /** A rise this soon after the start means the meal was eaten without waiting. */
@@ -311,6 +407,7 @@ class SavedMealLearningImpl @Inject constructor(
         const val MATCH_EARLY_MS = 60_000L
         private const val MAX_WATCHES = 5
         private const val K_MEALS = "meals"
+        private const val K_GENERAL = "general"
         private const val K_WATCHES = "watches"
 
         /**

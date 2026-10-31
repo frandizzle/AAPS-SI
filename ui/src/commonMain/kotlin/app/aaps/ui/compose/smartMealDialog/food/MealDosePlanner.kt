@@ -14,7 +14,8 @@ import kotlin.math.min
  * @param carbRatio        grams of carbs one unit covers, from the profile
  * @param factor           learned correction for the carbs: from `MealEstimateCalibration` (how this user's meals
  *                         compare with estimates), or what a saved meal learned about itself
- * @param fatProteinFactor the same for the fat and protein; null uses [factor], set when a saved meal learned its own
+ * @param waveFactor       the same for the fat and protein wave (pre-bolus 2); null uses [factor]
+ * @param tailFactor       the same for the tail of a heavy meal (pre-bolus 3); null uses the wave factor
  * @param pb2DelayMin      pre-bolus 2, counted from the start of the mode
  * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
@@ -29,7 +30,8 @@ data class MealPlanSettings(
     val carbRatio: Double,
     val factor: Double,
     val bolusStep: Double,
-    val fatProteinFactor: Double? = null,
+    val waveFactor: Double? = null,
+    val tailFactor: Double? = null,
     val pb2DelayMin: Int = MealDosePlanner.PB2_DELAY_MIN,
     val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN
 )
@@ -42,6 +44,10 @@ data class MealPlanSettings(
  * Pre-bolus 2 and 3 only fire later if BG is above target and not falling, so a meal that turns out
  * smaller than estimated does not get them. The loop covers anything above the plan from real BG.
  *
+ * DURA and Protein/Fat after the meal are not turned on: the pre-boluses and a mode long enough for the fat
+ * and protein ([MealDosePlanner.durationFor]) cover the meal, and both on top would cover the tail twice.
+ * The user can still switch them on.
+ *
  * @param carbsU     insulin for the carbs, before shares and caps
  * @param fatProteinU insulin for fat and protein, before shares and caps
  * @param capped     the plan was cut to the max pre-bolus or max total
@@ -53,8 +59,6 @@ data class MealPlan(
     val pb3U: Double,
     val pb3DelayMin: Int,
     val durationMin: Int,
-    val duraEnabled: Boolean,
-    val pfAfter: Boolean,
     val carbsU: Double,
     val fatProteinU: Double,
     val capped: Boolean
@@ -92,8 +96,6 @@ data class MealAddition(
     val pb2AddU: Double,
     val pb3AddU: Double,
     val minutesLeft: Int,
-    val duraEnabled: Boolean,
-    val pfAfter: Boolean,
     val carbsU: Double,
     val fatProteinU: Double,
     val capped: Boolean,
@@ -112,7 +114,7 @@ object MealDosePlanner {
     const val PB3_DELAY_MIN = 90
     /** Below this many fat-protein units there is no pre-bolus 2: the loop covers so little by itself. */
     const val FPU_PB2 = 1.0
-    /** From this many fat-protein units, DURA is on and Protein/Fat follows the meal. */
+    /** Food added with this many fat-protein units keeps the mode on as long as a meal of it would. */
     const val FPU_SLOW_MEAL = 2.0
     /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
     const val FPU_HEAVY_MEAL = 3.0
@@ -120,10 +122,9 @@ object MealDosePlanner {
     fun plan(totals: MealTotals, settings: MealPlanSettings): MealPlan {
         val ratio = settings.carbRatio.takeIf { it > 0.0 } ?: return empty(totals)
         val carbsU = totals.carbsG * settings.factor / ratio
-        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * (settings.fatProteinFactor ?: settings.factor) / ratio
+        val (fatProteinU, fp2, fp3) = fatProteinDoses(totals.fpu, ratio, settings)
 
         var pb1 = carbsU * settings.carbPct / 100.0
-        val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)
         var pb2 = fp2
         var pb3 = fp3
         val wanted = pb1 + pb2 + pb3
@@ -145,7 +146,6 @@ object MealDosePlanner {
         // Pre-bolus 3 counts from pre-bolus 2, so without a pre-bolus 2 it would never fire.
         if (pb2 <= 0.0) pb3 = 0.0
 
-        val slow = totals.fpu >= FPU_SLOW_MEAL
         return MealPlan(
             pb1U = pb1,
             pb2U = pb2,
@@ -153,8 +153,6 @@ object MealDosePlanner {
             pb3U = pb3,
             pb3DelayMin = settings.pb3DelayMin,
             durationMin = durationFor(totals.fpu),
-            duraEnabled = slow,
-            pfAfter = slow,
             carbsU = carbsU,
             fatProteinU = fatProteinU,
             capped = pb1 + pb2 + pb3 + settings.bolusStep < wanted
@@ -167,18 +165,17 @@ object MealDosePlanner {
      *
      * The carbs are given now. The fat and protein dose goes into pre-bolus 2 and 3 only while they still
      * wait, split as for a new meal when both wait. If they have fired, no new one is made: for fat and
-     * protein the mode runs longer, with DURA and Protein/Fat after it.
+     * protein the mode runs longer, as long as a new meal with that much fat and protein would.
      */
     fun planAddition(totals: MealTotals, settings: MealPlanSettings, running: RunningMeal): MealAddition {
         val slow = totals.fpu >= FPU_SLOW_MEAL
         val minutesLeft = max(running.minutesLeft, if (slow) durationFor(totals.fpu) else ADD_MIN_LEFT_MIN)
         val ratio = settings.carbRatio.takeIf { it > 0.0 }
-            ?: return MealAddition(0.0, 0.0, 0.0, minutesLeft, false, false, 0.0, 0.0, false, false, false)
+            ?: return MealAddition(0.0, 0.0, 0.0, minutesLeft, 0.0, 0.0, false, false, false)
         val carbsU = totals.carbsG * settings.factor / ratio
-        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * (settings.fatProteinFactor ?: settings.factor) / ratio
+        val (fatProteinU, fp2, fp3) = fatProteinDoses(totals.fpu, ratio, settings)
 
         var now = carbsU * settings.carbPct / 100.0
-        val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)
         val pb2Waits = running.pb2WaitingU > 0.0
         val pb3Waits = running.pb3WaitingU > 0.0
         // A pre-bolus that has fired cannot take its part, so the one still waiting takes all of it.
@@ -214,8 +211,6 @@ object MealDosePlanner {
             pb2AddU = floorToStep(pb2, settings.bolusStep),
             pb3AddU = floorToStep(pb3, settings.bolusStep),
             minutesLeft = minutesLeft,
-            duraEnabled = slow,
-            pfAfter = slow,
             carbsU = carbsU,
             fatProteinU = fatProteinU,
             capped = capped,
@@ -225,29 +220,51 @@ object MealDosePlanner {
     }
 
     /**
-     * The fat and protein dose for pre-bolus 2 and pre-bolus 3. A light meal gets none, a heavy one has it
+     * The insulin for the fat and protein (before the share given up front), and the doses for pre-bolus 2 and
+     * pre-bolus 3, each with its own learned factor. A light meal gets no pre-bolus 2, a heavy one has the dose
      * split between the two.
      */
-    private fun splitFatProtein(fpu: Double, fatProteinU: Double, settings: MealPlanSettings): Pair<Double, Double> {
-        if (fpu < FPU_PB2) return 0.0 to 0.0
-        val dose = fatProteinU * settings.fatProteinPct / 100.0
-        if (fpu < FPU_HEAVY_MEAL) return dose to 0.0
-        val pb3 = dose * settings.pb3SharePct / 100.0
-        return dose - pb3 to pb3
+    private fun fatProteinDoses(fpu: Double, ratio: Double, settings: MealPlanSettings): Triple<Double, Double, Double> {
+        val (waveG, tailG) = fatProteinGrams(fpu, settings.pb3SharePct)
+        val wave = settings.waveFactor ?: settings.factor
+        val tail = settings.tailFactor ?: wave
+        val waveU = waveG * wave / ratio
+        val tailU = tailG * tail / ratio
+        if (fpu < FPU_PB2) return Triple(waveU + tailU, 0.0, 0.0)
+        val share = settings.fatProteinPct / 100.0
+        return Triple(waveU + tailU, waveU * share, tailU * share)
+    }
+
+    /**
+     * The carb equivalent of the fat and protein, in grams, that pre-bolus 2 and pre-bolus 3 cover. Only a heavy
+     * meal has a part for pre-bolus 3. The meal learner is told the same split, so it judges each part against
+     * what that pre-bolus was for.
+     */
+    fun fatProteinGrams(fpu: Double, pb3SharePct: Int): Pair<Double, Double> {
+        val grams = fpu * MealTotals.FPU_CARB_G
+        if (fpu < FPU_HEAVY_MEAL) return grams to 0.0
+        val tail = grams * pb3SharePct / 100.0
+        return grams - tail to tail
     }
 
     /** Food added to a running meal keeps the mode on for at least this long, so the loop still treats it as a meal. */
     const val ADD_MIN_LEFT_MIN = 120
 
-    /** Warsaw method: the more fat and protein, the longer the meal keeps acting. */
+    /**
+     * Warsaw method: the more fat and protein, the longer the meal keeps acting. The mode has to cover all
+     * of it, since DURA and Protein/Fat are not turned on after it. Kept to 6 h even for the heaviest meals:
+     * after that the loop's own fasting settings handle what is left, and a long meal mode with a strong
+     * meal ISF is a risk of its own.
+     */
     fun durationFor(fpu: Double): Int = when {
         fpu < 2.0 -> 180
         fpu < 3.0 -> 240
-        else      -> 300
+        fpu < 4.0 -> 300
+        else      -> 360
     }
 
     private fun empty(totals: MealTotals) =
-        MealPlan(0.0, 0.0, PB2_DELAY_MIN, 0.0, PB3_DELAY_MIN, durationFor(totals.fpu), false, false, 0.0, 0.0, false)
+        MealPlan(0.0, 0.0, PB2_DELAY_MIN, 0.0, PB3_DELAY_MIN, durationFor(totals.fpu), 0.0, 0.0, false)
 
     private fun floorToStep(u: Double, step: Double): Double =
         if (step <= 0.0) u else floor(u / step + 1e-9) * step

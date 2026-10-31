@@ -216,7 +216,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private val learningSnapshots = LearningSnapshots(siteCheckFiles::readSnapshots, siteCheckFiles::writeSnapshots)
     /** Every learner a bad site can mislead. Its order does not matter. */
     private val undoableLearners: List<UndoableLearner> = listOf(
-        circadianLearner, basalLearner, aggressionLearner, modeIsfLearner, uamEntryFractionLearner, duraStrengthLearner, profileLearner
+        circadianLearner, basalLearner, aggressionLearner, modeIsfLearner, uamEntryFractionLearner, duraStrengthLearner, profileLearner,
+        savedMealLearning
     )
     /** "This site was bad" from the tab, done on the next loop cycle so no learner is changed while it runs. */
     @Volatile private var pendingSiteBad: SiteBadChoice? = null
@@ -969,6 +970,10 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     fun deleteFoodLogEntry(timeMs: Long) = foodLog.delete(timeMs)
+
+    /** Changes how much of a logged food was eaten: [factor] 0.5 for half. */
+    fun scaleFoodLogEntry(entry: FoodLogEntry, factor: Double) =
+        foodLog.update(entry.copy(carbsG = entry.carbsG * factor, fibreG = entry.fibreG * factor, proteinG = entry.proteinG * factor, fatG = entry.fatG * factor))
 
     // ── Learning journal digest for the continuous learners ───────────────────
     // Circadian ISF/basal and aggressiveness move a little every cycle; journaling each move would bury

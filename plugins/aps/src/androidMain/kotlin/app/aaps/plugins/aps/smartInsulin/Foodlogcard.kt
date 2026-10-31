@@ -1,5 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import android.text.format.DateFormat
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,21 +12,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.aaps.core.interfaces.smartInsulin.FoodLog
+import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.ui.compose.AapsTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -36,12 +48,18 @@ import java.util.Locale
  *
  * @param daysBack 0 for today
  * @param onDelete asks before removing an entry
+ * @param onScale  changes how much of an entry was eaten, for example 0.5 for half
  */
 @Composable
-fun FoodLogSection(day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (Int) -> Unit, onDelete: (Long, String) -> Unit) {
+fun FoodLogSection(
+    day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (Int) -> Unit, onDelete: (Long, String) -> Unit, onScale: (FoodLogEntry, Double) -> Unit
+) {
+    var changing by remember { mutableStateOf<FoodLogEntry?>(null) }
     val colors = AapsTheme.generalColors
     val dayFmt = remember { SimpleDateFormat("EEE d MMM", Locale.getDefault()) }
-    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    // The phone's own choice of 12 or 24 hour time, for example "3:44 pm".
+    val context = LocalContext.current
+    val timeFmt = remember { DateFormat.getTimeFormat(context) }
     val kcal = day.entries.sumOf { it.kcal }
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -97,7 +115,7 @@ fun FoodLogSection(day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     day.entries.asReversed().forEach { e ->
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { changing = e }) {
             Text(timeFmt.format(Date(e.timeMs)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Text(e.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
@@ -110,7 +128,38 @@ fun FoodLogSection(day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (
             IconButton(onClick = { onDelete(e.timeMs, e.name) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete") }
         }
     }
+    if (day.entries.isNotEmpty())
+        Text("Tap an entry to change how much was eaten.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+    changing?.let { e -> AmountDialog(e, onSave = { onScale(e, it); changing = null }, onDismiss = { changing = null }) }
 }
+
+/** How much of a logged food was really eaten, as a share of what was logged: ×0.5 for half, ×2 for twice. */
+@Composable
+private fun AmountDialog(entry: FoodLogEntry, onSave: (Double) -> Unit, onDismiss: () -> Unit) {
+    var factor by remember { mutableDoubleStateOf(1.0) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("How much was eaten?") },
+        text = {
+            Column {
+                Text(entry.name, style = MaterialTheme.typography.bodyMedium)
+                SiSpacer(8)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { factor = (factor - AMOUNT_STEP).coerceAtLeast(AMOUNT_STEP) }) { Icon(Icons.Filled.Remove, contentDescription = "Less") }
+                    Text("×%.2f".format(factor), style = MaterialTheme.typography.titleLarge)
+                    IconButton(onClick = { factor = (factor + AMOUNT_STEP).coerceAtMost(MAX_AMOUNT) }) { Icon(Icons.Filled.Add, contentDescription = "More") }
+                    Text("%,.0f kcal".format(entry.kcal * factor), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 8.dp))
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(factor) }, enabled = factor != 1.0) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private const val AMOUNT_STEP = 0.25
+private const val MAX_AMOUNT = 5.0
 
 @Composable
 private fun MacroColumn(label: String, grams: Double, goal: Int, color: Color, modifier: Modifier) {

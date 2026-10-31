@@ -6,6 +6,7 @@ import app.aaps.core.keys.interfaces.Preferences
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import kotlin.math.abs
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -90,6 +91,20 @@ object SavedFoodList {
     }
 
     private fun sameFood(item: FoodItem) = item.name.lowercase() to item.baseGrams
+
+    /**
+     * True when [after] is a small change of [before]: carbs, and fat and protein, each within [SIMILAR_SHARE]
+     * of before (or both too small to matter). What a meal learned is kept over a small change only.
+     */
+    fun similar(before: List<FoodItem>, after: List<FoodItem>): Boolean {
+        val b = before.totals()
+        val a = after.totals()
+        fun close(x: Double, y: Double) = (x < SIMILAR_MIN_G && y < SIMILAR_MIN_G) || abs(x - y) <= SIMILAR_SHARE * maxOf(x, y)
+        return close(b.carbsG, a.carbsG) && close(b.fpu * MealTotals.FPU_CARB_G, a.fpu * MealTotals.FPU_CARB_G)
+    }
+
+    const val SIMILAR_SHARE = 0.2
+    const val SIMILAR_MIN_G = 10.0
 
     /** An item from My foods or the recent list, ready to add to the meal. */
     fun forMeal(item: FoodItem): FoodItem = item.copy(source = FoodSource.SAVED)

@@ -46,10 +46,4 @@ enum class BooleanNonKey(
     // pairing.
     NsClientControlSecretReplaced("nsclient_control_secret_replaced", false, exportable = false),
 
-    // ── SmartInsulin: learner state and per-mode DURA settings ──
-    ApsSmartInsulinBreakfastDuraEnabled(key = "si_breakfast_dura_enabled", defaultValue = false),
-    ApsSmartInsulinLunchDuraEnabled(key = "si_lunch_dura_enabled", defaultValue = false),
-    ApsSmartInsulinDinnerDuraEnabled(key = "si_dinner_dura_enabled", defaultValue = false),
-    ApsSmartInsulinLowCarbDuraEnabled(key = "si_lowcarb_dura_enabled", defaultValue = false),
-    ApsSmartInsulinExtendedDuraEnabled(key = "si_extended_dura_enabled", defaultValue = false),
 }

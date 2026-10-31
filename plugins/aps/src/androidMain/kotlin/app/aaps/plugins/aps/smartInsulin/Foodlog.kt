@@ -41,6 +41,15 @@ class FoodLogImpl @Inject constructor(
 
     override fun entries(fromMs: Long, toMs: Long): List<FoodLogEntry> = synchronized(this) { log.filter { it.timeMs in fromMs until toMs } }
 
+    override fun update(entry: FoodLogEntry) {
+        val found = synchronized(this) {
+            val i = log.indexOfFirst { it.timeMs == entry.timeMs }
+            if (i >= 0) log[i] = entry
+            i >= 0
+        }
+        if (found) save()
+    }
+
     override fun delete(timeMs: Long) {
         val removed = synchronized(this) { log.removeAll { it.timeMs == timeMs } }
         if (removed) save()
