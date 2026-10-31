@@ -37,6 +37,8 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.clientcontrol.failText
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
+import app.aaps.core.interfaces.smartInsulin.FoodLog
+import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.ui.UiStrings
@@ -150,7 +152,12 @@ data class SmartMealDialogUiState(
     /** The food list is one saved meal, so the meal learns about itself. Null for any other list. */
     val sourceMeal: String? = null,
     /** What the saved meals have learned, by name. */
-    val learnedMeals: Map<String, LearnedMeal> = emptyMap()
+    val learnedMeals: Map<String, LearnedMeal> = emptyMap(),
+
+    /** The food list was logged without a meal, this many kcal. Shown until the list changes. */
+    val loggedKcal: Double? = null,
+    /** Log only was asked for a list that looks wrong: its kcal, while the user is asked to check. */
+    val logCheckKcal: Double? = null
 ) {
 
     /** What [sourceMeal] has learned, or null. */
@@ -193,6 +200,7 @@ class SmartMealDialogViewModel(
     private val mealFoodRepository: MealFoodRepository,
     private val savedFoodStore: SavedFoodStore,
     private val savedMealLearning: SavedMealLearning,
+    private val foodLog: FoodLog,
     private val mealEstimateCalibration: MealEstimateCalibration,
     private val glucoseStatusProvider: GlucoseStatusProvider,
     private val iobCobCalculator: IobCobCalculator,
@@ -386,7 +394,7 @@ class SmartMealDialogViewModel(
                     is FoodLookupResult.Success -> {
                         savedFoodStore.remember(result.items)
                         val kept = if (replacesEstimate) s.foodItems.filter { it.source != FoodSource.ESTIMATE } else s.foodItems
-                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent, sourceMeal = null)
+                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent, sourceMeal = null, loggedKcal = null)
                     }
 
                     is FoodLookupResult.Failure -> s.copy(lookupBusy = false, lookupError = result.reason, lookupDetail = result.detail)
@@ -408,8 +416,42 @@ class SmartMealDialogViewModel(
 
     fun clearFood() {
         photoJpeg = null
-        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null) }
+        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null, loggedKcal = null) }
     }
+
+    // ── Food log ─────────────────────────────────────────────────────────────
+
+    /**
+     * Logs the food list for the calorie count without starting a meal or giving insulin, for a snack left to
+     * the loop. A list that looks wrong is held until the user checks it ([force] then logs it anyway).
+     */
+    fun logOnly(force: Boolean = false) {
+        val state = uiState.value
+        val entry = logEntry(state) ?: return
+        if (!force && looksWrong(state, entry)) {
+            _uiState.update { it.copy(logCheckKcal = entry.kcal) }
+            return
+        }
+        foodLog.add(entry)
+        clearFood()
+        _uiState.update { it.copy(loggedKcal = entry.kcal, logCheckKcal = null) }
+    }
+
+    fun cancelLogCheck() = _uiState.update { it.copy(logCheckKcal = null) }
+
+    private fun logEntry(state: SmartMealDialogUiState): FoodLogEntry? {
+        if (state.foodItems.isEmpty()) return null
+        val t = state.foodTotals
+        val name = (state.sourceMeal ?: state.foodItems.joinToString(", ") { it.name }).take(MAX_LOG_NAME)
+        return FoodLogEntry(dateUtil.now(), name, t.carbsG, t.fibreG, t.proteinG, t.fatG)
+    }
+
+    /** More than [FoodLog.CHECK_KCAL], or a food with more carbs, protein and fat than its own weight (bad label data). */
+    private fun looksWrong(state: SmartMealDialogUiState, entry: FoodLogEntry): Boolean =
+        entry.kcal > FoodLog.CHECK_KCAL || state.foodItems.any { it.carbsG + it.proteinG + it.fatG > it.grams * 1.05 }
+
+    private fun checkLine(state: SmartMealDialogUiState): ConfirmationLine? =
+        logEntry(state)?.takeIf { looksWrong(state, it) }?.let { ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_food_log_check, decimalFormatter.to0Decimal(it.kcal))) }
 
     // ── My foods ─────────────────────────────────────────────────────────────
 
@@ -476,7 +518,7 @@ class SmartMealDialogViewModel(
     /** @param sourceMeal the saved meal the list now is, or null when it is no longer one saved meal */
     private fun addItems(items: List<FoodItem>, sourceMeal: String?) = _uiState.update {
         it.copy(
-            foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, sourceMeal = sourceMeal,
+            foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, sourceMeal = sourceMeal, loggedKcal = null,
             savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent, learnedMeals = learnedMeals()
         )
     }
@@ -627,6 +669,7 @@ class SmartMealDialogViewModel(
         if (state.pfAfter)
             add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_pf_after)))
         foodLine(state)?.let { add(it) }
+        checkLine(state)?.let { add(it) }
     }
 
     private fun foodLine(state: SmartMealDialogUiState): ConfirmationLine? {
@@ -663,6 +706,7 @@ class SmartMealDialogViewModel(
         if (state.pfAfter && !state.runningPfAfter)
             add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_pf_after)))
         foodLine(state)?.let { add(it) }
+        checkLine(state)?.let { add(it) }
 
         // The limits are checked again here, because the amounts can be typed by hand.
         val now = readNow()
@@ -795,6 +839,7 @@ class SmartMealDialogViewModel(
         appScope.launch {
             if (state.addMode) {
                 commitAddition(state, bolusId)
+                logEntry(state)?.let { foodLog.add(it) }
                 // The bolus is for food that is being eaten, so it is given even if the meal ended meanwhile.
                 deliver(bolusId)
                 return@launch
@@ -823,6 +868,7 @@ class SmartMealDialogViewModel(
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             recordEstimate(state)
             recordSavedMeal(state)
+            logEntry(state)?.let { foodLog.add(it) }
             deliver(bolusId)
         }
     }
@@ -840,6 +886,7 @@ class SmartMealDialogViewModel(
     companion object {
 
         const val QUANTITY_STEP = 0.25
+        private const val MAX_LOG_NAME = 120
         private const val MIN_QUANTITY = 0.25
         private const val MAX_QUANTITY = 20.0
     }

@@ -63,6 +63,7 @@ class SmartInsulinSessionsTest {
             mealAbsorptionCsvLogger = mock(),
             mealEstimateCalibration = mock(),
             savedMealLearning       = mock(),
+            foodLog                 = mock(),
             siteCheckFiles          = mock(),
             modeIsfLearner        = mock(),
             uamEntryFractionLearner = mock(),

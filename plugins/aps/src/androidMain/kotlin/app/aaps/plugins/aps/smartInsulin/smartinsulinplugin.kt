@@ -66,6 +66,7 @@ import app.aaps.core.interfaces.resources.ResourceHelper
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
@@ -84,6 +85,7 @@ import app.aaps.core.objects.extensions.target
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -127,6 +129,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
     private val mealEstimateCalibration: MealEstimateCalibrationImpl,
     private val savedMealLearning:       SavedMealLearningImpl,
+    private val foodLog:                 FoodLogImpl,
     private val siteCheckFiles:          SiteCheckFiles,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
@@ -553,6 +556,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val profilesRawStatus: String, val tirRawLine: String, val avgBgMgdl24h: Double,
         val estimatedHba1c: Double, val bgWindowHours: Int, val activeDoseU: Double?,
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val activeAddedU: Double, val pb2Status: String, val pb3Status: String,
+        /** What pre-bolus 2 and 3 are set to give, 0 when there is none. */
+        val pb2PlannedU: Double, val pb3PlannedU: Double,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
@@ -772,6 +777,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activeDoseU = mealOverrideManager.activeDoseU, activePb2DoseU = mealOverrideManager.activePb2DoseU,
             activePb3DoseU = mealOverrideManager.activePb3DoseU, activeAddedU = mealOverrideManager.activeState?.addedU ?: 0.0,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
+            pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
@@ -942,6 +948,27 @@ open class SmartInsulinPlugin @Inject constructor(
 
     /** Learning journal, newest first, for the SI tab. */
     fun learningJournalEntries(): List<LearningJournal.Entry> = learningJournal.entries()
+
+    /** One day of the food log for the Today's food card, with the goals it is measured against. 0 = no goal. */
+    data class FoodDay(val startMs: Long, val entries: List<FoodLogEntry>, val goalKcal: Int, val goalCarbs: Int, val goalFat: Int, val goalProtein: Int)
+
+    /** @param daysBack 0 for today, 1 for yesterday, and so on */
+    fun foodDay(daysBack: Int): FoodDay {
+        val cal = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            add(Calendar.DAY_OF_YEAR, -daysBack)
+        }
+        val startMs = cal.timeInMillis
+        cal.add(Calendar.DAY_OF_YEAR, 1)
+        fun goal(key: IntKey) = sp.getInt(key.key, key.defaultValue)
+        return FoodDay(
+            startMs, foodLog.entries(startMs, cal.timeInMillis),
+            goal(IntKey.ApsSmartInsulinFoodGoalKcal), goal(IntKey.ApsSmartInsulinFoodGoalCarbs),
+            goal(IntKey.ApsSmartInsulinFoodGoalFat), goal(IntKey.ApsSmartInsulinFoodGoalProtein)
+        )
+    }
+
+    fun deleteFoodLogEntry(timeMs: Long) = foodLog.delete(timeMs)
 
     // ── Learning journal digest for the continuous learners ───────────────────
     // Circadian ISF/basal and aggressiveness move a little every cycle; journaling each move would bury
@@ -2273,6 +2300,10 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinMealPlanPb3SharePct,
                     IntKey.ApsSmartInsulinMealPlanPb2DelayMins,
                     IntKey.ApsSmartInsulinMealPlanPb3DelayMins,
+                    IntKey.ApsSmartInsulinFoodGoalKcal,
+                    IntKey.ApsSmartInsulinFoodGoalCarbs,
+                    IntKey.ApsSmartInsulinFoodGoalFat,
+                    IntKey.ApsSmartInsulinFoodGoalProtein,
                     DoubleKey.ApsSmartInsulinMealPlanMaxTotalU
                 )
             ),

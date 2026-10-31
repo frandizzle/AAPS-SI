@@ -462,6 +462,11 @@
     <string name="si_meal_plan_carb_summary">How much of the insulin for the carbs pre-bolus 1 gives at the start, when a meal is filled in. Use less than 100 if the estimates are often too high.</string>
     <string name="si_meal_plan_fat_protein_title">Planned meal: fat and protein (%)</string>
     <string name="si_meal_plan_fat_protein_summary">How much of the insulin for fat and protein pre-bolus 2 and 3 give, later in the meal. The usual count for fat and protein is often too high, so most people use less than 100. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
+    <string name="si_food_goal_kcal_title">Daily calorie goal (kcal)</string>
+    <string name="si_food_goal_carbs_title">Daily carbs goal (g)</string>
+    <string name="si_food_goal_fat_title">Daily fat goal (g)</string>
+    <string name="si_food_goal_protein_title">Daily protein goal (g)</string>
+    <string name="si_food_goal_summary">For the Today\'s food card on the Smart Insulin tab. 0 hides this bar.</string>
     <string name="si_meal_plan_pb2_delay_title">Planned meal: pre-bolus 2 after (min)</string>
     <string name="si_meal_plan_pb2_delay_summary">When pre-bolus 2 is given for the fat and protein wave, counted from the start. Fast insulin needs about 1 hour to work fully, so 60 min puts it to work as the wave starts.</string>
     <string name="si_meal_plan_pb3_delay_title">Planned meal: pre-bolus 3 after pre-bolus 2 (min)</string>

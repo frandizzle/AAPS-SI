@@ -140,6 +140,7 @@ enum class StringNonKey(
     ApsSmartInsulinSavedFoods(key = "si_saved_foods", defaultValue = ""),
     ApsSmartInsulinRecentFoods(key = "si_recent_foods", defaultValue = "", exportable = false),
     ApsSmartInsulinSavedMealLearning(key = "si_saved_meal_learning", defaultValue = ""),
+    ApsSmartInsulinFoodLog(key = "si_food_log", defaultValue = ""),
     ApsSmartInsulinModeIsfLearnerState(key = "si_mode_isf_learner_state", defaultValue = ""),
     ApsSmartInsulinDuraStrengthLearnerState(key = "si_dura_strength_learner_state", defaultValue = ""),
     ApsSmartInsulinLearningJournal(key = "si_learning_journal", defaultValue = ""),

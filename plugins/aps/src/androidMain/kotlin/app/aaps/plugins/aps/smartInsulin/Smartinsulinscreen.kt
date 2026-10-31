@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DonutLarge
 import androidx.compose.material.icons.filled.FitnessCenter
 import androidx.compose.material.icons.filled.Fastfood
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.GolfCourse
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.HealthAndSafety
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.LocalDining
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Restaurant
@@ -98,6 +100,10 @@ fun SmartInsulinScreen(
     val scope = rememberCoroutineScope()
     // Circadian day shown; starts on today each time the tab opens, as in 3.4.
     var circadianDow by remember { mutableIntStateOf(todayDow()) }
+    // Food log day shown: 0 is today.
+    var foodDaysBack by remember { mutableIntStateOf(0) }
+    // A food log entry waiting for "Delete" to be confirmed: its time and name.
+    var deleteFood by remember { mutableStateOf<Pair<Long, String>?>(null) }
     // Start counting straight away on a grant; otherwise it would wait for the next app start.
     val stepPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) plugin.startPhoneStepCounter()
@@ -157,6 +163,16 @@ fun SmartInsulinScreen(
 
         SiSection("General", Icons.Filled.Tune, subtitle = "What the loop is doing this hour") {
             SiItems(cards.buildGeneralCard(d).items, onAction)
+        }
+
+        val foodDay = plugin.foodDay(foodDaysBack)
+        SiSection("Today's Food", Icons.Filled.LocalDining, accent = AapsTheme.elementColors.carbs,
+                  subtitle = if (foodDay.goalKcal > 0) "%,.0f of %,d kcal".format(foodDay.entries.sumOf { it.kcal }, foodDay.goalKcal) else "Calories and macros") {
+            FoodLogSection(
+                day = foodDay, daysBack = foodDaysBack,
+                onDaysBack = { foodDaysBack = it; tick++ },
+                onDelete = { timeMs, name -> deleteFood = timeMs to name }
+            )
         }
 
         SiSection("Site / Pod Health", Icons.Filled.HealthAndSafety, accent = colors.statusWarning,
@@ -260,6 +276,19 @@ fun SmartInsulinScreen(
                 TextButton(onClick = { action(); confirm = null; tick++ }) { Text("Reset", color = MaterialTheme.colorScheme.error) }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } }
+        )
+    }
+
+    deleteFood?.let { (timeMs, name) ->
+        AlertDialog(
+            onDismissRequest = { deleteFood = null },
+            icon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+            title = { Text("Delete from food log?") },
+            text = { Text(name) },
+            confirmButton = {
+                TextButton(onClick = { plugin.deleteFoodLogEntry(timeMs); deleteFood = null; tick++ }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deleteFood = null }) { Text("Cancel") } }
         )
     }
 

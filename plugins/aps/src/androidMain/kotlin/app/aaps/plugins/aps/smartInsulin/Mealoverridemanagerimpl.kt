@@ -278,6 +278,8 @@ class MealOverrideManagerImpl @Inject constructor(
         val s   = _state ?: return ""
         if (s.preBolus2U <= 0.0) return ""  // PB2 never requested
         val now = System.currentTimeMillis()
+        // What is still to come shows its dose, for example "PB2 (2.40 U): 32min 57s".
+        val pb2 = "PB2 (${"%.2f".format(s.preBolus2U)} U)"
         return when {
             // Discarded (-1L) or already fired (positive timestamp)
             s.preBolus2FiredMs != null && s.preBolus2FiredMs == -1L ->
@@ -290,17 +292,17 @@ class MealOverrideManagerImpl @Inject constructor(
             now < s.preBolus2FireAtMs -> {
                 val secsLeft = (s.preBolus2FireAtMs - now) / 1000
                 if (secsLeft >= 60)
-                    "PB2: ${secsLeft / 60}min ${secsLeft % 60}s"
+                    "$pb2: ${secsLeft / 60}min ${secsLeft % 60}s"
                 else
-                    "PB2: ${secsLeft}s"
+                    "$pb2: ${secsLeft}s"
             }
             // Time elapsed — show safety block reasons if any
             else -> {
                 val reasons = safetyBlockReasons(
                     lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta
                 )
-                if (reasons.isEmpty()) "PB2: waiting for next loop cycle"
-                else "PB2 waiting: ${reasons.joinToString(", ")}"
+                if (reasons.isEmpty()) "$pb2: waiting for next loop cycle"
+                else "$pb2 waiting: ${reasons.joinToString(", ")}"
             }
         }
     }
@@ -309,6 +311,7 @@ class MealOverrideManagerImpl @Inject constructor(
         val s   = _state ?: return ""
         if (s.preBolus3U <= 0.0) return ""  // PB3 never requested
         val now = System.currentTimeMillis()
+        val pb3 = "PB3 (${"%.2f".format(s.preBolus3U)} U)"
         return when {
             // Discarded (-1L)
             s.preBolus3FiredMs != null && s.preBolus3FiredMs == -1L ->
@@ -327,7 +330,7 @@ class MealOverrideManagerImpl @Inject constructor(
                     s.preBolus2FiredMs != null && s.preBolus2FiredMs == -1L ->
                         "PB3: will cancel (PB2 cancelled)"
                     else ->
-                        "PB3: waiting for PB2"
+                        "$pb3: waiting for PB2"
                 }
             }
             // PB2 fired — PB3 now has a valid fireAt time
@@ -336,16 +339,16 @@ class MealOverrideManagerImpl @Inject constructor(
                 if (now < fireAt) {
                     val secsLeft = (fireAt - now) / 1000
                     if (secsLeft >= 60)
-                        "PB3: ${secsLeft / 60}min ${secsLeft % 60}s"
+                        "$pb3: ${secsLeft / 60}min ${secsLeft % 60}s"
                     else
-                        "PB3: ${secsLeft}s"
+                        "$pb3: ${secsLeft}s"
                 } else {
                     val reasons = safetyBlockReasons(
                         lastPb3BgMgdl, lastPb3Iob, lastPb3MaxIob, lastPb3TargetMgdl,
                         lastPb3Delta, lastPb3ShortAvgDelta
                     )
-                    if (reasons.isEmpty()) "PB3: waiting for next loop cycle"
-                    else "PB3 waiting: ${reasons.joinToString(", ")}"
+                    if (reasons.isEmpty()) "$pb3: waiting for next loop cycle"
+                    else "$pb3 waiting: ${reasons.joinToString(", ")}"
                 }
             }
         }

@@ -414,14 +414,16 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         } else if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
+            // The dose still to come, for example "Pre-bolus 2 (2.40U)".
+            val pb2 = if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${"%.2f".format(d.pb2PlannedU)}U)" else "Pre-bolus 2"
             val pb2Primary = when {
-                d.pb2Status.contains("due") -> "Pre-bolus 2 — ready to deliver now"
-                Regex("""(\d+)m""").containsMatchIn(d.pb2Status) -> {
-                    val mins = Regex("""(\d+)m""").find(d.pb2Status)?.groupValues?.get(1)
-                    "Pre-bolus 2 — delivers in ${mins}m"
+                d.pb2Status.contains("due") -> "$pb2 — ready to deliver now"
+                Regex("""(\d+)min""").containsMatchIn(d.pb2Status) -> {
+                    val mins = Regex("""(\d+)min""").find(d.pb2Status)?.groupValues?.get(1)
+                    "$pb2 — delivers in ${mins}m"
                 }
-                gate != null -> "Pre-bolus 2 — waiting for safety gates"
-                else         -> "Pre-bolus 2"
+                gate != null -> "$pb2 — waiting for safety gates"
+                else         -> pb2
             }
             addRow(pb2Primary, tone = if (isActive) SiTone.GOOD else SiTone.INFO)
 
@@ -465,15 +467,16 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         } else if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
             val gate3    = d.pb3GateData
             val isActive3 = d.pb3Status.contains("active")
+            val pb3 = if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3"
             val pb3Primary = when {
-                d.pb3Status.contains("waiting for PB2") -> "Pre-bolus 3 — waiting for PB2 to fire"
-                d.pb3Status.contains("due")             -> "Pre-bolus 3 — ready to deliver now"
-                Regex("""(\d+)m""").containsMatchIn(d.pb3Status) -> {
-                    val mins = Regex("""(\d+)m""").find(d.pb3Status)?.groupValues?.get(1)
-                    "Pre-bolus 3 — delivers in ${mins}m"
+                d.pb3Status.contains("waiting for PB2") -> "$pb3 — waiting for PB2 to fire"
+                d.pb3Status.contains("due")             -> "$pb3 — ready to deliver now"
+                Regex("""(\d+)min""").containsMatchIn(d.pb3Status) -> {
+                    val mins = Regex("""(\d+)min""").find(d.pb3Status)?.groupValues?.get(1)
+                    "$pb3 — delivers in ${mins}m"
                 }
-                gate3 != null -> "Pre-bolus 3 — waiting for safety gates"
-                else          -> "Pre-bolus 3"
+                gate3 != null -> "$pb3 — waiting for safety gates"
+                else          -> pb3
             }
             val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
                 "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."

@@ -446,6 +446,12 @@
     <string name="si_food_meal_ate_soon">Most times BG started to rise soon after pre-bolus 1. Waiting about 15 min before eating may lower the spike.</string>
     <string name="si_food_learned_short" comment="%1$s=factor for carbs, %2$s=factor for fat and protein, %3$d=number of meals. Example: Learned: carbs ×1.12, fat and protein ×0.95 (4 meals)">Learned: carbs ×%1$s, fat and protein ×%2$s (%3$d meals)</string>
     <string name="si_food_learning_reset">Forget what this meal learned</string>
+    <string name="si_food_log_only">Log only</string>
+    <string name="si_food_log_only_hint">Log only counts the food for today\'s calories, without a meal mode or insulin.</string>
+    <string name="si_food_logged" comment="%1$s=calories of what was logged, without unit. Example: Logged: 450 kcal">Logged: %1$s kcal</string>
+    <string name="si_food_log_check" comment="%1$s=calories, without unit. Example: This is 3200 kcal. Check the amounts.">This is %1$s kcal. Check the amounts.</string>
+    <string name="si_food_log_check_title">Check the amounts</string>
+    <string name="si_food_log_anyway">Log anyway</string>
     <string name="si_food_manual_title">Type in a food</string>
     <string name="si_food_manual_portion">Portion, for example 1 wrap (you can leave it empty)</string>
     <string name="si_food_manual_grams">Weight (g)</string>

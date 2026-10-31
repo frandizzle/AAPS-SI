@@ -476,6 +476,42 @@ enum class IntKey(
         summary = KeysStrings.si_meal_plan_pb3_share_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinFoodGoalKcal(
+        key = "si_food_goal_kcal",
+        defaultValue = 1800,
+        min = 0,
+        max = 6000,
+        title = KeysStrings.si_food_goal_kcal_title,
+        summary = KeysStrings.si_food_goal_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodGoalCarbs(
+        key = "si_food_goal_carbs",
+        defaultValue = 226,
+        min = 0,
+        max = 1000,
+        title = KeysStrings.si_food_goal_carbs_title,
+        summary = KeysStrings.si_food_goal_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodGoalFat(
+        key = "si_food_goal_fat",
+        defaultValue = 60,
+        min = 0,
+        max = 500,
+        title = KeysStrings.si_food_goal_fat_title,
+        summary = KeysStrings.si_food_goal_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinFoodGoalProtein(
+        key = "si_food_goal_protein",
+        defaultValue = 90,
+        min = 0,
+        max = 500,
+        title = KeysStrings.si_food_goal_protein_title,
+        summary = KeysStrings.si_food_goal_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinMealPlanPb2DelayMins(
         key = "si_meal_plan_pb2_delay_mins",
         defaultValue = 60,

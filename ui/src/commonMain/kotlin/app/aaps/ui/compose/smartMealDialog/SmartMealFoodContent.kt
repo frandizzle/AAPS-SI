@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
@@ -141,9 +142,14 @@ internal fun SmartMealFoodContent(
                 Button(onClick = viewModel::fillInFromFood, modifier = Modifier.weight(1f)) { Text(stringResource(UiStrings.si_food_fill_in)) }
                 TextButton(onClick = viewModel::clearFood) { Text(stringResource(UiStrings.si_food_clear)) }
             }
-            TextButton(onClick = { savingMeal = true }) { Text(stringResource(UiStrings.si_food_save_meal)) }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { savingMeal = true }) { Text(stringResource(UiStrings.si_food_save_meal)) }
+                OutlinedButton(onClick = { viewModel.logOnly() }) { Text(stringResource(UiStrings.si_food_log_only)) }
+            }
+            Hint(stringResource(UiStrings.si_food_log_only_hint))
             Hint(stringResource(UiStrings.si_food_fill_hint))
         }
+        state.loggedKcal?.let { Hint(stringResource(UiStrings.si_food_logged, df.to0Decimal(it))) }
         state.lastSave?.let { result ->
             when (result) {
                 SaveResult.SAVED    -> Hint(stringResource(UiStrings.si_food_saved))
@@ -192,6 +198,15 @@ internal fun SmartMealFoodContent(
             onForgetLearning = viewModel::forgetMealLearning,
             onDismiss = { showMyFoods = false }
         )
+    state.logCheckKcal?.let { kcal ->
+        AlertDialog(
+            onDismissRequest = viewModel::cancelLogCheck,
+            title = { Text(stringResource(UiStrings.si_food_log_check_title)) },
+            text = { Text(stringResource(UiStrings.si_food_log_check, df.to0Decimal(kcal))) },
+            confirmButton = { TextButton(onClick = { viewModel.logOnly(force = true) }) { Text(stringResource(UiStrings.si_food_log_anyway)) } },
+            dismissButton = { TextButton(onClick = viewModel::cancelLogCheck) { Text(stringResource(CoreUiStrings.cancel)) } }
+        )
+    }
     if (showManual)
         ManualFoodDialog(onAdd = { viewModel.addManualFood(it); showManual = false }, onDismiss = { showManual = false })
     if (savingMeal)

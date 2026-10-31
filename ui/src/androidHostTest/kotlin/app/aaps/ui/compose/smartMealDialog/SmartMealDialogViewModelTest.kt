@@ -22,6 +22,8 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.smartInsulin.FoodLog
+import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
@@ -93,6 +95,7 @@ internal class SmartMealDialogViewModelTest {
     private val mealFoodRepository: MealFoodRepository = mock()
     private lateinit var savedFoodStore: SavedFoodStore
     private val savedMealLearning: SavedMealLearning = mock()
+    private val foodLog: FoodLog = mock()
     private val mealEstimateCalibration: MealEstimateCalibration = mock()
     private val glucoseStatusProvider: GlucoseStatusProvider = mock()
     private val iobCobCalculator: IobCobCalculator = mock()
@@ -115,7 +118,7 @@ internal class SmartMealDialogViewModelTest {
         if (!::savedFoodStore.isInitialized) savedFoodStore = SavedFoodStore(preferences)
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
-            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, mealEstimateCalibration,
+            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, foodLog, mealEstimateCalibration,
             glucoseStatusProvider, iobCobCalculator, constraintsChecker, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
@@ -669,6 +672,46 @@ internal class SmartMealDialogViewModelTest {
         verify(savedMealLearning).rename("Wrap", "Turkey wrap")
         sut.deleteSavedFood("Turkey wrap")
         verify(savedMealLearning).forget("Turkey wrap")
+    }
+
+    // --- Food log ---
+
+    @Test
+    fun `log only counts the food without a meal or insulin`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert(carbs = 20.0, protein = 5.0, fat = 10.0).copy(name = "Biscuits", source = FoodSource.MANUAL))
+        sut.logOnly()
+        verify(foodLog).add(FoodLogEntry(NOW, "Biscuits", 20.0, 0.0, 5.0, 10.0))
+        with(sut.uiState.value) {
+            assertThat(foodItems).isEmpty()
+            assertThat(loggedKcal).isWithin(1e-9).of(190.0)
+        }
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `food that looks wrong is held until the user checks it`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        // 734 g of fat: about 6600 kcal.
+        sut.addManualFood(dessert(fat = 100.0).copy(name = "Typo", baseGrams = 734.0, source = FoodSource.MANUAL))
+        sut.logOnly()
+        verify(foodLog, never()).add(any())
+        assertThat(sut.uiState.value.logCheckKcal).isNotNull()
+        sut.logOnly(force = true)
+        verify(foodLog).add(any())
+        assertThat(sut.uiState.value.logCheckKcal).isNull()
+    }
+
+    @Test
+    fun `a started meal and food added to it are logged`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert().copy(name = "Pasta", source = FoodSource.MANUAL))
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(foodLog).add(argThat { name == "Pasta" })
     }
 
     private companion object {
