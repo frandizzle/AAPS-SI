@@ -2,11 +2,13 @@ package app.aaps.plugins.aps.di
 
 import app.aaps.core.interfaces.plugin.PluginBase
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
+import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
 import app.aaps.plugins.aps.smartInsulin.MealEstimateCalibrationImpl
+import app.aaps.plugins.aps.smartInsulin.SavedMealLearningImpl
 import app.aaps.plugins.aps.smartInsulin.MealOverrideManagerImpl
 import app.aaps.plugins.aps.smartInsulin.ProfileLearner
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
@@ -51,6 +53,9 @@ object SmartInsulinRegistrations {
 
     @Provides
     fun mealEstimateCalibration(impl: MealEstimateCalibrationImpl): MealEstimateCalibration = impl
+
+    @Provides
+    fun savedMealLearning(impl: SavedMealLearningImpl): SavedMealLearning = impl
 
     @Provides
     fun smartInsulinLearner(impl: ProfileLearner): SmartInsulinLearner = impl

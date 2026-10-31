@@ -3,6 +3,7 @@ package app.aaps.ui.compose.smartMealDialog
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.data.ue.Sources
+import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.data.ui.ConfirmationRole
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
@@ -21,7 +22,9 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
@@ -35,6 +38,7 @@ import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.interfaces.profile.EffectiveProfile
+import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
@@ -88,6 +92,7 @@ internal class SmartMealDialogViewModelTest {
     private val pumpDescription: PumpDescription = mock()
     private val mealFoodRepository: MealFoodRepository = mock()
     private lateinit var savedFoodStore: SavedFoodStore
+    private val savedMealLearning: SavedMealLearning = mock()
     private val mealEstimateCalibration: MealEstimateCalibration = mock()
     private val glucoseStatusProvider: GlucoseStatusProvider = mock()
     private val iobCobCalculator: IobCobCalculator = mock()
@@ -110,7 +115,7 @@ internal class SmartMealDialogViewModelTest {
         if (!::savedFoodStore.isInitialized) savedFoodStore = SavedFoodStore(preferences)
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
-            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, mealEstimateCalibration,
+            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, mealEstimateCalibration,
             glucoseStatusProvider, iobCobCalculator, constraintsChecker, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
@@ -356,6 +361,43 @@ internal class SmartMealDialogViewModelTest {
         verifyBlocking(batchExecutor, never()) { prepare(any(), any(), any()) }
     }
 
+    @Test
+    fun `pre-bolus 1 is shown first, worded like pre-bolus 2, and the note last`() {
+        whenever(rh.gs(eq(UiStrings.si_confirm_pb1), anyVararg())).thenReturn("PB1")
+        whenever(rh.gs(eq(UiStrings.si_confirm_pb2), anyVararg())).thenReturn("PB2")
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(
+            ActionProgress.Prepared(id = 1L, lines = listOf(ConfirmationLine(ConfirmationRole.BOLUS, "Bolus: 2.00 U"), ConfirmationLine(ConfirmationRole.NORMAL, "Notes")))
+        )
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updatePb2Enabled(true)
+        sut.updatePb2(1.5)
+        sut.prepareAndConfirm()
+        val texts = (effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation).lines.map { it.text }
+        assertThat(texts.indexOf("PB1")).isLessThan(texts.indexOf("PB2"))
+        assertThat(texts).doesNotContain("Bolus: 2.00 U")
+        assertThat(texts.last()).isEqualTo("Notes")
+    }
+
+    @Test
+    fun `a dose cut by the constraints keeps the master's own line`() {
+        whenever(rh.gs(eq(UiStrings.si_confirm_pb1), anyVararg())).thenReturn("PB1")
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(
+            ActionProgress.Prepared(
+                id = 1L,
+                lines = listOf(ConfirmationLine(ConfirmationRole.BOLUS, "Bolus: 1.00 U"), ConfirmationLine(ConfirmationRole.WARNING, "Cut from 2.00 to 1.00 U"))
+            )
+        )
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.prepareAndConfirm()
+        val texts = (effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation).lines.map { it.text }
+        assertThat(texts).containsAtLeast("Bolus: 1.00 U", "Cut from 2.00 to 1.00 U").inOrder()
+        assertThat(texts).doesNotContain("PB1")
+    }
+
     // ── Pre-bolus 2 / 3 and the mode itself ──────────────────────────────────
 
     @Test
@@ -521,6 +563,8 @@ internal class SmartMealDialogViewModelTest {
         sut.commit(null)
         verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0))
         verify(mealEstimateCalibration, never()).dropEstimate(any())
+        // More food: the meal no longer stands for one saved meal.
+        verify(savedMealLearning).dropMeal(running.triggerTimeMs)
     }
 
     @Test
@@ -572,6 +616,59 @@ internal class SmartMealDialogViewModelTest {
         assertThat(sut.uiState.value.savedFoods.single().name).isEqualTo("Biscoff biscuit")
         sut.deleteSavedFood("Biscoff biscuit")
         assertThat(sut.uiState.value.savedFoods).isEmpty()
+    }
+
+    @Test
+    fun `a saved meal uses what it learned and is watched to learn more`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.2, fatProteinFactor = 0.8, meals = 3, ateSoon = 0, recentMeals = 3))
+        build()
+        sut.addManualFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.saveMeal("Turkey wrap")
+        sut.clearFood()
+        sut.addSavedFood(sut.uiState.value.savedFoods.single())
+        assertThat(sut.uiState.value.sourceMeal).isEqualTo("Turkey wrap")
+
+        sut.fillInFromFood()
+        with(sut.uiState.value.plan!!) {
+            assertThat(carbsU).isWithin(1e-9).of(20.0 * 1.2 / 5.0)
+            // 1.45 FPU = 14.5 g carb equivalent, at its own factor.
+            assertThat(fatProteinU).isWithin(1e-9).of(14.5 * 0.8 / 5.0)
+        }
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(savedMealLearning).recordMeal(eq("Turkey wrap"), eq(NOW), any(), any(), eq(20.0), eq(14.5))
+    }
+
+    @Test
+    fun `a saved meal with other food added is not learned as that meal`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.saveMeal("Turkey wrap")
+        sut.clearFood()
+        sut.addSavedFood(sut.uiState.value.savedFoods.single())
+        sut.addManualFood(dessert().copy(name = "Chips", source = FoodSource.MANUAL))
+        assertThat(sut.uiState.value.sourceMeal).isNull()
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(savedMealLearning, never()).recordMeal(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `renaming or deleting a saved meal keeps its learning with it`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.saveMeal("Wrap")
+        sut.renameSavedFood("Wrap", "Turkey wrap")
+        verify(savedMealLearning).rename("Wrap", "Turkey wrap")
+        sut.deleteSavedFood("Turkey wrap")
+        verify(savedMealLearning).forget("Turkey wrap")
     }
 
     private companion object {

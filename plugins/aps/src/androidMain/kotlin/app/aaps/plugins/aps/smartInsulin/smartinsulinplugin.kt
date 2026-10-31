@@ -126,6 +126,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
     private val mealEstimateCalibration: MealEstimateCalibrationImpl,
+    private val savedMealLearning:       SavedMealLearningImpl,
     private val siteCheckFiles:          SiteCheckFiles,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
@@ -413,6 +414,7 @@ open class SmartInsulinPlugin @Inject constructor(
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
         relowTracker.reset()
         mealEstimateCalibration.reset()
+        savedMealLearning.reset()
         learningSnapshots.clear()
         learningJournal.note("Reset", "All learners reset")
     }
@@ -921,6 +923,7 @@ open class SmartInsulinPlugin @Inject constructor(
     init {
         // Every learner verdict goes to the journal; see LearningJournal.
         modeIsfLearner.onOutcome          = { learningJournal.note("Meal ISF", it) }
+        savedMealLearning.onOutcome       = { learningJournal.note("Saved meal", it) }
         // The journal shows the mode's ISF before and after, not the multiplier: the same base ISF
         // the SI tab's learned-ISF table and dosing use.
         modeIsfLearner.isfText = { mode, window, mult ->
@@ -1841,6 +1844,24 @@ open class SmartInsulinPlugin @Inject constructor(
         // Where the rise that fired a UAM mode began, so both spike checks measure from there
         // and not only from target. 0.0 for a mode the user started, or P/F.
         val riseStartMgdl = uamController.riseStartMgdlFor(mealOverrideManager.modeStartMs)
+
+        // -- Saved meals (My foods) ------------------------------------------------
+        // A meal started from one saved entry learns its own carb and fat/protein insulin. While it is
+        // watched, the mode ISF and DURA learners sit the episode out, so one spike is not corrected twice.
+        val episodeNow = mealAbsorptionTracker.inProgress
+        savedMealLearning.onCycle(
+            nowMs            = now,
+            activeMode       = mealOverrideManager.activeMealMode,
+            modeStartMs      = mealOverrideManager.modeStartMs,
+            episodeStartMs   = episodeNow?.startMs ?: 0L,
+            episodeGrams     = episodeNow?.estimatedGramsSoFar ?: 0.0,
+            bgMgdl           = glucoseStatus.glucose,
+            lowActive        = lowActiveNow,
+            undershootActive = undershootNow,
+            contaminated     = secondWaveNow || exerciseSuspected || podBoostDosedLastCycle || carbEpisodeActive
+        )
+        val savedMealWatched = savedMealLearning.watching(now)
+
         modeIsfLearner.onCycle(
             activeModeNow  = mealOverrideManager.activeMealMode,
             modeStartMs    = mealOverrideManager.modeStartMs,
@@ -1864,7 +1885,7 @@ open class SmartInsulinPlugin @Inject constructor(
             preBolused        = (mealOverrideManager.activeDoseU ?: 0.0) > 0.0,
             // Entered carbs are not a dose this loop chose, so the dose-judging learners sit them
             // out. Only the insulin-curve learner (DIA/peak) runs against a carb episode.
-            learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive,
+            learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive && !savedMealWatched,
             modeInsulinShare  = modeInsulinShare,
             // Watch the mode's own insulin out rather than a fixed window — the share decides how
             // much of a late low is actually its, so a longer watch can't mis-charge one.
@@ -1930,7 +1951,7 @@ open class SmartInsulinPlugin @Inject constructor(
             duraAtFloor       = duraAtFloorThisCycle,
             modeInsulinShare  = modeInsulinShare,
             watchMs           = postModeWatchMs(),
-            learningEnabled   = duraLearningEnabled(),
+            learningEnabled   = duraLearningEnabled() && !savedMealWatched,
             newPodBoost       = podBoostDosedLastCycle
         )
 
@@ -2250,6 +2271,8 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinMealPlanCarbPct,
                     IntKey.ApsSmartInsulinMealPlanFatProteinPct,
                     IntKey.ApsSmartInsulinMealPlanPb3SharePct,
+                    IntKey.ApsSmartInsulinMealPlanPb2DelayMins,
+                    IntKey.ApsSmartInsulinMealPlanPb3DelayMins,
                     DoubleKey.ApsSmartInsulinMealPlanMaxTotalU
                 )
             ),

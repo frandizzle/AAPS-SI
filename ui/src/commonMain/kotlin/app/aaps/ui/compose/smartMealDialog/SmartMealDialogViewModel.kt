@@ -37,6 +37,8 @@ import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.clientcontrol.failText
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
+import app.aaps.core.interfaces.smartInsulin.LearnedMeal
+import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
@@ -144,8 +146,16 @@ data class SmartMealDialogUiState(
     /** The last foods looked up or typed in, newest first. */
     val recentFoods: List<FoodItem> = emptyList(),
     /** What the last save did, shown until the next one. Null before. */
-    val lastSave: SaveResult? = null
+    val lastSave: SaveResult? = null,
+    /** The food list is one saved meal, so the meal learns about itself. Null for any other list. */
+    val sourceMeal: String? = null,
+    /** What the saved meals have learned, by name. */
+    val learnedMeals: Map<String, LearnedMeal> = emptyMap()
 ) {
+
+    /** What [sourceMeal] has learned, or null. */
+    val sourceLearned: LearnedMeal? get() = sourceMeal?.let { learnedMeals[it] }
+
 
     val foodTotals: MealTotals get() = foodItems.totals()
 
@@ -182,6 +192,7 @@ class SmartMealDialogViewModel(
     val decimalFormatter: DecimalFormatter,
     private val mealFoodRepository: MealFoodRepository,
     private val savedFoodStore: SavedFoodStore,
+    private val savedMealLearning: SavedMealLearning,
     private val mealEstimateCalibration: MealEstimateCalibration,
     private val glucoseStatusProvider: GlucoseStatusProvider,
     private val iobCobCalculator: IobCobCalculator,
@@ -221,7 +232,8 @@ class SmartMealDialogViewModel(
                 calibrationFactor = mealEstimateCalibration.factor,
                 calibrationMeals = mealEstimateCalibration.mealsUsed,
                 savedFoods = savedFoodStore.foods,
-                recentFoods = savedFoodStore.recent
+                recentFoods = savedFoodStore.recent,
+                learnedMeals = learnedMeals()
             )
         }
         loadMode(MealMode.LUNCH)
@@ -374,7 +386,7 @@ class SmartMealDialogViewModel(
                     is FoodLookupResult.Success -> {
                         savedFoodStore.remember(result.items)
                         val kept = if (replacesEstimate) s.foodItems.filter { it.source != FoodSource.ESTIMATE } else s.foodItems
-                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent)
+                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent, sourceMeal = null)
                     }
 
                     is FoodLookupResult.Failure -> s.copy(lookupBusy = false, lookupError = result.reason, lookupDetail = result.detail)
@@ -391,12 +403,12 @@ class SmartMealDialogViewModel(
 
     fun removeFood(index: Int) = _uiState.update { s ->
         if (index !in s.foodItems.indices) s
-        else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null)
+        else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null, sourceMeal = null)
     }
 
     fun clearFood() {
         photoJpeg = null
-        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null) }
+        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null, sourceMeal = null) }
     }
 
     // ── My foods ─────────────────────────────────────────────────────────────
@@ -404,16 +416,19 @@ class SmartMealDialogViewModel(
     /** Adds a food typed in by hand. It goes to the recent list too, so it can be saved later. */
     fun addManualFood(item: FoodItem) {
         savedFoodStore.remember(listOf(item))
-        addItems(listOf(item))
+        addItems(listOf(item), null)
     }
 
-    /** Adds every food of a saved entry, with the amounts it was saved with. */
+    /**
+     * Adds every food of a saved entry, with the amounts it was saved with. Added to an empty list, the meal
+     * is that saved meal and learns about itself.
+     */
     fun addSavedFood(food: SavedFood) {
         savedFoodStore.markUsed(food.name, dateUtil.now())
-        addItems(food.items.map { SavedFoodList.forMeal(it) })
+        addItems(food.items.map { SavedFoodList.forMeal(it) }, food.name.takeIf { uiState.value.foodItems.isEmpty() })
     }
 
-    fun addRecentFood(item: FoodItem) = addItems(listOf(SavedFoodList.forMeal(item)))
+    fun addRecentFood(item: FoodItem) = addItems(listOf(SavedFoodList.forMeal(item)), null)
 
     /** Saves the whole food list as one entry, for example a wrap with all that is in it. */
     fun saveMeal(name: String) = save(name, uiState.value.foodItems)
@@ -428,21 +443,42 @@ class SmartMealDialogViewModel(
 
     fun deleteSavedFood(name: String) {
         savedFoodStore.delete(name)
-        _uiState.update { it.copy(savedFoods = savedFoodStore.foods) }
+        savedMealLearning.forget(name)
+        refreshSaved()
     }
 
     fun renameSavedFood(name: String, newName: String) {
         savedFoodStore.rename(name, newName)
-        _uiState.update { it.copy(savedFoods = savedFoodStore.foods) }
+        // Only when the store took the new name: it refuses one that another entry has.
+        if (savedFoodStore.foods.any { it.name == newName.trim() }) savedMealLearning.rename(name, newName.trim())
+        refreshSaved()
+    }
+
+    /** Forgets what a saved meal has learned, and starts again. */
+    fun forgetMealLearning(name: String) {
+        savedMealLearning.forget(name)
+        refreshSaved()
     }
 
     private fun save(name: String, items: List<FoodItem>) {
         val result = savedFoodStore.save(name, items, dateUtil.now())
-        _uiState.update { it.copy(savedFoods = savedFoodStore.foods, lastSave = result) }
+        // New contents under an old name: what the old meal learned does not fit it.
+        if (result == SaveResult.REPLACED) savedMealLearning.forget(name.trim())
+        refreshSaved()
+        _uiState.update { it.copy(lastSave = result) }
     }
 
-    private fun addItems(items: List<FoodItem>) = _uiState.update {
-        it.copy(foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent)
+    private fun refreshSaved() = _uiState.update { it.copy(savedFoods = savedFoodStore.foods, learnedMeals = learnedMeals()) }
+
+    private fun learnedMeals(): Map<String, LearnedMeal> =
+        savedFoodStore.foods.mapNotNull { f -> savedMealLearning.learned(f.name)?.let { f.name to it } }.toMap()
+
+    /** @param sourceMeal the saved meal the list now is, or null when it is no longer one saved meal */
+    private fun addItems(items: List<FoodItem>, sourceMeal: String?) = _uiState.update {
+        it.copy(
+            foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, sourceMeal = sourceMeal,
+            savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent, learnedMeals = learnedMeals()
+        )
     }
 
     /**
@@ -458,7 +494,9 @@ class SmartMealDialogViewModel(
                 _uiState.update { it.copy(planNoRatio = true, plan = null, addition = null) }
                 return@launch
             }
-            val factor = mealEstimateCalibration.factor
+            // A saved meal that has learned about itself uses that instead of the general estimate factor.
+            val own = state.sourceLearned?.takeIf { it.inUse }
+            val factor = own?.carbFactor ?: mealEstimateCalibration.factor
             val settings = MealPlanSettings(
                 carbPct = preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct),
                 fatProteinPct = preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct),
@@ -467,6 +505,9 @@ class SmartMealDialogViewModel(
                 maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
                 carbRatio = carbRatio,
                 factor = factor,
+                fatProteinFactor = own?.fatProteinFactor,
+                pb2DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
+                pb3DelayMin = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep
             )
             if (state.addMode) {
@@ -555,7 +596,8 @@ class SmartMealDialogViewModel(
     private fun fmtU(u: Double, step: Double) = decimalFormatter.toPumpSupportedBolus(u, step)
     private fun fmtBg(v: Double, mmol: Boolean) = if (mmol) decimalFormatter.to2Decimal(v) else decimalFormatter.to0Decimal(v)
 
-    private fun modeLines(state: SmartMealDialogUiState): List<ConfirmationLine> = buildList {
+    /** @param doseLines pre-bolus 1 as prepared, shown before pre-bolus 2 and 3 */
+    private fun modeLines(state: SmartMealDialogUiState, doseLines: List<ConfirmationLine>): List<ConfirmationLine> = buildList {
         add(ConfirmationLine(ConfirmationRole.PRIMARY, rh.gs(UiStrings.si_confirm_mode, state.mode.label)))
         state.activeMode?.let { running ->
             add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_replaces, running.label)))
@@ -575,6 +617,7 @@ class SmartMealDialogViewModel(
             )
         if (state.pb1Enabled && state.pb1U > state.maxPreBolus)
             add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_capped, fmtU(state.maxPreBolus, state.bolusStep))))
+        addAll(doseLines)
         val pb2 = state.pb2()
         if (pb2 > 0.0)
             add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_pb2, fmtU(pb2, state.bolusStep), state.pb2DelayMinutes)))
@@ -602,9 +645,11 @@ class SmartMealDialogViewModel(
     private fun duraSettingsOf(mode: MealMode): Pair<Double, Double> =
         (duraFloorKeyFor(mode)?.let { preferences.get(it) } ?: 0.0) to (duraStrengthKeyFor(mode)?.let { preferences.get(it) } ?: 1.0)
 
-    private suspend fun addLines(state: SmartMealDialogUiState, running: MealOverrideState): List<ConfirmationLine> = buildList {
+    /** @param doseLines the dose now as prepared, shown before what is added to pre-bolus 2 and 3 */
+    private suspend fun addLines(state: SmartMealDialogUiState, running: MealOverrideState, doseLines: List<ConfirmationLine>): List<ConfirmationLine> = buildList {
         val fmt = { u: Double -> fmtU(u, state.bolusStep) }
         add(ConfirmationLine(ConfirmationRole.PRIMARY, rh.gs(UiStrings.si_confirm_add, running.mode.label)))
+        addAll(doseLines)
         if (state.addPb2U > 0.0)
             add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_add_pb2, fmt(state.addPb2U), fmt(state.runningPb2WaitingU + state.addPb2U))))
         if (state.addPb3U > 0.0)
@@ -649,10 +694,16 @@ class SmartMealDialogViewModel(
                 refreshActive()
                 return@launch
             }
-            val lines = if (running != null) addLines(state, running) else modeLines(state)
+            suspend fun lines(prepared: List<ConfirmationLine>): List<ConfirmationLine> {
+                val doseText = if (running != null) rh.gs(UiStrings.si_confirm_add_now, fmtU(state.addNow(), state.bolusStep))
+                else rh.gs(UiStrings.si_confirm_pb1, fmtU(state.pb1(), state.bolusStep))
+                val (dose, rest) = placePrepared(prepared, doseText)
+                return (if (running != null) addLines(state, running, dose) else modeLines(state, dose)) + rest
+            }
+
             val pb1 = if (running != null) state.addNow() else state.pb1()
             if (pb1 <= 0.0) {
-                _sideEffect.tryEmit(SideEffect.ShowConfirmation(null, lines))
+                _sideEffect.tryEmit(SideEffect.ShowConfirmation(null, lines(emptyList())))
                 return@launch
             }
             val note = if (running != null) rh.gs(UiStrings.si_add_note, running.mode.label) else rh.gs(UiStrings.si_prebolus_note, state.mode.label)
@@ -661,10 +712,10 @@ class SmartMealDialogViewModel(
                 notes = note, timestamp = dateUtil.now(), iCfg = null
             )
             when (val prepared = batchExecutor.prepare(listOf(bolus), Sources.InsulinDialog, rh.gs(InterfacesStrings.bolus))) {
-                is ActionProgress.Prepared -> _sideEffect.tryEmit(SideEffect.ShowConfirmation(prepared.id, lines + prepared.lines))
+                is ActionProgress.Prepared -> _sideEffect.tryEmit(SideEffect.ShowConfirmation(prepared.id, lines(prepared.lines)))
                 is ActionProgress.Rejected -> when {
                     // Capped to nothing: the mode can still start, just without a pre-bolus.
-                    prepared.reason == FailureReason.NoAction -> _sideEffect.tryEmit(SideEffect.ShowConfirmation(null, lines))
+                    prepared.reason == FailureReason.NoAction -> _sideEffect.tryEmit(SideEffect.ShowConfirmation(null, lines(emptyList())))
                     prepared.reason.isNotDeliveryError()      -> rxBus.send(EventShowDialog.Ok(title = rh.gs(InterfacesStrings.bolus), message = rh.gs(prepared.reason.failText())))
                     else                                      -> prepared.detail?.let { _sideEffect.tryEmit(SideEffect.ShowDeliveryError(it)) }
                 }
@@ -672,6 +723,17 @@ class SmartMealDialogViewModel(
                 else                       -> Unit
             }
         }
+    }
+
+    /**
+     * Splits the prepared bolus lines: the dose and any warning about it go first, worded like pre-bolus 2 and
+     * 3, the rest (the note) goes last. When the master cut the dose, its own line is kept as it is, so the
+     * confirmation always shows the amount the pump will get.
+     */
+    private fun placePrepared(prepared: List<ConfirmationLine>, doseText: String): Pair<List<ConfirmationLine>, List<ConfirmationLine>> {
+        val (dose, rest) = prepared.partition { it.role == ConfirmationRole.BOLUS || it.role == ConfirmationRole.WARNING }
+        val cut = dose.any { it.role == ConfirmationRole.WARNING }
+        return (if (cut) dose else dose.map { if (it.role == ConfirmationRole.BOLUS) it.copy(text = doseText) else it }) to rest
     }
 
     /**
@@ -690,6 +752,16 @@ class SmartMealDialogViewModel(
         )
     }
 
+    /** A meal started from one saved meal is watched, so that meal learns its own insulin. */
+    private fun recordSavedMeal(state: SmartMealDialogUiState) {
+        val name = state.sourceMeal ?: return
+        val startMs = mealOverrideManager.modeStartMs.takeIf { it > 0L } ?: dateUtil.now()
+        val modeEndMs = startMs + state.durationMinutes * 60_000L
+        val pfMin = if (state.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
+        val t = state.foodTotals
+        savedMealLearning.recordMeal(name, startMs, modeEndMs, modeEndMs + pfMin * 60_000L, t.carbsG, t.fpu * MealTotals.FPU_CARB_G)
+    }
+
     /**
      * Adds the confirmed food to the running meal. The estimate is added to the meal's estimate; food
      * without one means this meal can no longer be compared, so it is not used to learn.
@@ -705,6 +777,8 @@ class SmartMealDialogViewModel(
                 duraEnabled = state.addDura, duraFloorMgdl = floorMgdl, duraStrength = strength, pfAfter = state.pfAfter
             )
             val startMs = running.triggerTimeMs
+            // More food: the meal is no longer the saved meal it was started from.
+            savedMealLearning.dropMeal(startMs)
             if (state.foodItems.isEmpty()) mealEstimateCalibration.dropEstimate(startMs)
             else {
                 val modeEndMs = maxOf(running.modeExpiryMs, endMs)
@@ -748,6 +822,7 @@ class SmartMealDialogViewModel(
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             recordEstimate(state)
+            recordSavedMeal(state)
             deliver(bolusId)
         }
     }

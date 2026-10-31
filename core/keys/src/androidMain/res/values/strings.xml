@@ -461,7 +461,11 @@
     <string name="si_meal_plan_carb_title">Planned meal: carbs in pre-bolus 1 (%)</string>
     <string name="si_meal_plan_carb_summary">How much of the insulin for the carbs pre-bolus 1 gives at the start, when a meal is filled in. Use less than 100 if the estimates are often too high.</string>
     <string name="si_meal_plan_fat_protein_title">Planned meal: fat and protein (%)</string>
-    <string name="si_meal_plan_fat_protein_summary">How much of the insulin for fat and protein pre-bolus 2 and 3 give, after 90 min and about 3 h. The usual count for fat and protein is often too high, so most people use less than 100. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
+    <string name="si_meal_plan_fat_protein_summary">How much of the insulin for fat and protein pre-bolus 2 and 3 give, later in the meal. The usual count for fat and protein is often too high, so most people use less than 100. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
+    <string name="si_meal_plan_pb2_delay_title">Planned meal: pre-bolus 2 after (min)</string>
+    <string name="si_meal_plan_pb2_delay_summary">When pre-bolus 2 is given for the fat and protein wave, counted from the start. Fast insulin needs about 1 hour to work fully, so 60 min puts it to work as the wave starts.</string>
+    <string name="si_meal_plan_pb3_delay_title">Planned meal: pre-bolus 3 after pre-bolus 2 (min)</string>
+    <string name="si_meal_plan_pb3_delay_summary">When pre-bolus 3 is given on a heavy meal, counted from pre-bolus 2.</string>
     <string name="si_meal_plan_pb3_share_title">Planned meal: pre-bolus 3 on heavy meals (%)</string>
     <string name="si_meal_plan_pb3_share_summary">On a meal with a lot of fat and protein, the part of the fat and protein insulin that pre-bolus 3 gives for what is left of the wave. Pre-bolus 2 gives the rest.</string>
     <string name="si_meal_plan_max_total_title">Planned meal: max insulin up front (U)</string>

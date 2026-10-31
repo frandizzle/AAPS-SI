@@ -476,6 +476,24 @@ enum class IntKey(
         summary = KeysStrings.si_meal_plan_pb3_share_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinMealPlanPb2DelayMins(
+        key = "si_meal_plan_pb2_delay_mins",
+        defaultValue = 60,
+        min = 30,
+        max = 120,
+        title = KeysStrings.si_meal_plan_pb2_delay_title,
+        summary = KeysStrings.si_meal_plan_pb2_delay_summary,
+        defaultedBySM = true
+    ),
+    ApsSmartInsulinMealPlanPb3DelayMins(
+        key = "si_meal_plan_pb3_delay_mins",
+        defaultValue = 90,
+        min = 30,
+        max = 120,
+        title = KeysStrings.si_meal_plan_pb3_delay_title,
+        summary = KeysStrings.si_meal_plan_pb3_delay_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinPreBolus2DefaultDelayMins(
         key = "si_prebolus2_default_delay_mins",
         defaultValue = 25,

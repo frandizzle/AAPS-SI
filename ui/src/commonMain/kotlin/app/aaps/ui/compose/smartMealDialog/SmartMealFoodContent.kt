@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.stringResource
 import app.aaps.ui.UiStrings
@@ -151,12 +152,23 @@ internal fun SmartMealFoodContent(
                 SaveResult.EMPTY    -> Unit
             }
         }
+        state.sourceMeal?.let { name ->
+            val learned = state.sourceLearned
+            when {
+                learned?.inUse == true ->
+                    Hint(stringResource(UiStrings.si_food_meal_learned, name, df.to2Decimal(learned.carbFactor), df.to2Decimal(learned.fatProteinFactor), learned.meals))
+                else                   -> Hint(stringResource(UiStrings.si_food_meal_learning, name, learned?.meals ?: 0, LearnedMeal.MIN_MEALS))
+            }
+            if (learned != null && learned.recentMeals >= ATE_SOON_MIN_MEALS && learned.ateSoon * 2 > learned.recentMeals)
+                Hint(stringResource(UiStrings.si_food_meal_ate_soon))
+        }
         if (state.planNoRatio) Text(stringResource(UiStrings.si_food_no_ratio), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         // The insulin the food needs, from a new meal's plan or from food added to the running one.
         val needU = state.plan?.let { it.carbsU to it.fatProteinU } ?: state.addition?.let { it.carbsU to it.fatProteinU }
         needU?.let { (carbsU, fatProteinU) ->
             Text(stringResource(UiStrings.si_food_plan_summary, fmtU(carbsU), fmtU(fatProteinU)), style = MaterialTheme.typography.bodyMedium)
-            Hint(
+            // A saved meal with its own learning says so above.
+            if (state.sourceLearned?.inUse != true) Hint(
                 if (state.calibrationMeals > 0 && state.calibrationFactor != 1.0)
                     stringResource(UiStrings.si_food_plan_factor, df.to2Decimal(state.calibrationFactor), state.calibrationMeals)
                 else stringResource(UiStrings.si_food_plan_learning)
@@ -168,13 +180,16 @@ internal fun SmartMealFoodContent(
     if (showMyFoods)
         MyFoodsDialog(
             foods = state.savedFoods,
+            learned = state.learnedMeals,
             recent = state.recentFoods,
             df = { df.to0Decimal(it) },
+            factor = { df.to2Decimal(it) },
             onAdd = { viewModel.addSavedFood(it); showMyFoods = false },
             onAddRecent = { viewModel.addRecentFood(it); showMyFoods = false },
             onSaveRecent = viewModel::saveRecentFood,
             onRename = viewModel::renameSavedFood,
             onDelete = viewModel::deleteSavedFood,
+            onForgetLearning = viewModel::forgetMealLearning,
             onDismiss = { showMyFoods = false }
         )
     if (showManual)
@@ -197,6 +212,8 @@ internal fun SmartMealFoodContent(
 }
 
 private const val QUICK_CHIPS = 5
+/** The hint to wait after pre-bolus 1 needs this many recent meals. */
+private const val ATE_SOON_MIN_MEALS = 3
 
 /** Half servings for a packet, quarter portions for an estimate. */
 private fun quantityStep(item: FoodItem): Double =

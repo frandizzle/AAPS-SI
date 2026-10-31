@@ -12,7 +12,11 @@ import kotlin.math.min
  *                         together. The Warsaw method often counts high, so this is usually below 100.
  * @param pb3SharePct      on a heavy meal, the part of that fat and protein dose that pre-bolus 3 gives
  * @param carbRatio        grams of carbs one unit covers, from the profile
- * @param factor           learned correction from `MealEstimateCalibration`: how this user's meals compare with estimates
+ * @param factor           learned correction for the carbs: from `MealEstimateCalibration` (how this user's meals
+ *                         compare with estimates), or what a saved meal learned about itself
+ * @param fatProteinFactor the same for the fat and protein; null uses [factor], set when a saved meal learned its own
+ * @param pb2DelayMin      pre-bolus 2, counted from the start of the mode
+ * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
  */
@@ -24,7 +28,10 @@ data class MealPlanSettings(
     val maxTotalU: Double,
     val carbRatio: Double,
     val factor: Double,
-    val bolusStep: Double
+    val bolusStep: Double,
+    val fatProteinFactor: Double? = null,
+    val pb2DelayMin: Int = MealDosePlanner.PB2_DELAY_MIN,
+    val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN
 )
 
 /**
@@ -96,9 +103,12 @@ data class MealAddition(
 
 object MealDosePlanner {
 
-    /** Pre-bolus 2, the fat and protein wave, counted from the start of the mode. */
-    const val PB2_DELAY_MIN = 90
-    /** Pre-bolus 3, what is left of the wave, counted from when pre-bolus 2 fired, so about 3 h after the start. */
+    /**
+     * Pre-bolus 2, the fat and protein wave, counted from the start of the mode. Fast insulin works fully after
+     * about an hour, so it is working as the wave starts, about 2 h in, without stacking on pre-bolus 1's peak.
+     */
+    const val PB2_DELAY_MIN = 60
+    /** Pre-bolus 3, what is left of the wave, counted from when pre-bolus 2 fired, so about 2.5 h after the start. */
     const val PB3_DELAY_MIN = 90
     /** Below this many fat-protein units there is no pre-bolus 2: the loop covers so little by itself. */
     const val FPU_PB2 = 1.0
@@ -110,7 +120,7 @@ object MealDosePlanner {
     fun plan(totals: MealTotals, settings: MealPlanSettings): MealPlan {
         val ratio = settings.carbRatio.takeIf { it > 0.0 } ?: return empty(totals)
         val carbsU = totals.carbsG * settings.factor / ratio
-        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * settings.factor / ratio
+        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * (settings.fatProteinFactor ?: settings.factor) / ratio
 
         var pb1 = carbsU * settings.carbPct / 100.0
         val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)
@@ -139,9 +149,9 @@ object MealDosePlanner {
         return MealPlan(
             pb1U = pb1,
             pb2U = pb2,
-            pb2DelayMin = PB2_DELAY_MIN,
+            pb2DelayMin = settings.pb2DelayMin,
             pb3U = pb3,
-            pb3DelayMin = PB3_DELAY_MIN,
+            pb3DelayMin = settings.pb3DelayMin,
             durationMin = durationFor(totals.fpu),
             duraEnabled = slow,
             pfAfter = slow,
@@ -165,7 +175,7 @@ object MealDosePlanner {
         val ratio = settings.carbRatio.takeIf { it > 0.0 }
             ?: return MealAddition(0.0, 0.0, 0.0, minutesLeft, false, false, 0.0, 0.0, false, false, false)
         val carbsU = totals.carbsG * settings.factor / ratio
-        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * settings.factor / ratio
+        val fatProteinU = totals.fpu * MealTotals.FPU_CARB_G * (settings.fatProteinFactor ?: settings.factor) / ratio
 
         var now = carbsU * settings.carbPct / 100.0
         val (fp2, fp3) = splitFatProtein(totals.fpu, fatProteinU, settings)

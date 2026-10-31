@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
@@ -35,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.stringResource
@@ -132,13 +134,16 @@ private fun NumberField(value: String, onChange: (String) -> Unit, label: String
 @Composable
 internal fun MyFoodsDialog(
     foods: List<SavedFood>,
+    learned: Map<String, LearnedMeal>,
     recent: List<FoodItem>,
     df: (Double) -> String,
+    factor: (Double) -> String,
     onAdd: (SavedFood) -> Unit,
     onAddRecent: (FoodItem) -> Unit,
     onSaveRecent: (FoodItem, String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onForgetLearning: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
@@ -166,11 +171,15 @@ internal fun MyFoodsDialog(
                         item { Hint(stringResource(UiStrings.si_food_my_foods_empty)) }
                     items(shown, key = { "saved:" + it.name }) { food ->
                         val t = food.totals
+                        val l = learned[food.name]
                         EntryRow(
                             title = food.name,
                             detail = stringResource(UiStrings.si_food_subtitle_totals, df(t.carbsG), df(t.proteinG), df(t.fatG)),
+                            learnedText = l?.let { stringResource(UiStrings.si_food_learned_short, factor(it.carbFactor), factor(it.fatProteinFactor), it.meals) },
                             onClick = { onAdd(food) }
                         ) {
+                            if (l != null)
+                                IconButton(onClick = { onForgetLearning(food.name) }) { Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(UiStrings.si_food_learning_reset)) }
                             IconButton(onClick = { renaming = food }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(UiStrings.si_food_rename)) }
                             IconButton(onClick = { deleting = food }) { Icon(Icons.Filled.Delete, contentDescription = stringResource(CoreUiStrings.delete)) }
                         }
@@ -224,12 +233,13 @@ internal fun MyFoodsDialog(
 }
 
 @Composable
-private fun EntryRow(title: String, detail: String, onClick: () -> Unit, actions: @Composable () -> Unit) {
+private fun EntryRow(title: String, detail: String, onClick: () -> Unit, learnedText: String? = null, actions: @Composable () -> Unit) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(AapsSpacing.large), modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
         Row(Modifier.padding(start = AapsSpacing.large, top = AapsSpacing.small, bottom = AapsSpacing.small), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                learnedText?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
             }
             actions()
         }
