@@ -179,7 +179,8 @@ class DetermineBasalSmartInsulinTest {
         msSinceLastSuspend: Long                = 3600_000L,
         riseTurn:          RiseTurnGuard.Result? = null,
         mealMode:          MealMode             = MealMode.FASTING,
-        foodFadeMins:      Int                  = 60
+        foodFadeMins:      Int                  = 60,
+        foodToCome:        FoodToCome?          = null
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -215,7 +216,8 @@ class DetermineBasalSmartInsulinTest {
             cgmWarmupReason       = "",
             uamSmbFraction        = uamSmbFraction,
             riseTurn              = riseTurn,
-            foodFadeMins          = foodFadeMins
+            foodFadeMins          = foodFadeMins,
+            foodToCome            = foodToCome
         )
         return fakeResult
     }
@@ -512,6 +514,65 @@ class DetermineBasalSmartInsulinTest {
         val r = invoke(mealMode = MealMode.UAM_DINNER, foodFadeMins = 120)
         assertEquals(150.0 - 9.0 * 5.5, r.predictionsAsGv.minOf { it.value }, 0.5)
         assertTrue(r.reason.contains("fade=60m"), r.reason)
+    }
+
+    // ── Food still to come ───────────────────────────────────────────────────
+
+    /** A Dinner with 30 g of carbs still to come within the hour, and 30 g of fat and protein over 3 hours. */
+    private fun dinnerFood(now: Long = System.currentTimeMillis()) =
+        FoodToCome(carbsG = 30.0, carbsUntilMs = now + 60 * 60_000L, fatProteinG = 30.0, fatProteinUntilMs = now + 3 * 60 * 60_000L, carbRatio = 5.0)
+
+    /** Tonight: BG 9.1 flat in a Dinner, 4.3 U on board and still acting. */
+    private fun midDinner(bg: Double = 164.0, delta: Double = 0.0) {
+        whenever(oapsProfile.max_iob).thenReturn(12.0)
+        whenever(glucoseStatus.glucose).thenReturn(bg)
+        whenever(glucoseStatus.delta).thenReturn(delta)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(delta)
+    }
+
+    @Test fun `mid-meal, insulin alone forecasts a low, and the food still to come does not`() {
+        midDinner()
+        val iob = flatIobArray(iob = 4.3, activity = 0.04)
+        val alone = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        assertTrue(alone.reason.contains("SUSPEND"), alone.reason)
+
+        val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
+        assertFalse(withFood.reason.contains("SUSPEND"), withFood.reason)
+        assertTrue(withFood.reason.contains("cob=60g(carbs 30 fp 30)"), withFood.reason)
+        assertTrue(withFood.reason.contains("NORMAL"), withFood.reason)
+    }
+
+    @Test fun `a falling BG says the food is not coming in, and the low guard works as without it`() {
+        midDinner(delta = -5.0)
+        val r = invoke(iobArray = flatIobArray(iob = 4.3, activity = 0.04), mealMode = MealMode.DINNER,
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
+        assertTrue(r.reason.contains("not used: BG falling"), r.reason)
+        assertTrue(r.reason.contains("SUSPEND"), r.reason)
+    }
+
+    @Test fun `under target the food only stops a false suspend, and gives no insulin`() {
+        midDinner(bg = 95.0)
+        val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.01), mealMode = MealMode.DINNER,
+                       lowGuardMmol = 4.0, warnGuardMmol = 4.5, foodToCome = dinnerFood())
+        assertTrue(r.reason.contains("low guard only"), r.reason)
+        assertEquals(0.0, r.smb, 1e-9)
+    }
+
+    @Test fun `food still to come gives more insulin above target than the insulin alone would`() {
+        // Just above target: the insulin on board alone brings BG down to target, so it asks for nothing.
+        midDinner(bg = 115.0)
+        val iob = flatIobArray(iob = 1.0, activity = 0.01)
+        val alone = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 5.0)
+        assertEquals(0.0, alone.smb, 1e-9)
+        val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 5.0, foodToCome = dinnerFood())
+        assertTrue(withFood.smb > 0.0, withFood.reason)
+    }
+
+    @Test fun `Fasting never uses food still to come`() {
+        midDinner()
+        val r = invoke(iobArray = flatIobArray(iob = 4.3, activity = 0.04), mealMode = MealMode.FASTING,
+                       lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
+        assertTrue(r.reason.contains("SUSPEND"), r.reason)
     }
 
     @Test fun `a degenerate dosing ISF produces finite output`() {

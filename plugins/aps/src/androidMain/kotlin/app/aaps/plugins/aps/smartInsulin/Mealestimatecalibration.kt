@@ -12,6 +12,21 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
+ * A meal's food that has not come in yet, in grams of carb equivalent, scaled by the learned factor.
+ *
+ * @param mealG        the whole meal as estimated, scaled the same way
+ * @param carbsUntilMs the carbs eaten so far should have come in by this time
+ */
+data class StillToCome(
+    val modeStartMs: Long,
+    val windowEndMs: Long,
+    val carbsG: Double,
+    val fatProteinG: Double,
+    val mealG: Double,
+    val carbsUntilMs: Long
+)
+
+/**
  * Compares each estimated meal with the grams [MealAbsorptionTracker] saw for it, and keeps the ratio.
  *
  * Both sides are in the same unit on purpose: the tracker turns insulin into grams with the profile's
@@ -36,7 +51,10 @@ class MealEstimateCalibrationImpl @Inject constructor(
         var proteinG:    Double,
         var fatG:        Double,
         var trackerG:    Double = 0.0,
-        var episodes:    Int    = 0
+        var episodes:    Int    = 0,
+        /** The carbs eaten so far should have come in by this time. */
+        var carbsUntilMs: Long  = modeStartMs + MealFoodForecast.CARBS_MIN * 60_000L,
+        val learn:       Boolean = true
     )
 
     private val pending = mutableListOf<Pending>()
@@ -55,21 +73,22 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     override val mealsUsed: Int get() = synchronized(this) { ratios.size }
 
-    override fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double) {
+    override fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean) {
         synchronized(this) {
             // A new estimate for the same meal mode replaces the old one.
             pending.removeAll { it.modeStartMs == modeStartMs }
-            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG))
+            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: estimate ${"%.0f".format(carbEquivG)} g recorded")
     }
 
-    override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double) {
+    override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long) {
         val found = synchronized(this) {
             pending.firstOrNull { it.modeStartMs == modeStartMs }?.also {
                 it.windowEndMs = maxOf(it.windowEndMs, windowEndMs)
+                if (carbsG > 0.0) it.carbsUntilMs = maxOf(it.carbsUntilMs, eatenMs + MealFoodForecast.CARBS_MIN * 60_000L)
                 it.carbEquivG += carbEquivG; it.carbsG += carbsG; it.proteinG += proteinG; it.fatG += fatG
             }
         }
@@ -95,9 +114,33 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     override fun foodStillToComeG(modeStartMs: Long): Double? {
-        val (p, f) = synchronized(this) { (pending.firstOrNull { it.modeStartMs == modeStartMs } ?: return null) to factor }
-        val now = live?.takeIf { matches(p, it.startMs) }?.estimatedGramsSoFar ?: 0.0
-        return (p.carbEquivG * f - p.trackerG - now).coerceAtLeast(0.0)
+        val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs } } ?: return null
+        return stillToCome(p).let { it.carbsG + it.fatProteinG }
+    }
+
+    /**
+     * The food still to come of the estimated meal whose window holds [nowMs], for the loop's forecast; null when
+     * there is none. A following Protein/Fat is inside the window, so the food goes on counting there.
+     */
+    fun stillToCome(nowMs: Long): StillToCome? {
+        val p = synchronized(this) { pending.filter { nowMs >= it.modeStartMs && nowMs <= it.windowEndMs }.maxByOrNull { it.modeStartMs } } ?: return null
+        return stillToCome(p)
+    }
+
+    /** What the tracker has seen is counted against the carbs first: they come in first. */
+    private fun stillToCome(p: Pending): StillToCome {
+        val f = factor
+        val seen = p.trackerG + (live?.takeIf { matches(p, it.startMs) }?.estimatedGramsSoFar ?: 0.0)
+        val carbs = p.carbsG * f
+        val fatProtein = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f
+        return StillToCome(
+            modeStartMs = p.modeStartMs,
+            windowEndMs = p.windowEndMs,
+            carbsG = (carbs - seen).coerceAtLeast(0.0),
+            fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceAtLeast(0.0),
+            mealG = p.carbEquivG * f,
+            carbsUntilMs = p.carbsUntilMs
+        )
     }
 
     private fun matches(p: Pending, episodeStartMs: Long) = episodeStartMs >= p.modeStartMs - MATCH_EARLY_MS && episodeStartMs <= p.windowEndMs
@@ -118,7 +161,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     private fun judge(p: Pending) {
-        if (p.episodes == 0 || p.carbEquivG < MIN_ESTIMATE_G) {
+        if (!p.learn || p.episodes == 0 || p.carbEquivG < MIN_ESTIMATE_G) {
             aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${p.modeStartMs} not used (episodes=${p.episodes})")
             return
         }
@@ -148,7 +191,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                         put(JSONObject()
                                 .put("s", it.modeStartMs).put("e", it.windowEndMs).put("ce", it.carbEquivG)
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
-                                .put("t", it.trackerG).put("n", it.episodes))
+                                .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn))
                     }
                 })
         }
@@ -164,8 +207,10 @@ class MealEstimateCalibrationImpl @Inject constructor(
             json.optJSONArray(K_PENDING)?.let { a ->
                 for (i in 0 until a.length()) {
                     val o = a.getJSONObject(i)
-                    pending.add(Pending(o.getLong("s"), o.getLong("e"), o.getDouble("ce"), o.getDouble("c"), o.getDouble("p"), o.getDouble("f"),
-                                        o.optDouble("t", 0.0), o.optInt("n", 0)))
+                    val start = o.getLong("s")
+                    pending.add(Pending(start, o.getLong("e"), o.getDouble("ce"), o.getDouble("c"), o.getDouble("p"), o.getDouble("f"),
+                                        o.optDouble("t", 0.0), o.optInt("n", 0),
+                                        o.optLong("cu", start + MealFoodForecast.CARBS_MIN * 60_000L), o.optBoolean("l", true)))
                 }
             }
         } catch (e: Exception) {

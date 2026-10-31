@@ -205,6 +205,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var postModeDeliveredU   = 0.0
     private var postModeSinceMs      = 0L
     private var lastModeStartSeenMs  = 0L
+    /** The running meal's food still to come as the last cycle saw it, for the SI tab. */
+    @Volatile private var lastFoodToCome: FoodToCome? = null
     /** The meal mode start the after-activity cut was last decided for, so a UAM mode is cut once, not every cycle. */
     private var afterActivityCheckedMs = 0L
     private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
@@ -565,6 +567,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb2PlannedU: Double, val pb3PlannedU: Double,
         /** Status of the rest of pre-bolus 1, "" when there is none. */
         val pb1RestStatus: String,
+        /** The running meal's food still to come, or null when there is none. */
+        val foodToCome: FoodToCome?,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
@@ -786,6 +790,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
             pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
+            foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
@@ -2113,6 +2118,21 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
+
+        // The running meal's food still to come, from its estimate, for the forecast. Pre-boluses still
+        // waiting are taken off: their insulin is coming anyway. Only while a meal mode runs.
+        val foodToCome = if (mealOverrideManager.activeMealMode == null) null
+        else mealEstimateCalibration.stillToCome(now)?.let { still ->
+            val s = mealOverrideManager.activeState?.takeIf { it.triggerTimeMs == still.modeStartMs }
+            MealFoodForecast.foodToCome(
+                still, now,
+                restU = if (s?.preBolus1RestPending == true) s.preBolus1RestU else 0.0,
+                pbU = (if (s?.preBolus2Pending == true) s.preBolus2U else 0.0) + (if (s?.preBolus3Pending == true) s.preBolus3U else 0.0),
+                carbRatio = profile.getIc()
+            )
+        }
+        lastFoodToCome = foodToCome
+
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
         // null with nothing said about it — every other early return sets a reason the user can
         // see. An exception here means no decision this cycle; surface that rather than looking
@@ -2160,7 +2180,8 @@ open class SmartInsulinPlugin @Inject constructor(
             sessionStatusText        = sessionStatus,
             afterActivityText        = if (afterActivityPct > 0) "after activity -$afterActivityPct%" else "",
             riseTurn                 = riseTurnNow(glucoseStatus.delta),
-            foodFadeMins             = foodFadeMins(mealMode)
+            foodFadeMins             = foodFadeMins(mealMode),
+            foodToCome               = foodToCome
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)

@@ -401,6 +401,15 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    tone = SiTone.GOOD)
         }
 
+        // The meal's food still to come, which the loop doses for as it comes in
+        d.foodToCome?.let { f ->
+            addRow("Food still to come: ${"%.0f".format(f.totalG)} g",
+                   "${"%.0f".format(f.carbsG)} g carbs, ${"%.0f".format(f.fatProteinG)} g fat and protein (as carbs)" +
+                       (if (f.coveredG >= 1.0) ". ${"%.0f".format(f.coveredG)} g more is for the waiting pre-boluses." else ".") +
+                       " The loop gives insulin for it as it comes in, while BG is not falling.",
+                   SiTone.INFO)
+        }
+
         // The rest of pre-bolus 1, given once BG rises
         if (d.mealMode != "Fasting" && d.pb1RestStatus.isNotEmpty()) {
             addRow(d.pb1RestStatus, tone = if (d.pb1RestStatus.contains("delivered")) SiTone.GOOD else SiTone.INFO)

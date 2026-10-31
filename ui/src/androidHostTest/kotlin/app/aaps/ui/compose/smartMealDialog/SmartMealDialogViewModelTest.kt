@@ -566,7 +566,7 @@ internal class SmartMealDialogViewModelTest {
         }
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0))
+        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0), any())
         verify(mealEstimateCalibration, never()).dropEstimate(any())
         // More food: the meal no longer stands for one saved meal.
         verify(savedMealLearning).dropMeal(running.triggerTimeMs)
@@ -604,7 +604,8 @@ internal class SmartMealDialogViewModelTest {
         sut.commit(null)
         verify(mealOverrideManager).setAfterActivityCut(15)
         verify(savedMealLearning, never()).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
-        verify(mealEstimateCalibration, never()).recordEstimate(any(), any(), any(), any(), any(), any())
+        // Its food still counts as food still to come, but it is not learned from.
+        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false))
     }
 
     @Test

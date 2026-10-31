@@ -25,15 +25,19 @@ interface MealEstimateCalibration {
      * @param carbsG        estimated carbs, without fibre
      * @param proteinG      estimated protein
      * @param fatG          estimated fat
+     * @param learn         false for a meal that says nothing about the estimates, for example one given less
+     *                      insulin after exercise. Its food still counts as food still to come.
      */
-    fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double)
+    fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true)
 
     /**
      * Adds food eaten later in the same meal mode (a dessert) to that meal's estimate, and moves the end
      * of the watch window. Does nothing when the meal has no estimate: the tracker would then see more
      * food than was estimated.
+     *
+     * @param eatenMs when the added food is eaten: its carbs are expected to come in over the next 2 hours
      */
-    fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double)
+    fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long)
 
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */
     fun dropEstimate(modeStartMs: Long)

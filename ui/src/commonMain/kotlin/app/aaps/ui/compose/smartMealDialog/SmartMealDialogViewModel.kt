@@ -880,7 +880,8 @@ class SmartMealDialogViewModel(
 
     /**
      * Remembers what the food list said, so the meal tracker can later tell how this user's meals compare
-     * with estimates. The watch window covers a following Protein/Fat too.
+     * with estimates, and the loop knows the food still to come. The watch window covers a following
+     * Protein/Fat too. A meal cut after exercise is not learned from, but its food still counts.
      */
     private fun recordEstimate(state: SmartMealDialogUiState) {
         if (state.foodItems.isEmpty()) return
@@ -890,7 +891,8 @@ class SmartMealDialogViewModel(
         mealEstimateCalibration.recordEstimate(
             modeStartMs = startMs,
             windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
-            carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG
+            carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG,
+            learn = state.afterActivityPct == 0
         )
     }
 
@@ -931,7 +933,7 @@ class SmartMealDialogViewModel(
                 val modeEndMs = maxOf(running.modeExpiryMs, endMs)
                 val pfMin = if (state.pfAfter || running.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
                 val t = state.foodTotals
-                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG)
+                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now())
             }
         }
     }
@@ -974,10 +976,8 @@ class SmartMealDialogViewModel(
             if (state.pb1Rest() > 0.0) mealOverrideManager.setPreBolus1Rest(state.pb1Rest())
             // A meal cut after exercise says nothing about how much insulin the food needs, so it is not learned from.
             if (state.afterActivityPct > 0) mealOverrideManager.setAfterActivityCut(state.afterActivityPct)
-            else {
-                recordEstimate(state)
-                recordMealLearning(state)
-            }
+            recordEstimate(state)
+            if (state.afterActivityPct == 0) recordMealLearning(state)
             logEntry(state)?.let { foodLog.add(it) }
             deliver(bolusId)
         }

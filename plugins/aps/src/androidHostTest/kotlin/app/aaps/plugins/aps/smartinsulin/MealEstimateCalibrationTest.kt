@@ -42,6 +42,36 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `what the tracker saw is taken off the carbs first`() {
+        // 60 g carbs, 20 g fat and protein as carbs; the tracker has seen 70 g.
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
+        cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.DINNER, T0, 70.0))
+        val s = cal.stillToCome(T0 + 2 * HOUR)!!
+        assertEquals(0.0, s.carbsG, 1e-9)
+        assertEquals(10.0, s.fatProteinG, 1e-9)
+        assertEquals(T0 + 2 * HOUR, s.carbsUntilMs)
+        assertEquals(null, cal.stillToCome(T0 + 5 * HOUR))     // after the window
+    }
+
+    @Test
+    fun `carbs added later are expected over the 2 hours after they are eaten`() {
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
+        cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + 3 * HOUR)
+        assertEquals(T0 + 5 * HOUR, cal.stillToCome(T0 + 3 * HOUR)!!.carbsUntilMs)
+    }
+
+    @Test
+    fun `a meal not for learning still counts as food, but is not judged`() {
+        repeat(3) {
+            cal.recordEstimate(T0 + it * DAY, T0 + it * DAY + 3 * HOUR, 100.0, 100.0, 0.0, 0.0, learn = false)
+            assertEquals(100.0, cal.foodStillToComeG(T0 + it * DAY)!!, 1e-9)
+            cal.onEpisode(episode(T0 + it * DAY, 150.0))
+            cal.onCycle(T0 + it * DAY + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        }
+        assertEquals(0, cal.mealsUsed)
+    }
+
+    @Test
     fun `the factor stays 1 until three meals are judged`() {
         meal(T0, 100.0, 140.0)
         meal(T0 + DAY, 100.0, 140.0)
@@ -108,7 +138,7 @@ class MealEstimateCalibrationTest {
     @Test
     fun `a dessert is added to the meal it belongs to, and the window grows`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 100.0, 100.0, 0.0, 0.0)
-        cal.addToEstimate(T0, T0 + 5 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.addToEstimate(T0, T0 + 5 * HOUR, 40.0, 40.0, 0.0, 0.0, T0 + HOUR)
         cal.onEpisode(episode(T0, 100.0))
         cal.onEpisode(episode(T0 + 4 * HOUR, 54.0))     // only inside the longer window
         cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
@@ -120,7 +150,7 @@ class MealEstimateCalibrationTest {
 
     @Test
     fun `a dessert for a meal without an estimate is not recorded`() {
-        cal.addToEstimate(T0, T0 + 5 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.addToEstimate(T0, T0 + 5 * HOUR, 40.0, 40.0, 0.0, 0.0, T0 + HOUR)
         cal.onEpisode(episode(T0, 60.0))
         cal.onCycle(T0 + 5 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(0, cal.mealsUsed)
