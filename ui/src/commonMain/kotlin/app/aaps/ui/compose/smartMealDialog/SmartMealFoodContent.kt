@@ -295,6 +295,7 @@ private fun lookupErrorText(reason: FoodLookupResult.Reason, detail: String): St
     FoodLookupResult.Reason.INVALID_KEY   -> stringResource(UiStrings.si_food_err_invalid_key)
     FoodLookupResult.Reason.LIMIT_REACHED -> stringResource(UiStrings.si_food_err_limit)
     FoodLookupResult.Reason.BUSY          -> stringResource(UiStrings.si_food_err_busy)
+    FoodLookupResult.Reason.TIMEOUT       -> stringResource(UiStrings.si_food_err_timeout)
     FoodLookupResult.Reason.NOT_FOOD      -> stringResource(UiStrings.si_food_err_not_food)
     FoodLookupResult.Reason.NOT_FOUND     -> stringResource(UiStrings.si_food_err_not_found)
     FoodLookupResult.Reason.BAD_RESPONSE  -> stringResource(UiStrings.si_food_err_bad)

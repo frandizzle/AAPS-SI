@@ -1,5 +1,9 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
+import io.ktor.client.network.sockets.ConnectTimeoutException
+import io.ktor.client.network.sockets.SocketTimeoutException
+import io.ktor.client.plugins.HttpRequestTimeoutException
+
 /** The answer to a meal estimate or a barcode lookup. */
 sealed class FoodLookupResult {
 
@@ -21,6 +25,9 @@ sealed class FoodLookupResult {
         /** The service is too busy right now, also after trying again. */
         BUSY,
 
+        /** No answer came in time. Not asked again: a second wait would be as long. */
+        TIMEOUT,
+
         /** The photo or text did not show food. */
         NOT_FOOD,
 
@@ -30,5 +37,14 @@ sealed class FoodLookupResult {
         /** The answer could not be read. */
         BAD_RESPONSE,
         OTHER
+    }
+
+    companion object {
+
+        /** What a request that threw [e] failed with: a timeout gets its own reason, anything else shows its message. */
+        fun failureOf(e: Exception): Failure = when (e) {
+            is HttpRequestTimeoutException, is SocketTimeoutException, is ConnectTimeoutException -> Failure(Reason.TIMEOUT, e.message.orEmpty())
+            else                                                                                -> Failure(Reason.OTHER, e.message ?: e::class.simpleName.orEmpty())
+        }
     }
 }

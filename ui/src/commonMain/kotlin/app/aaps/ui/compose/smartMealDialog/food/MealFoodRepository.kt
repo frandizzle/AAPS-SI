@@ -29,8 +29,10 @@ class MealFoodRepository(
     private val http = HttpClient {
         install(HttpTimeout) {
             connectTimeoutMillis = CONNECT_TIMEOUT_MS
-            // A photo answer from a thinking model can take a while.
+            // A photo answer from a thinking model can take a while, and nothing comes back while it thinks.
+            // Without a socket timeout here the Android engine uses its own 10 s one, which cut such answers off.
             requestTimeoutMillis = REQUEST_TIMEOUT_MS
+            socketTimeoutMillis = REQUEST_TIMEOUT_MS
         }
     }
     private val gemini = GeminiFoodClient(http)

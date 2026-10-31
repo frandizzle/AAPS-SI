@@ -78,7 +78,7 @@ internal class GeminiFoodClient(private val http: HttpClient) {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            FoodLookupResult.Failure(FoodLookupResult.Reason.OTHER, e.message ?: e::class.simpleName.orEmpty())
+            FoodLookupResult.failureOf(e)
         }
 
     internal fun requestBody(description: String, photoJpeg: ByteArray?, region: String): String =

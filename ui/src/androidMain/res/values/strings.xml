@@ -480,6 +480,7 @@
     <string name="si_food_err_invalid_key">The Gemini API key was refused. Check it in the settings.</string>
     <string name="si_food_err_limit">The free limit is reached. Try again later.</string>
     <string name="si_food_err_busy">Google\'s servers are busy right now. Try again in a few minutes, or use Barcode, Type in or My foods.</string>
+    <string name="si_food_err_timeout">The answer took too long. Try again, or use a smaller photo, Barcode, Type in or My foods.</string>
     <string name="si_food_err_not_food">No food was found</string>
     <string name="si_food_err_not_found">This product is not in Open Food Facts, or it has no nutrition values</string>
     <string name="si_food_err_bad">The answer could not be read. Try again.</string>

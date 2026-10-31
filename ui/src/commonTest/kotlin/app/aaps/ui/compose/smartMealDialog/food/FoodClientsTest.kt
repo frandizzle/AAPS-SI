@@ -3,6 +3,7 @@ package app.aaps.ui.compose.smartMealDialog.food
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.client.network.sockets.SocketTimeoutException
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -128,6 +129,19 @@ class FoodClientsTest {
         val r = GeminiFoodClient(alwaysBusy).estimate("k", "m", "x", null, "")
         assertEquals(FoodLookupResult.Reason.BUSY, assertIs<FoodLookupResult.Failure>(r).reason)
         assertEquals(1 + GeminiFoodClient.RETRY_DELAYS_MS.size, calls)
+    }
+
+    @Test
+    fun `a timeout says so, and is not asked again`() = runTest {
+        var calls = 0
+        val slow = HttpClient(MockEngine { calls++; throw SocketTimeoutException("Socket timeout has expired") })
+        val r = GeminiFoodClient(slow).estimate("k", "m", "x", null, "")
+        assertEquals(FoodLookupResult.Reason.TIMEOUT, assertIs<FoodLookupResult.Failure>(r).reason)
+        assertEquals(1, calls)
+        val other = HttpClient(MockEngine { throw IllegalStateException("broken") })
+        val r2 = assertIs<FoodLookupResult.Failure>(GeminiFoodClient(other).estimate("k", "m", "x", null, ""))
+        assertEquals(FoodLookupResult.Reason.OTHER, r2.reason)
+        assertEquals("broken", r2.detail)
     }
 
     // --- Open Food Facts ---
