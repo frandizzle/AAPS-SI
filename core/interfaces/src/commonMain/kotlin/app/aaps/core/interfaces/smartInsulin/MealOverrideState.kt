@@ -10,6 +10,8 @@ package app.aaps.core.interfaces.smartInsulin
  * [preBolus3DelayMs] — ms AFTER PB2 FIRES to fire the third bolus.
  * [pfAfter]          — start Protein/Fat (UAM) when this mode runs out, for a meal with a slow fat and protein tail.
  * [addedU]           — insulin given now for food added to this meal later (dessert, a second plate).
+ * [preBolus1RestU]   — the part of pre-bolus 1 above the max pre-bolus, given later once BG rises. 0.0 = none.
+ * [preBolus1RestFiredMs] — when it was given; null = still waits, -1 = cancelled or failed, -2 = BG did not rise in time.
  * [afterActivityPct] — how much less insulin this meal gets after exercise, in percent; 0 = none. The loop makes the
  *                      mode's ISF weaker by the same share, and the meal learners do not judge the meal.
  */
@@ -29,8 +31,14 @@ data class MealOverrideState(
     val duraStrength:     Double  = 1.0,    // how fast DURA ramps while stuck (mirrors DuraIsfTracker.DEFAULT_WEIGHT)
     val pfAfter:          Boolean = false,
     val addedU:           Double  = 0.0,
-    val afterActivityPct: Int     = 0
+    val afterActivityPct: Int     = 0,
+    val preBolus1RestU:   Double  = 0.0,
+    val preBolus1RestFiredMs: Long? = null
 ) {
+    /** True while the rest of pre-bolus 1 waits for BG to rise */
+    val preBolus1RestPending: Boolean
+        get() = preBolus1RestU > 0.0 && preBolus1RestFiredMs == null
+
     /** True if a second bolus was requested and hasn't fired yet */
     val preBolus2Pending: Boolean
         get() = preBolus2U > 0.0 && preBolus2FiredMs == null
@@ -50,6 +58,7 @@ data class MealOverrideState(
     /** All insulin this meal gives as fixed doses: what was given plus what is still planned. Cancelled pre-boluses do not count. */
     val plannedTotalU: Double
         get() = (doseU ?: 0.0) + addedU +
+            (if (preBolus1RestFiredMs == null || preBolus1RestFiredMs > 0L) preBolus1RestU else 0.0) +
             (if (preBolus2FiredMs != -1L) preBolus2U else 0.0) +
             (if (preBolus3FiredMs != -1L) preBolus3U else 0.0)
 

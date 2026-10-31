@@ -86,6 +86,8 @@ data class SmartMealDialogUiState(
     val duraStrength: Double = 1.0,
     val pb1Enabled: Boolean = false,
     val pb1U: Double = 0.0,
+    /** The part of pre-bolus 1 above the max pre-bolus, given 15 to 45 min in once BG rises; 0 = none. */
+    val pb1RestU: Double = 0.0,
     val pb2Enabled: Boolean = false,
     val pb2U: Double = 0.0,
     val pb2DelayMinutes: Int = 30,
@@ -101,6 +103,8 @@ data class SmartMealDialogUiState(
     // What is running now
     val activeMode: MealMode? = null,
     val activeRemainingMin: Int = 0,
+    val pb1RestPending: Boolean = false,
+    val pb1RestStatus: String = "",
     val pb2Pending: Boolean = false,
     val pb2Status: String = "",
     val pb3Pending: Boolean = false,
@@ -277,6 +281,8 @@ class SmartMealDialogViewModel(
             it.copy(
                 activeMode = mealOverrideManager.activeMealMode,
                 activeRemainingMin = (mealOverrideManager.modeTimeRemainingMs / 60_000L).toInt(),
+                pb1RestPending = mealOverrideManager.preBolus1RestPending,
+                pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
                 pb2Pending = mealOverrideManager.preBolus2Pending,
                 pb2Status = mealOverrideManager.preBolus2StatusText,
                 pb3Pending = mealOverrideManager.preBolus3Pending,
@@ -344,6 +350,7 @@ class SmartMealDialogViewModel(
     fun updatePb1Enabled(v: Boolean) = _uiState.update { it.copy(pb1Enabled = v) }
     fun updatePb1(v: Double) = _uiState.update { it.copy(pb1U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun addPb1(increment: Double) = _uiState.update { it.copy(pb1U = (it.pb1U + increment).coerceAtMost(it.maxPreBolus)) }
+    fun updatePb1Rest(v: Double) = _uiState.update { it.copy(pb1RestU = v.coerceIn(0.0, it.maxPreBolus)) }
     fun updatePb2Enabled(v: Boolean) = _uiState.update { it.copy(pb2Enabled = v) }
     fun updatePb2(v: Double) = _uiState.update { it.copy(pb2U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun updatePb2Delay(v: Double) = _uiState.update { it.copy(pb2DelayMinutes = v.toInt().coerceIn(5, 120)) }
@@ -359,7 +366,7 @@ class SmartMealDialogViewModel(
         if (on == s.afterActivityOn) return@update s
         val share = 1.0 - pct / 100.0
         fun scale(u: Double) = Round.roundTo(if (on) u * share else u / share, s.bolusStep).coerceIn(0.0, s.maxPreBolus)
-        s.copy(afterActivityOn = on, pb1U = scale(s.pb1U), pb2U = scale(s.pb2U), pb3U = scale(s.pb3U))
+        s.copy(afterActivityOn = on, pb1U = scale(s.pb1U), pb1RestU = scale(s.pb1RestU), pb2U = scale(s.pb2U), pb3U = scale(s.pb3U))
     }
 
     // ── Add to meal ──────────────────────────────────────────────────────────
@@ -645,7 +652,7 @@ class SmartMealDialogViewModel(
                     calibrationFactor = factor,
                     calibrationMeals = mealEstimateCalibration.mealsUsed,
                     durationMinutes = plan.durationMin,
-                    pb1Enabled = plan.pb1U > 0.0, pb1U = plan.pb1U,
+                    pb1Enabled = plan.pb1U > 0.0, pb1U = plan.pb1U, pb1RestU = plan.pb1RestU,
                     pb2Enabled = plan.pb2U > 0.0, pb2U = plan.pb2U, pb2DelayMinutes = plan.pb2DelayMin,
                     pb3Enabled = plan.pb3U > 0.0, pb3U = plan.pb3U, pb3DelayMinutes = plan.pb3DelayMin
                     // DURA and Protein/Fat are left as the user set them.
@@ -676,6 +683,7 @@ class SmartMealDialogViewModel(
     // ── Cancel what is running ───────────────────────────────────────────────
 
     fun cancelMode() = mealOverrideManager.cancelOverride()
+    fun cancelPb1Rest() = mealOverrideManager.cancelPreBolus1Rest()
     fun cancelPb2() = mealOverrideManager.cancelPreBolus2()
     fun cancelPb3() = mealOverrideManager.cancelPreBolus3()
 
@@ -686,6 +694,9 @@ class SmartMealDialogViewModel(
 
     private fun SmartMealDialogUiState.pb1(): Double =
         if (pb1Enabled && pb1U > 0.0) Round.floorTo(pb1U.coerceAtMost(maxPreBolus), ch.bolusStep(pb1U)) else 0.0
+
+    /** Only with pre-bolus 1 on: the rest is the part of it that waits. */
+    private fun SmartMealDialogUiState.pb1Rest(): Double = if (pb1Enabled && pb1RestU > 0.0) pb1RestU.coerceAtMost(maxPreBolus) else 0.0
 
     private fun SmartMealDialogUiState.pb2(): Double = if (pb2Enabled && pb2U > 0.0) pb2U.coerceAtMost(maxPreBolus) else 0.0
     private fun SmartMealDialogUiState.pb3(): Double = if (pb3Enabled && pb3U > 0.0) pb3U.coerceAtMost(maxPreBolus) else 0.0
@@ -715,6 +726,14 @@ class SmartMealDialogViewModel(
         if (state.pb1Enabled && state.pb1U > state.maxPreBolus)
             add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_capped, fmtU(state.maxPreBolus, state.bolusStep))))
         addAll(doseLines)
+        val rest = state.pb1Rest()
+        if (rest > 0.0)
+            add(
+                ConfirmationLine(
+                    ConfirmationRole.BOLUS,
+                    rh.gs(UiStrings.si_confirm_pb1_rest, fmtU(rest, state.bolusStep), MealOverrideManager.PB1_REST_FROM_MIN, MealOverrideManager.PB1_REST_UNTIL_MIN)
+                )
+            )
         val pb2 = state.pb2()
         if (pb2 > 0.0)
             add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_pb2, fmtU(pb2, state.bolusStep), state.pb2DelayMinutes)))
@@ -930,6 +949,7 @@ class SmartMealDialogViewModel(
                 duraStrength = state.duraStrength
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
+            if (state.pb1Rest() > 0.0) mealOverrideManager.setPreBolus1Rest(state.pb1Rest())
             // A meal cut after exercise says nothing about how much insulin the food needs, so it is not learned from.
             if (state.afterActivityPct > 0) mealOverrideManager.setAfterActivityCut(state.afterActivityPct)
             else {

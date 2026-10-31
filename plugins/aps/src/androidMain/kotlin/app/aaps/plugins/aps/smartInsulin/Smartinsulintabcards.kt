@@ -401,6 +401,11 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    tone = SiTone.GOOD)
         }
 
+        // The rest of pre-bolus 1, given once BG rises
+        if (d.mealMode != "Fasting" && d.pb1RestStatus.isNotEmpty()) {
+            addRow(d.pb1RestStatus, tone = if (d.pb1RestStatus.contains("delivered")) SiTone.GOOD else SiTone.INFO)
+        }
+
         // Food added to the meal later, given as one dose
         if (d.mealMode != "Fasting" && d.activeAddedU > 0.0) {
             addRow("Added to meal — ${"%.2f".format(d.activeAddedU)}U", tone = SiTone.GOOD)

@@ -76,9 +76,34 @@ class MealDosePlannerTest {
         val p = MealDosePlanner.plan(meal(100.0, protein = 50.0, fat = 20.0), settings)
         // Wanted 16 + 3.19 + 2.13 U; the total may be 10.
         assertEquals(8.0, p.pb1U, 1e-9)     // also held to the max pre-bolus
-        assertEquals(2.0, p.pb2U, 1e-9)
+        assertEquals(2.0, p.pb1RestU, 1e-9) // the carbs come before the fat and protein
+        assertEquals(0.0, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
         assertTrue(p.capped)
+    }
+
+    @Test
+    fun `pre-bolus 1 above the max pre-bolus is given later as its rest`() {
+        // 56.25 g at 5 g/U, 80 % = 9 U; the max pre-bolus is 6 U.
+        val p = MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 6.0, maxTotalU = 15.0))
+        assertEquals(6.0, p.pb1U, 1e-9)
+        assertEquals(3.0, p.pb1RestU, 1e-9)
+        assertFalse(p.capped)
+        // Braver: a max of 7 U leaves 2 U, and a max of 9 U none.
+        assertEquals(2.0, MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 7.0, maxTotalU = 15.0)).pb1RestU, 1e-9)
+        assertEquals(0.0, MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 9.0, maxTotalU = 15.0)).pb1RestU, 1e-9)
+    }
+
+    @Test
+    fun `a rest is never more than one max pre-bolus, and a small one is left to the loop`() {
+        // 20 U for pre-bolus 1 with a max of 6 U: 6 U now, 6 U later, the rest is cut.
+        val big = MealDosePlanner.plan(meal(125.0), settings.copy(maxPreBolusU = 6.0, maxTotalU = 25.0))
+        assertEquals(6.0, big.pb1RestU, 1e-9)
+        assertTrue(big.capped)
+        // 6.4 U wanted: 0.4 U is too little to give on its own.
+        val small = MealDosePlanner.plan(meal(40.0), settings.copy(maxPreBolusU = 6.0, maxTotalU = 15.0))
+        assertEquals(6.0, small.pb1U, 1e-9)
+        assertEquals(0.0, small.pb1RestU, 1e-9)
     }
 
     @Test

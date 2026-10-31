@@ -1,5 +1,6 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -51,6 +52,8 @@ data class MealPlanSettings(
  * @param carbsU     insulin for the carbs, before shares and caps
  * @param fatProteinU insulin for fat and protein, before shares and caps
  * @param capped     the plan was cut to the max pre-bolus or max total
+ * @param pb1RestU   the part of pre-bolus 1 above the max pre-bolus, given 15 to 45 min in only if BG rises; 0 when none.
+ *                   See `MealOverrideManager.PB1_REST_FROM_MIN`.
  */
 data class MealPlan(
     val pb1U: Double,
@@ -61,7 +64,8 @@ data class MealPlan(
     val durationMin: Int,
     val carbsU: Double,
     val fatProteinU: Double,
-    val capped: Boolean
+    val capped: Boolean,
+    val pb1RestU: Double = 0.0
 )
 
 /**
@@ -130,18 +134,24 @@ object MealDosePlanner {
         val wanted = pb1 + pb2 + pb3
 
         // Each pre-bolus within its own cap, then all together within the total. The first one is
-        // kept whole the longest: insulin before the rise is what this whole plan is for.
+        // kept whole the longest: insulin before the rise is what this whole plan is for. What pre-bolus 1
+        // wants above the max pre-bolus is its rest, given a little later once BG shows the food coming in.
+        var rest = min(max(0.0, pb1 - settings.maxPreBolusU), settings.maxPreBolusU)
         pb1 = min(pb1, settings.maxPreBolusU)
         pb2 = min(pb2, settings.maxPreBolusU)
         pb3 = min(pb3, settings.maxPreBolusU)
         var left = max(0.0, settings.maxTotalU)
         pb1 = min(pb1, left).also { left -= it }
+        rest = min(rest, left).also { left -= it }
         pb2 = min(pb2, left).also { left -= it }
         pb3 = min(pb3, left)
 
         pb1 = floorToStep(pb1, settings.bolusStep)
+        rest = floorToStep(rest, settings.bolusStep)
         pb2 = floorToStep(pb2, settings.bolusStep)
         pb3 = floorToStep(pb3, settings.bolusStep)
+        // A small rest is left to the loop.
+        if (rest < MealOverrideManager.PB1_REST_MIN_U) rest = 0.0
 
         // Pre-bolus 3 counts from pre-bolus 2, so without a pre-bolus 2 it would never fire.
         if (pb2 <= 0.0) pb3 = 0.0
@@ -155,7 +165,8 @@ object MealDosePlanner {
             durationMin = durationFor(totals.fpu),
             carbsU = carbsU,
             fatProteinU = fatProteinU,
-            capped = pb1 + pb2 + pb3 + settings.bolusStep < wanted
+            capped = pb1 + rest + pb2 + pb3 + settings.bolusStep < wanted,
+            pb1RestU = rest
         )
     }
 

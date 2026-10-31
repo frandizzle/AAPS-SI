@@ -71,6 +71,8 @@ class MealOverrideManagerImpl @Inject constructor(
             put("pfAfter",          s.pfAfter)
             put("addedU",           s.addedU)
             put("afterActivityPct", s.afterActivityPct)
+            put("preBolus1RestU",   s.preBolus1RestU)
+            if (s.preBolus1RestFiredMs != null) put("preBolus1RestFiredMs", s.preBolus1RestFiredMs)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -105,7 +107,9 @@ class MealOverrideManagerImpl @Inject constructor(
                 duraStrength     = json.optDouble("duraStrength", 1.0),
                 pfAfter          = json.optBoolean("pfAfter", false),
                 addedU           = json.optDouble("addedU", 0.0),
-                afterActivityPct = json.optInt("afterActivityPct", 0)
+                afterActivityPct = json.optInt("afterActivityPct", 0),
+                preBolus1RestU   = json.optDouble("preBolus1RestU", 0.0),
+                preBolus1RestFiredMs = if (json.has("preBolus1RestFiredMs")) json.getLong("preBolus1RestFiredMs") else null
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -173,6 +177,9 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val modeStartMs: Long get() = _state?.triggerTimeMs ?: 0L
 
+    override val preBolus1RestPending: Boolean
+        get() = activeMealMode != null && _state?.preBolus1RestPending == true
+
     override val preBolus2Pending: Boolean
         get() = _state?.preBolus2Pending == true
 
@@ -220,6 +227,19 @@ class MealOverrideManagerImpl @Inject constructor(
         // (the mode-expiry path above eventually discards it if the window closes).
         if (loopRestraining)
             reasons += "Loop restraining insulin"
+        return reasons
+    }
+
+    /**
+     * Why the rest of pre-bolus 1 does not fire yet. Like pre-bolus 2, but BG need not be above target: it
+     * must be rising, which is the sign that the food is coming in.
+     */
+    private fun restBlockReasons(bgMgdl: Double, iob: Double, maxIob: Double, delta: Double, shortAvgDelta: Double): List<String> {
+        val reasons = mutableListOf<String>()
+        if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL) reasons += "BG too low"
+        if (delta < MealOverrideManager.PB1_REST_RISE_MGDL || shortAvgDelta <= 0.0) reasons += "BG not rising yet"
+        if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO) reasons += "IOB too high"
+        if (loopRestraining) reasons += "Loop restraining insulin"
         return reasons
     }
 
@@ -276,6 +296,27 @@ class MealOverrideManagerImpl @Inject constructor(
                 shortAvgDeltaMgdl = lastPb3ShortAvgDelta
             )
         }
+
+    override val preBolus1RestStatusText: String get() {
+        val s = _state ?: return ""
+        if (s.preBolus1RestU <= 0.0 || activeMealMode == null) return ""
+        val now = System.currentTimeMillis()
+        val rest = "PB1 rest (${"%.2f".format(s.preBolus1RestU)} U)"
+        val fired = s.preBolus1RestFiredMs
+        val fromMs = s.triggerTimeMs + MealOverrideManager.PB1_REST_FROM_MIN * 60_000L
+        return when {
+            fired == -1L -> "PB1 rest: cancelled"
+            fired == -2L -> "PB1 rest: not given, BG did not rise in time"
+            fired != null && fired > 0L -> "PB1 rest: delivered ${(now - fired) / 60_000}min ago"
+            now < fromMs -> "$rest: checks BG in ${(fromMs - now + 59_999) / 60_000}min"
+            else -> {
+                val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta)
+                val leftMin = (s.triggerTimeMs + MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L - now).coerceAtLeast(0L) / 60_000
+                if (reasons.isEmpty()) "$rest: waiting for next loop cycle"
+                else "$rest waiting: ${reasons.joinToString(", ")} (${leftMin}min left)"
+            }
+        }
+    }
 
     override val preBolus2StatusText: String get() {
         val s   = _state ?: return ""
@@ -459,6 +500,22 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} after activity -$pct%")
     }
 
+    override fun setPreBolus1Rest(restU: Double) {
+        val s = _state ?: return
+        if (restU <= 0.0) return
+        _state = s.copy(preBolus1RestU = restU, preBolus1RestFiredMs = null)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 1 rest ${restU}U once BG rises")
+    }
+
+    override fun cancelPreBolus1Rest() {
+        val s = _state ?: return
+        if (!s.preBolus1RestPending) return
+        _state = s.copy(preBolus1RestFiredMs = -1L)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest cancelled by user (mode still active: ${s.mode.label})")
+    }
+
     override fun cancelPreBolus2() {
         val s = _state ?: return
         if (!s.preBolus2Pending) {
@@ -501,6 +558,8 @@ class MealOverrideManagerImpl @Inject constructor(
     ) {
         this.loopRestraining = loopRestraining
         val s = _state ?: return
+        // The rest of pre-bolus 1 comes first. One bolus per cycle, so the loop sees it before anything else fires.
+        if (s.preBolus1RestPending && processPreBolus1Rest(glucoseStatus, iobArray, maxIobU)) return
         // Skip entirely if neither PB2 nor PB3 is pending
         if (!s.preBolus2Pending && !s.preBolus3Pending) return
 
@@ -519,6 +578,69 @@ class MealOverrideManagerImpl @Inject constructor(
         if (s.preBolus3Pending) {
             processPreBolus3(glucoseStatus, iobArray, maxIobU, profile)
         }
+    }
+
+    // ── Pre-bolus 1 rest delivery ─────────────────────────────────────────────
+
+    /** Fires the rest of pre-bolus 1 once BG rises, inside its window. True when it fired this cycle. */
+    private fun processPreBolus1Rest(glucoseStatus: GlucoseStatus, iobArray: Array<IobTotal>, maxIobU: Double): Boolean {
+        val s = _state ?: return false
+        if (!s.preBolus1RestPending || activeMealMode == null) return false
+        val now = System.currentTimeMillis()
+        val currentIob = iobArray.firstOrNull()?.iob ?: 0.0
+        // Shared with pre-bolus 2's cache, so the status text shows this cycle's values.
+        lastBgMgdl        = glucoseStatus.glucose
+        lastIob           = currentIob
+        lastMaxIob        = maxIobU
+        lastDelta         = glucoseStatus.delta
+        lastShortAvgDelta = glucoseStatus.shortAvgDelta
+
+        val elapsedMs = now - s.triggerTimeMs
+        if (elapsedMs < MealOverrideManager.PB1_REST_FROM_MIN * 60_000L) return false
+        if (elapsedMs > MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L) {
+            // BG never showed the food: the meal was smaller or slower than planned. Pre-bolus 2 and the loop cover the rest.
+            _state = s.copy(preBolus1RestFiredMs = -2L)
+            persistState()
+            aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest: BG did not rise in time, ${s.preBolus1RestU}U not given")
+            return false
+        }
+        val reasons = restBlockReasons(glucoseStatus.glucose, currentIob, maxIobU, glucoseStatus.delta, glucoseStatus.shortAvgDelta)
+        if (reasons.isNotEmpty()) {
+            aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest BLOCKED: ${reasons.joinToString(", ")}")
+            return false
+        }
+
+        aapsLogger.debug(LTag.APS,
+                         "SmartInsulin PB1 rest FIRING: ${s.preBolus1RestU}U bg=${String.format("%.1f", glucoseStatus.glucose / 18.0)} " +
+                             "delta=${String.format("%.1f", glucoseStatus.delta)} iob=${String.format("%.2f", currentIob)}U")
+        val bolusInfo = DetailedBolusInfo().apply {
+            insulin   = s.preBolus1RestU
+            notes     = "SmartMeal ${s.mode.label} pre-bolus 1 rest (BG rising)"
+            timestamp = dateUtil.now()
+        }
+        // Marked as fired before delivery, as pre-bolus 2 is, so a quick next cycle cannot fire it twice.
+        val firedState = s.copy(preBolus1RestFiredMs = now)
+        _state = firedState
+        persistState()
+        appScope.launch {
+            val result = commandQueue.bolus(bolusInfo)
+            if (!result.success) {
+                aapsLogger.error(LTag.APS, "SmartInsulin PB1 rest delivery FAILED: ${result.comment}")
+                // No automatic retry, as for pre-bolus 2: a failed delivery may have given part of it.
+                if (_state == firedState) {
+                    _state = firedState.copy(preBolus1RestFiredMs = -1L)
+                    persistState()
+                }
+                uiInteraction.runAlarm(
+                    "Rest of pre-bolus 1 delivery failed — please check pump and deliver manually if needed. Reason: ${result.comment}",
+                    "SmartMeal pre-bolus 1 rest failed",
+                    AlarmSound.BOLUS_ERROR
+                )
+            } else {
+                aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest delivered OK: ${s.preBolus1RestU}U")
+            }
+        }
+        return true
     }
 
     // ── Pre-bolus 2 delivery ──────────────────────────────────────────────────

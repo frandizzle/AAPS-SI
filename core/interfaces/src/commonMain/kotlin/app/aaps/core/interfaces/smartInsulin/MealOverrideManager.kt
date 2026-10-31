@@ -43,6 +43,12 @@ interface MealOverrideManager {
      *  Used by auto-cancel logic to protect the early-meal window from premature cancellation. */
     val modeStartMs: Long
 
+    /** True while the rest of pre-bolus 1 waits for BG to rise. See [PB1_REST_FROM_MIN]. */
+    val preBolus1RestPending: Boolean
+
+    /** Status of the rest of pre-bolus 1, for the dialog and the SI tab; "" when there is none. */
+    val preBolus1RestStatusText: String
+
     /** True if pre-bolus 2 is pending delivery (scheduled but not yet fired) */
     val preBolus2Pending: Boolean
 
@@ -96,6 +102,16 @@ interface MealOverrideManager {
      * after [activateOverride]; the pre-boluses are already cut by the caller. See `MealOverrideState.afterActivityPct`.
      */
     fun setAfterActivityCut(pct: Int)
+
+    /**
+     * Gives the running mode a rest of pre-bolus 1 of [restU] units: the part above the max pre-bolus. Call it
+     * right after [activateOverride]. It fires from [PB1_REST_FROM_MIN] to [PB1_REST_UNTIL_MIN] minutes after
+     * the start, only once BG rises, and only within the same IOB and loop limits as pre-bolus 2.
+     */
+    fun setPreBolus1Rest(restU: Double)
+
+    /** Cancels the rest of pre-bolus 1 if it still waits. */
+    fun cancelPreBolus1Rest()
 
     /**
      * Adds food eaten later to the running meal mode, for example a dessert. Pre-bolus 2 and 3 only
@@ -173,5 +189,15 @@ interface MealOverrideManager {
         const val DELTA_INSTANT_BLOCK_MGDL    = -2.0   // single reading: -2 mg/dL = ~-0.11 mmol/5min
         const val SHORT_AVG_DELTA_BLOCK_MGDL  = -3.0   // avg of last 3: -3 mg/dL = ~-0.17 mmol/5min
         const val DEFAULT_MODE_WINDOW_MS  = 3 * 60 * 60 * 1000L
+
+        // Pre-bolus 1 rest: the part of pre-bolus 1 above the max pre-bolus. It is given once BG shows the
+        // food coming in, not before [PB1_REST_FROM_MIN] minutes after the start, and dropped after
+        // [PB1_REST_UNTIL_MIN]: by then pre-bolus 2 and the loop take over.
+        const val PB1_REST_FROM_MIN  = 15
+        const val PB1_REST_UNTIL_MIN = 45
+        /** BG counts as rising from this change per 5 min, in mg/dL (about 0.1 mmol), with the 15 min average also up. */
+        const val PB1_REST_RISE_MGDL = 2.0
+        /** A smaller rest is left to the loop. */
+        const val PB1_REST_MIN_U     = 0.5
     }
 }

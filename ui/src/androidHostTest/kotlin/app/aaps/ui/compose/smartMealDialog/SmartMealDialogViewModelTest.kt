@@ -140,6 +140,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinLunchDuraStrength)).thenReturn(1.0)
         whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")
+        whenever(mealOverrideManager.preBolus1RestStatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus2StatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus3StatusText).thenReturn("")
         whenever(rh.gs(any())).thenReturn("")
@@ -607,6 +608,27 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
+    fun `pre-bolus 1 above the max is planned as a rest given once BG rises`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct)).thenReturn(100)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        build()
+        // 30 g at 5 g/U = 6 U; the max pre-bolus is 4 U.
+        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.fillInFromFood()
+        with(sut.uiState.value) {
+            assertThat(pb1U).isWithin(1e-9).of(4.0)
+            assertThat(pb1RestU).isWithin(1e-9).of(2.0)
+        }
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(mealOverrideManager).setPreBolus1Rest(2.0)
+    }
+
+    @Test
     fun `without exercise nothing is offered and the meal is learned from`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
@@ -617,6 +639,7 @@ internal class SmartMealDialogViewModelTest {
         sut.prepareAndConfirm()
         sut.commit(null)
         verify(mealOverrideManager, never()).setAfterActivityCut(any())
+        verify(mealOverrideManager, never()).setPreBolus1Rest(any())
         verify(savedMealLearning).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
     }
 

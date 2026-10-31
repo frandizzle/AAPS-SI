@@ -74,6 +74,7 @@ import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsTheme
@@ -172,6 +173,7 @@ fun SmartMealDialogScreen(
     // Planned insulin the mode will give up front (PB1 now + scheduled PB2/PB3), capped as the VM caps it.
     val plannedU = listOf(
         if (state.pb1Enabled) state.pb1U else 0.0,
+        if (state.pb1Enabled) state.pb1RestU else 0.0,
         if (state.pb2Enabled) state.pb2U else 0.0,
         if (state.pb3Enabled) state.pb3U else 0.0
     ).sumOf { it.coerceAtMost(state.maxPreBolus) }
@@ -253,6 +255,10 @@ fun SmartMealDialogScreen(
                         if (active.isUam)
                             Text(stringResource(UiStrings.si_uam_active_banner, active.label), style = MaterialTheme.typography.bodySmall,
                                  color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (state.pb1RestPending) {
+                            val msg = stringResource(UiStrings.si_cancel_pb1_rest_confirm)
+                            PendingRow(state.pb1RestStatus) { cancelPrompt = msg to viewModel::cancelPb1Rest }
+                        }
                         if (state.pb2Pending) {
                             val msg = stringResource(UiStrings.si_cancel_pb2_confirm)
                             PendingRow(state.pb2Status) { cancelPrompt = msg to viewModel::cancelPb2 }
@@ -430,6 +436,22 @@ fun SmartMealDialogScreen(
                             Text("+" + fmtU(inc))
                         }
                     }
+                }
+                // Shown when the plan has a rest, or one was typed in.
+                if (state.pb1RestU > 0.0) {
+                    NumberInputRow(
+                        labelRef = UiStrings.si_pb1_rest_label,
+                        value = state.pb1RestU,
+                        onValueChange = viewModel::updatePb1Rest,
+                        valueRange = 0.0..state.maxPreBolus,
+                        step = state.bolusStep,
+                        valueFormat = bolusFormat,
+                        unitLabel = CoreUiStrings.insulin_unit_shortname
+                    )
+                    Hint(
+                        modifier = Modifier.padding(top = 4.dp),
+                        text = stringResource(UiStrings.si_pb1_rest_hint, MealOverrideManager.PB1_REST_FROM_MIN, MealOverrideManager.PB1_REST_UNTIL_MIN)
+                    )
                 }
             }
 

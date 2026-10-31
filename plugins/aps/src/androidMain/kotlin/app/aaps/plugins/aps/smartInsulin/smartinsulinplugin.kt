@@ -563,6 +563,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val activeAddedU: Double, val pb2Status: String, val pb3Status: String,
         /** What pre-bolus 2 and 3 are set to give, 0 when there is none. */
         val pb2PlannedU: Double, val pb3PlannedU: Double,
+        /** Status of the rest of pre-bolus 1, "" when there is none. */
+        val pb1RestStatus: String,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
@@ -783,6 +785,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb3DoseU = mealOverrideManager.activePb3DoseU, activeAddedU = mealOverrideManager.activeState?.addedU ?: 0.0,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
+            pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
             lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard),
