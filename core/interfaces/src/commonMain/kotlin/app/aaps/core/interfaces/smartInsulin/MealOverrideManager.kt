@@ -92,6 +92,12 @@ interface MealOverrideManager {
     fun takeProteinFatFollowOn(): Boolean
 
     /**
+     * Gives the running mode [pct] percent less insulin, because it started soon after exercise. Call it right
+     * after [activateOverride]; the pre-boluses are already cut by the caller. See `MealOverrideState.afterActivityPct`.
+     */
+    fun setAfterActivityCut(pct: Int)
+
+    /**
      * Adds food eaten later to the running meal mode, for example a dessert. Pre-bolus 2 and 3 only
      * grow while they still wait; one that has fired or was cancelled stays as it is, and the loop
      * covers the rest. The mode never gets shorter, and DURA and Protein/Fat are only turned on, never off.

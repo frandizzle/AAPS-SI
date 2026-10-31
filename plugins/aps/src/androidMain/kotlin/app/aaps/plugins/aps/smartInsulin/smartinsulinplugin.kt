@@ -69,6 +69,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
 import app.aaps.core.interfaces.utils.HardLimits
@@ -130,6 +131,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val mealEstimateCalibration: MealEstimateCalibrationImpl,
     private val savedMealLearning:       SavedMealLearningImpl,
     private val foodLog:                 FoodLogImpl,
+    private val recentActivity:          RecentActivityImpl,
     private val siteCheckFiles:          SiteCheckFiles,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
@@ -203,6 +205,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var postModeDeliveredU   = 0.0
     private var postModeSinceMs      = 0L
     private var lastModeStartSeenMs  = 0L
+    /** The meal mode start the after-activity cut was last decided for, so a UAM mode is cut once, not every cycle. */
+    private var afterActivityCheckedMs = 0L
     private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
     /** Keeps learning paused after activity stops while BG is still dropping - see ActivityTail. */
     private val activityTail = ActivityTail()
@@ -1485,6 +1489,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // Learning pauses during activity, and stays paused after it while BG is still falling
         // faster than insulin explains - the drop a sprint keeps causing once you have sat down.
         activityTail.onCycle(now, activityMonitor.level, unexplainedDropTracker.stillDropping(now))
+        recentActivity.onCycle(now, activityMonitor.level)
         val activityPausesLearning = activityMonitor.suppressLearning || activityTail.paused
 
         // -- New pod boost -----------------------------------------------------------------
@@ -1748,6 +1753,28 @@ open class SmartInsulinPlugin @Inject constructor(
             }
         }
 
+        // -- After activity ---------------------------------------------------------
+        // The body uses insulin better for hours after exercise. A meal from Smart Meal got its cut
+        // when the user started it; a UAM mode that starts soon after exercise gets it here, by
+        // itself, once. While the mode runs its ISF is weaker by the same share, and the meal
+        // learners sit it out (see below), so a short-lived effect is not learned as the meal's.
+        mealOverrideManager.activeState?.takeIf { mealOverrideManager.activeMealMode != null }?.let { s ->
+            if (s.triggerTimeMs != afterActivityCheckedMs) {
+                afterActivityCheckedMs = s.triggerTimeMs
+                if (s.mode.isUam && s.afterActivityPct == 0) recentActivity.afterActivity(now)?.let { a ->
+                    mealOverrideManager.setAfterActivityCut(a.cutPct)
+                    learningJournal.note("After activity", "${s.mode.label}: ${a.activeMin} min of exercise in the last " +
+                        "${RecentActivity.LOOKBACK_HOURS} h, insulin -${a.cutPct} %")
+                }
+            }
+        }
+        val afterActivityPct = if (mealMode != MealMode.FASTING && mealOverrideManager.activeMealMode != null)
+            mealOverrideManager.activeState?.afterActivityPct ?: 0 else 0
+        if (afterActivityPct > 0) {
+            dosingIsfMgdl /= 1.0 - afterActivityPct / 100.0
+            aapsLogger.debug(LTag.APS, "SmartInsulin after activity: ${mealMode.label} -$afterActivityPct% → isf=${"%.1f".format(dosingIsfMgdl)}")
+        }
+
         // The session's learned resistant-phase multiplier. Below 1.0 strengthens, exactly like a
         // mode's learned ISF; it relaxes back toward 1.0 as the washout comes in, so the taper
         // below is never fighting a "you are resistant" correction that has already stopped being
@@ -1890,7 +1917,7 @@ open class SmartInsulinPlugin @Inject constructor(
             bgMgdl           = glucoseStatus.glucose,
             lowActive        = lowActiveNow,
             undershootActive = undershootNow,
-            contaminated     = secondWaveNow || exerciseSuspected || podBoostDosedLastCycle || carbEpisodeActive
+            contaminated     = secondWaveNow || exerciseSuspected || podBoostDosedLastCycle || carbEpisodeActive || afterActivityPct > 0
         )
         val savedMealWatched = savedMealLearning.watching(now)
 
@@ -1917,7 +1944,7 @@ open class SmartInsulinPlugin @Inject constructor(
             preBolused        = (mealOverrideManager.activeDoseU ?: 0.0) > 0.0,
             // Entered carbs are not a dose this loop chose, so the dose-judging learners sit them
             // out. Only the insulin-curve learner (DIA/peak) runs against a carb episode.
-            learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive && !savedMealWatched,
+            learningEnabled   = modeIsfLearningEnabled() && !carbEpisodeActive && !savedMealWatched && afterActivityPct == 0,
             modeInsulinShare  = modeInsulinShare,
             // Watch the mode's own insulin out rather than a fixed window — the share decides how
             // much of a late low is actually its, so a longer watch can't mis-charge one.
@@ -1944,12 +1971,12 @@ open class SmartInsulinPlugin @Inject constructor(
             carbRatio      = profile.getIc(),
             nowMs          = now,
             baseSignature  = mealOverrideManager.activeMealMode?.let { entrySmbFractionForMode(it) } ?: 0.0,
-            exerciseSuspected = exerciseSuspected,
+            exerciseSuspected = exerciseSuspected || afterActivityPct > 0,
             // The learner holds its verdict until the entry insulin has actually peaked. Learned
             // per mode by ProfileLearner, so a short mode isn't judged on its own clock.
             insulinPeakMins   = mealOverrideManager.activeMealMode
                 ?.let { profileLearner.getProfile(it).peakMinutes } ?: 0.0,
-            secondWave        = secondWaveNow || carbEpisodeActive,
+            secondWave        = secondWaveNow || carbEpisodeActive || afterActivityPct > 0,
             newPodBoost       = podBoostDosedLastCycle,
             riseStartMgdl     = riseStartMgdl
         )
@@ -1983,7 +2010,7 @@ open class SmartInsulinPlugin @Inject constructor(
             duraAtFloor       = duraAtFloorThisCycle,
             modeInsulinShare  = modeInsulinShare,
             watchMs           = postModeWatchMs(),
-            learningEnabled   = duraLearningEnabled() && !savedMealWatched,
+            learningEnabled   = duraLearningEnabled() && !savedMealWatched && afterActivityPct == 0,
             newPodBoost       = podBoostDosedLastCycle
         )
 
@@ -2125,6 +2152,7 @@ open class SmartInsulinPlugin @Inject constructor(
             duraStatusText           = duraStatusText,
             sessionInsulinFraction   = sessionDose.insulinFraction,
             sessionStatusText        = sessionStatus,
+            afterActivityText        = if (afterActivityPct > 0) "after activity -$afterActivityPct%" else "",
             riseTurn                 = riseTurnNow(glucoseStatus.delta),
             foodFadeMins             = foodFadeMins(mealMode)
             )
@@ -2330,7 +2358,8 @@ open class SmartInsulinPlugin @Inject constructor(
                     UnitDoubleKey.ApsSmartInsulinActivityLightTarget,
                     UnitDoubleKey.ApsSmartInsulinActivityModerateTarget,
                     UnitDoubleKey.ApsSmartInsulinActivityHeavyTarget,
-                    DoubleKey.ApsSmartInsulinRestingHrBpm
+                    DoubleKey.ApsSmartInsulinRestingHrBpm,
+                    IntKey.ApsSmartInsulinAfterActivityMaxPct
                 )
             ),
             PreferenceSubScreenDef(

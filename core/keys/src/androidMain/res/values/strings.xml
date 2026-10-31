@@ -466,6 +466,8 @@
     <string name="si_food_goal_carbs_title">Daily carbs goal (g)</string>
     <string name="si_food_goal_fat_title">Daily fat goal (g)</string>
     <string name="si_food_goal_protein_title">Daily protein goal (g)</string>
+    <string name="si_after_activity_max_title">After activity: most insulin cut (%)</string>
+    <string name="si_after_activity_max_summary">After 30 minutes or more of walking or harder exercise in the last 4 hours, Smart Meal offers to give less insulin, and a UAM mode that starts gives less by itself. 30 minutes cut 10 %, an hour 15 %, an hour and a half 20 %, never more than this. 0 turns it off.</string>
     <string name="si_food_goal_summary">For the Today\'s food card on the Smart Insulin tab. 0 hides this bar.</string>
     <string name="si_meal_plan_pb2_delay_title">Planned meal: pre-bolus 2 after (min)</string>
     <string name="si_meal_plan_pb2_delay_summary">When pre-bolus 2 is given for the fat and protein wave, counted from the start. Fast insulin needs about 1 hour to work fully, so 60 min puts it to work as the wave starts.</string>

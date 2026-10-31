@@ -114,6 +114,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
          *  apply, and the smaller one wins by construction. */
         sessionInsulinFraction:   Double = 1.0,
         sessionStatusText:        String = "",
+        /** "" unless the meal mode was started soon after exercise and gives less insulin, for example "after activity -15%". */
+        afterActivityText:        String = "",
         /** The rise as the raw readings see it, when a smoothing filter is behind - see [RiseTurnGuard].
          *  null, or level NONE, leaves the smoothed delta untouched. */
         riseTurn:                 RiseTurnGuard.Result? = null,
@@ -333,6 +335,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(" | rebound=watching")
         }
         if (sessionStatusText.isNotEmpty()) sb.append(" | $sessionStatusText")
+        if (afterActivityText.isNotEmpty()) sb.append(" | $afterActivityText")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")

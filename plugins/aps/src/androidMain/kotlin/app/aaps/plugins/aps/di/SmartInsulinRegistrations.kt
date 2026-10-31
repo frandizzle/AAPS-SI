@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
@@ -13,6 +14,7 @@ import app.aaps.plugins.aps.smartInsulin.MealEstimateCalibrationImpl
 import app.aaps.plugins.aps.smartInsulin.SavedMealLearningImpl
 import app.aaps.plugins.aps.smartInsulin.MealOverrideManagerImpl
 import app.aaps.plugins.aps.smartInsulin.ProfileLearner
+import app.aaps.plugins.aps.smartInsulin.RecentActivityImpl
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.BindingContainer
@@ -61,6 +63,9 @@ object SmartInsulinRegistrations {
 
     @Provides
     fun foodLog(impl: FoodLogImpl): FoodLog = impl
+
+    @Provides
+    fun recentActivity(impl: RecentActivityImpl): RecentActivity = impl
 
     @Provides
     fun smartInsulinLearner(impl: ProfileLearner): SmartInsulinLearner = impl

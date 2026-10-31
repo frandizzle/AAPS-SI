@@ -10,6 +10,8 @@ package app.aaps.core.interfaces.smartInsulin
  * [preBolus3DelayMs] — ms AFTER PB2 FIRES to fire the third bolus.
  * [pfAfter]          — start Protein/Fat (UAM) when this mode runs out, for a meal with a slow fat and protein tail.
  * [addedU]           — insulin given now for food added to this meal later (dessert, a second plate).
+ * [afterActivityPct] — how much less insulin this meal gets after exercise, in percent; 0 = none. The loop makes the
+ *                      mode's ISF weaker by the same share, and the meal learners do not judge the meal.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -26,7 +28,8 @@ data class MealOverrideState(
     val duraFloorMgdl:    Double  = 0.0,    // lowest (strongest) ISF DURA may push toward; 0.0 = no-op
     val duraStrength:     Double  = 1.0,    // how fast DURA ramps while stuck (mirrors DuraIsfTracker.DEFAULT_WEIGHT)
     val pfAfter:          Boolean = false,
-    val addedU:           Double  = 0.0
+    val addedU:           Double  = 0.0,
+    val afterActivityPct: Int     = 0
 ) {
     /** True if a second bolus was requested and hasn't fired yet */
     val preBolus2Pending: Boolean

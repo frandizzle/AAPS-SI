@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Check
@@ -73,6 +74,7 @@ import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.ui.CoreUiStrings
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.AapsTopAppBar
@@ -293,6 +295,21 @@ fun SmartMealDialogScreen(
                         ModeTile(m, selected = state.mode == m, color = carbsColor, modifier = Modifier.weight(1f)) { viewModel.selectMode(m) }
                     }
                     Spacer(Modifier.weight(1f))
+                }
+            }
+
+            // --- After activity: offered only when the last hours had enough exercise ---
+            if (!state.addMode) state.afterActivity?.let { a ->
+                Section(
+                    title = stringResource(UiStrings.si_after_activity_title),
+                    subtitle = if (state.afterActivityOn) stringResource(UiStrings.si_after_activity_on, a.cutPct)
+                    else stringResource(UiStrings.si_after_activity_off, a.activeMin, a.cutPct),
+                    icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                    accent = MaterialTheme.colorScheme.tertiary,
+                    checked = state.afterActivityOn,
+                    onCheckedChange = viewModel::updateAfterActivity
+                ) {
+                    Hint(text = stringResource(UiStrings.si_after_activity_hint, a.activeMin, RecentActivity.LOOKBACK_HOURS))
                 }
             }
 

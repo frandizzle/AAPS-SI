@@ -23,7 +23,9 @@ import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.smartInsulin.FoodLog
+import app.aaps.core.interfaces.smartInsulin.AfterActivity
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
+import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
@@ -96,6 +98,7 @@ internal class SmartMealDialogViewModelTest {
     private lateinit var savedFoodStore: SavedFoodStore
     private val savedMealLearning: SavedMealLearning = mock()
     private val foodLog: FoodLog = mock()
+    private val recentActivity: RecentActivity = mock()
     private val mealEstimateCalibration: MealEstimateCalibration = mock()
     private val glucoseStatusProvider: GlucoseStatusProvider = mock()
     private val iobCobCalculator: IobCobCalculator = mock()
@@ -118,7 +121,7 @@ internal class SmartMealDialogViewModelTest {
         if (!::savedFoodStore.isInitialized) savedFoodStore = SavedFoodStore(preferences)
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
-            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, foodLog, mealEstimateCalibration,
+            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, foodLog, recentActivity, mealEstimateCalibration,
             glucoseStatusProvider, iobCobCalculator, constraintsChecker, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
@@ -566,6 +569,72 @@ internal class SmartMealDialogViewModelTest {
         verify(mealEstimateCalibration, never()).dropEstimate(any())
         // More food: the meal no longer stands for one saved meal.
         verify(savedMealLearning).dropMeal(running.triggerTimeMs)
+    }
+
+    @Test
+    fun `after exercise the cut is offered, cuts the pre-boluses and the mode, and the meal is not learned from`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        whenever(recentActivity.afterActivity(NOW)).thenReturn(AfterActivity(activeMin = 60, cutPct = 15))
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct)).thenReturn(100)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        build()
+        with(sut.uiState.value) {
+            assertThat(afterActivity).isEqualTo(AfterActivity(60, 15))
+            assertThat(afterActivityOn).isFalse()
+        }
+        sut.addManualFood(dessert(carbs = 10.0).copy(source = FoodSource.MANUAL))
+        sut.fillInFromFood()
+        assertThat(sut.uiState.value.pb1U).isWithin(1e-9).of(2.0)
+        // On: what was filled in is cut, and the next Fill in plans with the cut.
+        sut.updateAfterActivity(true)
+        assertThat(sut.uiState.value.pb1U).isWithin(1e-9).of(1.7)
+        sut.fillInFromFood()
+        assertThat(sut.uiState.value.plan!!.carbsU).isWithin(1e-9).of(10.0 * 0.85 / 5.0)
+        assertThat(sut.uiState.value.pb1U).isWithin(1e-9).of(1.7)
+        // Off gives it back.
+        sut.updateAfterActivity(false)
+        assertThat(sut.uiState.value.pb1U).isWithin(1e-9).of(2.0)
+        sut.updateAfterActivity(true)
+
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(mealOverrideManager).setAfterActivityCut(15)
+        verify(savedMealLearning, never()).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealEstimateCalibration, never()).recordEstimate(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `without exercise nothing is offered and the meal is learned from`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        assertThat(sut.uiState.value.afterActivity).isNull()
+        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.updateAfterActivity(true)
+        assertThat(sut.uiState.value.afterActivityOn).isFalse()
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(mealOverrideManager, never()).setAfterActivityCut(any())
+        verify(savedMealLearning).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `food added to a meal cut after exercise is cut the same`() {
+        val running = dinnerRunning().copy(afterActivityPct = 20)
+        whenever(mealOverrideManager.activeState).thenReturn(running)
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct)).thenReturn(50)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        bg(150.0)
+        build()
+        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.fillInFromFood()
+        // 30 g at 5 g/U = 6 U, 20 % less, half of it now.
+        assertThat(sut.uiState.value.addNowU).isWithin(1e-9).of(2.4)
     }
 
     @Test

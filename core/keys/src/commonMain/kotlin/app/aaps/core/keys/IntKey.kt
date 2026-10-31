@@ -476,6 +476,15 @@ enum class IntKey(
         summary = KeysStrings.si_meal_plan_pb3_share_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinAfterActivityMaxPct(
+        key = "si_after_activity_max_pct",
+        defaultValue = 20,
+        min = 0,
+        max = 30,
+        title = KeysStrings.si_after_activity_max_title,
+        summary = KeysStrings.si_after_activity_max_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinFoodGoalKcal(
         key = "si_food_goal_kcal",
         defaultValue = 1800,

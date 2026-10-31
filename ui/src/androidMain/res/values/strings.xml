@@ -401,6 +401,11 @@
     <string name="si_pf_after_title">Then Protein/Fat</string>
     <string name="si_pf_after_hint">When this mode runs out, Protein/Fat (UAM) starts, so the loop does not drop to Fasting while fat and protein are still coming in. Not when BG is already at target.</string>
     <string name="si_confirm_pf_after">Then Protein/Fat</string>
+    <string name="si_after_activity_title">After activity</string>
+    <string name="si_after_activity_on" comment="%1$d=percent. Example: 15 % less insulin">%1$d %% less insulin</string>
+    <string name="si_after_activity_off" comment="%1$d=minutes of exercise, %2$d=percent. Example: 55 min of exercise lately. Turn on for 15 % less insulin">%1$d min of exercise lately. Turn on for %2$d %% less insulin</string>
+    <string name="si_after_activity_hint" comment="%1$d=minutes of exercise, %2$d=hours looked back. Example: 55 min of walking or harder exercise in the last 4 h.">%1$d min of walking or harder exercise in the last %2$d h. The body uses insulin better for some hours after it. On: the pre-boluses get less, and the loop gives less while the mode runs. This meal is not learned from.</string>
+    <string name="si_confirm_after_activity" comment="%1$d=percent. Example: After activity: 15 % less insulin, not learned from">After activity: %1$d %% less insulin, not learned from</string>
     <string name="si_confirm_food" comment="%1$s=carbs in grams, %2$s=protein in grams, %3$s=fat in grams. Example: Meal: 45 g carbs, 40 g protein, 15 g fat">Meal: %1$s g carbs, %2$s g protein, %3$s g fat</string>
     <string name="si_food_title">What are you eating?</string>
     <string name="si_food_subtitle">Describe, photograph, scan, type in or pick it to plan the insulin</string>

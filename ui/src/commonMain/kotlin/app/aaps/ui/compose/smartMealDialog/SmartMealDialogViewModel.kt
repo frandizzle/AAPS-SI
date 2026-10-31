@@ -34,11 +34,13 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.clientcontrol.failText
+import app.aaps.core.interfaces.smartInsulin.AfterActivity
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
+import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
@@ -108,6 +110,13 @@ data class SmartMealDialogUiState(
     val runningPb3WaitingU: Double = 0.0,
     val runningDura: Boolean = false,
     val runningPfAfter: Boolean = false,
+    /** How much less insulin the running meal gets after exercise, in percent; food added to it gets the same. */
+    val runningAfterActivityPct: Int = 0,
+
+    /** Exercise in the last hours that suggests less insulin, or null when there was too little. */
+    val afterActivity: AfterActivity? = null,
+    /** The user turned the after-activity cut on: the pre-boluses are cut, and the mode will be too. */
+    val afterActivityOn: Boolean = false,
 
     /** Start Protein/Fat when this mode runs out. */
     val pfAfter: Boolean = false,
@@ -171,6 +180,9 @@ data class SmartMealDialogUiState(
 
     val foodTotals: MealTotals get() = foodItems.totals()
 
+    /** The after-activity cut this new meal gets, in percent; 0 when off. */
+    val afterActivityPct: Int get() = if (afterActivityOn) afterActivity?.cutPct ?: 0 else 0
+
     val isMmol: Boolean get() = units == GlucoseUnit.MMOL
     val unitsLabel: String get() = if (isMmol) "mmol/L" else "mg/dL"
 }
@@ -206,6 +218,7 @@ class SmartMealDialogViewModel(
     private val savedFoodStore: SavedFoodStore,
     private val savedMealLearning: SavedMealLearning,
     private val foodLog: FoodLog,
+    private val recentActivity: RecentActivity,
     private val mealEstimateCalibration: MealEstimateCalibration,
     private val glucoseStatusProvider: GlucoseStatusProvider,
     private val iobCobCalculator: IobCobCalculator,
@@ -247,7 +260,8 @@ class SmartMealDialogViewModel(
                 savedFoods = savedFoodStore.foods,
                 recentFoods = savedFoodStore.recent,
                 learnedMeals = learnedMeals(),
-                generalLearned = savedMealLearning.general()
+                generalLearned = savedMealLearning.general(),
+                afterActivity = recentActivity.afterActivity(dateUtil.now())
             )
         }
         loadMode(MealMode.LUNCH)
@@ -271,6 +285,7 @@ class SmartMealDialogViewModel(
                 runningPb3WaitingU = running?.takeIf { r -> r.preBolus3Pending }?.preBolus3U ?: 0.0,
                 runningDura = running?.duraEnabled == true,
                 runningPfAfter = running?.pfAfter == true,
+                runningAfterActivityPct = running?.afterActivityPct ?: 0,
                 canAdd = canAdd,
                 addMode = it.addMode && canAdd
             )
@@ -337,6 +352,15 @@ class SmartMealDialogViewModel(
     fun updatePb3Delay(v: Double) = _uiState.update { it.copy(pb3DelayMinutes = v.toInt().coerceIn(5, 120)) }
 
     fun updatePfAfter(v: Boolean) = _uiState.update { it.copy(pfAfter = v) }
+
+    /** Turns the after-activity cut on or off. The pre-boluses already filled in are cut, or given back, by the same share. */
+    fun updateAfterActivity(on: Boolean) = _uiState.update { s ->
+        val pct = s.afterActivity?.cutPct ?: return@update s
+        if (on == s.afterActivityOn) return@update s
+        val share = 1.0 - pct / 100.0
+        fun scale(u: Double) = Round.roundTo(if (on) u * share else u / share, s.bolusStep).coerceIn(0.0, s.maxPreBolus)
+        s.copy(afterActivityOn = on, pb1U = scale(s.pb1U), pb2U = scale(s.pb2U), pb3U = scale(s.pb3U))
+    }
 
     // ── Add to meal ──────────────────────────────────────────────────────────
 
@@ -562,6 +586,9 @@ class SmartMealDialogViewModel(
             val own = state.sourceLearned?.takeIf { it.inUse }
             val learned = own ?: savedMealLearning.general()?.takeIf { it.inUse }
             val factor = learned?.carbFactor ?: mealEstimateCalibration.factor
+            // After exercise every part gets the same share less: food added to a running meal as that meal did.
+            val cutPct = if (state.addMode) state.runningAfterActivityPct else state.afterActivityPct
+            val share = 1.0 - cutPct / 100.0
             // A saved meal that has learned when its fat and protein come in times pre-bolus 2 and 3 for it.
             val timing = own?.let {
                 MealDosePlanner.learnedDelays(
@@ -576,9 +603,9 @@ class SmartMealDialogViewModel(
                 maxPreBolusU = state.maxPreBolus,
                 maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
                 carbRatio = carbRatio,
-                factor = factor,
-                waveFactor = learned?.waveFactor,
-                tailFactor = learned?.tailFactor,
+                factor = factor * share,
+                waveFactor = learned?.waveFactor?.times(share),
+                tailFactor = learned?.tailFactor?.times(share),
                 pb2DelayMin = timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
                 pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep
@@ -696,6 +723,8 @@ class SmartMealDialogViewModel(
             add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_pb3, fmtU(pb3, state.bolusStep), state.pb3DelayMinutes)))
         if (state.pfAfter)
             add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_pf_after)))
+        if (state.afterActivityPct > 0)
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_after_activity, state.afterActivityPct)))
         foodLine(state)?.let { add(it) }
         checkLine(state)?.let { add(it) }
     }
@@ -901,8 +930,12 @@ class SmartMealDialogViewModel(
                 duraStrength = state.duraStrength
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
-            recordEstimate(state)
-            recordMealLearning(state)
+            // A meal cut after exercise says nothing about how much insulin the food needs, so it is not learned from.
+            if (state.afterActivityPct > 0) mealOverrideManager.setAfterActivityCut(state.afterActivityPct)
+            else {
+                recordEstimate(state)
+                recordMealLearning(state)
+            }
             logEntry(state)?.let { foodLog.add(it) }
             deliver(bolusId)
         }

@@ -19,6 +19,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.ui.UiInteraction
 import app.aaps.core.interfaces.utils.DateUtil
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringKey
 import org.json.JSONObject
 import dev.zacsweers.metro.Inject
@@ -69,6 +70,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("duraStrength",     s.duraStrength)
             put("pfAfter",          s.pfAfter)
             put("addedU",           s.addedU)
+            put("afterActivityPct", s.afterActivityPct)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -102,7 +104,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 duraFloorMgdl    = json.optDouble("duraFloorMgdl", 0.0),
                 duraStrength     = json.optDouble("duraStrength", 1.0),
                 pfAfter          = json.optBoolean("pfAfter", false),
-                addedU           = json.optDouble("addedU", 0.0)
+                addedU           = json.optDouble("addedU", 0.0),
+                afterActivityPct = json.optInt("afterActivityPct", 0)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -447,6 +450,13 @@ class MealOverrideManagerImpl @Inject constructor(
         if (!pfFollowOnDue) return false
         pfFollowOnDue = false
         return true
+    }
+
+    override fun setAfterActivityCut(pct: Int) {
+        val s = _state ?: return
+        _state = s.copy(afterActivityPct = pct.coerceIn(0, IntKey.ApsSmartInsulinAfterActivityMaxPct.max))
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} after activity -$pct%")
     }
 
     override fun cancelPreBolus2() {
