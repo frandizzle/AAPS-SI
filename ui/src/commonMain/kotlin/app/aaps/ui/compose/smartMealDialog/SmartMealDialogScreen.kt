@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DinnerDining
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.FreeBreakfast
 import androidx.compose.material.icons.filled.HourglassBottom
 import androidx.compose.material.icons.filled.LunchDining
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
@@ -43,6 +45,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -63,6 +68,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import app.aaps.core.data.format.NumberFormat
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.interfaces.navigation.ElementType
 import app.aaps.core.interfaces.smartInsulin.MealMode
@@ -81,6 +87,8 @@ import app.aaps.core.ui.compose.stringResource
 import app.aaps.core.ui.compose.stringResourceOrNull
 import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.components.DialogStatusBar
+import app.aaps.ui.compose.smartMealDialog.food.barcodeScannerAvailable
+import app.aaps.ui.compose.smartMealDialog.food.rememberMealPhotoLauncher
 import app.aaps.ui.compose.overview.chips.CobUiState
 import app.aaps.ui.compose.overview.chips.IobUiState
 import app.aaps.ui.compose.overview.graphs.BgInfoUiState
@@ -104,6 +112,8 @@ fun SmartMealDialogScreen(
 
     var confirmation by remember { mutableStateOf<Pair<Long?, List<ConfirmationLine>>?>(null) }
     var cancelPrompt by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    var scanning by remember { mutableStateOf(false) }
+    val photoLauncher = rememberMealPhotoLauncher(onPhoto = viewModel::setPhoto)
 
     LaunchedEffect(Unit) {
         viewModel.sideEffect.collect { effect ->
@@ -132,6 +142,8 @@ fun SmartMealDialogScreen(
             onDismiss = { confirmation = null }
         )
     }
+    if (scanning)
+        BarcodeScanDialog(onScanned = { code -> scanning = false; viewModel.barcodeScanned(code) }, onDismiss = { scanning = false })
     cancelPrompt?.let { (message, action) ->
         AlertDialog(
             onDismissRequest = { cancelPrompt = null },
@@ -160,6 +172,8 @@ fun SmartMealDialogScreen(
         if (state.pb2Enabled) state.pb2U else 0.0,
         if (state.pb3Enabled) state.pb3U else 0.0
     ).sumOf { it.coerceAtMost(state.maxPreBolus) }
+    val addedU = state.addNowU + state.addPb2U + state.addPb3U
+    val activeLabel = state.activeMode?.label ?: ""
 
     Scaffold(
         topBar = {
@@ -184,8 +198,12 @@ fun SmartMealDialogScreen(
                 Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (plannedU > 0.0) stringResource(UiStrings.si_start_mode_units, state.mode.label, fmtU(plannedU))
-                    else stringResource(UiStrings.si_start_mode, state.mode.label),
+                    when {
+                        state.addMode && addedU > 0.0 -> stringResource(UiStrings.si_add_button_units, activeLabel, fmtU(addedU))
+                        state.addMode                 -> stringResource(UiStrings.si_add_button, activeLabel)
+                        plannedU > 0.0                -> stringResource(UiStrings.si_start_mode_units, state.mode.label, fmtU(plannedU))
+                        else                          -> stringResource(UiStrings.si_start_mode, state.mode.label)
+                    },
                     style = MaterialTheme.typography.titleSmall
                 )
             }
@@ -244,19 +262,67 @@ fun SmartMealDialogScreen(
                 }
             }
 
-            // --- Mode picker ---
-            Text(stringResource(UiStrings.si_mode_label), style = MaterialTheme.typography.titleSmall,
-                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                viewModel.modes.take(3).forEach { m ->
-                    ModeTile(m, selected = state.mode == m, color = carbsColor, modifier = Modifier.weight(1f)) { viewModel.selectMode(m) }
+            // --- Add to the running meal, or start a new one ---
+            if (state.canAdd) {
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = state.addMode,
+                        onClick = { focusManager.clearFocus(); viewModel.updateAddMode(true) },
+                        shape = SegmentedButtonDefaults.itemShape(0, 2)
+                    ) { Text(stringResource(UiStrings.si_add_toggle_add, activeLabel)) }
+                    SegmentedButton(
+                        selected = !state.addMode,
+                        onClick = { focusManager.clearFocus(); viewModel.updateAddMode(false) },
+                        shape = SegmentedButtonDefaults.itemShape(1, 2)
+                    ) { Text(stringResource(UiStrings.si_add_toggle_new)) }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                viewModel.modes.drop(3).forEach { m ->
-                    ModeTile(m, selected = state.mode == m, color = carbsColor, modifier = Modifier.weight(1f)) { viewModel.selectMode(m) }
+
+            // --- Mode picker ---
+            if (!state.addMode) {
+                Text(stringResource(UiStrings.si_mode_label), style = MaterialTheme.typography.titleSmall,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    viewModel.modes.take(3).forEach { m ->
+                        ModeTile(m, selected = state.mode == m, color = carbsColor, modifier = Modifier.weight(1f)) { viewModel.selectMode(m) }
+                    }
                 }
-                Spacer(Modifier.weight(1f))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    viewModel.modes.drop(3).forEach { m ->
+                        ModeTile(m, selected = state.mode == m, color = carbsColor, modifier = Modifier.weight(1f)) { viewModel.selectMode(m) }
+                    }
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+
+            // --- What is eaten: estimate, photo, barcode, typed in or from My foods ---
+            run {
+                val t = state.foodTotals
+                Section(
+                    title = stringResource(UiStrings.si_food_title),
+                    subtitle = if (state.foodItems.isEmpty()) stringResource(UiStrings.si_food_subtitle)
+                    else stringResource(
+                        UiStrings.si_food_subtitle_totals,
+                        viewModel.decimalFormatter.to0Decimal(t.carbsG), viewModel.decimalFormatter.to0Decimal(t.proteinG), viewModel.decimalFormatter.to0Decimal(t.fatG)
+                    ),
+                    icon = Icons.Filled.Restaurant,
+                    accent = carbsColor
+                ) {
+                    SmartMealFoodContent(
+                        state = state,
+                        viewModel = viewModel,
+                        photoLauncher = photoLauncher,
+                        canScan = barcodeScannerAvailable,
+                        onScan = { focusManager.clearFocus(); scanning = true },
+                        fmtU = { viewModel.decimalFormatter.toPumpSupportedBolusWithUnits(it, state.bolusStep) }
+                    )
+                }
+            }
+
+            if (state.addMode) {
+                AddToMealSection(state, viewModel, bolusFormat, fmtU, insulinColor, onIncrement = { focusManager.clearFocus(); viewModel.addAddNow(it) })
+                Spacer(Modifier.height(8.dp))
+                return@Column
             }
 
             // --- Duration and ISF ---
@@ -282,7 +348,9 @@ fun SmartMealDialogScreen(
                     step = isfStep,
                     decimalPlaces = isfDecimals
                 )
-                Hint(stringResource(UiStrings.si_isf_hint))
+                Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_isf_hint))
+                SwitchRow(stringResource(UiStrings.si_pf_after_title), state.pfAfter, viewModel::updatePfAfter)
+                Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_pf_after_hint))
             }
 
             // --- DURA ---
@@ -373,7 +441,7 @@ fun SmartMealDialogScreen(
                     valueFormat = bolusFormat,
                     unitLabel = CoreUiStrings.insulin_unit_shortname
                 )
-                Hint(stringResource(UiStrings.si_prebolus_gate_hint))
+                Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_prebolus_gate_hint))
             }
 
             Section(
@@ -402,11 +470,94 @@ fun SmartMealDialogScreen(
                     valueFormat = bolusFormat,
                     unitLabel = CoreUiStrings.insulin_unit_shortname
                 )
-                Hint(stringResource(UiStrings.si_prebolus_gate_hint))
+                Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_prebolus_gate_hint))
             }
 
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+/** Food added to the running meal: insulin now, what is added to the waiting pre-boluses, and how long the mode stays on. */
+@Composable
+private fun AddToMealSection(
+    state: SmartMealDialogUiState,
+    viewModel: SmartMealDialogViewModel,
+    bolusFormat: NumberFormat,
+    fmtU: (Double) -> String,
+    accent: Color,
+    onIncrement: (Double) -> Unit
+) {
+    Section(
+        title = stringResource(UiStrings.si_add_title),
+        subtitle = stringResource(UiStrings.si_add_summary, fmtU(state.addNowU)),
+        icon = Icons.Filled.AddCircle,
+        accent = accent
+    ) {
+        NumberInputRow(
+            labelRef = UiStrings.si_add_now,
+            value = state.addNowU,
+            onValueChange = viewModel::updateAddNow,
+            valueRange = 0.0..state.maxPreBolus,
+            step = state.bolusStep,
+            valueFormat = bolusFormat,
+            unitLabel = CoreUiStrings.insulin_unit_shortname
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally)) {
+            listOf(1.0, 2.0, 3.0).forEach { inc ->
+                FilledTonalButton(onClick = { onIncrement(inc) }) { Text("+" + fmtU(inc)) }
+            }
+        }
+        if (state.runningPb2WaitingU > 0.0)
+            NumberInputRow(
+                labelRef = UiStrings.si_add_pb2,
+                value = state.addPb2U,
+                onValueChange = viewModel::updateAddPb2,
+                valueRange = 0.0..(state.maxPreBolus - state.runningPb2WaitingU).coerceAtLeast(0.0),
+                step = state.bolusStep,
+                valueFormat = bolusFormat,
+                unitLabel = CoreUiStrings.insulin_unit_shortname
+            )
+        if (state.runningPb3WaitingU > 0.0)
+            NumberInputRow(
+                labelRef = UiStrings.si_add_pb3,
+                value = state.addPb3U,
+                onValueChange = viewModel::updateAddPb3,
+                valueRange = 0.0..(state.maxPreBolus - state.runningPb3WaitingU).coerceAtLeast(0.0),
+                step = state.bolusStep,
+                valueFormat = bolusFormat,
+                unitLabel = CoreUiStrings.insulin_unit_shortname
+            )
+        if (state.runningPb2WaitingU <= 0.0 && state.runningPb3WaitingU <= 0.0) Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_add_hint_fired))
+        NumberInputRow(
+            labelRef = UiStrings.si_add_minutes,
+            value = state.addMinutesLeft.toDouble(),
+            onValueChange = viewModel::updateAddMinutesLeft,
+            valueRange = 0.0..480.0,
+            step = 15.0,
+            unitLabel = CoreUiStrings.units_min
+        )
+        if (!state.runningDura)
+            SwitchRow(stringResource(UiStrings.si_add_dura), state.addDura, viewModel::updateAddDura)
+        if (!state.runningPfAfter) {
+            SwitchRow(stringResource(UiStrings.si_pf_after_title), state.pfAfter, viewModel::updatePfAfter)
+            Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_pf_after_hint))
+        }
+        state.addition?.let { a ->
+            val warn = MaterialTheme.colorScheme.error
+            if (a.heldForBg) Text(stringResource(UiStrings.si_add_plan_held), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
+            if (a.cutForIob) Text(stringResource(UiStrings.si_add_plan_iob), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
+            if (a.capped) Text(stringResource(UiStrings.si_add_plan_capped), style = MaterialTheme.typography.bodySmall, color = warn, modifier = Modifier.padding(top = 4.dp))
+        }
+        Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_add_hint))
+    }
+}
+
+@Composable
+private fun SwitchRow(text: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
@@ -518,6 +669,3 @@ private fun PendingRow(status: String, onCancel: () -> Unit) {
     }
 }
 
-@Composable
-private fun Hint(text: String) =
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))

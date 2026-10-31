@@ -31,7 +31,8 @@ enum class StringKey(
     override val validator: StringValidator = StringValidator.NONE,
     override val visibility: ElementVisibility = ElementVisibility.ALWAYS,
     override val enabledCondition: PreferenceEnabledCondition = PreferenceEnabledCondition.ALWAYS,
-    override val sync: SyncSpec? = null
+    override val sync: SyncSpec? = null,
+    override val exportable: Boolean = true
 ) : StringPreferenceKey {
 
     GeneralUnits(
@@ -214,6 +215,23 @@ enum class StringKey(
         title = KeysStrings.ns_wifi_ssids,
         summary = KeysStrings.ns_wifi_ssids_summary,
         dependency = BooleanKey.NsClientUseWifi
+    ),
+    /** Kept out of exports: it is a personal key for a paid service, like a password. */
+    ApsSmartInsulinMealAiKey(
+        key = "si_meal_ai_key",
+        defaultValue = "",
+        title = KeysStrings.si_meal_ai_key_title,
+        summary = KeysStrings.si_meal_ai_key_summary,
+        dependency = BooleanKey.ApsSmartInsulinMealAiEnabled,
+        isPassword = true,
+        exportable = false
+    ),
+    ApsSmartInsulinMealAiModel(
+        key = "si_meal_ai_model",
+        defaultValue = "gemini-2.5-flash",
+        title = KeysStrings.si_meal_ai_model_title,
+        summary = KeysStrings.si_meal_ai_model_summary,
+        dependency = BooleanKey.ApsSmartInsulinMealAiEnabled
     ),
     NsClientAccessToken(
         key = "nsclient_token",

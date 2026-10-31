@@ -14,6 +14,9 @@ interface MealOverrideManager {
     /** Active meal mode — returns override if not expired, else null */
     val activeMealMode: MealMode?
 
+    /** The running meal mode with its pre-boluses, or null when no mode is active. */
+    val activeState: MealOverrideState?
+
     /** Pre-bolus 1 dose delivered when this meal mode was activated — null if none or not via SmartMeal */
     val activeDoseU: Double?
     /** Non-null and > 0 when PB2 has been delivered this session — shows the delivered amount */
@@ -75,6 +78,42 @@ interface MealOverrideManager {
     )
 
     fun cancelOverride()
+
+    /**
+     * Start Protein/Fat (UAM) when the running mode runs out by itself. Call it right after
+     * [activateOverride]. Ending the mode by hand does not start it.
+     */
+    fun followWithProteinFat()
+
+    /**
+     * True once, when a mode that was set to [followWithProteinFat] has just run out. The caller then
+     * starts Protein/Fat.
+     */
+    fun takeProteinFatFollowOn(): Boolean
+
+    /**
+     * Adds food eaten later to the running meal mode, for example a dessert. Pre-bolus 2 and 3 only
+     * grow while they still wait; one that has fired or was cancelled stays as it is, and the loop
+     * covers the rest. The mode never gets shorter, and DURA and Protein/Fat are only turned on, never off.
+     *
+     * @param addedU         insulin given now for the added food (the caller delivers it)
+     * @param preBolus2AddU  added to pre-bolus 2 if it still waits
+     * @param preBolus3AddU  added to pre-bolus 3 if it still waits
+     * @param modeEndMs      the mode runs at least until this time
+     * @param duraFloorMgdl  used only when DURA was off and is turned on now
+     * @param duraStrength   used only when DURA was off and is turned on now
+     * @return false when no meal mode is running, so nothing was changed
+     */
+    fun addToMeal(
+        addedU:        Double,
+        preBolus2AddU: Double,
+        preBolus3AddU: Double,
+        modeEndMs:     Long,
+        duraEnabled:   Boolean,
+        duraFloorMgdl: Double,
+        duraStrength:  Double,
+        pfAfter:       Boolean
+    ): Boolean
 
     /**
      * Cancel a pending pre-bolus 2 without cancelling the meal mode itself.

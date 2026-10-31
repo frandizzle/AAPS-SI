@@ -133,6 +133,14 @@ kotlin {
                 // Ktor engine for this target. Replaces the direct OkHttp dependency the wiki search
                 // used before it was ported.
                 implementation(libs.io.ktor.client.okhttp)
+
+                // Smart Meal: the camera and the reader for food barcodes. Same libraries as the QR
+                // scanner of the client set-up in :plugins:sync.
+                implementation(libs.androidx.camera.camera2)
+                implementation(libs.androidx.camera.core)
+                implementation(libs.androidx.camera.lifecycle)
+                implementation(libs.androidx.camera.view)
+                implementation(libs.com.google.zxing.core)
             }
         }
 

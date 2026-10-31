@@ -398,6 +398,68 @@
     <string name="si_prebolus2_delay">Delay after activation</string>
     <string name="si_prebolus3_delay">Delay after pre-bolus 2</string>
     <string name="si_prebolus_gate_hint">Fires only if BG is above target and IOB has headroom</string>
+    <string name="si_pf_after_title">Then Protein/Fat</string>
+    <string name="si_pf_after_hint">When this mode runs out, Protein/Fat (UAM) starts, so the loop does not drop to Fasting while fat and protein are still coming in. Not when BG is already at target.</string>
+    <string name="si_confirm_pf_after">Then Protein/Fat</string>
+    <string name="si_confirm_food" comment="%1$s=carbs in grams, %2$s=protein in grams, %3$s=fat in grams. Example: Meal: 45 g carbs, 40 g protein, 15 g fat">Meal: %1$s g carbs, %2$s g protein, %3$s g fat</string>
+    <string name="si_food_title">What are you eating?</string>
+    <string name="si_food_subtitle">Describe, photograph, scan, type in or pick it to plan the insulin</string>
+    <string name="si_food_subtitle_totals" comment="%1$s=carbs in grams, %2$s=protein in grams, %3$s=fat in grams. Example: 45 g carbs · 40 g protein · 15 g fat">%1$s g carbs · %2$s g protein · %3$s g fat</string>
+    <string name="si_food_describe_hint">For example: 1 cup of cooked rice, 2 chicken drumsticks, vegetables</string>
+    <string name="si_food_take_photo">Photo</string>
+    <string name="si_food_pick_photo">Gallery</string>
+    <string name="si_food_scan">Barcode</string>
+    <string name="si_food_estimate">Estimate</string>
+    <string name="si_food_photo_added">Photo added</string>
+    <string name="si_food_remove_photo">Remove photo</string>
+    <string name="si_food_remove_item">Remove</string>
+    <string name="si_food_less">Less</string>
+    <string name="si_food_more">More</string>
+    <string name="si_food_quantity" comment="%1$s=how many portions or servings. Example: ×1.5">×%1$s</string>
+    <string name="si_food_portion" comment="%1$s=portion in words from the estimate or the package, %2$s=its weight in grams. Example: 1 cup cooked, 158 g">%1$s, %2$s g</string>
+    <string name="si_food_portion_grams" comment="%1$s=weight in grams. Example: 158 g">%1$s g</string>
+    <string name="si_food_item_detail" comment="%1$s=total grams eaten, %2$s=carbs in grams, %3$s=protein in grams, %4$s=fat in grams. Example: 237 g: 66 g carbs, 6 g protein, 1 g fat">%1$s g: %2$s g carbs, %3$s g protein, %4$s g fat</string>
+    <string name="si_food_fill_in">Fill in insulin plan</string>
+    <string name="si_food_clear">Clear</string>
+    <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling, and the loop gives the rest from real BG.</string>
+    <string name="si_food_plan_summary" comment="%1$s=insulin for carbs, %2$s=insulin for fat and protein, both with unit. Example: Needs about 9.0 U for carbs and 3.2 U for fat and protein">Needs about %1$s for carbs and %2$s for fat and protein</string>
+    <string name="si_food_plan_factor" comment="%1$s=learned factor, %2$d=number of meals it is based on. Example: Learned from your meals: ×1.15 (8 meals)">Learned from your meals: ×%1$s (%2$d meals)</string>
+    <string name="si_food_plan_learning">Not learned from your meals yet: estimates are used as they are</string>
+    <string name="si_food_plan_capped">The plan was cut to your max pre-bolus settings</string>
+    <string name="si_food_no_ratio">There is no carb ratio in the profile, so no plan could be made</string>
+    <string name="si_food_my_foods">My foods</string>
+    <string name="si_food_type_in">Type in</string>
+    <string name="si_food_save_meal">Save as meal</string>
+    <string name="si_food_save_item">Save to My foods</string>
+    <string name="si_food_save_name">Name</string>
+    <string name="si_food_save_hint">An entry with the same name is replaced.</string>
+    <string name="si_food_saved">Saved to My foods</string>
+    <string name="si_food_save_replaced">Updated in My foods</string>
+    <string name="si_food_save_full" comment="%1$d=most entries My foods can hold. Example: My foods is full (100). Delete one first.">My foods is full (%1$d). Delete one first.</string>
+    <string name="si_food_my_foods_empty">Nothing saved yet. Tap the star on a food, or Save as meal, to keep it here.</string>
+    <string name="si_food_recent">Recent</string>
+    <string name="si_food_recent_hint">Your last looked up foods. Tap the star to save one.</string>
+    <string name="si_food_rename">Rename</string>
+    <string name="si_food_delete_title" comment="%1$s=name of a saved food or meal. Example: Delete Turkey wrap?">Delete %1$s?</string>
+    <string name="si_food_manual_title">Type in a food</string>
+    <string name="si_food_manual_portion">Portion, for example 1 wrap (you can leave it empty)</string>
+    <string name="si_food_manual_grams">Weight (g)</string>
+    <string name="si_food_manual_carbs">Carbs (g)</string>
+    <string name="si_food_manual_protein">Protein (g)</string>
+    <string name="si_food_manual_fat">Fat (g)</string>
+    <string name="si_food_manual_hint">Enter what this weight holds, as on the label or in the recipe. Carbs without fibre.</string>
+    <string name="si_food_manual_invalid">Carbs, protein and fat together cannot be more than the weight</string>
+    <string name="si_food_scan_title">Point the camera at the barcode</string>
+    <string name="si_food_camera_refused">Scanning needs the camera. Allow it to scan barcodes.</string>
+    <string name="si_food_camera_retry">Allow camera</string>
+    <string name="si_food_err_not_set_up">Meal estimates are off or have no API key. Set them up in Smart Insulin settings, meal modes.</string>
+    <string name="si_food_err_offline">No internet connection</string>
+    <string name="si_food_err_invalid_key">The Gemini API key was refused. Check it in the settings.</string>
+    <string name="si_food_err_limit">The free limit is reached. Try again later.</string>
+    <string name="si_food_err_not_food">No food was found</string>
+    <string name="si_food_err_not_found">This product is not in Open Food Facts, or it has no nutrition values</string>
+    <string name="si_food_err_bad">The answer could not be read. Try again.</string>
+    <string name="si_food_err_other" comment="%1$s=the error message from the service, in English">Something went wrong: %1$s</string>
     <string name="si_cancel_mode">Cancel %1$s mode</string>
     <string name="si_cancel_uam">Cancel UAM (%1$s)</string>
     <string name="si_cancel_mode_confirm">Cancel active %1$s mode?</string>
@@ -406,6 +468,34 @@
     <string name="si_cancel_pb">Cancel | %1$s</string>
     <string name="si_cancel_pb2_confirm">Cancel the scheduled pre-bolus 2? The meal mode will stay active.</string>
     <string name="si_cancel_pb3_confirm">Cancel the scheduled pre-bolus 3? The meal mode will stay active.</string>
+    <string name="si_add_toggle_add" comment="%1$s=name of the running meal mode. Example: Add to Dinner">Add to %1$s</string>
+    <string name="si_add_toggle_new">New meal</string>
+    <string name="si_add_title">Add to this meal</string>
+    <string name="si_add_summary" comment="%1$s=insulin given now, without unit. Example: 2.5 U now">%1$s U now</string>
+    <string name="si_add_now">Insulin now</string>
+    <string name="si_add_pb2">Add to pre-bolus 2</string>
+    <string name="si_add_pb3">Add to pre-bolus 3</string>
+    <string name="si_add_minutes">Keep the mode on for at least</string>
+    <string name="si_add_dura">Turn on DURA</string>
+    <string name="si_add_hint">Fill in from the food above, or type the insulin yourself. Food without an estimate is not used to learn from this meal.</string>
+    <string name="si_add_hint_fired">Pre-bolus 2 and 3 have fired or are not planned, so the loop covers the rest of this food.</string>
+    <string name="si_add_plan_held">Nothing now, because BG is low or falling. The loop gives insulin when BG rises.</string>
+    <string name="si_add_plan_iob">The insulin now was cut so IOB stays within max IOB</string>
+    <string name="si_add_plan_capped">The plan was cut to your max pre-bolus and to what is left of the max for the whole meal</string>
+    <string name="si_add_button" comment="%1$s=name of the running meal mode. Example: Add to Dinner">Add to %1$s</string>
+    <string name="si_add_button_units" comment="%1$s=name of the running meal mode, %2$s=insulin without unit. Example: Add to Dinner · 2.5 U">Add to %1$s · %2$s U</string>
+    <string name="si_add_note" comment="Note saved with the bolus. %1$s=name of the meal mode. Example: SmartMeal Dinner added food">SmartMeal %1$s added food</string>
+    <string name="si_confirm_add" comment="%1$s=name of the running meal mode. Example: Add to Dinner">Add to %1$s</string>
+    <string name="si_confirm_add_pb2" comment="%1$s=insulin added, %2$s=new total of pre-bolus 2, both without unit. Example: Pre-bolus 2 grows by 1.0 U, to 3.5 U (safety-gated)">Pre-bolus 2 grows by %1$s U, to %2$s U (safety-gated)</string>
+    <string name="si_confirm_add_pb3" comment="%1$s=insulin added, %2$s=new total of pre-bolus 3, both without unit. Example: Pre-bolus 3 grows by 1.0 U, to 3.5 U (safety-gated)">Pre-bolus 3 grows by %1$s U, to %2$s U (safety-gated)</string>
+    <string name="si_confirm_add_longer" comment="%1$d=minutes from now. Example: Meal mode on for 180 more min">Meal mode on for %1$d more min</string>
+    <string name="si_confirm_add_iob" comment="%1$s=insulin on board now, %2$s=max IOB, both without unit. Example: IOB now 3.20 U, max IOB 7.00 U">IOB now %1$s U, max IOB %2$s U</string>
+    <string name="si_confirm_add_bg_low">BG is low or falling</string>
+    <string name="si_confirm_add_iob_high">IOB will go above max IOB</string>
+    <string name="si_confirm_add_total_high" comment="%1$s=insulin of the whole meal in fixed doses, %2$s=the max set for a meal, both without unit. Example: This meal gives 12.0 U in fixed doses, more than your max of 10.0 U">This meal gives %1$s U in fixed doses, more than your max of %2$s U</string>
+    <string name="si_confirm_add_not_learned">Food without an estimate: this meal is not used to learn</string>
+    <string name="si_confirm_replaces" comment="%1$s=name of the running meal mode. Example: This replaces the running Dinner mode">This replaces the running %1$s mode</string>
+    <string name="si_confirm_replaces_pb">Its pre-bolus 2 and 3 that have not fired are dropped</string>
     <string name="si_confirm_mode">Meal mode: %1$s</string>
     <string name="si_confirm_duration">Duration: %1$d min</string>
     <string name="si_confirm_isf">ISF override: %1$s</string>

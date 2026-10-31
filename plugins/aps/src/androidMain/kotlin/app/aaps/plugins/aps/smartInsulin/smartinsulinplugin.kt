@@ -125,6 +125,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private val duraIsfTracker:   DuraIsfTracker,
     private val mealAbsorptionTracker:   MealAbsorptionTracker,
     private val mealAbsorptionCsvLogger: MealAbsorptionCsvLogger,
+    private val mealEstimateCalibration: MealEstimateCalibrationImpl,
     private val siteCheckFiles:          SiteCheckFiles,
     private val modeIsfLearner:          ModeIsfLearner,
     private val uamEntryFractionLearner: UamEntryFractionLearner,
@@ -411,6 +412,7 @@ open class SmartInsulinPlugin @Inject constructor(
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
         relowTracker.reset()
+        mealEstimateCalibration.reset()
         learningSnapshots.clear()
         learningJournal.note("Reset", "All learners reset")
     }
@@ -548,7 +550,7 @@ open class SmartInsulinPlugin @Inject constructor(
         val profileLearningStatus: String, val circadianRawStatus: String,
         val profilesRawStatus: String, val tirRawLine: String, val avgBgMgdl24h: Double,
         val estimatedHba1c: Double, val bgWindowHours: Int, val activeDoseU: Double?,
-        val activePb2DoseU: Double?, val activePb3DoseU: Double?, val pb2Status: String, val pb3Status: String,
+        val activePb2DoseU: Double?, val activePb3DoseU: Double?, val activeAddedU: Double, val pb2Status: String, val pb3Status: String,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
         val pb3GateData: MealOverrideManager.Pb2GateData?,
         val lowGuardMgdl: Double,
@@ -766,7 +768,7 @@ open class SmartInsulinPlugin @Inject constructor(
             circadianRawStatus = circRaw, profilesRawStatus = profRaw, tirRawLine = aggressionLearner.tirSummary,
             avgBgMgdl24h = cachedHba1cAvgMgdl, estimatedHba1c = cachedHba1cEstimate, bgWindowHours = cachedHba1cWindowHours,
             activeDoseU = mealOverrideManager.activeDoseU, activePb2DoseU = mealOverrideManager.activePb2DoseU,
-            activePb3DoseU = mealOverrideManager.activePb3DoseU,
+            activePb3DoseU = mealOverrideManager.activePb3DoseU, activeAddedU = mealOverrideManager.activeState?.addedU ?: 0.0,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
@@ -1636,6 +1638,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val circIsfMult = circadianLearner.isfMultiplier(currentHour, currentDow, currentMinute)
         var dosingIsfMgdl = if (mIsfMgdl > 0.0) mIsfMgdl else trueIsfMgdl / circIsfMult
 
+        // A meal set up from an estimate with a lot of fat and protein hands over to Protein/Fat when it
+        // runs out, so the loop does not drop to Fasting while that slow tail is still coming in. Not when
+        // BG is already back at target: there is nothing left to cover.
+        if (mealOverrideManager.takeProteinFatFollowOn() && glucoseStatus.glucose > profile.getTargetMgdl())
+            uamController.startProteinFat(glucoseStatus.glucose / 18.0)
+
         mealOverrideManager.onLoopCycle(
             glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
             // Rebound state and the previous decision are both carried over from the last cycle —
@@ -1779,7 +1787,11 @@ open class SmartInsulinPlugin @Inject constructor(
             carbRatio      = profile.getIc(),
             nowMs          = now
         )
-        if (completedMealEpisode != null) mealAbsorptionCsvLogger.log(completedMealEpisode)
+        if (completedMealEpisode != null) {
+            mealAbsorptionCsvLogger.log(completedMealEpisode)
+            mealEstimateCalibration.onEpisode(completedMealEpisode)
+        }
+        mealEstimateCalibration.onCycle(now)
 
         // Exercise suspected: the drop is bigger than insulin explains, or activity has just ended
         // and BG is still dropping from it. A low then is learned by the meal learners at a small
@@ -2231,7 +2243,14 @@ open class SmartInsulinPlugin @Inject constructor(
                     UnitDoubleKey.ApsSmartInsulinLunchIsf,
                     UnitDoubleKey.ApsSmartInsulinDinnerIsf,
                     UnitDoubleKey.ApsSmartInsulinLowCarbIsf,
-                    UnitDoubleKey.ApsSmartInsulinExtendedIsf
+                    UnitDoubleKey.ApsSmartInsulinExtendedIsf,
+                    BooleanKey.ApsSmartInsulinMealAiEnabled,
+                    StringKey.ApsSmartInsulinMealAiKey,
+                    StringKey.ApsSmartInsulinMealAiModel,
+                    IntKey.ApsSmartInsulinMealPlanPb1Pct,
+                    IntKey.ApsSmartInsulinMealPlanPb2Pct,
+                    IntKey.ApsSmartInsulinMealPlanPb3Pct,
+                    DoubleKey.ApsSmartInsulinMealPlanMaxTotalU
                 )
             ),
             PreferenceSubScreenDef(

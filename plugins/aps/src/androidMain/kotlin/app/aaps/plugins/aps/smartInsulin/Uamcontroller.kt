@@ -585,6 +585,12 @@ class UamController @Inject constructor(
     fun riseStartMgdlFor(modeStartMs: Long): Double =
         if (riseStartMmol > 0.0 && abs(modeStartMs - riseStartAtMs) <= RISE_START_MATCH_MS) riseStartMmol * 18.0 else 0.0
 
+    /**
+     * Starts Protein/Fat (UAM) with its settings, as if it had been detected. Used when a meal mode that was
+     * planned with a fat and protein tail runs out.
+     */
+    fun startProteinFat(bgMmol: Double) = triggerUam(MealMode.UAM_PROTEIN_FAT, bgMmol, 0.0, 0.0)
+
     private fun triggerUam(mode: MealMode, bgMmol: Double, deltaMmol: Double, totalRise: Double, riseStartMmol: Double = 0.0) {
         justFiredThisCycle = mode
         val durationMins = uamDurationMins(mode)

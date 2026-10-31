@@ -38,6 +38,9 @@ class MealOverrideManagerImpl @Inject constructor(
 
     @Volatile private var _state: MealOverrideState? = null
 
+    /** A mode set to [followWithProteinFat] has run out, and Protein/Fat has not been started yet. */
+    @Volatile private var pfFollowOnDue = false
+
     init {
         restoreState()
     }
@@ -64,6 +67,8 @@ class MealOverrideManagerImpl @Inject constructor(
             put("duraEnabled",      s.duraEnabled)
             put("duraFloorMgdl",    s.duraFloorMgdl)
             put("duraStrength",     s.duraStrength)
+            put("pfAfter",          s.pfAfter)
+            put("addedU",           s.addedU)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -95,7 +100,9 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus3FiredMs = if (json.has("preBolus3FiredMs")) json.getLong("preBolus3FiredMs") else null,
                 duraEnabled      = json.optBoolean("duraEnabled", false),
                 duraFloorMgdl    = json.optDouble("duraFloorMgdl", 0.0),
-                duraStrength     = json.optDouble("duraStrength", 1.0)
+                duraStrength     = json.optDouble("duraStrength", 1.0),
+                pfAfter          = json.optBoolean("pfAfter", false),
+                addedU           = json.optDouble("addedU", 0.0)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -114,6 +121,14 @@ class MealOverrideManagerImpl @Inject constructor(
         val now = System.currentTimeMillis()
         if (s.modeExpiryMs > now) return s.mode
 
+        // A meal with a slow fat and protein tail hands over to Protein/Fat now, see takeProteinFatFollowOn.
+        if (s.pfAfter) {
+            pfFollowOnDue = true
+            _state = s.copy(pfAfter = false)
+            persistState()
+            aapsLogger.debug(LTag.APS, "SmartInsulin mode ${s.mode.label} expired - Protein/Fat follows")
+        }
+
         // Mode expired. If PB2 or PB3 is still pending, leave _state intact so
         // onLoopCycle can formally discard and log it rather than silently vanishing.
         if (s.preBolus2Pending || s.preBolus3Pending) return null
@@ -123,6 +138,8 @@ class MealOverrideManagerImpl @Inject constructor(
         persistState()
         return null
     }
+
+    override val activeState: MealOverrideState? get() = if (activeMealMode != null) _state else null
 
     override val activeIsfMultiplier: Double get() = 1.0
 
@@ -363,6 +380,7 @@ class MealOverrideManagerImpl @Inject constructor(
             duraFloorMgdl    = duraFloorMgdl,
             duraStrength     = duraStrength
         )
+        pfFollowOnDue = false  // a new mode owns the time now
         persistState()
         aapsLogger.debug(LTag.APS,
                          "SmartInsulin override: mode=${mode.label} modeTTL=${modeWindowMs / 60_000}min" +
@@ -371,10 +389,61 @@ class MealOverrideManagerImpl @Inject constructor(
                              (if (duraEnabled) " dura=on floor=${duraFloorMgdl}mg/dL strength=${duraStrength}" else ""))
     }
 
+    override fun addToMeal(
+        addedU:        Double,
+        preBolus2AddU: Double,
+        preBolus3AddU: Double,
+        modeEndMs:     Long,
+        duraEnabled:   Boolean,
+        duraFloorMgdl: Double,
+        duraStrength:  Double,
+        pfAfter:       Boolean
+    ): Boolean {
+        if (activeMealMode == null) return false
+        val s = _state ?: return false
+        // A pre-bolus that has fired or was cancelled is not brought back: the loop covers that part.
+        val pb2Add = if (s.preBolus2Pending) preBolus2AddU.coerceAtLeast(0.0) else 0.0
+        val pb3Add = if (s.preBolus3Pending) preBolus3AddU.coerceAtLeast(0.0) else 0.0
+        val duraNew = duraEnabled && !s.duraEnabled
+        _state = s.copy(
+            addedU        = s.addedU + addedU.coerceAtLeast(0.0),
+            preBolus2U    = s.preBolus2U + pb2Add,
+            preBolus3U    = s.preBolus3U + pb3Add,
+            modeExpiryMs  = maxOf(s.modeExpiryMs, modeEndMs),
+            duraEnabled   = s.duraEnabled || duraEnabled,
+            duraFloorMgdl = if (duraNew) duraFloorMgdl else s.duraFloorMgdl,
+            duraStrength  = if (duraNew) duraStrength else s.duraStrength,
+            pfAfter       = s.pfAfter || pfAfter
+        )
+        persistState()
+        aapsLogger.debug(LTag.APS,
+                         "SmartInsulin add to meal ${s.mode.label}: now=${addedU}U pb2+=${pb2Add}U pb3+=${pb3Add}U" +
+                             (if (preBolus2AddU > pb2Add) " (pb2 no longer waits, ${preBolus2AddU}U left to the loop)" else "") +
+                             (if (preBolus3AddU > pb3Add) " (pb3 no longer waits, ${preBolus3AddU}U left to the loop)" else "") +
+                             " ends in ${(_state!!.modeExpiryMs - System.currentTimeMillis()) / 60_000}min" +
+                             (if (duraNew) " dura=on" else "") + (if (pfAfter) " then P/F" else ""))
+        return true
+    }
+
     override fun cancelOverride() {
         aapsLogger.debug(LTag.APS, "SmartInsulin override cancelled")
         _state = null
+        pfFollowOnDue = false
         persistState()
+    }
+
+    override fun followWithProteinFat() {
+        val s = _state ?: return
+        _state = s.copy(pfAfter = true)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: Protein/Fat follows ${s.mode.label}")
+    }
+
+    override fun takeProteinFatFollowOn(): Boolean {
+        activeMealMode  // notices a mode that has just run out
+        if (!pfFollowOnDue) return false
+        pfFollowOnDue = false
+        return true
     }
 
     override fun cancelPreBolus2() {

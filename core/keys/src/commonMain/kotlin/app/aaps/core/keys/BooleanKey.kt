@@ -387,6 +387,12 @@ enum class BooleanKey(
         defaultedBySM = true,
         dependency = ApsSmartInsulinUamEnabled
     ),
+    ApsSmartInsulinMealAiEnabled(
+        key = "si_meal_ai_enabled",
+        defaultValue = false,
+        title = KeysStrings.si_meal_ai_enabled_title,
+        summary = KeysStrings.si_meal_ai_enabled_summary
+    ),
     ApsSmartInsulinUamPfTakeover(
         key = "si_uam_pf_takeover",
         defaultValue = true,

@@ -8,6 +8,8 @@ package app.aaps.core.interfaces.smartInsulin
  * [preBolus2FiredMs] — wall-clock time it was actually delivered, or null if still pending.
  * [preBolus3U]       — pre-bolus 3 dose in units.
  * [preBolus3DelayMs] — ms AFTER PB2 FIRES to fire the third bolus.
+ * [pfAfter]          — start Protein/Fat (UAM) when this mode runs out, for a meal with a slow fat and protein tail.
+ * [addedU]           — insulin given now for food added to this meal later (dessert, a second plate).
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -22,7 +24,9 @@ data class MealOverrideState(
     val preBolus3FiredMs: Long?  = null,
     val duraEnabled:      Boolean = false,  // DURA_ISF: strengthen ISF while BG sits stuck above target
     val duraFloorMgdl:    Double  = 0.0,    // lowest (strongest) ISF DURA may push toward; 0.0 = no-op
-    val duraStrength:     Double  = 1.0     // how fast DURA ramps while stuck (mirrors DuraIsfTracker.DEFAULT_WEIGHT)
+    val duraStrength:     Double  = 1.0,    // how fast DURA ramps while stuck (mirrors DuraIsfTracker.DEFAULT_WEIGHT)
+    val pfAfter:          Boolean = false,
+    val addedU:           Double  = 0.0
 ) {
     /** True if a second bolus was requested and hasn't fired yet */
     val preBolus2Pending: Boolean
@@ -39,6 +43,12 @@ data class MealOverrideState(
     /** True if a third bolus was requested and hasn't fired yet */
     val preBolus3Pending: Boolean
         get() = preBolus3U > 0.0 && preBolus3FiredMs == null
+
+    /** All insulin this meal gives as fixed doses: what was given plus what is still planned. Cancelled pre-boluses do not count. */
+    val plannedTotalU: Double
+        get() = (doseU ?: 0.0) + addedU +
+            (if (preBolus2FiredMs != -1L) preBolus2U else 0.0) +
+            (if (preBolus3FiredMs != -1L) preBolus3U else 0.0)
 
     /** Fire time for PB3: preBolus3DelayMs relative to PB2 fire time.
      *  Returns null if PB2 hasn't fired yet (can't compute PB3 trigger). */

@@ -390,6 +390,16 @@ enum class DoubleKey(
         defaultedBySM = true,
         unitType = UnitType.INSULIN
     ),
+    ApsSmartInsulinMealPlanMaxTotalU(
+        key = "si_meal_plan_max_total_u",
+        defaultValue = 10.0,
+        min = 1.0,
+        max = 25.0,
+        title = KeysStrings.si_meal_plan_max_total_title,
+        summary = KeysStrings.si_meal_plan_max_total_summary,
+        defaultedBySM = true,
+        unitType = UnitType.INSULIN
+    ),
     ApsSmartInsulinPreBolus2DefaultU(
         key = "si_prebolus2_default_u",
         defaultValue = 2.0,

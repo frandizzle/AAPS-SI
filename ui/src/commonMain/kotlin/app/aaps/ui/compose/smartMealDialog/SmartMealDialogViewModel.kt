@@ -13,7 +13,10 @@ import app.aaps.core.interfaces.bolus.BatchExecutor
 import app.aaps.core.interfaces.clientcontrol.ActionProgress
 import app.aaps.core.interfaces.clientcontrol.FailureReason
 import app.aaps.core.interfaces.clientcontrol.isNotDeliveryError
+import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.insulin.ConcentrationHelper
+import app.aaps.core.interfaces.iob.GlucoseStatusProvider
+import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -32,7 +35,24 @@ import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.clientcontrol.failText
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
+import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.ui.UiStrings
+import app.aaps.ui.compose.smartMealDialog.food.FoodItem
+import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
+import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.MealAddition
+import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
+import app.aaps.ui.compose.smartMealDialog.food.MealFoodRepository
+import app.aaps.ui.compose.smartMealDialog.food.MealPlan
+import app.aaps.ui.compose.smartMealDialog.food.MealPlanSettings
+import app.aaps.ui.compose.smartMealDialog.food.MealTotals
+import app.aaps.ui.compose.smartMealDialog.food.RunningMeal
+import app.aaps.ui.compose.smartMealDialog.food.SaveResult
+import app.aaps.ui.compose.smartMealDialog.food.SavedFood
+import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
+import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
+import app.aaps.ui.compose.smartMealDialog.food.totals
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
@@ -79,8 +99,55 @@ data class SmartMealDialogUiState(
     val pb2Pending: Boolean = false,
     val pb2Status: String = "",
     val pb3Pending: Boolean = false,
-    val pb3Status: String = ""
+    val pb3Status: String = "",
+    /** Pre-bolus 2 and 3 of the running mode that still wait to fire, 0 when none. */
+    val runningPb2WaitingU: Double = 0.0,
+    val runningPb3WaitingU: Double = 0.0,
+    val runningDura: Boolean = false,
+    val runningPfAfter: Boolean = false,
+
+    /** Start Protein/Fat when this mode runs out. */
+    val pfAfter: Boolean = false,
+
+    // Add to meal: more food for the meal mode that is running
+    /** A meal mode started from this dialog is running, so food can be added to it. */
+    val canAdd: Boolean = false,
+    /** True: the dialog adds to the running meal. False: it starts a new one, which replaces the running one. */
+    val addMode: Boolean = false,
+    val addNowU: Double = 0.0,
+    val addPb2U: Double = 0.0,
+    val addPb3U: Double = 0.0,
+    /** The mode runs at least this many more minutes. */
+    val addMinutesLeft: Int = 0,
+    val addDura: Boolean = false,
+    /** The plan from the last "Fill in" in add mode. Null before. */
+    val addition: MealAddition? = null,
+
+    // Meal estimate (photo, description, barcode)
+    val estimatesEnabled: Boolean = false,
+    val description: String = "",
+    val hasPhoto: Boolean = false,
+    val foodItems: List<FoodItem> = emptyList(),
+    val lookupBusy: Boolean = false,
+    val lookupError: FoodLookupResult.Reason? = null,
+    val lookupDetail: String = "",
+    /** The plan from the last "Fill in", shown as a summary. Null before. */
+    val plan: MealPlan? = null,
+    /** True when "Fill in" found no carb ratio in the profile. */
+    val planNoRatio: Boolean = false,
+    val calibrationFactor: Double = 1.0,
+    val calibrationMeals: Int = 0,
+
+    // My foods
+    /** Saved foods and meals, most used first. */
+    val savedFoods: List<SavedFood> = emptyList(),
+    /** The last foods looked up or typed in, newest first. */
+    val recentFoods: List<FoodItem> = emptyList(),
+    /** What the last save did, shown until the next one. Null before. */
+    val lastSave: SaveResult? = null
 ) {
+
+    val foodTotals: MealTotals get() = foodItems.totals()
 
     val isMmol: Boolean get() = units == GlucoseUnit.MMOL
     val unitsLabel: String get() = if (isMmol) "mmol/L" else "mg/dL"
@@ -113,8 +180,17 @@ class SmartMealDialogViewModel(
     val rh: TextResolver,
     val dateUtil: DateUtil,
     val decimalFormatter: DecimalFormatter,
+    private val mealFoodRepository: MealFoodRepository,
+    private val savedFoodStore: SavedFoodStore,
+    private val mealEstimateCalibration: MealEstimateCalibration,
+    private val glucoseStatusProvider: GlucoseStatusProvider,
+    private val iobCobCalculator: IobCobCalculator,
+    private val constraintsChecker: ConstraintsChecker,
     private val appScope: CoroutineScope
 ) : ViewModel() {
+
+    /** The meal photo to send with the next estimate. Kept out of the UI state: it is only bytes to send. */
+    private var photoJpeg: ByteArray? = null
 
     private val _uiState = MutableStateFlow(SmartMealDialogUiState())
     val uiState: StateFlow<SmartMealDialogUiState> = _uiState.asStateFlow()
@@ -140,22 +216,37 @@ class SmartMealDialogViewModel(
                 bolusStep = activePlugin.activePump.pumpDescription.bolusStep,
                 pb2U = defaultPb2,
                 pb2DelayMinutes = preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins),
-                pb3U = defaultPb2
+                pb3U = defaultPb2,
+                estimatesEnabled = mealFoodRepository.estimatesEnabled,
+                calibrationFactor = mealEstimateCalibration.factor,
+                calibrationMeals = mealEstimateCalibration.mealsUsed,
+                savedFoods = savedFoodStore.foods,
+                recentFoods = savedFoodStore.recent
             )
         }
         loadMode(MealMode.LUNCH)
         refreshActive()
+        // A meal is running: the most likely wish is to add to it, not to replace it.
+        if (uiState.value.canAdd) updateAddMode(true)
     }
 
     fun refreshActive() {
+        val running = mealOverrideManager.activeState
         _uiState.update {
+            val canAdd = running != null && running.mode in modes
             it.copy(
                 activeMode = mealOverrideManager.activeMealMode,
                 activeRemainingMin = (mealOverrideManager.modeTimeRemainingMs / 60_000L).toInt(),
                 pb2Pending = mealOverrideManager.preBolus2Pending,
                 pb2Status = mealOverrideManager.preBolus2StatusText,
                 pb3Pending = mealOverrideManager.preBolus3Pending,
-                pb3Status = mealOverrideManager.preBolus3StatusText
+                pb3Status = mealOverrideManager.preBolus3StatusText,
+                runningPb2WaitingU = running?.takeIf { r -> r.preBolus2Pending }?.preBolus2U ?: 0.0,
+                runningPb3WaitingU = running?.takeIf { r -> r.preBolus3Pending }?.preBolus3U ?: 0.0,
+                runningDura = running?.duraEnabled == true,
+                runningPfAfter = running?.pfAfter == true,
+                canAdd = canAdd,
+                addMode = it.addMode && canAdd
             )
         }
     }
@@ -227,6 +318,223 @@ class SmartMealDialogViewModel(
     fun updatePb3(v: Double) = _uiState.update { it.copy(pb3U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun updatePb3Delay(v: Double) = _uiState.update { it.copy(pb3DelayMinutes = v.toInt().coerceIn(5, 120)) }
 
+    fun updatePfAfter(v: Boolean) = _uiState.update { it.copy(pfAfter = v) }
+
+    // ── Add to meal ──────────────────────────────────────────────────────────
+
+    /** Switches between adding to the running meal and starting a new one. Adding starts from nothing extra. */
+    fun updateAddMode(v: Boolean) = _uiState.update {
+        if (v && !it.canAdd) it
+        else it.copy(
+            addMode = v, addNowU = 0.0, addPb2U = 0.0, addPb3U = 0.0, addMinutesLeft = it.activeRemainingMin,
+            addDura = false, addition = null, plan = null, pfAfter = false
+        )
+    }
+
+    fun updateAddNow(v: Double) = _uiState.update { it.copy(addNowU = v.coerceIn(0.0, it.maxPreBolus)) }
+    fun addAddNow(increment: Double) = _uiState.update { it.copy(addNowU = (it.addNowU + increment).coerceAtMost(it.maxPreBolus)) }
+    fun updateAddPb2(v: Double) = _uiState.update { it.copy(addPb2U = v.coerceIn(0.0, (it.maxPreBolus - it.runningPb2WaitingU).coerceAtLeast(0.0))) }
+    fun updateAddPb3(v: Double) = _uiState.update { it.copy(addPb3U = v.coerceIn(0.0, (it.maxPreBolus - it.runningPb3WaitingU).coerceAtLeast(0.0))) }
+    fun updateAddMinutesLeft(v: Double) = _uiState.update { it.copy(addMinutesLeft = v.toInt().coerceIn(0, 480)) }
+    fun updateAddDura(v: Boolean) = _uiState.update { it.copy(addDura = v) }
+
+    // ── Meal estimate ────────────────────────────────────────────────────────
+
+    fun updateDescription(v: String) = _uiState.update { it.copy(description = v) }
+
+    fun setPhoto(jpeg: ByteArray) {
+        photoJpeg = jpeg
+        _uiState.update { it.copy(hasPhoto = true) }
+    }
+
+    fun clearPhoto() {
+        photoJpeg = null
+        _uiState.update { it.copy(hasPhoto = false) }
+    }
+
+    /** Asks for an estimate from the description and photo. A new estimate replaces the last one; scanned items stay. */
+    fun estimateMeal() {
+        val state = uiState.value
+        if (state.lookupBusy || (state.description.isBlank() && photoJpeg == null)) return
+        lookup { mealFoodRepository.estimate(state.description, photoJpeg) to true }
+    }
+
+    /** Looks up a scanned barcode and adds the product, one serving, to the list. */
+    fun barcodeScanned(code: String) {
+        if (uiState.value.lookupBusy) return
+        lookup { mealFoodRepository.lookupBarcode(code) to false }
+    }
+
+    private fun lookup(request: suspend () -> Pair<FoodLookupResult, Boolean>) {
+        _uiState.update { it.copy(lookupBusy = true, lookupError = null, lookupDetail = "") }
+        appScope.launch {
+            val (result, replacesEstimate) = request()
+            _uiState.update { s ->
+                when (result) {
+                    is FoodLookupResult.Success -> {
+                        savedFoodStore.remember(result.items)
+                        val kept = if (replacesEstimate) s.foodItems.filter { it.source != FoodSource.ESTIMATE } else s.foodItems
+                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, recentFoods = savedFoodStore.recent)
+                    }
+
+                    is FoodLookupResult.Failure -> s.copy(lookupBusy = false, lookupError = result.reason, lookupDetail = result.detail)
+                }
+            }
+        }
+    }
+
+    fun changeQuantity(index: Int, delta: Double) = _uiState.update { s ->
+        val item = s.foodItems.getOrNull(index) ?: return@update s
+        val q = (item.quantity + delta).coerceIn(MIN_QUANTITY, MAX_QUANTITY)
+        s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(quantity = q) }, plan = null, addition = null)
+    }
+
+    fun removeFood(index: Int) = _uiState.update { s ->
+        if (index !in s.foodItems.indices) s
+        else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null)
+    }
+
+    fun clearFood() {
+        photoJpeg = null
+        _uiState.update { it.copy(foodItems = emptyList(), description = "", hasPhoto = false, plan = null, addition = null, lookupError = null, lookupDetail = "", lastSave = null) }
+    }
+
+    // ── My foods ─────────────────────────────────────────────────────────────
+
+    /** Adds a food typed in by hand. It goes to the recent list too, so it can be saved later. */
+    fun addManualFood(item: FoodItem) {
+        savedFoodStore.remember(listOf(item))
+        addItems(listOf(item))
+    }
+
+    /** Adds every food of a saved entry, with the amounts it was saved with. */
+    fun addSavedFood(food: SavedFood) {
+        savedFoodStore.markUsed(food.name, dateUtil.now())
+        addItems(food.items.map { SavedFoodList.forMeal(it) })
+    }
+
+    fun addRecentFood(item: FoodItem) = addItems(listOf(SavedFoodList.forMeal(item)))
+
+    /** Saves the whole food list as one entry, for example a wrap with all that is in it. */
+    fun saveMeal(name: String) = save(name, uiState.value.foodItems)
+
+    /** Saves one food of the list on its own. */
+    fun saveFood(index: Int, name: String) {
+        val item = uiState.value.foodItems.getOrNull(index) ?: return
+        save(name, listOf(item))
+    }
+
+    fun saveRecentFood(item: FoodItem, name: String) = save(name, listOf(item))
+
+    fun deleteSavedFood(name: String) {
+        savedFoodStore.delete(name)
+        _uiState.update { it.copy(savedFoods = savedFoodStore.foods) }
+    }
+
+    fun renameSavedFood(name: String, newName: String) {
+        savedFoodStore.rename(name, newName)
+        _uiState.update { it.copy(savedFoods = savedFoodStore.foods) }
+    }
+
+    private fun save(name: String, items: List<FoodItem>) {
+        val result = savedFoodStore.save(name, items, dateUtil.now())
+        _uiState.update { it.copy(savedFoods = savedFoodStore.foods, lastSave = result) }
+    }
+
+    private fun addItems(items: List<FoodItem>) = _uiState.update {
+        it.copy(foodItems = it.foodItems + items, plan = null, addition = null, lastSave = null, savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent)
+    }
+
+    /**
+     * Fills the pre-boluses, length, DURA and Protein/Fat from the food list. Nothing is given here: the
+     * user still checks the fields and confirms. See [MealDosePlanner].
+     */
+    fun fillInFromFood() {
+        appScope.launch {
+            val state = uiState.value
+            if (state.foodItems.isEmpty()) return@launch
+            val carbRatio = profileFunction.getProfile()?.getIc() ?: 0.0
+            if (carbRatio <= 0.0) {
+                _uiState.update { it.copy(planNoRatio = true, plan = null, addition = null) }
+                return@launch
+            }
+            val factor = mealEstimateCalibration.factor
+            val settings = MealPlanSettings(
+                pb1Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb1Pct),
+                pb2Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb2Pct),
+                pb3Pct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3Pct),
+                maxPreBolusU = state.maxPreBolus,
+                maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
+                carbRatio = carbRatio,
+                factor = factor,
+                bolusStep = state.bolusStep
+            )
+            if (state.addMode) {
+                val running = mealOverrideManager.activeState ?: return@launch
+                val now = readNow()
+                val addition = MealDosePlanner.planAddition(
+                    state.foodTotals, settings,
+                    RunningMeal(
+                        plannedTotalU = running.plannedTotalU,
+                        pb2WaitingU = if (running.preBolus2Pending) running.preBolus2U else 0.0,
+                        pb3WaitingU = if (running.preBolus3Pending) running.preBolus3U else 0.0,
+                        minutesLeft = state.activeRemainingMin,
+                        iobRoomU = now.maxIobU - now.iobU,
+                        holdNow = now.holdNow
+                    )
+                )
+                _uiState.update {
+                    it.copy(
+                        addition = addition,
+                        planNoRatio = false,
+                        calibrationFactor = factor,
+                        calibrationMeals = mealEstimateCalibration.mealsUsed,
+                        addNowU = addition.nowU, addPb2U = addition.pb2AddU, addPb3U = addition.pb3AddU,
+                        addMinutesLeft = addition.minutesLeft,
+                        addDura = addition.duraEnabled,
+                        pfAfter = addition.pfAfter
+                    )
+                }
+                return@launch
+            }
+            val plan = MealDosePlanner.plan(state.foodTotals, settings)
+            _uiState.update {
+                it.copy(
+                    plan = plan,
+                    planNoRatio = false,
+                    calibrationFactor = factor,
+                    calibrationMeals = mealEstimateCalibration.mealsUsed,
+                    durationMinutes = plan.durationMin,
+                    pb1Enabled = plan.pb1U > 0.0, pb1U = plan.pb1U,
+                    pb2Enabled = plan.pb2U > 0.0, pb2U = plan.pb2U, pb2DelayMinutes = plan.pb2DelayMin,
+                    pb3Enabled = plan.pb3U > 0.0, pb3U = plan.pb3U, pb3DelayMinutes = plan.pb3DelayMin,
+                    // A slow meal turns DURA on; a quick one leaves the mode's own choice alone.
+                    duraEnabled = it.duraEnabled || plan.duraEnabled,
+                    pfAfter = plan.pfAfter
+                )
+            }
+        }
+    }
+
+    /** BG and IOB right now, as limits for a dose given during a running meal. */
+    private data class NowValues(val iobU: Double, val maxIobU: Double, val holdNow: Boolean)
+
+    /**
+     * BG low or falling holds the dose now, with the same limits pre-bolus 2 waits for, except that BG
+     * between that low limit and the target does not hold it: the food is being eaten now. No BG reading
+     * holds it too.
+     */
+    private suspend fun readNow(): NowValues {
+        val bolusIob = iobCobCalculator.calculateIobFromBolus().iob
+        val basalIob = iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended().basaliob
+        val gs = glucoseStatusProvider.glucoseStatusData
+        val hold = gs == null ||
+            gs.glucose < MealOverrideManager.MIN_BG_FOR_PB2_MGDL ||
+            gs.delta < MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL ||
+            gs.shortAvgDelta < MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+        return NowValues(bolusIob + basalIob, constraintsChecker.getMaxIOBAllowed().value(), hold)
+    }
+
     // ── Cancel what is running ───────────────────────────────────────────────
 
     fun cancelMode() = mealOverrideManager.cancelOverride()
@@ -249,6 +557,10 @@ class SmartMealDialogViewModel(
 
     private fun modeLines(state: SmartMealDialogUiState): List<ConfirmationLine> = buildList {
         add(ConfirmationLine(ConfirmationRole.PRIMARY, rh.gs(UiStrings.si_confirm_mode, state.mode.label)))
+        state.activeMode?.let { running ->
+            add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_replaces, running.label)))
+            if (state.pb2Pending || state.pb3Pending) add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_replaces_pb)))
+        }
         add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_duration, state.durationMinutes)))
         add(
             if (state.isf > 0.0) ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_isf, "${fmtBg(state.isf, state.isMmol)} ${state.unitsLabel}"))
@@ -269,6 +581,58 @@ class SmartMealDialogViewModel(
         val pb3 = state.pb3()
         if (pb3 > 0.0)
             add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_pb3, fmtU(pb3, state.bolusStep), state.pb3DelayMinutes)))
+        if (state.pfAfter)
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_pf_after)))
+        foodLine(state)?.let { add(it) }
+    }
+
+    private fun foodLine(state: SmartMealDialogUiState): ConfirmationLine? {
+        if (state.foodItems.isEmpty()) return null
+        val t = state.foodTotals
+        return ConfirmationLine(
+            ConfirmationRole.NORMAL,
+            rh.gs(UiStrings.si_confirm_food, decimalFormatter.to0Decimal(t.carbsG), decimalFormatter.to0Decimal(t.proteinG), decimalFormatter.to0Decimal(t.fatG))
+        )
+    }
+
+    private fun SmartMealDialogUiState.addNow(): Double =
+        if (addNowU > 0.0) Round.floorTo(addNowU.coerceAtMost(maxPreBolus), ch.bolusStep(addNowU)) else 0.0
+
+    /** The running mode's own DURA floor in mg/dL and strength, used when adding food turns DURA on. */
+    private fun duraSettingsOf(mode: MealMode): Pair<Double, Double> =
+        (duraFloorKeyFor(mode)?.let { preferences.get(it) } ?: 0.0) to (duraStrengthKeyFor(mode)?.let { preferences.get(it) } ?: 1.0)
+
+    private suspend fun addLines(state: SmartMealDialogUiState, running: MealOverrideState): List<ConfirmationLine> = buildList {
+        val fmt = { u: Double -> fmtU(u, state.bolusStep) }
+        add(ConfirmationLine(ConfirmationRole.PRIMARY, rh.gs(UiStrings.si_confirm_add, running.mode.label)))
+        if (state.addPb2U > 0.0)
+            add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_add_pb2, fmt(state.addPb2U), fmt(state.runningPb2WaitingU + state.addPb2U))))
+        if (state.addPb3U > 0.0)
+            add(ConfirmationLine(ConfirmationRole.BOLUS, rh.gs(UiStrings.si_confirm_add_pb3, fmt(state.addPb3U), fmt(state.runningPb3WaitingU + state.addPb3U))))
+        if (state.addMinutesLeft > state.activeRemainingMin)
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_add_longer, state.addMinutesLeft)))
+        if (state.addDura && !state.runningDura) {
+            val (floorMgdl, strength) = duraSettingsOf(running.mode)
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_dura, "${fmtBg(toDisplay(floorMgdl), state.isMmol)} ${state.unitsLabel}", decimalFormatter.to1Decimal(strength))))
+        }
+        if (state.pfAfter && !state.runningPfAfter)
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_pf_after)))
+        foodLine(state)?.let { add(it) }
+
+        // The limits are checked again here, because the amounts can be typed by hand.
+        val now = readNow()
+        val nowU = state.addNow()
+        add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_add_iob, fmt(now.iobU), fmt(now.maxIobU))))
+        if (nowU > 0.0 && now.holdNow)
+            add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_add_bg_low)))
+        if (nowU > 0.0 && now.iobU + nowU > now.maxIobU)
+            add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_add_iob_high)))
+        val maxTotal = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)
+        val total = running.plannedTotalU + nowU + state.addPb2U + state.addPb3U
+        if (total > maxTotal + state.bolusStep / 2)
+            add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_add_total_high, fmt(total), fmt(maxTotal))))
+        if (state.foodItems.isEmpty())
+            add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_add_not_learned)))
     }
 
     /**
@@ -279,15 +643,22 @@ class SmartMealDialogViewModel(
         appScope.launch {
             val state = uiState.value
             confirmedState = state
-            val lines = modeLines(state)
-            val pb1 = state.pb1()
+            val running = if (state.addMode) mealOverrideManager.activeState else null
+            if (state.addMode && running == null) {
+                // The meal ended while the dialog was open.
+                refreshActive()
+                return@launch
+            }
+            val lines = if (running != null) addLines(state, running) else modeLines(state)
+            val pb1 = if (running != null) state.addNow() else state.pb1()
             if (pb1 <= 0.0) {
                 _sideEffect.tryEmit(SideEffect.ShowConfirmation(null, lines))
                 return@launch
             }
+            val note = if (running != null) rh.gs(UiStrings.si_add_note, running.mode.label) else rh.gs(UiStrings.si_prebolus_note, state.mode.label)
             val bolus = BatchAction.Bolus(
                 insulin = pb1, carbs = 0, carbsTimeOffsetMinutes = 0, carbsDurationHours = 0, recordOnly = false,
-                notes = rh.gs(UiStrings.si_prebolus_note, state.mode.label), timestamp = dateUtil.now(), iCfg = null
+                notes = note, timestamp = dateUtil.now(), iCfg = null
             )
             when (val prepared = batchExecutor.prepare(listOf(bolus), Sources.InsulinDialog, rh.gs(InterfacesStrings.bolus))) {
                 is ActionProgress.Prepared -> _sideEffect.tryEmit(SideEffect.ShowConfirmation(prepared.id, lines + prepared.lines))
@@ -303,10 +674,57 @@ class SmartMealDialogViewModel(
         }
     }
 
+    /**
+     * Remembers what the food list said, so the meal tracker can later tell how this user's meals compare
+     * with estimates. The watch window covers a following Protein/Fat too.
+     */
+    private fun recordEstimate(state: SmartMealDialogUiState) {
+        if (state.foodItems.isEmpty()) return
+        val startMs = mealOverrideManager.modeStartMs.takeIf { it > 0L } ?: dateUtil.now()
+        val pfMin = if (state.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
+        val t = state.foodTotals
+        mealEstimateCalibration.recordEstimate(
+            modeStartMs = startMs,
+            windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
+            carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG
+        )
+    }
+
+    /**
+     * Adds the confirmed food to the running meal. The estimate is added to the meal's estimate; food
+     * without one means this meal can no longer be compared, so it is not used to learn.
+     */
+    private fun commitAddition(state: SmartMealDialogUiState, bolusId: Long?) {
+        val running = mealOverrideManager.activeState
+        val nowU = if (bolusId != null) state.addNow() else 0.0
+        val endMs = dateUtil.now() + state.addMinutesLeft * 60_000L
+        if (running != null) {
+            val (floorMgdl, strength) = duraSettingsOf(running.mode)
+            mealOverrideManager.addToMeal(
+                addedU = nowU, preBolus2AddU = state.addPb2U, preBolus3AddU = state.addPb3U, modeEndMs = endMs,
+                duraEnabled = state.addDura, duraFloorMgdl = floorMgdl, duraStrength = strength, pfAfter = state.pfAfter
+            )
+            val startMs = running.triggerTimeMs
+            if (state.foodItems.isEmpty()) mealEstimateCalibration.dropEstimate(startMs)
+            else {
+                val modeEndMs = maxOf(running.modeExpiryMs, endMs)
+                val pfMin = if (state.pfAfter || running.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
+                val t = state.foodTotals
+                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG)
+            }
+        }
+    }
+
     /** Save the per-mode settings, start the mode, then deliver the prepared pre-bolus 1 if there is one. */
     fun commit(bolusId: Long?) {
         val state = confirmedState ?: return
         appScope.launch {
+            if (state.addMode) {
+                commitAddition(state, bolusId)
+                // The bolus is for food that is being eaten, so it is given even if the meal ended meanwhile.
+                deliver(bolusId)
+                return@launch
+            }
             val mode = state.mode
             isfKeyFor(mode)?.let { preferences.put(it, toMgdl(state.isf)) }
             val duraFloorMgdl = if (state.duraEnabled) toMgdl(state.duraFloor) else 0.0
@@ -328,15 +746,26 @@ class SmartMealDialogViewModel(
                 duraFloorMgdl = duraFloorMgdl,
                 duraStrength = state.duraStrength
             )
-
-            if (bolusId != null) {
-                val result = batchExecutor.commit(bolusId, Sources.InsulinDialog, rh.gs(InterfacesStrings.bolus))
-                if (result is ActionProgress.Rejected) {
-                    if (result.reason.isNotDeliveryError())
-                        rxBus.send(EventShowDialog.Ok(title = rh.gs(InterfacesStrings.bolus), message = rh.gs(result.reason.failText())))
-                    else result.detail?.let { _sideEffect.tryEmit(SideEffect.ShowDeliveryError(it)) }
-                }
-            }
+            if (state.pfAfter) mealOverrideManager.followWithProteinFat()
+            recordEstimate(state)
+            deliver(bolusId)
         }
+    }
+
+    private suspend fun deliver(bolusId: Long?) {
+        if (bolusId == null) return
+        val result = batchExecutor.commit(bolusId, Sources.InsulinDialog, rh.gs(InterfacesStrings.bolus))
+        if (result is ActionProgress.Rejected) {
+            if (result.reason.isNotDeliveryError())
+                rxBus.send(EventShowDialog.Ok(title = rh.gs(InterfacesStrings.bolus), message = rh.gs(result.reason.failText())))
+            else result.detail?.let { _sideEffect.tryEmit(SideEffect.ShowDeliveryError(it)) }
+        }
+    }
+
+    companion object {
+
+        const val QUANTITY_STEP = 0.25
+        private const val MIN_QUANTITY = 0.25
+        private const val MAX_QUANTITY = 20.0
     }
 }

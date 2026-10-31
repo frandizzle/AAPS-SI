@@ -36,14 +36,33 @@ class MealAbsorptionCsvLogger @Inject constructor(
     }
 
     private val logFile: File get() = File(logDir, "meal_absorption_log.csv")
+    private val estimateFile: File get() = File(logDir, "meal_estimate_log.csv")
 
-    fun log(episode: CompletedMealEpisode) {
+    fun log(episode: CompletedMealEpisode) = append(logFile, HEADER, rowToCsv(episode))
+
+    /**
+     * One row per estimated meal (photo, description or barcode) once it is judged, next to what the meal
+     * tracker saw. See `MealEstimateCalibrationImpl`.
+     */
+    fun logEstimate(
+        modeStartMs: Long, carbsG: Double, proteinG: Double, fatG: Double, carbEquivG: Double, trackerG: Double, ratio: Double, factorAfter: Double
+    ) {
+        val date = Date(modeStartMs)
+        val row = listOf(
+            dateFormat.format(date), timeFormat.format(date),
+            "%.1f".format(Locale.US, carbsG), "%.1f".format(Locale.US, proteinG), "%.1f".format(Locale.US, fatG),
+            "%.1f".format(Locale.US, carbEquivG), "%.1f".format(Locale.US, trackerG),
+            "%.2f".format(Locale.US, ratio), "%.2f".format(Locale.US, factorAfter)
+        ).joinToString(",")
+        append(estimateFile, ESTIMATE_HEADER, row)
+    }
+
+    private fun append(file: File, header: String, row: String) {
         try {
-            val file = logFile
             val isNew = !file.exists()
             file.appendText(buildString {
-                if (isNew) appendLine(HEADER)
-                appendLine(rowToCsv(episode))
+                if (isNew) appendLine(header)
+                appendLine(row)
             })
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "MealAbsorptionCsvLogger write failed: ${e.message}")
@@ -72,6 +91,9 @@ class MealAbsorptionCsvLogger @Inject constructor(
         private val HEADER = listOf(
             "date", "start_time", "mode", "duration_min", "estimated_grams_carb_equiv",
             "rise_min", "plateau_min", "tail_min", "rise_g", "plateau_g", "tail_g"
+        ).joinToString(",")
+        private val ESTIMATE_HEADER = listOf(
+            "date", "start_time", "carbs_g", "protein_g", "fat_g", "carb_equiv_g", "tracker_g", "ratio", "factor_after"
         ).joinToString(",")
     }
 }

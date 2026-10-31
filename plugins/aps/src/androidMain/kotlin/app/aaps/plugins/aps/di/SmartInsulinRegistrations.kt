@@ -1,10 +1,12 @@
 package app.aaps.plugins.aps.di
 
 import app.aaps.core.interfaces.plugin.PluginBase
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinLearner
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
+import app.aaps.plugins.aps.smartInsulin.MealEstimateCalibrationImpl
 import app.aaps.plugins.aps.smartInsulin.MealOverrideManagerImpl
 import app.aaps.plugins.aps.smartInsulin.ProfileLearner
 import app.aaps.plugins.aps.smartInsulin.SmartInsulinPlugin
@@ -16,7 +18,7 @@ import dev.zacsweers.metro.IntoMap
 import dev.zacsweers.metro.Provides
 
 /**
- * Registers SmartInsulin and the three interfaces it provides to the rest of the app.
+ * Registers SmartInsulin and the interfaces it provides to the rest of the app.
  *
  * In 3.4 this was split between `ApsModule` (the overview binding) and `:app`'s `PluginsListModule`
  * (the plugin entry and the two manager bindings). 4.0 moved plugin registration out of `:app` and
@@ -46,6 +48,9 @@ object SmartInsulinRegistrations {
 
     @Provides
     fun mealOverrideManager(impl: MealOverrideManagerImpl): MealOverrideManager = impl
+
+    @Provides
+    fun mealEstimateCalibration(impl: MealEstimateCalibrationImpl): MealEstimateCalibration = impl
 
     @Provides
     fun smartInsulinLearner(impl: ProfileLearner): SmartInsulinLearner = impl

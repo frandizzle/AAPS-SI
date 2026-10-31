@@ -401,6 +401,11 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    tone = SiTone.GOOD)
         }
 
+        // Food added to the meal later, given as one dose
+        if (d.mealMode != "Fasting" && d.activeAddedU > 0.0) {
+            addRow("Added to meal — ${"%.2f".format(d.activeAddedU)}U", tone = SiTone.GOOD)
+        }
+
         // Pre-bolus 2 — show delivered amount once fired
         if (d.mealMode != "Fasting" && d.activePb2DoseU != null && d.activePb2DoseU > 0.0) {
             addRow("Pre-bolus 2 — delivered ${"%.2f".format(d.activePb2DoseU)}U",

@@ -452,6 +452,20 @@
     <string name="si_lunch_isf_title">Lunch ISF override (0 = use profile)</string>
     <string name="si_max_prebolus_summary">Safety cap on automatic pre-bolus dose</string>
     <string name="si_max_prebolus_title">Max pre-bolus (U)</string>
+    <string name="si_meal_ai_enabled_title">Meal estimate from photo or text</string>
+    <string name="si_meal_ai_enabled_summary">In the Smart Meal dialog, describe or photograph a meal and Google Gemini estimates carbs, protein and fat. The food text and photo are sent to Google. On the free tier Google may use them to improve its products.</string>
+    <string name="si_meal_ai_key_title">Gemini API key</string>
+    <string name="si_meal_ai_key_summary">A free key from aistudio.google.com. It is not exported with the settings.</string>
+    <string name="si_meal_ai_model_title">Gemini model</string>
+    <string name="si_meal_ai_model_summary">The model name, for example gemini-2.5-flash. Change it when Google renames or retires a model.</string>
+    <string name="si_meal_plan_pb1_title">Planned meal: pre-bolus 1 (%)</string>
+    <string name="si_meal_plan_pb1_summary">Share of the insulin for the carbs that is given at the start, when a meal is filled in from an estimate.</string>
+    <string name="si_meal_plan_pb2_title">Planned meal: pre-bolus 2 (%)</string>
+    <string name="si_meal_plan_pb2_summary">Share of the insulin for the carbs that pre-bolus 2 gives later. It only fires if BG is above target and not falling.</string>
+    <string name="si_meal_plan_pb3_title">Planned meal: pre-bolus 3 (%)</string>
+    <string name="si_meal_plan_pb3_summary">Share of the insulin for fat and protein that pre-bolus 3 gives. It only fires if BG is above target and not falling.</string>
+    <string name="si_meal_plan_max_total_title">Planned meal: max insulin up front (U)</string>
+    <string name="si_meal_plan_max_total_summary">The three pre-boluses filled in from an estimate never add up to more than this. The loop gives the rest from what BG really does.</string>
     <string name="si_max_smb_title">Max SMB (U)</string>
     <string name="si_max_tbr_title">SmartInsulin Max TBR (U/h) — inner cap (set equal to Max Basal Rate above)</string>
     <string name="si_mode_isf_learning_summary">Learns a per-mode ISF correction from how each meal or UAM episode lands. Off freezes what has been learned — the multipliers keep being dosed from, nothing new is learned. Use the reset button on the SmartInsulin tab to clear them instead.</string>

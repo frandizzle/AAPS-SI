@@ -3,11 +3,18 @@ package app.aaps.ui.compose.smartMealDialog
 import app.aaps.core.data.model.GlucoseUnit
 import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.data.ue.Sources
+import app.aaps.core.data.ui.ConfirmationRole
+import app.aaps.core.interfaces.aps.GlucoseStatus
+import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.bolus.BatchAction
 import app.aaps.core.interfaces.bolus.BatchExecutor
 import app.aaps.core.interfaces.clientcontrol.ActionProgress
 import app.aaps.core.interfaces.clientcontrol.FailureReason
+import app.aaps.core.interfaces.constraints.Constraint
+import app.aaps.core.interfaces.constraints.ConstraintsChecker
 import app.aaps.core.interfaces.insulin.ConcentrationHelper
+import app.aaps.core.interfaces.iob.GlucoseStatusProvider
+import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
@@ -15,15 +22,25 @@ import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.BooleanNonKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
+import app.aaps.core.interfaces.profile.EffectiveProfile
+import app.aaps.ui.compose.smartMealDialog.food.FoodItem
+import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
+import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.MealFoodRepository
+import app.aaps.ui.compose.smartMealDialog.food.SaveResult
+import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +55,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argThat
 import org.mockito.kotlin.anyVararg
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
@@ -68,6 +86,13 @@ internal class SmartMealDialogViewModelTest {
     private val decimalFormatter: DecimalFormatter = mock()
     private val pump: PumpWithConcentration = mock()
     private val pumpDescription: PumpDescription = mock()
+    private val mealFoodRepository: MealFoodRepository = mock()
+    private lateinit var savedFoodStore: SavedFoodStore
+    private val mealEstimateCalibration: MealEstimateCalibration = mock()
+    private val glucoseStatusProvider: GlucoseStatusProvider = mock()
+    private val iobCobCalculator: IobCobCalculator = mock()
+    private val constraintsChecker: ConstraintsChecker = mock()
+    private val maxIob: Constraint<Double> = mock()
 
     private val scope = CoroutineScope(UnconfinedTestDispatcher())
     private lateinit var sut: SmartMealDialogViewModel
@@ -82,9 +107,11 @@ internal class SmartMealDialogViewModelTest {
         whenever(profileUtil.convertToMgdl(any(), any())).thenAnswer { i ->
             val v = i.getArgument<Double>(0); if (i.getArgument<GlucoseUnit>(1) == GlucoseUnit.MMOL) v * 18.0 else v
         }
+        if (!::savedFoodStore.isInitialized) savedFoodStore = SavedFoodStore(preferences)
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
-            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, scope
+            batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, mealEstimateCalibration,
+            glucoseStatusProvider, iobCobCalculator, constraintsChecker, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
     }
@@ -100,6 +127,8 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(DoubleKey.ApsSmartInsulinPreBolus2DefaultU)).thenReturn(2.0)
         whenever(preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins)).thenReturn(30)
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinLunchDuraStrength)).thenReturn(1.0)
+        whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
+        whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")
         whenever(mealOverrideManager.preBolus2StatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus3StatusText).thenReturn("")
         whenever(rh.gs(any())).thenReturn("")
@@ -108,7 +137,38 @@ internal class SmartMealDialogViewModelTest {
         whenever(decimalFormatter.to0Decimal(any())).thenReturn("")
         whenever(decimalFormatter.to1Decimal(any())).thenReturn("")
         whenever(decimalFormatter.to2Decimal(any())).thenReturn("")
+        whenever { iobCobCalculator.calculateIobFromBolus() }.thenReturn(IobTotal(time = 0L, iob = 2.0))
+        whenever { iobCobCalculator.calculateIobFromTempBasalsIncludingConvertedExtended() }.thenReturn(IobTotal(time = 0L, basaliob = 0.5))
+        whenever { constraintsChecker.getMaxIOBAllowed() }.thenReturn(maxIob)
+        whenever(maxIob.value()).thenReturn(8.0)
+        whenever(dateUtil.now()).thenReturn(NOW)
+        whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
     }
+
+    private fun bg(mgdl: Double, delta: Double = 2.0) {
+        val gs: GlucoseStatus = mock()
+        whenever(gs.glucose).thenReturn(mgdl)
+        whenever(gs.delta).thenReturn(delta)
+        whenever(gs.shortAvgDelta).thenReturn(delta)
+        whenever(glucoseStatusProvider.glucoseStatusData).thenReturn(gs)
+    }
+
+    /** A Dinner started 40 min ago with pre-bolus 2 still waiting, 80 min left. */
+    private fun dinnerRunning(mode: MealMode = MealMode.DINNER, pb2FiredMs: Long? = null): MealOverrideState {
+        val s = MealOverrideState(
+            mode = mode, triggerTimeMs = NOW - 40 * 60_000L, modeExpiryMs = NOW + 80 * 60_000L, doseU = 3.0,
+            preBolus2U = 1.5, preBolus2DelayMs = 60 * 60_000L, preBolus2FiredMs = pb2FiredMs
+        )
+        whenever(mealOverrideManager.activeState).thenReturn(s)
+        whenever(mealOverrideManager.activeMealMode).thenReturn(mode)
+        whenever(mealOverrideManager.modeTimeRemainingMs).thenReturn(80 * 60_000L)
+        whenever(mealOverrideManager.preBolus2Pending).thenReturn(s.preBolus2Pending)
+        return s
+    }
+
+    private fun dessert(carbs: Double = 30.0, protein: Double = 0.0, fat: Double = 0.0) =
+        FoodItem("Dessert", baseGrams = 100.0, portion = "", carbsPer100 = carbs, fibrePer100 = 0.0,
+                 proteinPer100 = protein, fatPer100 = fat, source = FoodSource.ESTIMATE)
 
     @AfterEach
     fun tearDown() = Dispatchers.resetMain()
@@ -372,5 +432,150 @@ internal class SmartMealDialogViewModelTest {
         assertThat(sut.uiState.value.pb2U).isEqualTo(2.0)
         assertThat(sut.uiState.value.pb2DelayMinutes).isEqualTo(30)
         assertThat(sut.uiState.value.pb2Enabled).isFalse()
+    }
+
+    // ── Add to meal ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `with a meal running the dialog adds to it`() {
+        dinnerRunning()
+        build()
+        with(sut.uiState.value) {
+            assertThat(canAdd).isTrue()
+            assertThat(addMode).isTrue()
+            assertThat(addMinutesLeft).isEqualTo(80)
+            assertThat(runningPb2WaitingU).isEqualTo(1.5)
+        }
+    }
+
+    @Test
+    fun `an auto-detected UAM mode is not added to`() {
+        dinnerRunning(MealMode.UAM_DINNER)
+        build()
+        assertThat(sut.uiState.value.canAdd).isFalse()
+        assertThat(sut.uiState.value.addMode).isFalse()
+    }
+
+    @Test
+    fun `a dose typed by hand is added to the meal and stops it being learned from`() {
+        val running = dinnerRunning()
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 7L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
+        whenever(mealOverrideManager.addToMeal(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(true)
+        bg(150.0)
+        build()
+        sut.updateAddNow(2.0)
+        sut.updateAddPb2(0.5)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        assertThat(confirm.bolusId).isEqualTo(7L)
+        assertThat(confirm.lines.none { it.role == ConfirmationRole.WARNING }).isTrue()
+
+        sut.commit(confirm.bolusId)
+        verify(mealOverrideManager).addToMeal(
+            eq(2.0), eq(0.5), eq(0.0), eq(NOW + 80 * 60_000L), eq(false), any(), any(), eq(false)
+        )
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealEstimateCalibration).dropEstimate(running.triggerTimeMs)
+        verifyBlocking(batchExecutor) { commit(eq(7L), eq(Sources.InsulinDialog), any(), any()) }
+    }
+
+    @Test
+    fun `a dose now while BG is falling and above max IOB is warned about`() {
+        dinnerRunning()
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 1L))
+        bg(150.0, delta = -9.0)
+        build()
+        sut.updateAddNow(4.0)          // IOB 2.5 + 4 > max IOB 4
+        whenever(maxIob.value()).thenReturn(4.0)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        assertThat(confirm.lines.count { it.role == ConfirmationRole.WARNING }).isEqualTo(2)
+    }
+
+    @Test
+    fun `filling in an estimated dessert plans now and adds to the waiting pre-bolus 2`() {
+        val running = dinnerRunning()
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb1Pct)).thenReturn(50)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb2Pct)).thenReturn(25)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb3Pct)).thenReturn(40)
+        whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        whenever { mealFoodRepository.estimate(any(), anyOrNull()) }.thenReturn(FoodLookupResult.Success(listOf(dessert())))
+        bg(150.0)
+        build()
+        sut.updateDescription("cake")
+        sut.estimateMeal()
+        sut.fillInFromFood()
+        with(sut.uiState.value) {
+            // 30 g at 5 g/U = 6 U: half now, a quarter into the waiting pre-bolus 2.
+            assertThat(addNowU).isWithin(1e-9).of(3.0)
+            assertThat(addPb2U).isWithin(1e-9).of(1.5)
+            assertThat(addPb3U).isEqualTo(0.0)
+            assertThat(addMinutesLeft).isEqualTo(120)
+        }
+        sut.prepareAndConfirm()
+        sut.commit(null)
+        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0))
+        verify(mealEstimateCalibration, never()).dropEstimate(any())
+    }
+
+    @Test
+    fun `starting a new meal while one runs warns that it is replaced`() {
+        dinnerRunning()
+        build()
+        sut.updateAddMode(false)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        // The mode is replaced, and its pre-bolus 2 still waits.
+        assertThat(confirm.lines.count { it.role == ConfirmationRole.WARNING }).isEqualTo(2)
+    }
+
+    // --- My foods ---
+
+    @Test
+    fun `a saved meal is added in one tap, and a new estimate does not replace it`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        whenever { mealFoodRepository.estimate(any(), anyOrNull()) }.thenReturn(FoodLookupResult.Success(listOf(dessert())))
+        build()
+        sut.addManualFood(dessert(carbs = 20.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addManualFood(dessert(carbs = 0.0, protein = 25.0).copy(name = "Turkey", source = FoodSource.MANUAL))
+        sut.saveMeal("Turkey wrap")
+        assertThat(sut.uiState.value.lastSave).isEqualTo(SaveResult.SAVED)
+        sut.clearFood()
+
+        val wrap = sut.uiState.value.savedFoods.single()
+        sut.addSavedFood(wrap)
+        sut.updateDescription("cake")
+        sut.estimateMeal()
+        with(sut.uiState.value) {
+            assertThat(foodItems.map { it.name }).containsExactly("Wrap", "Turkey", "Dessert").inOrder()
+            assertThat(savedFoods.single().uses).isEqualTo(1)
+            // The typed-in foods and the estimate are all in the recent list.
+            assertThat(recentFoods.map { it.name }).containsExactly("Dessert", "Turkey", "Wrap").inOrder()
+        }
+        sut.estimateMeal()
+        assertThat(sut.uiState.value.foodItems.map { it.name }).containsExactly("Wrap", "Turkey", "Dessert").inOrder()
+    }
+
+    @Test
+    fun `My foods is kept in the settings`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert().copy(name = "Biscoff", source = FoodSource.MANUAL))
+        sut.saveFood(0, "Biscoff")
+        verify(preferences).put(eq(StringNonKey.ApsSmartInsulinSavedFoods), argThat { contains("Biscoff") })
+        sut.renameSavedFood("Biscoff", "Biscoff biscuit")
+        assertThat(sut.uiState.value.savedFoods.single().name).isEqualTo("Biscoff biscuit")
+        sut.deleteSavedFood("Biscoff biscuit")
+        assertThat(sut.uiState.value.savedFoods).isEmpty()
+    }
+
+    private companion object {
+
+        const val NOW = 1_790_000_000_000L
     }
 }
