@@ -571,6 +571,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val pb1RestStatus: String,
         /** The running meal's food still to come, or null when there is none. */
         val foodToCome: FoodToCome?,
+        /** Minutes until the fat and protein of [foodToCome] start to count; 0 when they already do. */
+        val fatProteinStartsInMin: Long,
         /** What the meals have learned about the carb ratio. */
         val effectiveCr: EffectiveCr,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
@@ -821,6 +823,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
             pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
             foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
+            fatProteinStartsInMin = lastFoodToCome?.let { ((it.fatProteinFromMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
             effectiveCr = effectiveCr(),
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
@@ -1012,11 +1015,18 @@ open class SmartInsulinPlugin @Inject constructor(
         )
     }
 
-    fun deleteFoodLogEntry(timeMs: Long) = foodLog.delete(timeMs)
+    /** Removes a logged food. Its food is also taken off the meal it was logged in, so the loop stops counting it. */
+    fun deleteFoodLogEntry(timeMs: Long) {
+        foodLog.entries(timeMs, timeMs + 1).firstOrNull()?.let { scaleFoodLogEntry(it, 0.0) }
+        foodLog.delete(timeMs)
+    }
 
-    /** Changes how much of a logged food was eaten: [factor] 0.5 for half. */
-    fun scaleFoodLogEntry(entry: FoodLogEntry, factor: Double) =
+    /** Changes how much of a logged food was eaten: [factor] 0.5 for half. The meal it was logged in changes the same way. */
+    fun scaleFoodLogEntry(entry: FoodLogEntry, factor: Double) {
         foodLog.update(entry.copy(carbsG = entry.carbsG * factor, fibreG = entry.fibreG * factor, proteinG = entry.proteinG * factor, fatG = entry.fatG * factor))
+        val change = factor - 1.0
+        mealEstimateCalibration.changeLoggedFood(entry.timeMs, entry.carbsG * change, entry.proteinG * change, entry.fatG * change)
+    }
 
     // ── Learning journal digest for the continuous learners ───────────────────
     // Circadian ISF/basal and aggressiveness move a little every cycle; journaling each move would bury

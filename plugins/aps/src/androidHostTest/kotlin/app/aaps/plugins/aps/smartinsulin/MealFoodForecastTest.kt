@@ -71,6 +71,16 @@ class MealFoodForecastTest {
         assertEquals(f.carbsG / 6 * 10.0 + f.fatProteinG / 18 * 10.0, steps[0], 1e-9)
     }
 
+    @Test
+    fun `fat and protein add nothing before they start, then come in as usual`() {
+        val f = MealFoodForecast.foodToCome(dinner.copy(fatProteinFromMs = T0 + 45 * MIN), T0, 0.0, 0.0, 5.0)!!
+        assertEquals(30.0, f.fatProteinG, 1e-9)      // still to come, only not yet
+        val before = MealFoodForecast.steps(f, T0, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 48)
+        assertEquals(500.0, before.sum(), 1e-6)       // only the 50 g of carbs
+        val after = MealFoodForecast.steps(f, T0 + 45 * MIN, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 48)
+        assertEquals(30.0 / 39 * 10.0, after[30], 1e-9)  // spread from 45 min to the end of the window
+    }
+
     private companion object {
 
         const val MIN = 60_000L

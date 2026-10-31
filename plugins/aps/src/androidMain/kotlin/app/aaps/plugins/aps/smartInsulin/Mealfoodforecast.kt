@@ -12,6 +12,7 @@ import kotlin.math.min
  * @param fatProteinUntilMs the fat and protein should have come in by this time: the end of the meal's window
  * @param carbRatio         grams per unit, to turn the food into BG
  * @param coveredG          food the waiting pre-boluses will cover, already taken off; for the reason string
+ * @param fatProteinFromMs  the fat and protein start to come in at this time; before it, the forecast leaves them out
  */
 data class FoodToCome(
     val carbsG: Double,
@@ -19,7 +20,8 @@ data class FoodToCome(
     val fatProteinG: Double,
     val fatProteinUntilMs: Long,
     val carbRatio: Double,
-    val coveredG: Double = 0.0
+    val coveredG: Double = 0.0,
+    val fatProteinFromMs: Long = 0L
 ) {
 
     val totalG: Double get() = carbsG + fatProteinG
@@ -30,7 +32,9 @@ data class FoodToCome(
  * instead of predicting a low from the insulin on board alone. See `DetermineBasalSmartInsulin`.
  *
  * The carbs are counted as coming in evenly until [FoodToCome.carbsUntilMs] ([CARBS_MIN] after they were eaten),
- * the fat and protein evenly until the end of the meal's window. Food the waiting pre-boluses will cover is
+ * the fat and protein evenly until the end of the meal's window. Fat and protein only start to raise BG
+ * [FAT_PROTEIN_START_MIN] after they are eaten, so until then they are left out of the forecast: the loop does
+ * not give insulin for them at the start of the meal. Food the waiting pre-boluses will cover is
  * taken off first, so the loop does not give insulin that a pre-bolus is about to give. Food that does not show
  * up fades out with the time left of the meal, so a smaller meal than estimated is not dosed for long.
  */
@@ -38,6 +42,8 @@ object MealFoodForecast {
 
     /** Minutes carbs take to come in, from when they are eaten. */
     const val CARBS_MIN = 120
+    /** Minutes after they are eaten that fat and protein start to raise BG. */
+    const val FAT_PROTEIN_START_MIN = 45
     /** The food still to come may be at most this many times the meal's share of the time left. */
     const val FADE_SLACK = 1.5
     /** Less food than this is not worth forecasting. */
@@ -78,13 +84,14 @@ object MealFoodForecast {
             fatProtein *= share
         }
         if (carbs + fatProtein < MIN_FOOD_G) return null
-        return FoodToCome(carbs, still.carbsUntilMs, fatProtein, still.windowEndMs, carbRatio, c1 + f1 + f2 + c2)
+        return FoodToCome(carbs, still.carbsUntilMs, fatProtein, still.windowEndMs, carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs)
     }
 
     /**
      * The BG rise [food] adds at each 5-min step ahead, mg/dL. The rise BG already shows is in the forecast on
      * its own, fading out ([ciAheadMgdl] is all of it still to come), so that much food is taken off first,
-     * carbs before fat and protein, and the same grams are not counted twice.
+     * carbs before fat and protein, and the same grams are not counted twice. Fat and protein that have not
+     * started yet ([FoodToCome.fatProteinFromMs]) add nothing.
      *
      * @param isfMgdl the same ISF the forecast uses for the insulin, so food and insulin are weighed alike
      */
@@ -94,7 +101,7 @@ object MealFoodForecast {
         var seenG = ciAheadMgdl.coerceAtLeast(0.0) / csf
         val carbs = (food.carbsG - seenG).coerceAtLeast(0.0)
         seenG = (seenG - food.carbsG).coerceAtLeast(0.0)
-        val fatProtein = (food.fatProteinG - seenG).coerceAtLeast(0.0)
+        val fatProtein = if (nowMs < food.fatProteinFromMs) 0.0 else (food.fatProteinG - seenG).coerceAtLeast(0.0)
         val carbSteps = max(MIN_CARB_STEPS, ceil((food.carbsUntilMs - nowMs).toDouble() / STEP_MS).toInt())
         val fatProteinSteps = max(MIN_FAT_PROTEIN_STEPS, ceil((food.fatProteinUntilMs - nowMs).toDouble() / STEP_MS).toInt())
         return List(count) { i ->

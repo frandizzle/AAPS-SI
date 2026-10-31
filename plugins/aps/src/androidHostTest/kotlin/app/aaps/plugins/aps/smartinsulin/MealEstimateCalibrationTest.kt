@@ -172,9 +172,40 @@ class MealEstimateCalibrationTest {
         assertEquals(0, cal.mealsUsed)
     }
 
+    @Test
+    fun `fat and protein start 45 min after the meal, or after the first food that has them`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 30.0, 10.0, 9.0, 9.0)
+        assertEquals(T0 + 45 * MIN, cal.stillToCome(T0, T0)!!.fatProteinFromMs)
+        // A meal of carbs only: fat and protein added an hour later start 45 min after that.
+        cal.recordEstimate(T0 + DAY, T0 + DAY + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.addToEstimate(T0 + DAY, T0 + DAY + 3 * HOUR, 20.0, 5.0, 10.0, 10.0, T0 + DAY + HOUR)
+        assertEquals(T0 + DAY + HOUR + 45 * MIN, cal.stillToCome(T0 + DAY, T0 + DAY)!!.fatProteinFromMs)
+    }
+
+    @Test
+    fun `a logged food made smaller makes its meal smaller`() {
+        // A cup of milk, 10 g carbs, 9 g protein, 9 g fat: 1.17 fat-protein units = 11.7 g.
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 21.7, 10.0, 9.0, 9.0)
+        // Only a quarter of it was drunk.
+        cal.changeLoggedFood(T0 + 10_000L, -7.5, -6.75, -6.75)
+        val still = cal.stillToCome(T0, T0)!!
+        assertEquals(2.5, still.carbsG, 1e-9)
+        assertEquals(21.7 / 4, still.carbsG + still.fatProteinG, 1e-9)
+    }
+
+    @Test
+    fun `a removed food leaves nothing, and food from another time changes no meal`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.changeLoggedFood(T0 + 4 * HOUR, -40.0, 0.0, 0.0)   // after the window
+        assertEquals(40.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        cal.changeLoggedFood(T0, -40.0, 0.0, 0.0)
+        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)
+    }
+
     private companion object {
 
-        const val HOUR = 3_600_000L
+        const val MIN = 60_000L
+        const val HOUR = 60 * MIN
         const val DAY = 24 * HOUR
         const val T0 = 1_790_000_000_000L
     }
