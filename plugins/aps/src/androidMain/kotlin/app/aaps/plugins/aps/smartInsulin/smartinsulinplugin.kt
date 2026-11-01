@@ -442,6 +442,7 @@ open class SmartInsulinPlugin @Inject constructor(
     fun resetIsf() { circadianLearner.resetIsf(); learningSnapshots.clear(); learningJournal.note("Reset", "Circadian ISF reset to 1.0") }
     fun resetBasal() { basalLearner.reset(); circadianLearner.resetBasal(); learningSnapshots.clear(); learningJournal.note("Reset", "Basal learning reset to 1.0") }
     fun resetCircadian() { circadianLearner.reset(); learningSnapshots.clear(); learningJournal.note("Reset", "All circadian learning reset") }
+    fun resetMealEstimateFactor() { mealEstimateCalibration.resetFactor(); learningJournal.note("Reset", "Meal estimate factor reset to 1.0") }
     fun resetProfiles() { profileLearner.resetProfiles(); learningSnapshots.clear(); learningJournal.note("Reset", "Insulin profiles reset to defaults") }
     fun resetModeLearners() {
         modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset()
@@ -2207,12 +2208,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
 
         // The running meal's food still to come, from its estimate, for the forecast. Pre-boluses still
-        // waiting are taken off: their insulin is coming anyway. The carbs pre-bolus 1 holds back count once BG rises. Only in the Smart Meal mode that recorded the
+        // waiting are taken off: their insulin is coming anyway. All the carbs count. Only in the Smart Meal mode that recorded the
         // estimate: Protein/Fat and the UAM modes dose from ISF and what BG does, also when Protein/Fat follows
         // the meal, so they never see it.
         val foodToCome = mealOverrideManager.activeState
             ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
-            ?.also { s -> mealEstimateCalibration.updateCarbTopUp(s.triggerTimeMs, now, glucoseStatus.glucose, glucoseStatus.delta, glucoseStatus.shortAvgDelta) }
             ?.let { s -> mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.let { s to it } }
             ?.let { (s, still) ->
                 MealFoodForecast.foodToCome(
@@ -2220,7 +2220,6 @@ open class SmartInsulinPlugin @Inject constructor(
                     restU = if (s.preBolus1RestPending) s.preBolus1RestU else 0.0,
                     pbU = (if (s.preBolus2Pending) s.preBolus2U else 0.0) + (if (s.preBolus3Pending) s.preBolus3U else 0.0),
                     carbRatio = profile.getIc(),
-                    carbShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanCarbPct.key, IntKey.ApsSmartInsulinMealPlanCarbPct.defaultValue) / 100.0,
                     fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
                 )
             }
@@ -2233,7 +2232,6 @@ open class SmartInsulinPlugin @Inject constructor(
             .mapNotNull { still ->
                 MealFoodForecast.foodToCome(
                     still, now, restU = 0.0, pbU = 0.0, carbRatio = profile.getIc(),
-                    carbShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanCarbPct.key, IntKey.ApsSmartInsulinMealPlanCarbPct.defaultValue) / 100.0,
                     fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
                 )
             }

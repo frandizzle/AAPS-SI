@@ -28,10 +28,13 @@ interface MealEstimateCalibration {
      * @param learn         false for a meal that says nothing about the estimates, for example one given less
      *                      insulin after exercise. Its food still counts as food still to come.
      * @param carbsMin      minutes the carbs take to come in, from how fast the foods are
+     * @param estimatedG    the part of [carbEquivG] from a photo or description estimate. Only that part is scaled by
+     *                      [factor], and only a meal that is all estimated teaches it. The rest is exact: scanned,
+     *                      typed in or saved.
      */
     fun recordEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true,
-        carbsMin: Int = DEFAULT_CARBS_MIN
+        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
     )
 
     /**
@@ -41,10 +44,11 @@ interface MealEstimateCalibration {
      *
      * @param eatenMs  when the added food is eaten: its carbs are expected to come in over the next [carbsMin] minutes
      * @param carbsMin minutes the added carbs take to come in, from how fast the foods are
+     * @param estimatedG the part of [carbEquivG] from a photo or description estimate, see [recordEstimate]
      */
     fun addToEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
-        carbsMin: Int = DEFAULT_CARBS_MIN
+        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
     )
 
     /**
@@ -55,10 +59,11 @@ interface MealEstimateCalibration {
      * @param modeEndMs when the mode ends; the food is watched at least until its carbs should have come in
      * @param eatenMs   when the food is eaten
      * @param carbsMin  minutes its carbs take to come in, from how fast the foods are
+     * @param estimatedG the part of [carbEquivG] from a photo or description estimate, see [recordEstimate]
      */
     fun logFood(
         modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
-        carbsMin: Int = DEFAULT_CARBS_MIN
+        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
     )
 
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */

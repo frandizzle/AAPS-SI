@@ -135,6 +135,16 @@ class SavedFoodsTest {
     }
 
     @Test
+    fun `the estimate factor scales only estimated food`() {
+        val scanned = food("Yoghurt", grams = 100.0, carbs = 20.0).copy(source = FoodSource.BARCODE)
+        val guessed = food("Rice", grams = 100.0, carbs = 20.0).copy(source = FoodSource.ESTIMATE)
+        assertEquals(1.0, listOf(scanned).estimateFactor(0.7), 1e-9)
+        assertEquals(0.7, listOf(guessed).estimateFactor(0.7), 1e-9)
+        assertEquals(0.85, listOf(scanned, guessed).estimateFactor(0.7), 1e-9)
+        assertEquals(guessed.let { listOf(it).totals().carbEquivG }, listOf(scanned, guessed).estimatedCarbEquivG(), 1e-9)
+    }
+
+    @Test
     fun `just carbs, with their own weight, is a food`() {
         val item = manualFood("30 g carbs", "", 30.0, 30.0, 0.0, 0.0)!!
         assertEquals(30.0, item.carbsG, 1e-9)

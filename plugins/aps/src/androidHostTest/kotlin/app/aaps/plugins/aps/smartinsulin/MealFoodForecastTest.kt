@@ -29,38 +29,10 @@ class MealFoodForecastTest {
     }
 
     @Test
-    fun `carbs count at the share Fill in plans`() {
-        val f = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0, carbShare = 0.8)!!
-        assertEquals(40.0, f.carbsG, 1e-9)
-        assertEquals(30.0, f.fatProteinG, 1e-9)
-    }
-
-    @Test
-    fun `the held back carbs count once BG rises, and never when it does not`() {
-        val waiting = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0, carbShare = 0.8)!!
-        assertEquals(10.0, waiting.heldBackCarbsG, 1e-9)
-        val given = MealFoodForecast.foodToCome(dinner.copy(carbTopUp = CarbTopUp.GIVEN), T0, 0.0, 0.0, 5.0, carbShare = 0.8)!!
-        assertEquals(50.0, given.carbsG, 1e-9)
-        assertEquals(0.0, given.heldBackCarbsG, 1e-9)
-        val dropped = MealFoodForecast.foodToCome(dinner.copy(carbTopUp = CarbTopUp.DROPPED), T0, 0.0, 0.0, 5.0, carbShare = 0.8)!!
-        assertEquals(40.0, dropped.carbsG, 1e-9)
-        assertEquals(0.0, dropped.heldBackCarbsG, 1e-9)
-    }
-
-    @Test
-    fun `the held back carbs wait for a rise between 15 and 45 min`() {
-        val w = CarbTopUp.WAITING
-        // Rising, but too early.
-        assertEquals(w, MealFoodForecast.carbTopUp(w, 10 * MIN, 120.0, 3.0, 2.0))
-        // Flat, or rising from a low BG: still waiting.
-        assertEquals(w, MealFoodForecast.carbTopUp(w, 20 * MIN, 120.0, 0.5, 0.5))
-        assertEquals(w, MealFoodForecast.carbTopUp(w, 20 * MIN, 85.0, 3.0, 2.0))
-        // Rising: given, and it stays given.
-        assertEquals(CarbTopUp.GIVEN, MealFoodForecast.carbTopUp(w, 20 * MIN, 120.0, 3.0, 2.0))
-        assertEquals(CarbTopUp.GIVEN, MealFoodForecast.carbTopUp(CarbTopUp.GIVEN, 90 * MIN, 100.0, -5.0, -5.0))
-        // No rise by 45 min: dropped, also when BG rises later.
-        assertEquals(CarbTopUp.DROPPED, MealFoodForecast.carbTopUp(w, 46 * MIN, 120.0, 3.0, 2.0))
-        assertEquals(CarbTopUp.DROPPED, MealFoodForecast.carbTopUp(CarbTopUp.DROPPED, 60 * MIN, 120.0, 3.0, 2.0))
+    fun `all the carbs count, not only the share pre-bolus 1 gives`() {
+        val f = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0, fatProteinShare = 0.7)!!
+        assertEquals(50.0, f.carbsG, 1e-9)
+        assertEquals(21.0, f.fatProteinG, 1e-9)
     }
 
     @Test

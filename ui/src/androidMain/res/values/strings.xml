@@ -428,6 +428,7 @@
     <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Pre-bolus 1 is for the carbs, pre-bolus 2 for the fat and protein wave (1 hour in), and on a heavy meal pre-bolus 3 for what is left of it. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
     <string name="si_food_plan_factor" comment="%1$s=learned factor, %2$d=number of meals it is based on. Example: Learned from your meals: ×1.15 (8 meals)">Learned from your meals: ×%1$s (%2$d meals)</string>
     <string name="si_food_plan_parts" comment="%1$s=factor for carbs, %2$s=factor for the fat and protein wave, %3$s=factor for the tail, %4$d=number of meals. Example: Learned from your meals: carbs ×1.05, fat and protein ×1.20, tail ×0.90 (8 meals)">Learned from your meals: carbs ×%1$s, fat and protein ×%2$s, tail ×%3$s (%4$d meals)</string>
+    <string name="si_food_plan_exact">Scanned, typed in or saved food counts as it is: the estimate factor is only for photos and descriptions</string>
     <string name="si_food_plan_learning">Not learned from your meals yet: estimates are used as they are</string>
     <string name="si_food_no_ratio">There is no carb ratio in the profile, so no plan could be made</string>
     <string name="si_food_my_foods">My foods</string>

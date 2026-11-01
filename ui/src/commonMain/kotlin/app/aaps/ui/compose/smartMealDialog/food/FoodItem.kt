@@ -93,6 +93,20 @@ fun List<FoodItem>.carbsMin(): Int {
 /** Fat in a meal from which its carbs are never counted as faster than normal. */
 const val FAT_SLOWS_G = 25.0
 
+/** Carb equivalent of the foods that are estimates from a photo or a description; scanned, typed-in and saved food is exact. */
+fun List<FoodItem>.estimatedCarbEquivG(): Double = filter { it.source == FoodSource.ESTIMATE }.totals().carbEquivG
+
+/**
+ * The learned estimate [factor] for these foods: it says how far estimates are off, so only the estimated part is
+ * scaled and exact food counts as it is. 1.0 without estimated food.
+ */
+fun List<FoodItem>.estimateFactor(factor: Double): Double {
+    val total = totals().carbEquivG
+    if (total <= 0.0) return if (any { it.source == FoodSource.ESTIMATE }) factor else 1.0
+    val estimated = estimatedCarbEquivG()
+    return (total - estimated + estimated * factor) / total
+}
+
 fun List<FoodItem>.totals(): MealTotals =
     MealTotals(sumOf { it.carbsG }, sumOf { it.fibreG }, sumOf { it.proteinG }, sumOf { it.fatG })
 

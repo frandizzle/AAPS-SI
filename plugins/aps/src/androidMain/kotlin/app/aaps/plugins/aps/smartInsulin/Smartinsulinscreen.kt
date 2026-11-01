@@ -250,6 +250,9 @@ fun SmartInsulinScreen(
             ResetRow("ISF circadian learning") { confirm = "Reset ISF circadian learning to 1.0? Basal and aggression learning kept." to { plugin.resetIsf() } }
             ResetRow("Basal learning") { confirm = "Reset basal + circadian basal learners to 1.0?" to { plugin.resetBasal() } }
             ResetRow("All circadian learning") { confirm = "Reset all circadian (ISF/basal/aggr) hourly learning?" to { plugin.resetCircadian() } }
+            ResetRow("Meal estimate factor") {
+                confirm = "Reset the meal estimate factor to 1.0? Photo and description estimates are then used as they are until it learns again." to { plugin.resetMealEstimateFactor() }
+            }
             ResetRow("Insulin profiles") { confirm = "Reset all learned insulin profiles back to defaults?" to { plugin.resetProfiles() } }
             ResetRow("Meal/UAM learners") {
                 confirm = "Reset learned per-meal ISF adjustments and UAM entry fractions back to your configured values?" to { plugin.resetModeLearners() }

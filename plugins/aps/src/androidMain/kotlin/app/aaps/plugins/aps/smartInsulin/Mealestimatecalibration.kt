@@ -17,7 +17,6 @@ import org.json.JSONObject
  * @param mealG        the whole meal as estimated, scaled the same way
  * @param carbsUntilMs the carbs eaten so far should have come in by this time
  * @param fatProteinFromMs the fat and protein start to come in at this time
- * @param carbTopUp    whether the carbs pre-bolus 1 holds back count yet
  */
 data class StillToCome(
     val modeStartMs: Long,
@@ -26,8 +25,7 @@ data class StillToCome(
     val fatProteinG: Double,
     val mealG: Double,
     val carbsUntilMs: Long,
-    val fatProteinFromMs: Long = 0L,
-    val carbTopUp: CarbTopUp = CarbTopUp.WAITING
+    val fatProteinFromMs: Long = 0L
 )
 
 /**
@@ -61,7 +59,6 @@ class MealEstimateCalibrationImpl @Inject constructor(
         var learn:       Boolean = true,
         /** The fat and protein start to come in at this time. */
         var fatProteinFromMs: Long = modeStartMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
-        var carbTopUp: CarbTopUp = CarbTopUp.WAITING,
         /** There was real exercise during the meal or just before it: BG says less about how much was eaten. */
         var exercised: Boolean = false,
         /** Minutes the meal's first carbs take to come in, from how fast the foods are; for the log. */
@@ -70,7 +67,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
          * Food the tracker saw beyond the estimate before more food was added: food nobody counted, such as a snack
          * logged for calories only. It is kept out of what was seen, so it does not cancel the food added after it.
          */
-        var seenBeforeAddG: Double = 0.0
+        var seenBeforeAddG: Double = 0.0,
+        /** The part of [carbEquivG] that was estimated (photo or description). The rest is exact: a scan, typed in, saved. */
+        var estimatedG: Double = carbEquivG
     )
 
     private val pending = mutableListOf<Pending>()
@@ -89,7 +88,10 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     override val mealsUsed: Int get() = synchronized(this) { ratios.size }
 
-    override fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean, carbsMin: Int) {
+    override fun recordEstimate(
+        modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean, carbsMin: Int,
+        estimatedG: Double
+    ) {
         synchronized(this) {
             // A new estimate for the same meal mode replaces the old one.
             pending.removeAll { it.modeStartMs == modeStartMs }
@@ -98,21 +100,29 @@ class MealEstimateCalibrationImpl @Inject constructor(
             val earlier = pending.filter { it.modeStartMs < modeStartMs && modeStartMs <= it.windowEndMs && stillToCome(it).let { c -> c.carbsG + c.fatProteinG } >= MealFoodForecast.MIN_FOOD_G }
             earlier.forEach { it.learn = false }
             pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn && earlier.isEmpty(),
-                                carbsUntilMs = modeStartMs + carbsMin * 60_000L, carbsMin = carbsMin))
+                                carbsUntilMs = modeStartMs + carbsMin * 60_000L, carbsMin = carbsMin, estimatedG = estimatedG.coerceIn(0.0, carbEquivG)))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: estimate ${"%.0f".format(carbEquivG)} g recorded")
     }
 
-    override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
-        val found = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs }?.also { add(it, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin) } }
+    override fun addToEstimate(
+        modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int,
+        estimatedG: Double
+    ) {
+        val found = synchronized(this) {
+            pending.firstOrNull { it.modeStartMs == modeStartMs }?.also { add(it, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin, estimatedG) }
+        }
         if (found == null) return
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: ${"%.0f".format(carbEquivG)} g added, meal now ${"%.0f".format(found.carbEquivG)} g")
     }
 
-    override fun logFood(modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
+    override fun logFood(
+        modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int,
+        estimatedG: Double
+    ) {
         // The food needs time to come in, also when the mode ends sooner.
         val windowEndMs = maxOf(modeEndMs, eatenMs + carbsMin * 60_000L)
         val meal = synchronized(this) {
@@ -120,7 +130,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                 ?: Pending(modeStartMs, windowEndMs, 0.0, 0.0, 0.0, 0.0, learn = false, carbsUntilMs = eatenMs, carbsMin = carbsMin,
                            fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L)
                     .also { pending.add(it); while (pending.size > MAX_PENDING) pending.removeAt(0) }
-            add(p, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin)
+            add(p, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin, estimatedG)
             // Food eaten without its insulin says nothing about how good the estimates are.
             p.learn = false
             p
@@ -130,9 +140,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     /** Adds food eaten at [eatenMs] to [p]: more food, a longer window, and carbs expected over [carbsMin] from when eaten. */
-    private fun add(p: Pending, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
+    private fun add(
+        p: Pending, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int,
+        estimatedG: Double
+    ) {
         // What the tracker saw beyond the meal so far came before this food was eaten, so it is not this food.
-        val beyondG = seenG(p) - p.carbEquivG * factor
+        val beyondG = seenG(p) - p.carbEquivG * factorFor(p)
         if (beyondG > 0.0) p.seenBeforeAddG += beyondG
         p.windowEndMs = maxOf(p.windowEndMs, windowEndMs)
         if (carbsG > 0.0) p.carbsUntilMs = maxOf(p.carbsUntilMs, eatenMs + carbsMin * 60_000L)
@@ -140,6 +153,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
         if (carbEquivG > carbsG && p.carbEquivG <= p.carbsG)
             p.fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
         p.carbEquivG += carbEquivG; p.carbsG += carbsG; p.proteinG += proteinG; p.fatG += fatG
+        p.estimatedG += estimatedG.coerceIn(0.0, carbEquivG)
     }
 
     /**
@@ -153,7 +167,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
         val carbEquivG = carbsG + (fatG * 9.0 + proteinG * 4.0) / 100.0 * FPU_CARB_G
         val found = synchronized(this) {
             pending.filter { matches(it, loggedMs) }.maxByOrNull { it.modeStartMs }?.also {
+                val share = if (it.carbEquivG > 0.0) it.estimatedG / it.carbEquivG else 1.0
                 it.carbEquivG = (it.carbEquivG + carbEquivG).coerceAtLeast(0.0)
+                it.estimatedG = it.carbEquivG * share
                 it.carbsG = (it.carbsG + carbsG).coerceAtLeast(0.0)
                 it.proteinG = (it.proteinG + proteinG).coerceAtLeast(0.0)
                 it.fatG = (it.fatG + fatG).coerceAtLeast(0.0)
@@ -162,22 +178,6 @@ class MealEstimateCalibrationImpl @Inject constructor(
         if (found == null) return
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: logged food changed by ${"%.0f".format(carbEquivG)} g, meal now ${"%.0f".format(found.carbEquivG)} g")
-    }
-
-    /**
-     * Moves the held back carbs of the meal started at [modeStartMs] on, see [MealFoodForecast.carbTopUp]. Call once per
-     * loop cycle while the meal runs.
-     */
-    fun updateCarbTopUp(modeStartMs: Long, nowMs: Long, bgMgdl: Double, delta: Double, shortAvgDelta: Double) {
-        val changed = synchronized(this) {
-            pending.firstOrNull { it.modeStartMs == modeStartMs }?.let { p ->
-                val next = MealFoodForecast.carbTopUp(p.carbTopUp, nowMs - modeStartMs, bgMgdl, delta, shortAvgDelta)
-                (next != p.carbTopUp).also { p.carbTopUp = next }
-            } ?: false
-        }
-        if (!changed) return
-        save()
-        aapsLogger.debug(LTag.APS, "MealEstimateCalibration: held back carbs of the meal at $modeStartMs now ${stillToCome(modeStartMs, nowMs)?.carbTopUp}")
     }
 
     override fun dropEstimate(modeStartMs: Long) {
@@ -223,7 +223,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
      * keeps food that BG never showed (a flat BG with insulin working) from being counted as still to come.
      */
     private fun stillToCome(p: Pending): StillToCome {
-        val f = factor
+        val f = factorFor(p)
         val seen = seenG(p)
         val carbs = p.carbsG * f
         val fatProtein = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f
@@ -234,10 +234,16 @@ class MealEstimateCalibrationImpl @Inject constructor(
             fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceAtLeast(0.0),
             mealG = p.carbEquivG * f,
             carbsUntilMs = p.carbsUntilMs,
-            fatProteinFromMs = p.fatProteinFromMs,
-            carbTopUp = p.carbTopUp
+            fatProteinFromMs = p.fatProteinFromMs
         )
     }
+
+    /**
+     * The learned factor for [p]: it is how far photo and description estimates are off, so only the estimated part of
+     * the meal is scaled. Scanned, typed-in and saved food counts as it is.
+     */
+    private fun factorFor(p: Pending): Double =
+        if (p.carbEquivG > 0.0) (p.carbEquivG - p.estimatedG + p.estimatedG * factor) / p.carbEquivG else factor
 
     /**
      * The food the tracker has seen of [p]: its finished episodes, and for the running one the larger of its two
@@ -280,6 +286,11 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     private fun judge(p: Pending) {
+        // Exact food says nothing about how far estimates are off.
+        if (p.estimatedG < p.carbEquivG - MIN_FOOD_EXACT_G) {
+            aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${p.modeStartMs} not used (scanned, typed-in or saved food in it)")
+            return
+        }
         if (p.exercised) {
             aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${p.modeStartMs} not used (exercise)")
             return
@@ -299,6 +310,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
             "ratio ${"%.2f".format(ratio)}, factor ${"%.2f".format(after)}")
     }
 
+    /** Forgets the learned factor, and keeps the meals still running, so their food still counts. */
+    fun resetFactor() {
+        synchronized(this) { ratios.clear() }
+        save()
+    }
+
     /** Forgets everything learned. */
     fun reset() {
         synchronized(this) { pending.clear(); ratios.clear() }
@@ -315,7 +332,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("s", it.modeStartMs).put("e", it.windowEndMs).put("ce", it.carbEquivG)
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
-                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name).put("x", it.exercised).put("cm", it.carbsMin).put("sb", it.seenBeforeAddG))
+                                .put("fs", it.fatProteinFromMs).put("x", it.exercised).put("cm", it.carbsMin).put("sb", it.seenBeforeAddG).put("eg", it.estimatedG))
                     }
                 })
         }
@@ -336,9 +353,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                         o.optDouble("t", 0.0), o.optInt("n", 0),
                                         o.optLong("cu", start + MealFoodForecast.CARBS_MIN * 60_000L), o.optBoolean("l", true),
                                         o.optLong("fs", start + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L),
-                                        CarbTopUp.entries.find { it.name == o.optString("tu") } ?: CarbTopUp.WAITING,
                                         o.optBoolean("x", false), o.optInt("cm", MealFoodForecast.CARBS_MIN),
-                                        o.optDouble("sb", 0.0)))
+                                        o.optDouble("sb", 0.0), o.optDouble("eg", o.getDouble("ce"))))
                 }
             }
         } catch (e: Exception) {
@@ -359,6 +375,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
         /** The factor uses the last this many meals. */
         const val MAX_MEALS = 20
         const val MIN_FACTOR = 0.7
+        /** Exact food up to this much (carb equivalent) still leaves a meal as estimated, for learning. */
+        const val MIN_FOOD_EXACT_G = 2.0
         const val MAX_FACTOR = 1.5
         /** One very odd meal (forgot to eat half, a site problem) may not count as more than this. */
         const val MIN_RATIO = 0.3

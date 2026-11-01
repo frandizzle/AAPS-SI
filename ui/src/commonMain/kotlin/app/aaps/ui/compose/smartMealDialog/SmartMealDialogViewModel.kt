@@ -59,6 +59,8 @@ import app.aaps.ui.compose.smartMealDialog.food.SavedFood
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
 import app.aaps.ui.compose.smartMealDialog.food.carbsMin
+import app.aaps.ui.compose.smartMealDialog.food.estimateFactor
+import app.aaps.ui.compose.smartMealDialog.food.estimatedCarbEquivG
 import app.aaps.ui.compose.smartMealDialog.food.totals
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
@@ -484,7 +486,8 @@ class SmartMealDialogViewModel(
         if (running != null && state.canAdd && !state.logTreatingLow) {
             val t = state.foodTotals
             mealEstimateCalibration.logFood(
-                running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbsMin()
+                running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbsMin(),
+                state.foodItems.estimatedCarbEquivG()
             )
         }
         clearFood()
@@ -627,7 +630,8 @@ class SmartMealDialogViewModel(
             // then the general estimate factor.
             val own = state.sourceLearned?.takeIf { it.inUse }
             val learned = own ?: savedMealLearning.general()?.takeIf { it.inUse }
-            val factor = learned?.carbFactor ?: mealEstimateCalibration.factor
+            // The estimate factor is how far photo and description estimates are off: only that part is scaled.
+            val factor = learned?.carbFactor ?: state.foodItems.estimateFactor(mealEstimateCalibration.factor)
             // After exercise every part gets the same share less: food added to a running meal as that meal did.
             val cutPct = if (state.addMode) state.runningAfterActivityPct else state.afterActivityPct
             val share = 1.0 - cutPct / 100.0
@@ -933,7 +937,8 @@ class SmartMealDialogViewModel(
             windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
             carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG,
             learn = state.afterActivityPct == 0,
-            carbsMin = state.foodItems.carbsMin()
+            carbsMin = state.foodItems.carbsMin(),
+            estimatedG = state.foodItems.estimatedCarbEquivG()
         )
     }
 
@@ -974,7 +979,8 @@ class SmartMealDialogViewModel(
                 val modeEndMs = maxOf(running.modeExpiryMs, endMs)
                 val pfMin = if (state.pfAfter || running.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
                 val t = state.foodTotals
-                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now(), state.foodItems.carbsMin())
+                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now(), state.foodItems.carbsMin(),
+                    state.foodItems.estimatedCarbEquivG())
             }
         }
     }

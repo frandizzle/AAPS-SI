@@ -567,7 +567,7 @@ internal class SmartMealDialogViewModelTest {
         }
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0), any(), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN))
+        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0), any(), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), any())
         verify(mealEstimateCalibration, never()).dropEstimate(any())
         // More food: the meal no longer stands for one saved meal.
         verify(savedMealLearning).dropMeal(running.triggerTimeMs)
@@ -606,7 +606,7 @@ internal class SmartMealDialogViewModelTest {
         verify(mealOverrideManager).setAfterActivityCut(15)
         verify(savedMealLearning, never()).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
         // Its food still counts as food still to come, but it is not learned from.
-        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN))
+        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), any())
     }
 
     @Test
@@ -859,13 +859,13 @@ internal class SmartMealDialogViewModelTest {
         sut.addManualFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(mealEstimateCalibration).logFood(
-            eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN)
+            eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), eq(0.0)
         )
         sut.updateLogTreatingLow(true)
         sut.addManualFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(foodLog, times(2)).add(any())
-        verify(mealEstimateCalibration, times(1)).logFood(any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealEstimateCalibration, times(1)).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
 
     @Test
@@ -874,7 +874,7 @@ internal class SmartMealDialogViewModelTest {
         build()
         sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
         sut.logOnly()
-        verify(mealEstimateCalibration, never()).logFood(any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealEstimateCalibration, never()).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
 
     @Test

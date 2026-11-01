@@ -351,7 +351,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // The meal's food still to come, and whether the forecast used it.
         foodToCome?.let { f ->
             sb.append(" | cob=${"%.0f".format(Locale.US, f.totalG)}g(carbs ${"%.0f".format(Locale.US, f.carbsG)}")
-            if (f.heldBackCarbsG >= 1.0) sb.append(" +${"%.0f".format(Locale.US, f.heldBackCarbsG)} when BG rises")
             if (f.carbsG >= 1.0 && f.carbsUntilMs > currentTime) sb.append(" over ${(f.carbsUntilMs - currentTime) / 60_000L}m")
             sb.append(" fp ${"%.0f".format(Locale.US, f.fatProteinG)}")
             if (f.coveredG >= 1.0) sb.append(", ${"%.0f".format(Locale.US, f.coveredG)}g for pre-boluses")

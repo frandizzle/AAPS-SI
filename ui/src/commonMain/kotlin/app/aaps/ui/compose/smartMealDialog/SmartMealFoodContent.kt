@@ -350,6 +350,8 @@ private fun PlanSummary(state: SmartMealDialogUiState, df: DecimalFormatter, fmt
                 if (learned?.inUse != true) Hint(
                     if (general != null)
                         stringResource(UiStrings.si_food_plan_parts, df.to2Decimal(general.carbFactor), df.to2Decimal(general.waveFactor), df.to2Decimal(general.tailFactor), general.meals)
+                    else if (state.foodItems.none { it.source == FoodSource.ESTIMATE })
+                        stringResource(UiStrings.si_food_plan_exact)
                     else if (state.calibrationMeals > 0 && state.calibrationFactor != 1.0)
                         stringResource(UiStrings.si_food_plan_factor, df.to2Decimal(state.calibrationFactor), state.calibrationMeals)
                     else stringResource(UiStrings.si_food_plan_learning)

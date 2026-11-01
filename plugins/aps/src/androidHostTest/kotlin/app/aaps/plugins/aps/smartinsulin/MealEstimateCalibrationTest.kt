@@ -203,16 +203,6 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
-    fun `the held back carbs follow BG, and that survives a restart`() {
-        cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
-        cal.updateCarbTopUp(T0, T0 + 20 * MIN, 120.0, 0.0, 0.0)
-        assertEquals(CarbTopUp.WAITING, cal.stillToCome(T0, T0 + 20 * MIN)!!.carbTopUp)
-        cal.updateCarbTopUp(T0, T0 + 25 * MIN, 125.0, 3.0, 2.0)
-        cal = MealEstimateCalibrationImpl(sp, csv, log)
-        assertEquals(CarbTopUp.GIVEN, cal.stillToCome(T0, T0 + 30 * MIN)!!.carbTopUp)
-    }
-
-    @Test
     fun `a meal with exercise is not judged, also after a restart`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 100.0, 100.0, 0.0, 0.0)
         cal.noteExercise(T0 - MIN)                       // before the meal: not this one
@@ -309,6 +299,33 @@ class MealEstimateCalibrationTest {
         cal.onEpisode(episode(T0, 30.0))
         cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR)
         assertEquals(30.0, cal.foodStillToComeG(T0)!!, 1e-9)
+    }
+
+    @Test
+    fun `the factor scales only the estimated part, and only all-estimated meals teach it`() {
+        repeat(3) { meal(T0 + it * DAY, 100.0, 70.0) }
+        assertEquals(0.7, cal.factor, 1e-9)
+        // A scanned yoghurt: exact, so counted as it is.
+        cal.recordEstimate(T0 + 10 * DAY, T0 + 10 * DAY + 3 * HOUR, 22.0, 22.0, 0.0, 0.0, estimatedG = 0.0)
+        assertEquals(22.0, cal.foodStillToComeG(T0 + 10 * DAY)!!, 1e-9)
+        // Half estimated: 50 g as it is, 50 g at 0.7.
+        cal.recordEstimate(T0 + 11 * DAY, T0 + 11 * DAY + 3 * HOUR, 100.0, 100.0, 0.0, 0.0, estimatedG = 50.0)
+        assertEquals(85.0, cal.foodStillToComeG(T0 + 11 * DAY)!!, 1e-9)
+        // Neither teaches the factor.
+        cal.onEpisode(episode(T0 + 10 * DAY, 40.0))
+        cal.onEpisode(episode(T0 + 11 * DAY, 200.0))
+        cal.onCycle(T0 + 11 * DAY + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        assertEquals(3, cal.mealsUsed)
+    }
+
+    @Test
+    fun `resetting the factor keeps the food still to come`() {
+        repeat(3) { meal(T0 + it * DAY, 100.0, 70.0) }
+        cal.recordEstimate(T0 + 10 * DAY, T0 + 10 * DAY + 3 * HOUR, 50.0, 50.0, 0.0, 0.0)
+        cal.resetFactor()
+        assertEquals(1.0, cal.factor, 1e-9)
+        assertEquals(0, cal.mealsUsed)
+        assertEquals(50.0, cal.foodStillToComeG(T0 + 10 * DAY)!!, 1e-9)
     }
 
     private companion object {
