@@ -149,6 +149,7 @@ object SavedFoodCodec {
                 put("fibre", i.fibrePer100)
                 put("protein", i.proteinPer100)
                 put("fat", i.fatPer100)
+                put("speed", i.speed.name)
             })
         }
     }
@@ -167,7 +168,9 @@ object SavedFoodCodec {
             fibrePer100 = (num("fibre") ?: 0.0).coerceIn(0.0, 100.0),
             proteinPer100 = (num("protein") ?: 0.0).coerceIn(0.0, 100.0),
             fatPer100 = (num("fat") ?: 0.0).coerceIn(0.0, 100.0),
-            source = FoodSource.SAVED
+            source = FoodSource.SAVED,
+            // Foods saved before speeds existed read as normal.
+            speed = FoodSpeed.entries.find { it.name == (o["speed"] as? JsonPrimitive)?.content } ?: FoodSpeed.NORMAL
         )
     }
 

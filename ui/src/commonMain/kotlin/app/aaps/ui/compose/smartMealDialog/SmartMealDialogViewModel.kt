@@ -58,6 +58,7 @@ import app.aaps.ui.compose.smartMealDialog.food.SaveResult
 import app.aaps.ui.compose.smartMealDialog.food.SavedFood
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
+import app.aaps.ui.compose.smartMealDialog.food.carbsMin
 import app.aaps.ui.compose.smartMealDialog.food.totals
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
@@ -170,6 +171,8 @@ data class SmartMealDialogUiState(
     val generalLearned: LearnedMeal? = null,
     /** Pre-bolus 2 and 3 delays the last Fill in took from the saved meal's learned timing, or null. */
     val learnedTiming: Pair<Int, Int>? = null,
+    /** Minutes to wait after pre-bolus 1 before eating a fast meal, from the last Fill in; null when no wait. */
+    val fastCarbsWaitMin: Int? = null,
 
     /** A saved meal opened for editing: its foods are in the list, and "Save changes" saves them back. */
     val editingMeal: String? = null,
@@ -439,6 +442,12 @@ class SmartMealDialogViewModel(
         s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(quantity = q) }, plan = null, addition = null, learnedTiming = null)
     }
 
+    /** Changes how fast a food's carbs come in, to the next speed. */
+    fun changeSpeed(index: Int) = _uiState.update { s ->
+        val item = s.foodItems.getOrNull(index) ?: return@update s
+        s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(speed = item.speed.next()) }, plan = null, addition = null, learnedTiming = null)
+    }
+
     fun removeFood(index: Int) = _uiState.update { s ->
         if (index !in s.foodItems.indices) s
         else s.copy(foodItems = s.foodItems.toMutableList().also { it.removeAt(index) }, plan = null, addition = null, learnedTiming = null, sourceMeal = null)
@@ -660,10 +669,16 @@ class SmartMealDialogViewModel(
                 return@launch
             }
             val plan = MealDosePlanner.plan(state.foodTotals, settings)
+            // A saved meal that has learned when BG starts to rise says how long to wait itself.
+            val gs = glucoseStatusProvider.glucoseStatusData
+            val fastWait = if (own == null && plan.pb1U > 0.0) profile?.let { p ->
+                MealDosePlanner.fastCarbsWait(state.foodItems.carbsMin(), gs?.glucose, p.getTargetMgdl(), (gs?.shortAvgDelta ?: 0.0) * TREND_STEPS)
+            } else null
             _uiState.update {
                 it.copy(
                     plan = plan,
                     learnedTiming = timing?.takeIf { plan.pb2U > 0.0 },
+                    fastCarbsWaitMin = fastWait,
                     planNoRatio = false,
                     calibrationFactor = factor,
                     calibrationMeals = mealEstimateCalibration.mealsUsed,
@@ -892,7 +907,8 @@ class SmartMealDialogViewModel(
             modeStartMs = startMs,
             windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
             carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG,
-            learn = state.afterActivityPct == 0
+            learn = state.afterActivityPct == 0,
+            carbsMin = state.foodItems.carbsMin()
         )
     }
 
@@ -933,7 +949,7 @@ class SmartMealDialogViewModel(
                 val modeEndMs = maxOf(running.modeExpiryMs, endMs)
                 val pfMin = if (state.pfAfter || running.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
                 val t = state.foodTotals
-                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now())
+                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now(), state.foodItems.carbsMin())
             }
         }
     }

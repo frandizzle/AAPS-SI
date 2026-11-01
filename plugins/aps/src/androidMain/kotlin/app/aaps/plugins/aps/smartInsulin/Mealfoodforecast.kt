@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import kotlin.math.ceil
 import kotlin.math.max
@@ -48,7 +49,8 @@ enum class CarbTopUp {
  * The food of a meal with an estimate, put into the loop's forecast, so the loop doses for food still coming
  * instead of predicting a low from the insulin on board alone. See `DetermineBasalSmartInsulin`.
  *
- * The carbs are counted as coming in evenly until [FoodToCome.carbsUntilMs] ([CARBS_MIN] after they were eaten),
+ * The carbs are counted as coming in evenly until [FoodToCome.carbsUntilMs] (by default [CARBS_MIN] after they were
+ * eaten, sooner for fast food and later for slow food),
  * the fat and protein evenly until the end of the meal's window. Fat and protein only start to raise BG
  * [FAT_PROTEIN_START_MIN] after they are eaten, so until then they are left out of the forecast: the loop does
  * not give insulin for them at the start of the meal. Food the waiting pre-boluses will cover is
@@ -57,8 +59,8 @@ enum class CarbTopUp {
  */
 object MealFoodForecast {
 
-    /** Minutes carbs take to come in, from when they are eaten. */
-    const val CARBS_MIN = 120
+    /** Minutes carbs of normal speed take to come in, from when they are eaten. A meal's own speed may change it. */
+    const val CARBS_MIN = MealEstimateCalibration.DEFAULT_CARBS_MIN
     /** Minutes after they are eaten that fat and protein start to raise BG. */
     const val FAT_PROTEIN_START_MIN = 45
     /** The food still to come may be at most this many times the meal's share of the time left. */

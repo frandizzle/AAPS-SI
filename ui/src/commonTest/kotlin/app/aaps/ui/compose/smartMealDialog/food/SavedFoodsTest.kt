@@ -94,6 +94,29 @@ class SavedFoodsTest {
     }
 
     @Test
+    fun `the speed is saved, and a food saved before speeds is normal`() {
+        val fast = listOf(food("Juice").copy(speed = FoodSpeed.FAST))
+        assertEquals(FoodSpeed.FAST, SavedFoodCodec.decodeItems(SavedFoodCodec.encodeItems(fast)).single().speed)
+        val old = """[{"name":"Juice","grams":250,"portion":"","quantity":1,"carbs":10,"fibre":0,"protein":0,"fat":0}]"""
+        assertEquals(FoodSpeed.NORMAL, SavedFoodCodec.decodeItems(old).single().speed)
+    }
+
+    @Test
+    fun `a meal's carb time is each food's, weighted by its carbs, and fat keeps it from being fast`() {
+        fun item(carbs: Double, fat: Double, speed: FoodSpeed) =
+            FoodItem("x", baseGrams = 100.0, portion = "", carbsPer100 = carbs, fibrePer100 = 0.0, proteinPer100 = 0.0, fatPer100 = fat,
+                     source = FoodSource.MANUAL, speed = speed)
+        assertEquals(75, listOf(item(40.0, 0.0, FoodSpeed.FAST)).carbsMin())
+        // 30 g fast and 10 g slow: (30 × 75 + 10 × 180) / 40
+        assertEquals(101, listOf(item(30.0, 0.0, FoodSpeed.FAST), item(10.0, 0.0, FoodSpeed.SLOW)).carbsMin())
+        // A food without carbs does not count.
+        assertEquals(180, listOf(item(40.0, 0.0, FoodSpeed.SLOW), item(0.0, 10.0, FoodSpeed.FAST)).carbsMin())
+        // Fast bread with a fatty burger is normal.
+        assertEquals(120, listOf(item(40.0, 0.0, FoodSpeed.FAST), item(0.0, FAT_SLOWS_G, FoodSpeed.NORMAL)).carbsMin())
+        assertEquals(120, emptyList<FoodItem>().carbsMin())
+    }
+
+    @Test
     fun `a small change is similar, a big one is not`() {
         val more = wrap.map { if (it.name == "Cheese") it.copy(quantity = 2.0) else it }
         assertTrue(SavedFoodList.similar(wrap, more))

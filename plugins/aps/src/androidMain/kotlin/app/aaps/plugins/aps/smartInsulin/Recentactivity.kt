@@ -34,13 +34,25 @@ class RecentActivityImpl @Inject constructor(private val sp: KeyValueStore) : Re
     override fun afterActivity(nowMs: Long): AfterActivity? {
         val maxPct = sp.getInt(IntKey.ApsSmartInsulinAfterActivityMaxPct.key, IntKey.ApsSmartInsulinAfterActivityMaxPct.defaultValue)
         if (maxPct <= 0) return null
-        val minutes = synchronized(this) { samples.filter { it.first >= nowMs - LOOKBACK_MS }.sumOf { credit(it.second) } } * CYCLE_MIN
+        val minutes = exerciseMin(nowMs)
         val cut = cutFor(minutes).coerceAtMost(maxPct)
         return if (cut > 0) AfterActivity(minutes.roundToInt(), cut) else null
     }
 
+    /** Minutes of real exercise in the last [RecentActivity.LOOKBACK_HOURS] hours; a heavy minute counts as 1.5. */
+    private fun exerciseMin(nowMs: Long): Double =
+        synchronized(this) { samples.filter { it.first >= nowMs - LOOKBACK_MS }.sumOf { credit(it.second) } } * CYCLE_MIN
+
+    /**
+     * True when the last [RecentActivity.LOOKBACK_HOURS] hours had at least [MIN_EXERCISE_MIN] minutes of real
+     * exercise. A meal low then may be the exercise, not the dose, so the meal learners do not take it at full weight.
+     */
+    fun exercised(nowMs: Long): Boolean = exerciseMin(nowMs) >= MIN_EXERCISE_MIN
+
     companion object {
 
+        /** Less exercise than this (a run up the stairs) does not change how a meal is learned. */
+        const val MIN_EXERCISE_MIN = 10.0
         const val LOOKBACK_MS = RecentActivity.LOOKBACK_HOURS * 60 * 60_000L
         const val MIN_GAP_MS = 4 * 60_000L
         const val CYCLE_MIN = 5.0

@@ -56,6 +56,7 @@ import app.aaps.ui.compose.smartMealDialog.food.BarcodeScanner
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.FoodSpeed
 import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
 import app.aaps.ui.compose.smartMealDialog.food.MealPhotoLauncher
 import app.aaps.ui.compose.smartMealDialog.food.SaveResult
@@ -134,7 +135,8 @@ internal fun SmartMealFoodContent(
                 onLess = { viewModel.changeQuantity(index, -quantityStep(item)) },
                 onMore = { viewModel.changeQuantity(index, quantityStep(item)) },
                 onRemove = { viewModel.removeFood(index) },
-                onSave = { savingIndex = index }
+                onSave = { savingIndex = index },
+                onSpeed = { viewModel.changeSpeed(index) }
             )
         }
 
@@ -153,6 +155,7 @@ internal fun SmartMealFoodContent(
             }
             Hint(stringResource(UiStrings.si_food_log_only_hint))
             Hint(stringResource(UiStrings.si_food_fill_hint))
+            Hint(stringResource(UiStrings.si_food_speed_hint))
         }
         state.loggedKcal?.let { Hint(stringResource(UiStrings.si_food_logged, df.to0Decimal(it))) }
         state.lastSave?.let { result ->
@@ -185,6 +188,7 @@ internal fun SmartMealFoodContent(
         val needU = state.plan?.let { it.carbsU to it.fatProteinU } ?: state.addition?.let { it.carbsU to it.fatProteinU }
         needU?.let { (carbsU, fatProteinU) ->
             Text(stringResource(UiStrings.si_food_plan_summary, fmtU(carbsU), fmtU(fatProteinU)), style = MaterialTheme.typography.bodyMedium)
+            if (state.plan != null) state.fastCarbsWaitMin?.let { Hint(stringResource(UiStrings.si_food_fast_wait, it)) }
             // Right under what the food needs, so a plan that gives less than that says why.
             state.addition?.let { a ->
                 val warn = MaterialTheme.colorScheme.error
@@ -256,7 +260,10 @@ private fun quantityStep(item: FoodItem): Double =
     if (item.source == FoodSource.BARCODE || item.source == FoodSource.MANUAL) 0.5 else SmartMealDialogViewModel.QUANTITY_STEP
 
 @Composable
-private fun FoodRow(item: FoodItem, df: (Double) -> String, quantity: String, onLess: () -> Unit, onMore: () -> Unit, onRemove: () -> Unit, onSave: () -> Unit) {
+private fun FoodRow(
+    item: FoodItem, df: (Double) -> String, quantity: String, onLess: () -> Unit, onMore: () -> Unit, onRemove: () -> Unit, onSave: () -> Unit,
+    onSpeed: () -> Unit
+) {
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -268,6 +275,8 @@ private fun FoodRow(item: FoodItem, df: (Double) -> String, quantity: String, on
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                // Speed only matters for food with carbs.
+                if (item.carbsG >= 1.0) AssistChip(onClick = onSpeed, label = { Text(speedLabel(item.speed)) })
                 IconButton(onClick = onSave) { Icon(Icons.Outlined.StarBorder, contentDescription = stringResource(UiStrings.si_food_save_item)) }
                 IconButton(onClick = onRemove) { Icon(Icons.Filled.Close, contentDescription = stringResource(UiStrings.si_food_remove_item)) }
             }
@@ -282,6 +291,13 @@ private fun FoodRow(item: FoodItem, df: (Double) -> String, quantity: String, on
             }
         }
     }
+}
+
+@Composable
+private fun speedLabel(speed: FoodSpeed): String = when (speed) {
+    FoodSpeed.FAST   -> stringResource(UiStrings.si_food_speed_fast)
+    FoodSpeed.NORMAL -> stringResource(UiStrings.si_food_speed_normal)
+    FoodSpeed.SLOW   -> stringResource(UiStrings.si_food_speed_slow)
 }
 
 @Composable

@@ -27,17 +27,25 @@ interface MealEstimateCalibration {
      * @param fatG          estimated fat
      * @param learn         false for a meal that says nothing about the estimates, for example one given less
      *                      insulin after exercise. Its food still counts as food still to come.
+     * @param carbsMin      minutes the carbs take to come in, from how fast the foods are
      */
-    fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true)
+    fun recordEstimate(
+        modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true,
+        carbsMin: Int = DEFAULT_CARBS_MIN
+    )
 
     /**
      * Adds food eaten later in the same meal mode (a dessert) to that meal's estimate, and moves the end
      * of the watch window. Does nothing when the meal has no estimate: the tracker would then see more
      * food than was estimated.
      *
-     * @param eatenMs when the added food is eaten: its carbs are expected to come in over the next 2 hours
+     * @param eatenMs  when the added food is eaten: its carbs are expected to come in over the next [carbsMin] minutes
+     * @param carbsMin minutes the added carbs take to come in, from how fast the foods are
      */
-    fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long)
+    fun addToEstimate(
+        modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
+        carbsMin: Int = DEFAULT_CARBS_MIN
+    )
 
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */
     fun dropEstimate(modeStartMs: Long)
@@ -48,4 +56,10 @@ interface MealEstimateCalibration {
      * bolus calculator. Null when that meal has no estimate, so nothing is known about it.
      */
     fun foodStillToComeG(modeStartMs: Long): Double?
+
+    companion object {
+
+        /** Minutes carbs of normal speed take to come in, from when they are eaten. */
+        const val DEFAULT_CARBS_MIN = 120
+    }
 }

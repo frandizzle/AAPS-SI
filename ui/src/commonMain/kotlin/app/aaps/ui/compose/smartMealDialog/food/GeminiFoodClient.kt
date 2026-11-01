@@ -111,6 +111,9 @@ internal class GeminiFoodClient(private val http: HttpClient) {
         appendLine("- List each food separately: name, the portion in words, and the portion weight in grams as eaten (cooked weight for cooked food).")
         appendLine("- For each food give per 100 g: available carbohydrate WITHOUT fibre, fibre, protein and fat, from standard food tables.")
         appendLine("- Count only half of any sugar alcohols as carbohydrate. Do not count fibre as carbohydrate.")
+        appendLine("- For each food give how fast its carbohydrate raises blood glucose, as eaten in this meal: " +
+                       "fast (for example white bread, white rice, potato, cereal, juice, soft drinks, lollies), " +
+                       "slow (for example lentils, beans, pasta, whole grains, milk, yoghurt, most whole fruit) or normal.")
         appendLine("- Only list foods that are shown or described. Do not invent foods or sauces.")
         appendLine("- When a portion is unclear, choose a typical portion, never a large one.")
         appendLine("- If there is no food, return no items and set not_food to true.")
@@ -153,7 +156,8 @@ internal class GeminiFoodClient(private val http: HttpClient) {
             fibrePer100 = per100("fibre_per_100g"),
             proteinPer100 = per100("protein_per_100g"),
             fatPer100 = per100("fat_per_100g"),
-            source = FoodSource.ESTIMATE
+            source = FoodSource.ESTIMATE,
+            speed = FoodSpeed.entries.find { it.name.equals(o.str("speed")?.trim(), ignoreCase = true) } ?: FoodSpeed.NORMAL
         )
     }
 
@@ -195,9 +199,13 @@ internal class GeminiFoodClient(private val http: HttpClient) {
                             put("fibre_per_100g", NUMBER)
                             put("protein_per_100g", NUMBER)
                             put("fat_per_100g", NUMBER)
+                            putJsonObject("speed") {
+                                put("type", "STRING")
+                                put("enum", buildJsonArray { FoodSpeed.entries.forEach { add(it.name.lowercase()) } })
+                            }
                         }
                         put("required", buildJsonArray {
-                            listOf("name", "portion", "portion_grams", "carbs_per_100g", "fibre_per_100g", "protein_per_100g", "fat_per_100g").forEach { add(it) }
+                            listOf("name", "portion", "portion_grams", "carbs_per_100g", "fibre_per_100g", "protein_per_100g", "fat_per_100g", "speed").forEach { add(it) }
                         })
                     }
                 }

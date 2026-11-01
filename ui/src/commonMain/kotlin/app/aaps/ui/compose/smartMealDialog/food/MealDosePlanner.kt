@@ -335,6 +335,20 @@ object MealDosePlanner {
         return ((INSULIN_START_MIN - riseMin + 4) / 5 * 5).coerceIn(5, MAX_WAIT_MIN)
     }
 
+    /**
+     * How long to wait after pre-bolus 1 before eating a fast meal (its carbs come in within [FAST_MEAL_MAX_MIN]):
+     * fast carbs raise BG sooner than fast insulin starts to work. No wait with BG under target or falling, where
+     * eating at once is the safe choice, or without a BG reading.
+     *
+     * @param trendMgdl how far BG moves in the next 15 min if its trend goes on
+     */
+    fun fastCarbsWait(carbsMin: Int, bgMgdl: Double?, targetMgdl: Double, trendMgdl: Double): Int? =
+        if (carbsMin <= FAST_MEAL_MAX_MIN && bgMgdl != null && bgMgdl >= targetMgdl && trendMgdl >= 0.0) FAST_CARBS_WAIT_MIN else null
+
+    /** A meal whose carbs come in within this many minutes is fast. */
+    const val FAST_MEAL_MAX_MIN = 90
+    const val FAST_CARBS_WAIT_MIN = 15
+
     const val MIN_LEARNED_PB2_MIN = 45
     const val MIN_PB3_GAP_MIN = 30
     const val MAX_DELAY_MIN = 120

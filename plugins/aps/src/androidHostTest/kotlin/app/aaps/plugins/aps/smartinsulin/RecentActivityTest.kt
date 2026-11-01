@@ -5,7 +5,9 @@ import app.aaps.core.keys.IntKey
 import app.aaps.plugins.aps.smartInsulin.ActivityMonitor.ActivityLevel
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /** [RecentActivityImpl]: minutes of exercise in the last hours, and the cut of meal insulin they suggest. */
@@ -69,6 +71,17 @@ class RecentActivityTest {
         assertEquals(10, recent.afterActivity(end)!!.cutPct)
         sp.edit { putInt(IntKey.ApsSmartInsulinAfterActivityMaxPct.key, 0) }
         assertNull(recent.afterActivity(end))
+    }
+
+    @Test
+    fun `10 min of real exercise in the last 4 hours counts as exercised`() {
+        var t = walk(T0, 60, ActivityLevel.LIGHT)
+        t = walk(t, 5, ActivityLevel.MODERATE)
+        assertFalse(recent.exercised(t))           // light does not count, 5 min is too short
+        t = walk(t, 5, ActivityLevel.MODERATE)
+        assertTrue(recent.exercised(t))
+        assertTrue(recent.exercised(t + 3 * HOUR))
+        assertFalse(recent.exercised(t + 4 * HOUR))
     }
 
     private companion object {

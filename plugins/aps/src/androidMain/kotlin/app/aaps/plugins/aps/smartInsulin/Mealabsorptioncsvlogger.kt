@@ -45,14 +45,15 @@ class MealAbsorptionCsvLogger @Inject constructor(
      * tracker saw. See `MealEstimateCalibrationImpl`.
      */
     fun logEstimate(
-        modeStartMs: Long, carbsG: Double, proteinG: Double, fatG: Double, carbEquivG: Double, trackerG: Double, ratio: Double, factorAfter: Double
+        modeStartMs: Long, carbsG: Double, proteinG: Double, fatG: Double, carbEquivG: Double, trackerG: Double, ratio: Double, factorAfter: Double,
+        carbsMin: Int
     ) {
         val date = Date(modeStartMs)
         val row = listOf(
             dateFormat.format(date), timeFormat.format(date),
             "%.1f".format(Locale.US, carbsG), "%.1f".format(Locale.US, proteinG), "%.1f".format(Locale.US, fatG),
             "%.1f".format(Locale.US, carbEquivG), "%.1f".format(Locale.US, trackerG),
-            "%.2f".format(Locale.US, ratio), "%.2f".format(Locale.US, factorAfter)
+            "%.2f".format(Locale.US, ratio), "%.2f".format(Locale.US, factorAfter), carbsMin.toString()
         ).joinToString(",")
         append(estimateFile, ESTIMATE_HEADER, row)
     }
@@ -93,7 +94,7 @@ class MealAbsorptionCsvLogger @Inject constructor(
             "rise_min", "plateau_min", "tail_min", "rise_g", "plateau_g", "tail_g"
         ).joinToString(",")
         private val ESTIMATE_HEADER = listOf(
-            "date", "start_time", "carbs_g", "protein_g", "fat_g", "carb_equiv_g", "tracker_g", "ratio", "factor_after"
+            "date", "start_time", "carbs_g", "protein_g", "fat_g", "carb_equiv_g", "tracker_g", "ratio", "factor_after", "carbs_min"
         ).joinToString(",")
     }
 }

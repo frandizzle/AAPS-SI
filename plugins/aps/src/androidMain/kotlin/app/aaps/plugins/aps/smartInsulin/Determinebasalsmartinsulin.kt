@@ -349,6 +349,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         foodToCome?.let { f ->
             sb.append(" | cob=${"%.0f".format(Locale.US, f.totalG)}g(carbs ${"%.0f".format(Locale.US, f.carbsG)}")
             if (f.heldBackCarbsG >= 1.0) sb.append(" +${"%.0f".format(Locale.US, f.heldBackCarbsG)} when BG rises")
+            if (f.carbsG >= 1.0 && f.carbsUntilMs > currentTime) sb.append(" over ${(f.carbsUntilMs - currentTime) / 60_000L}m")
             sb.append(" fp ${"%.0f".format(Locale.US, f.fatProteinG)}")
             if (f.coveredG >= 1.0) sb.append(", ${"%.0f".format(Locale.US, f.coveredG)}g for pre-boluses")
             if (currentTime < f.fatProteinFromMs && f.fatProteinG >= 1.0) sb.append(", fp in ${(f.fatProteinFromMs - currentTime) / 60_000L}m")

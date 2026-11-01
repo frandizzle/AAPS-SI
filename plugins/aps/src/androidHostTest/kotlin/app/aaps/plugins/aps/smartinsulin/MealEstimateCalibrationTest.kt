@@ -117,7 +117,7 @@ class MealEstimateCalibrationTest {
         cal.onEpisode(episode(T0 + 5 * HOUR, 80.0))
         cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(0, cal.mealsUsed)
-        verify(csv, never()).logEstimate(any(), any(), any(), any(), any(), any(), any(), any())
+        verify(csv, never()).logEstimate(any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
 
     @Test
@@ -128,7 +128,7 @@ class MealEstimateCalibrationTest {
         assertEquals(0, cal.mealsUsed)
         cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(1, cal.mealsUsed)
-        verify(csv).logEstimate(eq(T0), eq(100.0), eq(0.0), eq(0.0), eq(100.0), eq(120.0), eq(1.2), eq(1.0))
+        verify(csv).logEstimate(eq(T0), eq(100.0), eq(0.0), eq(0.0), eq(100.0), eq(120.0), eq(1.2), eq(1.0), eq(120))
     }
 
     @Test
@@ -152,7 +152,7 @@ class MealEstimateCalibrationTest {
         assertEquals(0, cal.mealsUsed)                    // not judged before the new end
         cal.onCycle(T0 + 5 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(1, cal.mealsUsed)
-        verify(csv).logEstimate(eq(T0), eq(140.0), eq(0.0), eq(0.0), eq(140.0), eq(154.0), eq(1.1), eq(1.0))
+        verify(csv).logEstimate(eq(T0), eq(140.0), eq(0.0), eq(0.0), eq(140.0), eq(154.0), eq(1.1), eq(1.0), eq(120))
     }
 
     @Test
@@ -210,6 +210,33 @@ class MealEstimateCalibrationTest {
         cal.updateCarbTopUp(T0, T0 + 25 * MIN, 125.0, 3.0, 2.0)
         cal = MealEstimateCalibrationImpl(sp, csv, log)
         assertEquals(CarbTopUp.GIVEN, cal.stillToCome(T0, T0 + 30 * MIN)!!.carbTopUp)
+    }
+
+    @Test
+    fun `a meal with exercise is not judged, also after a restart`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 100.0, 100.0, 0.0, 0.0)
+        cal.noteExercise(T0 - MIN)                       // before the meal: not this one
+        cal.noteExercise(T0 + 4 * HOUR)                  // after its window: not this one
+        cal.noteExercise(T0 + HOUR)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(100.0, cal.foodStillToComeG(T0)!!, 1e-9)   // still food for the forecast
+        cal.onEpisode(episode(T0, 60.0))
+        cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        assertEquals(0, cal.mealsUsed)
+        meal(T0 + DAY, 100.0, 120.0)
+        assertEquals(1, cal.mealsUsed)
+    }
+
+    @Test
+    fun `fast carbs are expected sooner and slow ones later, also for food added later and after a restart`() {
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0, carbsMin = 75)
+        assertEquals(T0 + 75 * MIN, cal.stillToCome(T0, T0)!!.carbsUntilMs)
+        cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR, carbsMin = 180)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(T0 + 4 * HOUR, cal.stillToCome(T0, T0 + HOUR)!!.carbsUntilMs)
+        cal.onEpisode(episode(T0, 60.0))
+        cal.onCycle(T0 + 4 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        verify(csv).logEstimate(eq(T0), eq(60.0), eq(0.0), eq(0.0), eq(60.0), eq(60.0), eq(1.0), eq(1.0), eq(75))
     }
 
     private companion object {

@@ -152,6 +152,16 @@ class MealDosePlannerTest {
     }
 
     @Test
+    fun `a fast meal suggests a wait only with BG at target or above and not falling`() {
+        assertEquals(MealDosePlanner.FAST_CARBS_WAIT_MIN, MealDosePlanner.fastCarbsWait(75, 110.0, 100.0, 0.0))
+        assertEquals(MealDosePlanner.FAST_CARBS_WAIT_MIN, MealDosePlanner.fastCarbsWait(MealDosePlanner.FAST_MEAL_MAX_MIN, 100.0, 100.0, 5.0))
+        assertNull(MealDosePlanner.fastCarbsWait(101, 110.0, 100.0, 0.0))   // not fast enough
+        assertNull(MealDosePlanner.fastCarbsWait(75, 95.0, 100.0, 0.0))     // under target
+        assertNull(MealDosePlanner.fastCarbsWait(75, 110.0, 100.0, -3.0))   // falling
+        assertNull(MealDosePlanner.fastCarbsWait(75, null, 100.0, 0.0))     // no BG
+    }
+
+    @Test
     fun `no carb ratio plans nothing`() {
         val p = MealDosePlanner.plan(meal(50.0), settings.copy(carbRatio = 0.0))
         assertEquals(0.0, p.pb1U + p.pb2U + p.pb3U, 1e-9)

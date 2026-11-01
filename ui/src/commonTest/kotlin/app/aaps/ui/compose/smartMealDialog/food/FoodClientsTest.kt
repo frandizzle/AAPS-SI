@@ -91,6 +91,20 @@ class FoodClientsTest {
     }
 
     @Test
+    fun `each food has a speed, and a missing or unknown one is normal`() {
+        val client = GeminiFoodClient(HttpClient(MockEngine { respond("") }))
+        val r = client.parseResponse(gemini("""{"items":[
+            {"name":"Juice","portion":"1 glass","portion_grams":250,"carbs_per_100g":10,"fibre_per_100g":0,"protein_per_100g":0,"fat_per_100g":0,"speed":"fast"},
+            {"name":"Lentils","portion":"1 cup","portion_grams":200,"carbs_per_100g":14,"fibre_per_100g":8,"protein_per_100g":9,"fat_per_100g":0.4,"speed":"Slow"},
+            {"name":"Bread","portion":"1 slice","portion_grams":35,"carbs_per_100g":45,"fibre_per_100g":3,"protein_per_100g":9,"fat_per_100g":3,"speed":"very fast"}
+        ]}"""))
+        assertEquals(listOf(FoodSpeed.FAST, FoodSpeed.SLOW, FoodSpeed.NORMAL), assertIs<FoodLookupResult.Success>(r).items.map { it.speed })
+        assertEquals(FoodSpeed.NORMAL, assertIs<FoodLookupResult.Success>(client.parseResponse(gemini(dinner))).items[0].speed)
+        val schema = GeminiFoodClient.RESPONSE_SCHEMA.toString()
+        assertTrue(schema.contains("\"speed\""))
+    }
+
+    @Test
     fun `an item without a usable portion is left out`() {
         val client = GeminiFoodClient(HttpClient(MockEngine { respond("") }))
         val r = client.parseResponse(gemini("""{"items":[{"name":"Soup","portion":"","portion_grams":0,"carbs_per_100g":5,"fibre_per_100g":0,"protein_per_100g":1,"fat_per_100g":1}]}"""))

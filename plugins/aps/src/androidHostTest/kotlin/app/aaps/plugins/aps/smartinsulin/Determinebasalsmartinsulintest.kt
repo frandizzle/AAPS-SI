@@ -538,7 +538,7 @@ class DetermineBasalSmartInsulinTest {
 
         val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
         assertFalse(withFood.reason.contains("SUSPEND"), withFood.reason)
-        assertTrue(withFood.reason.contains("cob=60g(carbs 30 fp 30)"), withFood.reason)
+        assertTrue(withFood.reason.contains("cob=60g(carbs 30 over 60m fp 30)"), withFood.reason)
         assertTrue(withFood.reason.contains("NORMAL"), withFood.reason)
     }
 

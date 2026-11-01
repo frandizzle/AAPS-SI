@@ -61,7 +61,11 @@ class MealEstimateCalibrationImpl @Inject constructor(
         val learn:       Boolean = true,
         /** The fat and protein start to come in at this time. */
         var fatProteinFromMs: Long = modeStartMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
-        var carbTopUp: CarbTopUp = CarbTopUp.WAITING
+        var carbTopUp: CarbTopUp = CarbTopUp.WAITING,
+        /** There was real exercise during the meal or just before it: BG says less about how much was eaten. */
+        var exercised: Boolean = false,
+        /** Minutes the meal's first carbs take to come in, from how fast the foods are; for the log. */
+        val carbsMin: Int = MealFoodForecast.CARBS_MIN
     )
 
     private val pending = mutableListOf<Pending>()
@@ -80,22 +84,23 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     override val mealsUsed: Int get() = synchronized(this) { ratios.size }
 
-    override fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean) {
+    override fun recordEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean, carbsMin: Int) {
         synchronized(this) {
             // A new estimate for the same meal mode replaces the old one.
             pending.removeAll { it.modeStartMs == modeStartMs }
-            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn))
+            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn,
+                                carbsUntilMs = modeStartMs + carbsMin * 60_000L, carbsMin = carbsMin))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: estimate ${"%.0f".format(carbEquivG)} g recorded")
     }
 
-    override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long) {
+    override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
         val found = synchronized(this) {
             pending.firstOrNull { it.modeStartMs == modeStartMs }?.also {
                 it.windowEndMs = maxOf(it.windowEndMs, windowEndMs)
-                if (carbsG > 0.0) it.carbsUntilMs = maxOf(it.carbsUntilMs, eatenMs + MealFoodForecast.CARBS_MIN * 60_000L)
+                if (carbsG > 0.0) it.carbsUntilMs = maxOf(it.carbsUntilMs, eatenMs + carbsMin * 60_000L)
                 // Fat and protein already on their way keep their start; the first fat and protein start when eaten.
                 if (carbEquivG > carbsG && it.carbEquivG <= it.carbsG)
                     it.fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
@@ -214,7 +219,24 @@ class MealEstimateCalibrationImpl @Inject constructor(
         save()
     }
 
+    /**
+     * Marks the meals running at [nowMs] as eaten around exercise. Exercise makes BG drop, which the meal tracker
+     * would read as less food, so those meals do not teach the factor that the estimates are too high.
+     */
+    fun noteExercise(nowMs: Long) {
+        val marked = synchronized(this) {
+            pending.filter { !it.exercised && nowMs >= it.modeStartMs && nowMs <= it.windowEndMs }.onEach { it.exercised = true }
+        }
+        if (marked.isEmpty()) return
+        save()
+        marked.forEach { aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${it.modeStartMs} had exercise, will not be used") }
+    }
+
     private fun judge(p: Pending) {
+        if (p.exercised) {
+            aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${p.modeStartMs} not used (exercise)")
+            return
+        }
         if (!p.learn || p.episodes == 0 || p.carbEquivG < MIN_ESTIMATE_G) {
             aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${p.modeStartMs} not used (episodes=${p.episodes})")
             return
@@ -225,7 +247,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
             while (ratios.size > MAX_MEALS) ratios.removeAt(0)
             factor
         }
-        csvLogger.logEstimate(p.modeStartMs, p.carbsG, p.proteinG, p.fatG, p.carbEquivG, p.trackerG, ratio, after)
+        csvLogger.logEstimate(p.modeStartMs, p.carbsG, p.proteinG, p.fatG, p.carbEquivG, p.trackerG, ratio, after, p.carbsMin)
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: estimate ${"%.0f".format(p.carbEquivG)} g, tracker ${"%.0f".format(p.trackerG)} g, " +
             "ratio ${"%.2f".format(ratio)}, factor ${"%.2f".format(after)}")
     }
@@ -246,7 +268,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("s", it.modeStartMs).put("e", it.windowEndMs).put("ce", it.carbEquivG)
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
-                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name))
+                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name).put("x", it.exercised).put("cm", it.carbsMin))
                     }
                 })
         }
@@ -267,7 +289,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                         o.optDouble("t", 0.0), o.optInt("n", 0),
                                         o.optLong("cu", start + MealFoodForecast.CARBS_MIN * 60_000L), o.optBoolean("l", true),
                                         o.optLong("fs", start + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L),
-                                        CarbTopUp.entries.find { it.name == o.optString("tu") } ?: CarbTopUp.WAITING))
+                                        CarbTopUp.entries.find { it.name == o.optString("tu") } ?: CarbTopUp.WAITING,
+                                        o.optBoolean("x", false), o.optInt("cm", MealFoodForecast.CARBS_MIN)))
                 }
             }
         } catch (e: Exception) {

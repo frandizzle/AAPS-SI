@@ -91,6 +91,20 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `fast carbs come in sooner and slow carbs later`() {
+        val carbsOnly = dinner.copy(fatProteinG = 0.0, mealG = 50.0)
+        fun firstHour(carbsMin: Int): Double {
+            val still = carbsOnly.copy(carbsUntilMs = T0 + carbsMin * MIN)
+            val f = MealFoodForecast.foodToCome(still, T0, 0.0, 0.0, 5.0)!!
+            return MealFoodForecast.steps(f, T0, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 48).take(12).sum()
+        }
+        // 50 g at 10 mg/dL per gram: fast 60 of 75 min, normal 60 of 120, slow 60 of 180.
+        assertEquals(400.0, firstHour(75), 1e-6)
+        assertEquals(250.0, firstHour(120), 1e-6)
+        assertEquals(500.0 / 3, firstHour(180), 1e-6)
+    }
+
+    @Test
     fun `the rise BG already shows is not counted twice`() {
         val f = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0)!!
         // The seen rise brings 600 mg/dL = 60 g: all 50 g of carbs and 10 g of the fat and protein.

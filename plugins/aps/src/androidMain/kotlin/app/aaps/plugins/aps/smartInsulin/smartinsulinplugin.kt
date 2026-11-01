@@ -573,6 +573,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val foodToCome: FoodToCome?,
         /** Minutes until the fat and protein of [foodToCome] start to count; 0 when they already do. */
         val fatProteinStartsInMin: Long,
+        /** Minutes the carbs of [foodToCome] are still expected over, from how fast the foods are; 0 when the time is over. */
+        val carbsOverMin: Long,
         /** What the meals have learned about the carb ratio. */
         val effectiveCr: EffectiveCr,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
@@ -824,6 +826,7 @@ open class SmartInsulinPlugin @Inject constructor(
             pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
             foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
             fatProteinStartsInMin = lastFoodToCome?.let { ((it.fatProteinFromMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
+            carbsOverMin = lastFoodToCome?.let { ((it.carbsUntilMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
             effectiveCr = effectiveCr(),
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
@@ -1906,12 +1909,18 @@ open class SmartInsulinPlugin @Inject constructor(
             mealAbsorptionCsvLogger.log(completedMealEpisode)
             mealEstimateCalibration.onEpisode(completedMealEpisode)
         }
+        // Real exercise in the last hours: the body uses insulin better and BG drops, which says
+        // nothing about the meal's dose or size. The watch or phone sees it even when a meal's food
+        // hides the drop from the unexplained-drop check.
+        val exercisedRecently = recentActivity.exercised(now)
+        if (exercisedRecently) mealEstimateCalibration.noteExercise(now)
         mealEstimateCalibration.onCycle(now, mealAbsorptionTracker.inProgress)
 
-        // Exercise suspected: the drop is bigger than insulin explains, or activity has just ended
-        // and BG is still dropping from it. A low then is learned by the meal learners at a small
-        // step only. (The tracker itself is updated earlier, before the circadian learner.)
-        val exerciseSuspected = unexplainedDropTracker.exerciseSuspected || activityTail.paused
+        // Exercise suspected: the drop is bigger than insulin explains, activity has just ended
+        // and BG is still dropping from it, or there was real exercise in the last hours. A low
+        // then is learned by the meal learners at a small step only. (The tracker itself is
+        // updated earlier, before the circadian learner.)
+        val exerciseSuspected = unexplainedDropTracker.exerciseSuspected || activityTail.paused || exercisedRecently
 
         // Two severities of "this mode gave too much", both fed to the episode-outcome learners.
         // lowActive is a frank hypo (or its rebound window); undershootActive is the band just
