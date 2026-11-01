@@ -114,6 +114,12 @@ interface MealOverrideManager {
     fun cancelPreBolus1Rest()
 
     /**
+     * The pump gave [deliveredU] of pre-bolus 1, for example because the bolus was stopped. When that is less than
+     * the running mode thinks it gave, the mode keeps the real amount, and the planned one beside it.
+     */
+    fun preBolus1Delivered(deliveredU: Double)
+
+    /**
      * Adds food eaten later to the running meal mode, for example a dessert. Pre-bolus 2 and 3 only
      * grow while they still wait; one that has fired or was cancelled stays as it is, and the loop
      * covers the rest. The mode never gets shorter, and DURA and Protein/Fat are only turned on, never off.

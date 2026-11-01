@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.data.model.BS
 import app.aaps.core.interfaces.di.ApplicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -73,6 +74,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("afterActivityPct", s.afterActivityPct)
             put("preBolus1RestU",   s.preBolus1RestU)
             if (s.preBolus1RestFiredMs != null) put("preBolus1RestFiredMs", s.preBolus1RestFiredMs)
+            if (s.preBolus1PlannedU != null) put("preBolus1PlannedU", s.preBolus1PlannedU)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -109,7 +111,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 addedU           = json.optDouble("addedU", 0.0),
                 afterActivityPct = json.optInt("afterActivityPct", 0),
                 preBolus1RestU   = json.optDouble("preBolus1RestU", 0.0),
-                preBolus1RestFiredMs = if (json.has("preBolus1RestFiredMs")) json.getLong("preBolus1RestFiredMs") else null
+                preBolus1RestFiredMs = if (json.has("preBolus1RestFiredMs")) json.getLong("preBolus1RestFiredMs") else null,
+                preBolus1PlannedU = if (json.has("preBolus1PlannedU")) json.getDouble("preBolus1PlannedU") else null
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -517,6 +520,16 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 1 rest ${restU}U once BG rises")
     }
 
+    override fun preBolus1Delivered(deliveredU: Double) {
+        val s = _state ?: return
+        val doseU = s.doseU ?: return
+        if (deliveredU >= doseU - STOPPED_MIN_DIFF_U) return
+        val given = deliveredU.coerceAtLeast(0.0)
+        _state = s.copy(doseU = given, preBolus1PlannedU = s.preBolus1PlannedU ?: doseU)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 1 gave ${given}U of ${s.preBolus1PlannedU ?: doseU}U")
+    }
+
     override fun cancelPreBolus1Rest() {
         val s = _state ?: return
         if (!s.preBolus1RestPending) return
@@ -874,5 +887,25 @@ class MealOverrideManagerImpl @Inject constructor(
                 aapsLogger.debug(LTag.APS, "SmartInsulin PB3 delivered OK: ${s.preBolus3U}U")
             }
         }
+    }
+
+    companion object {
+
+        /** Less than this short of the planned pre-bolus 1 is rounding, not a stopped bolus. */
+        const val STOPPED_MIN_DIFF_U = 0.05
+        /** Pre-bolus 1 is given right after the mode starts: its record is looked for this long after the start. */
+        const val PB1_RECORD_WINDOW_MS = 10 * 60_000L
+        /** And this long before it, for a clock a little out between the mode start and the bolus record. */
+        private const val PB1_RECORD_EARLY_MS = 60_000L
+
+        /**
+         * The bolus record of pre-bolus 1 among [boluses]: the first valid normal bolus from just before the mode
+         * started at [triggerTimeMs] until [PB1_RECORD_WINDOW_MS] after. SMBs are not it. Null when there is none.
+         */
+        fun preBolus1Record(boluses: List<BS>, triggerTimeMs: Long): BS? =
+            boluses.filter {
+                it.isValid && it.type == BS.Type.NORMAL &&
+                    it.timestamp >= triggerTimeMs - PB1_RECORD_EARLY_MS && it.timestamp <= triggerTimeMs + PB1_RECORD_WINDOW_MS
+            }.minByOrNull { it.timestamp }
     }
 }

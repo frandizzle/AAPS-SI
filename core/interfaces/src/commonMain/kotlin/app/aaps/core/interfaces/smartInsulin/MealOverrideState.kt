@@ -12,6 +12,8 @@ package app.aaps.core.interfaces.smartInsulin
  * [addedU]           — insulin given now for food added to this meal later (dessert, a second plate).
  * [preBolus1RestU]   — the part of pre-bolus 1 above the max pre-bolus, given later once BG rises. 0.0 = none.
  * [preBolus1RestFiredMs] — when it was given; null = still waits, -1 = cancelled or failed, -2 = BG did not rise in time.
+ * [preBolus1PlannedU] — pre-bolus 1 as planned, when the pump gave less (the bolus was stopped); [doseU] is then what
+ *                       it really gave. Null when it gave all of it.
  * [afterActivityPct] — how much less insulin this meal gets after exercise, in percent; 0 = none. The loop makes the
  *                      mode's ISF weaker by the same share, and the meal learners do not judge the meal.
  */
@@ -33,7 +35,8 @@ data class MealOverrideState(
     val addedU:           Double  = 0.0,
     val afterActivityPct: Int     = 0,
     val preBolus1RestU:   Double  = 0.0,
-    val preBolus1RestFiredMs: Long? = null
+    val preBolus1RestFiredMs: Long? = null,
+    val preBolus1PlannedU: Double? = null
 ) {
     /** True while the rest of pre-bolus 1 waits for BG to rise */
     val preBolus1RestPending: Boolean

@@ -398,8 +398,11 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
 
         // Pre-bolus 1 — only shown when in meal mode and a dose was delivered
         if (d.mealMode != "Fasting" && d.activeDoseU != null && d.activeDoseU > 0.0) {
-            addRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
-                   tone = SiTone.GOOD)
+            if (d.activePb1PlannedU != null)
+                addRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U of ${"%.2f".format(d.activePb1PlannedU)}U (stopped)",
+                       tone = SiTone.WARNING)
+            else addRow("Pre-bolus 1 — delivered ${"%.2f".format(d.activeDoseU)}U",
+                        tone = SiTone.GOOD)
         }
 
         // The meal's food still to come, which the loop doses for as it comes in

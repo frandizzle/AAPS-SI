@@ -299,6 +299,9 @@ open class SmartInsulinPlugin @Inject constructor(
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L && bgWentLow && msSinceLastSuspend < reboundGuardMs
 
     companion object {
+        /** How long after a meal starts its pre-bolus 1 record is read again, for a bolus stopped part way. */
+        const val PB1_CHECK_MS = 30 * 60_000L
+        private const val PB1_CHECK_EARLY_MS = 2 * 60_000L
         const val REBOUND_GUARD_MS              = 60 * 60 * 1000L
         const val ROLLER_REBOUND_EXTENSION_MS   = 15 * 60 * 1000L
         const val ROLLER_REBOUND_EXTENSION_MAX_MS = 45 * 60 * 1000L
@@ -564,6 +567,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val profileLearningStatus: String, val circadianRawStatus: String,
         val profilesRawStatus: String, val tirRawLine: String, val avgBgMgdl24h: Double,
         val estimatedHba1c: Double, val bgWindowHours: Int, val activeDoseU: Double?,
+        /** Pre-bolus 1 as planned when the pump gave less ([activeDoseU]); null when it gave all of it. */
+        val activePb1PlannedU: Double?,
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val activeAddedU: Double, val pb2Status: String, val pb3Status: String,
         /** What pre-bolus 2 and 3 are set to give, 0 when there is none. */
         val pb2PlannedU: Double, val pb3PlannedU: Double,
@@ -819,7 +824,8 @@ open class SmartInsulinPlugin @Inject constructor(
             profileLearningStatus = if (!isLearningEnabled) "off: Disabled" else bolusCurveTracker.statusSummary(currentMealMode),
             circadianRawStatus = circRaw, profilesRawStatus = profRaw, tirRawLine = aggressionLearner.tirSummary,
             avgBgMgdl24h = cachedHba1cAvgMgdl, estimatedHba1c = cachedHba1cEstimate, bgWindowHours = cachedHba1cWindowHours,
-            activeDoseU = mealOverrideManager.activeDoseU, activePb2DoseU = mealOverrideManager.activePb2DoseU,
+            activeDoseU = mealOverrideManager.activeDoseU, activePb1PlannedU = mealOverrideManager.activeState?.preBolus1PlannedU,
+            activePb2DoseU = mealOverrideManager.activePb2DoseU,
             activePb3DoseU = mealOverrideManager.activePb3DoseU, activeAddedU = mealOverrideManager.activeState?.addedU ?: 0.0,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
@@ -1201,6 +1207,24 @@ open class SmartInsulinPlugin @Inject constructor(
             if (undone) "Site was bad: learning since ${format.format(Date(c.snapshotMs!!))} undone"
             else "Site was bad: pod from ${format.format(Date(c.podMs))} marked, no saved learning to go back to"
         )
+    }
+
+    /**
+     * A stopped pre-bolus 1 gives less than planned, and its bolus record then holds what the pump really gave. The
+     * running mode is told, so the SI tab and the meal's total insulin show the real amount. Checked until a while
+     * after the start, so a bolus that is still being given is read again once it ends.
+     */
+    private suspend fun checkPreBolus1Delivered(now: Long) {
+        val s = mealOverrideManager.activeState ?: return
+        if (s.doseU == null || now > s.triggerTimeMs + PB1_CHECK_MS) return
+        val record = try {
+            MealOverrideManagerImpl.preBolus1Record(
+                persistenceLayer.getBolusesFromTimeToTime(s.triggerTimeMs - PB1_CHECK_EARLY_MS, now, true), s.triggerTimeMs
+            )
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "SmartInsulin: pre-bolus 1 read failed: ${e.message}"); null
+        } ?: return
+        mealOverrideManager.preBolus1Delivered(record.amount)
     }
 
     /** What the loop gave above profile basal since the last cycle, boluses (SMBs) included, for the night check. */
@@ -1808,6 +1832,9 @@ open class SmartInsulinPlugin @Inject constructor(
                                  "SmartInsulin modeISF: ${mealMode.label} learned ×${"%.3f".format(learnedModeMult)} → isf=${"%.1f".format(dosingIsfMgdl)}")
             }
         }
+
+        // -- Pre-bolus 1 as really given ----------------------------------------------
+        checkPreBolus1Delivered(now)
 
         // -- After activity ---------------------------------------------------------
         // The body uses insulin better for hours after exercise. A meal from Smart Meal got its cut
