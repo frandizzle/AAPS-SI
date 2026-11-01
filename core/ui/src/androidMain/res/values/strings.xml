@@ -11,7 +11,7 @@
     <string name="treatments_history">Treatments history</string>
     <string name="treatments_desc">View and manage treatment history</string>
     <string name="nav_configuration">Configuration</string>
-    <string name="nav_configuration_desc">Setup your configuration (CGM, Pump, ...) end enable features</string>
+    <string name="nav_configuration_desc">Set up your configuration (CGM, pump, ...) and enable features</string>
     <string name="count_selected">%1$d selected</string>
     <string name="delete">Delete</string>
     <string name="show_invalidated">Show invalidated</string>
@@ -97,6 +97,8 @@
     <string name="treatments_iob_label_string">IOB:</string>
     <string name="mute5min">Mute for 5 minutes</string>
     <string name="mute">Mute</string>
+    <string name="alarm_silence" comment="Button on the alarm screen. It stops the sound, and the alarm screen stays open.">Silence alarm</string>
+    <string name="alarm_silence_and_close" comment="Button on the alarm screen. It stops the sound and closes the alarm screen.">Silence and close</string>
     <string name="success">Success</string>
     <string name="advanced_settings_title">Advanced Settings</string>
     <string name="extended_bolus">Extended bolus</string>
@@ -738,6 +740,7 @@
     <!-- Profile validation -->
     <string name="no_profile_selected">No profile selected</string>
     <string name="missing_profile_name">Missing profile name</string>
+    <string name="profile_clone_name" comment="Name of a cloned profile. %1$s=name of the original profile. Example: Normal copy">%1$s copy</string>
     <string name="profile_not_saved_activate">Profile not saved. Please save the profile before activating.</string>
     <string name="profile_basal_not_compatible_with_pump">Basal rate is not compatible with the current pump and cannot be activated. Reduce the percentage or adjust the basal rate.</string>
     <string name="profile_basal_below_pump_minimum">Basal rate is below the minimum of the current pump and cannot be activated. Raise the percentage or adjust the basal rate.</string>
@@ -815,7 +818,7 @@
     <string name="wizard_set_alarm">Set alarm</string>
     <string name="eat_reminder_title">Time to eat</string>
     <string name="eat_reminder_countdown" comment="Time left until it is time to eat, as minutes:seconds. %1$d=minutes, %2$02d=seconds with two digits. Example: 12:05">%1$d:%2$02d</string>
-    <string name="eat_reminder_set_duration" comment="The length of the eat reminder the user set. %1$s=length with unit. Example: Set: 20 min">Set: %1$s</string>
+    <string name="eat_reminder_total_wait" comment="The whole wait of the eat reminder, from the start until it rings. Each +5 min makes it longer. %1$s=length with unit. Example: Total wait: 25 min">Total wait: %1$s</string>
     <string name="eat_reminder_rung">The time is up</string>
     <string name="eat_reminder_extend" comment="Button that moves the eat reminder later. %1$d=minutes. Example: +5 min">+%1$d min</string>
     <string name="eat_reminder_not_set">The eat reminder could not be set. Allow AAPS to set alarms and reminders in the Android settings.</string>

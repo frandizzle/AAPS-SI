@@ -261,7 +261,11 @@ enum class NotificationId(
     // SmartInsulin: insulin acted much more slowly than usual after meals on this pod, which is what a
     // leaking or tunnelling site looks like. Asks the user to check the site; nothing is delivered
     // wrongly by it. Appended at the END for the same reason as above.
-    SITE_CHECK(IMPORTANT, PUMP);
+    SITE_CHECK(IMPORTANT, PUMP),
+    // A real pump is selected, but AAPS has no Bluetooth (Nearby devices) permission, so no command can reach the
+    // pump and the queue fails them (#5440). It removes itself once the permission is back. IMPORTANT, not URGENT:
+    // a bolus that fails because of it raises its own alarm. Appended at the END for the same reason as above.
+    BLUETOOTH_PERMISSION_MISSING(IMPORTANT, PUMP);
 
     companion object {
 
