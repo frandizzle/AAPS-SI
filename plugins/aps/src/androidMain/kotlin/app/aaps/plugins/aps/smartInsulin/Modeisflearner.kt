@@ -112,6 +112,8 @@ class ModeIsfLearner @Inject constructor(
     private var episodeShapeRailed = false
     /** The episode started with a pre-bolus - it gets the tighter spike bar, see [LATE_SPIKE_MARGIN_MGDL]. */
     private var episodePreBolused = false
+    /** Start of the episode whose pre-bolus 1 was stopped short: it is not strengthened. 0 = none. */
+    private var doseCutEpisodeMs = 0L
     /** Where the rise that fired this episode began, 0.0 if unknown. The spike bar is measured
      *  from it, see `UamEntryFractionLearner.spikeBaseMgdl`. */
     private var episodeRiseStartMgdl = 0.0
@@ -316,8 +318,10 @@ class ModeIsfLearner @Inject constructor(
         newPodBoost: Boolean = false,  // the new pod boost really added insulin (see NewPodBoost.addedInsulin). An
         // episode it touches is not judged at all, lows included: the boost changed the dose, and
         // a low already ends the boost for that pod. A tail or low watch still open is dropped.
-        riseStartMgdl: Double = 0.0  // where the rise that fired this mode began, 0.0 if unknown.
+        riseStartMgdl: Double = 0.0,  // where the rise that fired this mode began, 0.0 if unknown.
         // Read when the episode opens; the spike bar is measured from it, not only from target.
+        preBolus1CutShort: Boolean = false  // pre-bolus 1 was stopped short (MealOverrideState.preBolus1CutShort):
+        // the meal got less insulin than planned, so a high in it is not a reason to strengthen. Lows still count.
     ) {
         if (!learningEnabled) {
             // Drop anything in flight rather than leaving it to be judged whenever the switch comes
@@ -412,6 +416,7 @@ class ModeIsfLearner @Inject constructor(
                 episodeBoosted = false
             }
             if (newPodBoost) episodeBoosted = true
+            if (preBolus1CutShort) doseCutEpisodeMs = activeStartMs
             if (bgMgdl > episodePeakMgdl) episodePeakMgdl = bgMgdl
             if (entryShapeRailed) episodeShapeRailed = true
             tailDeltas.addFirst(deltaMgdl)
@@ -610,19 +615,15 @@ class ModeIsfLearner @Inject constructor(
         val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
         when {
             pendingSpikeTooHigh -> {
-                val step = strengthenStep()
                 val from = if (spikeBaseMgdl(targetMgdl) > targetMgdl) "where the rise began" else "target"
-                applyOutcome(p, step, "${p.label} spike held ≥${BgText.bg(spikeMarginMgdl(), 0)} over $from for 30min with no front-loading left — strengthened", pendingStartMs)
-                return step
+                return applyOutcome(p, strengthenStep(), "${p.label} spike held ≥${BgText.bg(spikeMarginMgdl(), 0)} over $from for 30min with no front-loading left — strengthened", pendingStartMs)
             }
             // Working through a high it inherited: below where it started and still coming
             // down. Charging this reads someone else's high as this mode's under-dosing.
             endedHigh && stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL ->
                 noChange(p, "${p.label} ended ${aboveMmol} above target but ${BgText.bg(pendingStartBgMgdl - bgMgdl)} below where it started, still falling — working through an inherited high, no change")
             endedHigh && !duraOwnedStall() -> {
-                val step = strengthenStep()
-                applyOutcome(p, step, "${p.label} ended ${aboveMmol} above target${shortDuraText()} — strengthened", pendingStartMs)
-                return step
+                return applyOutcome(p, strengthenStep(), "${p.label} ended ${aboveMmol} above target${shortDuraText()} — strengthened", pendingStartMs)
             }
             endedHigh -> noChange(p, "${p.label} ended ${aboveMmol} above target with DURA working (×${"%.2f".format(pendingMaxDura)} for ${pendingDuraEngagedMs / 60_000}min) — a stall is DURA's to fix, no change")
             else      -> noChange(p, "${p.label} ended on target — no change")
@@ -639,8 +640,7 @@ class ModeIsfLearner @Inject constructor(
         val endedHigh = bgMgdl > targetMgdl + strengthenMarginMgdl()
         val inheritedHigh = stillFalling() && bgMgdl < pendingStartBgMgdl - MIN_RISE_FOR_SPIKE_MGDL
         if (endedHigh && pendingWindowStep == 1.0 && !inheritedHigh && !duraOwnedStall()) {
-            val step = strengthenStep()
-            applyOutcome(p, step,
+            val step = applyOutcome(p, strengthenStep(),
                          "${p.label}: BG still ${BgText.bg(bgMgdl - targetMgdl)} above target ${TAIL_MS / 60_000}min after it ended — strengthened",
                          pendingStartMs, countEpisode = false)
             // The low watch runs a little past the tail; a low in it undoes this too.
@@ -827,8 +827,13 @@ class ModeIsfLearner @Inject constructor(
                      episodeStartMs)
     }
 
+    /** Moves the multiplier by [step] and returns the step applied: 1.0 when a strengthen is not allowed. */
     private fun applyOutcome(scope: Scope, step: Double, reason: String, episodeStartMs: Long = 0L,
-                             countEpisode: Boolean = true) {
+                             countEpisode: Boolean = true): Double {
+        if (step < 1.0 && episodeStartMs != 0L && episodeStartMs == doseCutEpisodeMs) {
+            noChange(scope, "${scope.label} not strengthened: pre-bolus 1 was stopped short, so the meal got less insulin than planned", countEpisode)
+            return 1.0
+        }
         val s = states.getOrPut(scope.key) { ModeState() }
         val before = s.mult
         s.mult = (s.mult * step).coerceIn(MULT_MIN, MULT_MAX)
@@ -841,6 +846,7 @@ class ModeIsfLearner @Inject constructor(
         lastOutcome = if (from != null && to != null) "$reason: ISF $from → $to (n=${s.episodes})"
         else "$reason → ×${"%.3f".format(s.mult)} (n=${s.episodes})"
         aapsLogger.debug(LTag.APS, "ModeIsfLearner: $lastOutcome")
+        return step
     }
 
     private fun skipPending(reason: String) {
@@ -868,7 +874,7 @@ class ModeIsfLearner @Inject constructor(
         activeScope = null; activeStartMs = 0L; episodeLow = false; episodeEarlyLow = false
         episodeUndershoot = false; episodeLowWasUnexplained = false; episodeMaxDura = 1.0
         episodeDuraEngagedMs = 0L; episodeLastCycleMs = 0L; pendingDuraEngagedMs = 0L
-        episodeCarriedInLow = false; episodeRiseStartMgdl = 0.0
+        episodeCarriedInLow = false; episodeRiseStartMgdl = 0.0; doseCutEpisodeMs = 0L
         pendingScope = null; pendingStartMs = 0L
         lastMovedMode = null; lastMovedStartMs = 0L
         clearWatch()

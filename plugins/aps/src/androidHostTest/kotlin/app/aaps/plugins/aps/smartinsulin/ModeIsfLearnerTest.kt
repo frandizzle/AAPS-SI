@@ -39,14 +39,14 @@ class ModeIsfLearnerTest {
         undershoot: Boolean = false, railed: Boolean = false,
         pfWindow: PfWindow = PfWindow.NONE, learning: Boolean = true,
         preBolused: Boolean = false, boost: Boolean = false, riseStart: Double = 0.0,
-        share: Double = 1.0
+        share: Double = 1.0, cutShort: Boolean = false
     ) = learner.onCycle(
         activeModeNow = mode, modeStartMs = startMs, bgMgdl = bg, targetMgdl = target,
         lowActive = low, duraMult = dura, deltaMgdl = delta, activityPerMin = activity,
         fastingIsfMgdl = 50.0, carbRatio = 10.0, nowMs = nowMs, baseSignature = baseSig,
         exerciseSuspected = exercise, undershootActive = undershoot, entryShapeRailed = railed,
         pfWindow = pfWindow, learningEnabled = learning, preBolused = preBolused, newPodBoost = boost,
-        riseStartMgdl = riseStart, modeInsulinShare = share
+        riseStartMgdl = riseStart, modeInsulinShare = share, preBolus1CutShort = cutShort
     )
 
     /** Runs the full 75-min settling tail quietly (flat BG at [bg]), ending past the deadline. */
@@ -66,6 +66,28 @@ class ModeIsfLearnerTest {
         // mode ends; tail runs quietly with BG still 130 (target 100, margin 18 → strengthen)
         runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
         assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a meal whose pre-bolus 1 was stopped short is not strengthened by ending high, also in the tail`() {
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS, bg = 160.0, cutShort = true)
+        cycle(MealMode.DINNER, BASE_MS, BASE_MS + CYCLE_MS, bg = 160.0)
+        runQuietTail(BASE_MS + CYCLE_MS, bg = 130.0)
+        assertEquals(1.0, learner.multiplier(MealMode.DINNER), 1e-9)
+        assertEquals(1, learner.episodeCount(MealMode.DINNER))
+        // The next meal is judged as usual.
+        val next = BASE_MS + 24 * 60 * 60_000L
+        cycle(MealMode.DINNER, next, next, bg = 160.0)
+        runQuietTail(next, bg = 130.0)
+        assertEquals(0.975, learner.multiplier(MealMode.DINNER), 1e-9)
+    }
+
+    @Test
+    fun `a meal whose pre-bolus 1 was stopped short still weakens on a low`() {
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS, bg = 110.0, cutShort = true)
+        cycle(MealMode.LOW_CARB, BASE_MS, BASE_MS + CYCLE_MS, bg = 80.0, low = true, cutShort = true)
+        cycle(null, 0L, BASE_MS + 2 * CYCLE_MS, bg = 90.0)
+        assertEquals(1.05, learner.multiplier(MealMode.LOW_CARB), 1e-9)
     }
 
     @Test

@@ -1997,6 +1997,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // A meal started from one saved entry learns its own carb and fat/protein insulin. While it is
         // watched, the mode ISF and DURA learners sit the episode out, so one spike is not corrected twice.
         val episodeNow = mealAbsorptionTracker.inProgress
+        // Pre-bolus 1 stopped short: the meal got less insulin than planned, so its high teaches nothing.
+        val pb1CutShort = mealOverrideManager.activeState?.preBolus1CutShort ?: false
         savedMealLearning.onCycle(
             nowMs            = now,
             activeMode       = mealOverrideManager.activeMealMode,
@@ -2006,7 +2008,8 @@ open class SmartInsulinPlugin @Inject constructor(
             bgMgdl           = glucoseStatus.glucose,
             lowActive        = lowActiveNow,
             undershootActive = undershootNow,
-            contaminated     = secondWaveNow || exerciseSuspected || podBoostDosedLastCycle || carbEpisodeActive || afterActivityPct > 0
+            contaminated     = secondWaveNow || exerciseSuspected || podBoostDosedLastCycle || carbEpisodeActive || afterActivityPct > 0 ||
+                pb1CutShort
         )
         val savedMealWatched = savedMealLearning.watching(now)
 
@@ -2041,7 +2044,8 @@ open class SmartInsulinPlugin @Inject constructor(
             pfWindow          = pfWindowForMode(mealOverrideManager.activeMealMode, currentHour),
             // A meal the new pod boost really added insulin to is not judged at all, lows included.
             newPodBoost       = podBoostDosedLastCycle,
-            riseStartMgdl     = riseStartMgdl
+            riseStartMgdl     = riseStartMgdl,
+            preBolus1CutShort = pb1CutShort
         )
 
         // -- UAM entry-fraction shape learner -----------------------------------

@@ -3,11 +3,14 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.data.model.BS
 import app.aaps.core.data.model.ICfg
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 
@@ -34,6 +37,16 @@ class MealOverridePreBolus1Test {
         mgr.preBolus1Delivered(3.5)
         assertEquals(3.5, mgr.activeState!!.doseU!!, 1e-9)
         assertEquals(5.35, mgr.activeState!!.preBolus1PlannedU!!, 1e-9)
+    }
+
+    @Test
+    fun `stopped short is 0,5 U or a tenth of the plan`() {
+        fun cut(planned: Double, given: Double) = MealOverrideState(MealMode.DINNER, 0L, HOUR, doseU = given, preBolus1PlannedU = planned).preBolus1CutShort
+        assertTrue(cut(5.35, 3.95))
+        assertTrue(cut(6.0, 5.5))     // 0.5 U
+        assertTrue(cut(2.0, 1.8))     // a tenth
+        assertFalse(cut(6.0, 5.6))    // 0.4 U of 6
+        assertFalse(MealOverrideState(MealMode.DINNER, 0L, HOUR, doseU = 5.35).preBolus1CutShort)
     }
 
     @Test

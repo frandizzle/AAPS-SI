@@ -38,6 +38,13 @@ data class MealOverrideState(
     val preBolus1RestFiredMs: Long? = null,
     val preBolus1PlannedU: Double? = null
 ) {
+    /**
+     * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
+     * not given. The meal then got less insulin than planned, so a high says nothing about the meal's settings.
+     */
+    val preBolus1CutShort: Boolean
+        get() = preBolus1PlannedU?.let { planned -> planned - (doseU ?: 0.0) >= minOf(CUT_SHORT_MIN_U, planned * CUT_SHORT_SHARE) - ROUNDING_U } ?: false
+
     /** True while the rest of pre-bolus 1 waits for BG to rise */
     val preBolus1RestPending: Boolean
         get() = preBolus1RestU > 0.0 && preBolus1RestFiredMs == null
@@ -69,4 +76,12 @@ data class MealOverrideState(
      *  Returns null if PB2 hasn't fired yet (can't compute PB3 trigger). */
     val preBolus3FireAtMs: Long?
         get() = if (preBolus2FiredSuccessfully) preBolus2FiredMs!! + preBolus3DelayMs else null
+
+    companion object {
+
+        const val CUT_SHORT_MIN_U = 0.5
+        const val CUT_SHORT_SHARE = 0.1
+        /** Pump amounts like 2.0 - 1.8 are not exact in a Double. */
+        private const val ROUNDING_U = 1e-9
+    }
 }
