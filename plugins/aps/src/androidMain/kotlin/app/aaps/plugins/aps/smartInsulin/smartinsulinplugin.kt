@@ -207,6 +207,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var lastModeStartSeenMs  = 0L
     /** The running meal's food still to come as the last cycle saw it, for the SI tab. */
     @Volatile private var lastFoodToCome: FoodToCome? = null
+    /** Grams of food still coming from meals before the running one, from the last cycle; for the SI tab. */
+    @Volatile private var lastEarlierFoodG = 0.0
     /** The meal mode start the after-activity cut was last decided for, so a UAM mode is cut once, not every cycle. */
     private var afterActivityCheckedMs = 0L
     private var modeEndedMs          = 0L   // last cycle a mode was running - when it ended, once it has
@@ -580,6 +582,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val fatProteinStartsInMin: Long,
         /** Minutes the carbs of [foodToCome] are still expected over, from how fast the foods are; 0 when the time is over. */
         val carbsOverMin: Long,
+        /** Grams of food still coming from a snack or meal before the running one; 0 when none. */
+        val earlierFoodG: Double,
         /** What the meals have learned about the carb ratio. */
         val effectiveCr: EffectiveCr,
         val pb2GateData: MealOverrideManager.Pb2GateData?,
@@ -833,6 +837,7 @@ open class SmartInsulinPlugin @Inject constructor(
             foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
             fatProteinStartsInMin = lastFoodToCome?.let { ((it.fatProteinFromMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
             carbsOverMin = lastFoodToCome?.let { ((it.carbsUntilMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
+            earlierFoodG = if (mealOverrideManager.activeMealMode != null) lastEarlierFoodG else 0.0,
             effectiveCr = effectiveCr(),
             pb2GateData = mealOverrideManager.pb2GateData?.copy(isMmol = isMmol),
             pb3GateData = mealOverrideManager.pb3GateData?.copy(isMmol = isMmol),
@@ -2220,6 +2225,19 @@ open class SmartInsulinPlugin @Inject constructor(
                 )
             }
         lastFoodToCome = foodToCome
+        // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
+        // replaced or ended, but the food was not. Its pre-boluses no longer wait, so nothing is taken off for them.
+        val earlierFood = mealOverrideManager.activeState
+            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
+            ?.let { s -> mealEstimateCalibration.earlierToCome(s.triggerTimeMs, now) }.orEmpty()
+            .mapNotNull { still ->
+                MealFoodForecast.foodToCome(
+                    still, now, restU = 0.0, pbU = 0.0, carbRatio = profile.getIc(),
+                    carbShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanCarbPct.key, IntKey.ApsSmartInsulinMealPlanCarbPct.defaultValue) / 100.0,
+                    fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
+                )
+            }
+        lastEarlierFoodG = earlierFood.sumOf { it.totalG }
 
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
         // null with nothing said about it — every other early return sets a reason the user can
@@ -2269,7 +2287,8 @@ open class SmartInsulinPlugin @Inject constructor(
             afterActivityText        = if (afterActivityPct > 0) "after activity -$afterActivityPct%" else "",
             riseTurn                 = riseTurnNow(glucoseStatus.delta),
             foodFadeMins             = foodFadeMins(mealMode),
-            foodToCome               = foodToCome
+            foodToCome               = foodToCome,
+            earlierFood              = earlierFood
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)

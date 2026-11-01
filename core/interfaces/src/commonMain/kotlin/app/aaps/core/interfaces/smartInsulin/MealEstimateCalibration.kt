@@ -47,6 +47,20 @@ interface MealEstimateCalibration {
         carbsMin: Int = DEFAULT_CARBS_MIN
     )
 
+    /**
+     * Food logged without insulin (Log only) while the meal mode started at [modeStartMs] runs, for example a snack
+     * left to the loop. It counts as that meal's food still to come, so the loop's forecast knows it is coming, but
+     * the meal is not used to learn: the food came without its insulin. A meal mode without an estimate gets one.
+     *
+     * @param modeEndMs when the mode ends; the food is watched at least until its carbs should have come in
+     * @param eatenMs   when the food is eaten
+     * @param carbsMin  minutes its carbs take to come in, from how fast the foods are
+     */
+    fun logFood(
+        modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
+        carbsMin: Int = DEFAULT_CARBS_MIN
+    )
+
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */
     fun dropEstimate(modeStartMs: Long)
 

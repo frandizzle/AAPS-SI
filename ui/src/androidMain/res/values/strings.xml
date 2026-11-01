@@ -456,6 +456,8 @@
     <string name="si_food_speed_fast" comment="Short chip label: this food's carbs raise blood glucose fast (high glycaemic index). Tap to change.">Fast</string>
     <string name="si_food_speed_normal" comment="Short chip label: this food's carbs raise blood glucose at a normal speed. Tap to change.">Normal</string>
     <string name="si_food_speed_slow" comment="Short chip label: this food's carbs raise blood glucose slowly (low glycaemic index). Tap to change.">Slow</string>
+    <string name="si_food_log_treating_low" comment="Checkbox next to Log only: the food is eaten to fix a low blood glucose.">Treating a low</string>
+    <string name="si_food_log_counts_hint">A meal is running, so food you log counts as its food: the loop knows it is coming. Tick Treating a low for carbs eaten to fix a low. They are logged for calories only, so the loop does not give insulin for them.</string>
     <string name="si_food_speed_hint">Fast, Normal or Slow on a food is how fast its carbs raise BG. It changes when the loop expects them, not how much insulin they get. Tap it to change.</string>
     <string name="si_food_fast_wait" comment="%1$d=minutes to wait. Example: Fast carbs: wait about 15 min after pre-bolus 1 before eating.">Fast carbs: wait about %1$d min after pre-bolus 1 before eating.</string>
     <string name="si_food_meal_wait" comment="%1$d=minutes from pre-bolus 1 until BG usually starts to rise with this meal, %2$d=minutes to wait. Example: With this meal BG usually starts to rise 5 min after pre-bolus 1. Wait about 15 min after pre-bolus 1 before eating.">With this meal BG usually starts to rise %1$d min after pre-bolus 1. Wait about %2$d min after pre-bolus 1 before eating.</string>

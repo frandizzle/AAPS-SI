@@ -417,6 +417,13 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    SiTone.INFO)
         }
 
+        // Food of a snack or meal before this one, still coming in
+        if (d.earlierFoodG >= 1.0) {
+            addRow("Food still to come from before: ${"%.0f".format(d.earlierFoodG)} g",
+                   "From a snack or meal before this one, logged or estimated. It comes in on its own timing, and the loop counts it next to this meal's food.",
+                   SiTone.INFO)
+        }
+
         // The rest of pre-bolus 1, given once BG rises
         if (d.mealMode != "Fasting" && d.pb1RestStatus.isNotEmpty()) {
             addRow(d.pb1RestStatus, tone = if (d.pb1RestStatus.contains("delivered")) SiTone.GOOD else SiTone.INFO)

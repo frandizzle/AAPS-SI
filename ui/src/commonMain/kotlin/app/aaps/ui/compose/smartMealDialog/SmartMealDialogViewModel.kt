@@ -179,7 +179,12 @@ data class SmartMealDialogUiState(
     /** The food list was logged without a meal, this many kcal. Shown until the list changes. */
     val loggedKcal: Double? = null,
     /** Log only was asked for a list that looks wrong: its kcal, while the user is asked to check. */
-    val logCheckKcal: Double? = null
+    val logCheckKcal: Double? = null,
+    /**
+     * Log only is for carbs eaten to treat a low: they are logged for calories only. Otherwise food logged while a
+     * meal mode runs counts as that meal's food in the loop's forecast. On when BG was low in the last half hour.
+     */
+    val logTreatingLow: Boolean = false
 ) {
 
     /** What [sourceMeal] has learned, or null. */
@@ -269,7 +274,8 @@ class SmartMealDialogViewModel(
                 recentFoods = savedFoodStore.recent,
                 learnedMeals = learnedMeals(),
                 generalLearned = savedMealLearning.general(),
-                afterActivity = recentActivity.afterActivity(dateUtil.now())
+                afterActivity = recentActivity.afterActivity(dateUtil.now()),
+                logTreatingLow = lowRecently()
             )
         }
         loadMode(MealMode.LUNCH)
@@ -472,11 +478,30 @@ class SmartMealDialogViewModel(
             return
         }
         foodLog.add(entry)
+        // Food eaten while a meal mode runs is food the loop should know is coming. A low treatment is not: the
+        // loop would give insulin for it once BG is back up, and take the treatment away.
+        val running = mealOverrideManager.activeState
+        if (running != null && state.canAdd && !state.logTreatingLow) {
+            val t = state.foodTotals
+            mealEstimateCalibration.logFood(
+                running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbsMin()
+            )
+        }
         clearFood()
         _uiState.update { it.copy(loggedKcal = entry.kcal, logCheckKcal = null) }
     }
 
     fun cancelLogCheck() = _uiState.update { it.copy(logCheckKcal = null) }
+
+    fun updateLogTreatingLow(v: Boolean) = _uiState.update { it.copy(logTreatingLow = v) }
+
+    /** BG was under the low guard in the last [LOW_RECENT_MS]. */
+    private fun lowRecently(): Boolean {
+        val now = dateUtil.now()
+        val readings = runCatching { iobCobCalculator.ads.getBgReadingsDataTableCopy() }.getOrDefault(emptyList())
+            .filter { it.timestamp >= now - LOW_RECENT_MS }.map { it.value }
+        return wasLow(readings + listOfNotNull(glucoseStatusProvider.glucoseStatusData?.glucose), preferences.getRaw(UnitDoubleKey.ApsSmartInsulinLowGuard))
+    }
 
     private fun logEntry(state: SmartMealDialogUiState): FoodLogEntry? {
         if (state.foodItems.isEmpty()) return null
@@ -1012,6 +1037,11 @@ class SmartMealDialogViewModel(
     companion object {
 
         const val QUANTITY_STEP = 0.25
+        /** BG under the low guard this recently means food logged now is probably to treat the low. */
+        const val LOW_RECENT_MS = 30 * 60_000L
+
+        /** True when any of [readingsMgdl] is under [lowGuardMgdl]. */
+        fun wasLow(readingsMgdl: List<Double>, lowGuardMgdl: Double): Boolean = lowGuardMgdl > 0.0 && readingsMgdl.any { it < lowGuardMgdl }
         /** Used when the profile has no insulin set: the peak of fast insulin such as Fiasp. */
         private const val DEFAULT_INSULIN_PEAK_MIN = 55
         private const val MAX_LOG_NAME = 120

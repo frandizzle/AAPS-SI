@@ -105,6 +105,18 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `two meals' food adds up, and the rise BG shows is taken off once, from the older first`() {
+        val snack = FoodToCome(20.0, T0 + HOUR, 0.0, T0 + HOUR, 5.0)
+        val meal = FoodToCome(50.0, T0 + 2 * HOUR, 0.0, T0 + 2 * HOUR, 5.0)
+        // ISF 50 at 5 g/U: 10 mg/dL per gram. Both: 700 mg/dL.
+        assertEquals(700.0, MealFoodForecast.steps(listOf(snack, meal), T0, 50.0, 0.0, 48).sum(), 1e-6)
+        // A rise of 30 g already showing: all 20 g of the snack, then 10 g of the meal.
+        val steps = MealFoodForecast.steps(listOf(snack, meal), T0, 50.0, 300.0, 48)
+        assertEquals(400.0, steps.sum(), 1e-6)
+        assertEquals(40.0 / 24 * 10.0, steps[0], 1e-9)
+    }
+
+    @Test
     fun `the rise BG already shows is not counted twice`() {
         val f = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0)!!
         // The seen rise brings 600 mg/dL = 60 g: all 50 g of carbs and 10 g of the fat and protein.

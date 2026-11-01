@@ -126,7 +126,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
          *  Only used while food is coming in (ci > 0); a fall always fades over 60 min. */
         foodFadeMins:             Int = DEFAULT_FOOD_FADE_MINS,
         /** The running meal's food still to come, from its estimate; null when there is none. See [MealFoodForecast]. */
-        foodToCome:               FoodToCome? = null
+        foodToCome:               FoodToCome? = null,
+        earlierFood:              List<FoodToCome> = emptyList()
     ): APSResult {
 
         val result = apsResultProvider()
@@ -250,7 +251,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // pre-bolus already covers. Under target, or for lowering basal, all the food counts.
         val bgNotFalling = delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
         val ciAheadMgdl = if (ci > 0.0) bgiPerTick.indices.sumOf { i -> ci * (1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0))) } else 0.0
-        val foodSteps = foodToCome?.takeIf { mealMode != MealMode.FASTING && bgNotFalling }
+        // The earlier meals' food first: it came first, so the rise BG shows is more likely theirs.
+        val foods = earlierFood + listOfNotNull(foodToCome)
+        val foodSteps = foods.takeIf { it.isNotEmpty() && mealMode != MealMode.FASTING && bgNotFalling }
             ?.let { MealFoodForecast.steps(it, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
         val foodForecast = foodSteps?.let { predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it) }
         val forecast = foodForecast ?: predictedBg
@@ -355,6 +358,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (currentTime < f.fatProteinFromMs && f.fatProteinG >= 1.0) sb.append(", fp in ${(f.fatProteinFromMs - currentTime) / 60_000L}m")
             sb.append(")")
             when {
+                foodForecast == null             -> sb.append(" not used: BG falling")
+                dosingForecast === predictedBg   -> sb.append(" low guard only: BG not above target")
+            }
+        }
+        // Food of an earlier meal or snack still coming in, counted next to this meal's.
+        if (earlierFood.isNotEmpty()) {
+            sb.append(" | earlier food=${"%.0f".format(Locale.US, earlierFood.sumOf { it.totalG })}g")
+            if (foodToCome == null) when {
                 foodForecast == null             -> sb.append(" not used: BG falling")
                 dosingForecast === predictedBg   -> sb.append(" low guard only: BG not above target")
             }

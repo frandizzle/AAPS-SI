@@ -239,6 +239,54 @@ class MealEstimateCalibrationTest {
         verify(csv).logEstimate(eq(T0), eq(60.0), eq(0.0), eq(0.0), eq(60.0), eq(60.0), eq(1.0), eq(1.0), eq(75))
     }
 
+    @Test
+    fun `food logged in a meal mode without an estimate becomes its food, but is not learned from`() {
+        cal.logFood(T0, T0 + HOUR, 52.0, 36.0, 4.0, 16.0, eatenMs = T0 + 10 * MIN)
+        val still = cal.stillToCome(T0, T0 + 10 * MIN)!!
+        assertEquals(36.0, still.carbsG, 1e-9)
+        assertEquals(16.0, still.fatProteinG, 1e-9)
+        assertEquals(T0 + 10 * MIN + 2 * HOUR, still.carbsUntilMs)
+        assertEquals(T0 + 10 * MIN + 2 * HOUR, still.windowEndMs)   // the food's 2 hours, past the mode's hour
+        cal.onEpisode(episode(T0, 50.0))
+        cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS)
+        assertEquals(0, cal.mealsUsed)
+    }
+
+    @Test
+    fun `food logged in an estimated meal adds to it, and the meal is not learned from`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.logFood(T0, T0 + 3 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR)
+        assertEquals(60.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        cal.onEpisode(episode(T0, 60.0))
+        cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        assertEquals(0, cal.mealsUsed)
+    }
+
+    @Test
+    fun `a meal after a snack still coming counts the snack as earlier food, and neither is learned from`() {
+        cal.logFood(T0, T0 + HOUR, 40.0, 40.0, 0.0, 0.0, eatenMs = T0)
+        cal.recordEstimate(T0 + HOUR, T0 + 4 * HOUR, 60.0, 60.0, 0.0, 0.0)
+        val earlier = cal.earlierToCome(T0 + HOUR, T0 + HOUR)
+        assertEquals(1, earlier.size)
+        assertEquals(40.0, earlier.single().carbsG, 1e-9)
+        assertEquals(0, cal.earlierToCome(T0 + HOUR, T0 + 3 * HOUR).size)   // the snack's window is over
+        // The dinner's episode belongs to the dinner, not to the snack whose window it falls in.
+        cal.onEpisode(episode(T0 + HOUR, 70.0))
+        assertEquals(0.0, cal.foodStillToComeG(T0 + HOUR)!!, 1e-9)
+        cal.onCycle(T0 + 4 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        assertEquals(0, cal.mealsUsed)
+    }
+
+    @Test
+    fun `a meal after an earlier one whose food is all in is still learned from`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.onEpisode(episode(T0, 40.0))
+        cal.recordEstimate(T0 + 2 * HOUR, T0 + 5 * HOUR, 60.0, 60.0, 0.0, 0.0)
+        cal.onEpisode(episode(T0 + 2 * HOUR, 66.0))
+        cal.onCycle(T0 + 5 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
+        assertEquals(2, cal.mealsUsed)
+    }
+
     private companion object {
 
         const val MIN = 60_000L

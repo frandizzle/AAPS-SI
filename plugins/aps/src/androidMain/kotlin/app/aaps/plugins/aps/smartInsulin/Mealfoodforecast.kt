@@ -127,6 +127,21 @@ object MealFoodForecast {
     }
 
     /**
+     * The BG rise of several meals' food at each 5-min step ahead, mg/dL: [steps] of each, added up. The rise BG
+     * already shows is taken off once, from the first food in [foods] first: put the oldest first, its food came first.
+     */
+    fun steps(foods: List<FoodToCome>, nowMs: Long, isfMgdl: Double, ciAheadMgdl: Double, count: Int): List<Double> {
+        val total = DoubleArray(max(count, 0))
+        var seenMgdl = ciAheadMgdl.coerceAtLeast(0.0)
+        foods.forEach { f ->
+            steps(f, nowMs, isfMgdl, seenMgdl, count).forEachIndexed { i, v -> total[i] += v }
+            val csf = if (f.carbRatio > 0.0) isfMgdl / f.carbRatio else 0.0
+            if (csf > 0.0) seenMgdl = (seenMgdl / csf - f.totalG).coerceAtLeast(0.0) * csf
+        }
+        return total.toList()
+    }
+
+    /**
      * The BG rise [food] adds at each 5-min step ahead, mg/dL. The rise BG already shows is in the forecast on
      * its own, fading out ([ciAheadMgdl] is all of it still to come), so that much food is taken off first,
      * carbs before fat and protein, and the same grams are not counted twice. Fat and protein that have not

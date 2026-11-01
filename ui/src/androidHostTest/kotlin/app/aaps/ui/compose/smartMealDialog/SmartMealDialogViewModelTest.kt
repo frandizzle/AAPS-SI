@@ -69,6 +69,7 @@ import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyBlocking
 import org.mockito.kotlin.whenever
@@ -847,6 +848,40 @@ internal class SmartMealDialogViewModelTest {
             assertThat(loggedKcal).isWithin(1e-9).of(190.0)
         }
         verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `food logged while a meal runs counts as its food, unless it treats a low`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        val running = dinnerRunning()
+        build()
+        assertThat(sut.uiState.value.logTreatingLow).isFalse()
+        sut.addManualFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
+        sut.logOnly()
+        verify(mealEstimateCalibration).logFood(
+            eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN)
+        )
+        sut.updateLogTreatingLow(true)
+        sut.addManualFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))
+        sut.logOnly()
+        verify(foodLog, times(2)).add(any())
+        verify(mealEstimateCalibration, times(1)).logFood(any(), any(), any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `food logged with no meal running is for calories only`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.logOnly()
+        verify(mealEstimateCalibration, never()).logFood(any(), any(), any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `BG under the low guard means treating a low`() {
+        assertThat(SmartMealDialogViewModel.wasLow(listOf(120.0, 80.0, 95.0), 86.4)).isTrue()
+        assertThat(SmartMealDialogViewModel.wasLow(listOf(120.0, 95.0), 86.4)).isFalse()
+        assertThat(SmartMealDialogViewModel.wasLow(listOf(80.0), 0.0)).isFalse()
     }
 
     @Test

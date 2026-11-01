@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -154,6 +155,14 @@ internal fun SmartMealFoodContent(
                 OutlinedButton(onClick = { viewModel.logOnly() }) { Text(stringResource(UiStrings.si_food_log_only)) }
             }
             Hint(stringResource(UiStrings.si_food_log_only_hint))
+            // While a meal runs, logged food counts for the loop, unless it is to treat a low.
+            if (state.canAdd) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = state.logTreatingLow, onCheckedChange = viewModel::updateLogTreatingLow)
+                    Text(stringResource(UiStrings.si_food_log_treating_low), style = MaterialTheme.typography.bodyMedium)
+                }
+                Hint(stringResource(UiStrings.si_food_log_counts_hint))
+            }
             Hint(stringResource(UiStrings.si_food_fill_hint))
             Hint(stringResource(UiStrings.si_food_speed_hint))
         }

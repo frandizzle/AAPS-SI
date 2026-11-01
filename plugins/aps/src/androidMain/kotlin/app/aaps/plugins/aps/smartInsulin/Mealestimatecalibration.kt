@@ -58,7 +58,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
         var episodes:    Int    = 0,
         /** The carbs eaten so far should have come in by this time. */
         var carbsUntilMs: Long  = modeStartMs + MealFoodForecast.CARBS_MIN * 60_000L,
-        val learn:       Boolean = true,
+        var learn:       Boolean = true,
         /** The fat and protein start to come in at this time. */
         var fatProteinFromMs: Long = modeStartMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
         var carbTopUp: CarbTopUp = CarbTopUp.WAITING,
@@ -88,7 +88,11 @@ class MealEstimateCalibrationImpl @Inject constructor(
         synchronized(this) {
             // A new estimate for the same meal mode replaces the old one.
             pending.removeAll { it.modeStartMs == modeStartMs }
-            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn,
+            // An earlier meal with food still to come: the tracker cannot tell its tail from this meal, so
+            // neither is compared with its estimate.
+            val earlier = pending.filter { it.modeStartMs < modeStartMs && modeStartMs <= it.windowEndMs && stillToCome(it).let { c -> c.carbsG + c.fatProteinG } >= MealFoodForecast.MIN_FOOD_G }
+            earlier.forEach { it.learn = false }
+            pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn && earlier.isEmpty(),
                                 carbsUntilMs = modeStartMs + carbsMin * 60_000L, carbsMin = carbsMin))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
@@ -97,19 +101,37 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     override fun addToEstimate(modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
-        val found = synchronized(this) {
-            pending.firstOrNull { it.modeStartMs == modeStartMs }?.also {
-                it.windowEndMs = maxOf(it.windowEndMs, windowEndMs)
-                if (carbsG > 0.0) it.carbsUntilMs = maxOf(it.carbsUntilMs, eatenMs + carbsMin * 60_000L)
-                // Fat and protein already on their way keep their start; the first fat and protein start when eaten.
-                if (carbEquivG > carbsG && it.carbEquivG <= it.carbsG)
-                    it.fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
-                it.carbEquivG += carbEquivG; it.carbsG += carbsG; it.proteinG += proteinG; it.fatG += fatG
-            }
-        }
+        val found = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs }?.also { add(it, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin) } }
         if (found == null) return
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: ${"%.0f".format(carbEquivG)} g added, meal now ${"%.0f".format(found.carbEquivG)} g")
+    }
+
+    override fun logFood(modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
+        // The food needs time to come in, also when the mode ends sooner.
+        val windowEndMs = maxOf(modeEndMs, eatenMs + carbsMin * 60_000L)
+        val meal = synchronized(this) {
+            val p = pending.firstOrNull { it.modeStartMs == modeStartMs }
+                ?: Pending(modeStartMs, windowEndMs, 0.0, 0.0, 0.0, 0.0, learn = false, carbsUntilMs = eatenMs, carbsMin = carbsMin,
+                           fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L)
+                    .also { pending.add(it); while (pending.size > MAX_PENDING) pending.removeAt(0) }
+            add(p, windowEndMs, carbEquivG, carbsG, proteinG, fatG, eatenMs, carbsMin)
+            // Food eaten without its insulin says nothing about how good the estimates are.
+            p.learn = false
+            p
+        }
+        save()
+        aapsLogger.debug(LTag.APS, "MealEstimateCalibration: ${"%.0f".format(carbEquivG)} g logged in the meal at $modeStartMs, now ${"%.0f".format(meal.carbEquivG)} g, not for learning")
+    }
+
+    /** Adds food eaten at [eatenMs] to [p]: more food, a longer window, and carbs expected over [carbsMin] from when eaten. */
+    private fun add(p: Pending, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
+        p.windowEndMs = maxOf(p.windowEndMs, windowEndMs)
+        if (carbsG > 0.0) p.carbsUntilMs = maxOf(p.carbsUntilMs, eatenMs + carbsMin * 60_000L)
+        // Fat and protein already on their way keep their start; the first fat and protein start when eaten.
+        if (carbEquivG > carbsG && p.carbEquivG <= p.carbsG)
+            p.fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
+        p.carbEquivG += carbEquivG; p.carbsG += carbsG; p.proteinG += proteinG; p.fatG += fatG
     }
 
     /**
@@ -160,8 +182,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
     /** Adds a finished meal episode to the estimated meal it belongs to, if any. */
     fun onEpisode(episode: CompletedMealEpisode) {
         val found = synchronized(this) {
-            pending.firstOrNull { matches(it, episode.startMs) }
-                ?.also { it.trackerG += episode.estimatedGrams; it.episodes++ }
+            owner(episode.startMs)?.also { it.trackerG += episode.estimatedGrams; it.episodes++ }
         }
         if (found != null) save()
     }
@@ -170,6 +191,14 @@ class MealEstimateCalibrationImpl @Inject constructor(
         val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs } } ?: return null
         return stillToCome(p).let { it.carbsG + it.fatProteinG }
     }
+
+    /**
+     * The food still to come of the meals started before the one at [modeStartMs] whose window is still open at [nowMs]:
+     * a snack, or a meal replaced by this one. Their food keeps coming in on its own timing, so the loop's forecast counts
+     * it next to this meal's.
+     */
+    fun earlierToCome(modeStartMs: Long, nowMs: Long): List<StillToCome> =
+        synchronized(this) { pending.filter { it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it) }
 
     /**
      * The food still to come of the estimated meal started at [modeStartMs], for the loop's forecast; null when it has
@@ -187,7 +216,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
      */
     private fun stillToCome(p: Pending): StillToCome {
         val f = factor
-        val seen = p.trackerG + (live?.takeIf { matches(p, it.startMs) }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0)
+        val seen = p.trackerG + (live?.takeIf { owner(it.startMs) === p }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0)
         val carbs = p.carbsG * f
         val fatProtein = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f
         return StillToCome(
@@ -201,6 +230,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
             carbTopUp = p.carbTopUp
         )
     }
+
+    /** The meal an episode starting at [episodeStartMs] belongs to: the latest one it falls in, so a meal after a snack gets its own episode. */
+    private fun owner(episodeStartMs: Long): Pending? = synchronized(this) { pending.filter { matches(it, episodeStartMs) }.maxByOrNull { it.modeStartMs } }
 
     private fun matches(p: Pending, episodeStartMs: Long) = episodeStartMs >= p.modeStartMs - MATCH_EARLY_MS && episodeStartMs <= p.windowEndMs
 
