@@ -287,6 +287,30 @@ class MealEstimateCalibrationTest {
         assertEquals(2, cal.mealsUsed)
     }
 
+    @Test
+    fun `food added after the meal saw more than its estimate is still to come, also after a restart`() {
+        // Dinner of 40 g whose BG showed 70 g: 30 g came from food nobody counted.
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.onEpisode(episode(T0, 70.0))
+        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        // A yoghurt later: its 22 g are all still to come, not cancelled by the 30 g seen before it.
+        cal.addToEstimate(T0, T0 + 4 * HOUR, 22.0, 22.0, 0.0, 0.0, eatenMs = T0 + 2 * HOUR)
+        assertEquals(22.0, cal.stillToCome(T0, T0 + 2 * HOUR)!!.carbsG, 1e-9)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(22.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        // What the tracker sees after it counts against it as usual.
+        cal.onEpisode(episode(T0 + 2 * HOUR, 10.0))
+        assertEquals(12.0, cal.foodStillToComeG(T0)!!, 1e-9)
+    }
+
+    @Test
+    fun `food added while the meal has food left keeps the usual count`() {
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.onEpisode(episode(T0, 30.0))
+        cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR)
+        assertEquals(30.0, cal.foodStillToComeG(T0)!!, 1e-9)
+    }
+
     private companion object {
 
         const val MIN = 60_000L

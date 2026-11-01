@@ -65,7 +65,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
         /** There was real exercise during the meal or just before it: BG says less about how much was eaten. */
         var exercised: Boolean = false,
         /** Minutes the meal's first carbs take to come in, from how fast the foods are; for the log. */
-        val carbsMin: Int = MealFoodForecast.CARBS_MIN
+        val carbsMin: Int = MealFoodForecast.CARBS_MIN,
+        /**
+         * Food the tracker saw beyond the estimate before more food was added: food nobody counted, such as a snack
+         * logged for calories only. It is kept out of what was seen, so it does not cancel the food added after it.
+         */
+        var seenBeforeAddG: Double = 0.0
     )
 
     private val pending = mutableListOf<Pending>()
@@ -126,6 +131,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     /** Adds food eaten at [eatenMs] to [p]: more food, a longer window, and carbs expected over [carbsMin] from when eaten. */
     private fun add(p: Pending, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long, carbsMin: Int) {
+        // What the tracker saw beyond the meal so far came before this food was eaten, so it is not this food.
+        val beyondG = seenG(p) - p.carbEquivG * factor
+        if (beyondG > 0.0) p.seenBeforeAddG += beyondG
         p.windowEndMs = maxOf(p.windowEndMs, windowEndMs)
         if (carbsG > 0.0) p.carbsUntilMs = maxOf(p.carbsUntilMs, eatenMs + carbsMin * 60_000L)
         // Fat and protein already on their way keep their start; the first fat and protein start when eaten.
@@ -216,7 +224,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
      */
     private fun stillToCome(p: Pending): StillToCome {
         val f = factor
-        val seen = p.trackerG + (live?.takeIf { owner(it.startMs) === p }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0)
+        val seen = seenG(p)
         val carbs = p.carbsG * f
         val fatProtein = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f
         return StillToCome(
@@ -230,6 +238,13 @@ class MealEstimateCalibrationImpl @Inject constructor(
             carbTopUp = p.carbTopUp
         )
     }
+
+    /**
+     * The food the tracker has seen of [p]: its finished episodes, and for the running one the larger of its two
+     * counts. Less what it saw beyond the estimate before more food was added ([Pending.seenBeforeAddG]).
+     */
+    private fun seenG(p: Pending): Double =
+        p.trackerG + (live?.takeIf { owner(it.startMs) === p }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0) - p.seenBeforeAddG
 
     /** The meal an episode starting at [episodeStartMs] belongs to: the latest one it falls in, so a meal after a snack gets its own episode. */
     private fun owner(episodeStartMs: Long): Pending? = synchronized(this) { pending.filter { matches(it, episodeStartMs) }.maxByOrNull { it.modeStartMs } }
@@ -300,7 +315,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("s", it.modeStartMs).put("e", it.windowEndMs).put("ce", it.carbEquivG)
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
-                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name).put("x", it.exercised).put("cm", it.carbsMin))
+                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name).put("x", it.exercised).put("cm", it.carbsMin).put("sb", it.seenBeforeAddG))
                     }
                 })
         }
@@ -322,7 +337,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                         o.optLong("cu", start + MealFoodForecast.CARBS_MIN * 60_000L), o.optBoolean("l", true),
                                         o.optLong("fs", start + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L),
                                         CarbTopUp.entries.find { it.name == o.optString("tu") } ?: CarbTopUp.WAITING,
-                                        o.optBoolean("x", false), o.optInt("cm", MealFoodForecast.CARBS_MIN)))
+                                        o.optBoolean("x", false), o.optInt("cm", MealFoodForecast.CARBS_MIN),
+                                        o.optDouble("sb", 0.0)))
                 }
             }
         } catch (e: Exception) {
