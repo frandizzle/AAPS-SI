@@ -599,6 +599,18 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(forFast.smb > steakSmb, "steak $steakSmb, all within 2 h ${forFast.smb}")
     }
 
+    @Test fun `no extra insulin for carbs a pre-bolus just given already covers`() {
+        // Lunch on 1 Nov: BG 6.1 flat, pre-bolus 1 of 3.65 U given 4 min ago, 4.1 U on board, 22 g of carbs to
+        // come, counted at the 80 % Fill in plans. The pre-bolus has done only a third of its work in the next
+        // hour, but it covers the carbs: the loop must not give insulin for them again.
+        midDinner(bg = 110.0)
+        val now = System.currentTimeMillis()
+        val lunch = FoodToCome(carbsG = 22.0 * 0.8, carbsUntilMs = now + 2 * 60 * 60_000L, fatProteinG = 0.0, fatProteinUntilMs = now, carbRatio = 5.0)
+        val r = invoke(iobArray = flatIobArray(iob = 4.1, activity = 0.0076), mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = lunch)
+        assertEquals(0.0, r.smb, 1e-9)
+        assertTrue(r.rate <= 1.0 + 1e-9, r.reason)
+    }
+
     @Test fun `Fasting never uses food still to come`() {
         midDinner()
         val r = invoke(iobArray = flatIobArray(iob = 4.3, activity = 0.04), mealMode = MealMode.FASTING,

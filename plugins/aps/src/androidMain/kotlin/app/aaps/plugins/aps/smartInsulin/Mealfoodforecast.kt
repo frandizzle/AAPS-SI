@@ -58,12 +58,14 @@ object MealFoodForecast {
      *
      * @param restU the rest of pre-bolus 1 still waiting: it covers carbs
      * @param pbU   pre-bolus 2 and 3 still waiting: they cover fat and protein
+     * @param carbShare the share of the carbs that needs insulin, as Fill in plans it (Planned meal: carbs in pre-bolus 1,
+     *                  80 % by default). The rest is only given for when BG shows it, so a too high estimate is not dosed.
      * @param fatProteinShare the share of the fat and protein's carb equivalent that needs insulin, as Fill in plans it
      *                        (Planned meal: fat and protein insulin, 70 % by default)
      */
-    fun foodToCome(still: StillToCome, nowMs: Long, restU: Double, pbU: Double, carbRatio: Double, fatProteinShare: Double = 1.0): FoodToCome? {
+    fun foodToCome(still: StillToCome, nowMs: Long, restU: Double, pbU: Double, carbRatio: Double, carbShare: Double = 1.0, fatProteinShare: Double = 1.0): FoodToCome? {
         if (carbRatio <= 0.0) return null
-        var carbs = still.carbsG
+        var carbs = still.carbsG * carbShare.coerceIn(0.0, 1.0)
         var fatProtein = still.fatProteinG * fatProteinShare.coerceIn(0.0, 1.0)
         // Each waiting pre-bolus covers its own part first; what is left of it covers the other part.
         var restG = restU.coerceAtLeast(0.0) * carbRatio

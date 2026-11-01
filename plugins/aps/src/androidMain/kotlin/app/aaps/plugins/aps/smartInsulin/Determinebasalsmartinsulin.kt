@@ -243,10 +243,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         //
         // Only while BG is not falling: a fall says the food is not coming in now, and then the forecast
         // is the insulin alone, so the low guard works exactly as without food. For extra insulin the food
-        // only counts above target, and the forecast looks [DOSING_AHEAD_MIN] ahead: the food due by then
-        // against the insulin acting by then. Food further off is given for as it comes nearer, not all at
-        // once; and the insulin's long tail is not weighed against an hour of food. Under target, or for
-        // lowering basal, all the food counts.
+        // only counts above target, and only the food due in the next [DOSING_AHEAD_MIN]: food further off is
+        // given for as it comes nearer, not all at once. That food is weighed against all the insulin on board,
+        // like a bolus calculator weighs carbs on board against IOB: a pre-bolus given just now has done only
+        // about two thirds of its work after 2 hours, and cutting it off there gave insulin again for food the
+        // pre-bolus already covers. Under target, or for lowering basal, all the food counts.
         val bgNotFalling = delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
         val ciAheadMgdl = if (ci > 0.0) bgiPerTick.indices.sumOf { i -> ci * (1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0))) } else 0.0
         val foodSteps = foodToCome?.takeIf { mealMode != MealMode.FASTING && bgNotFalling }
@@ -254,8 +255,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val foodForecast = foodSteps?.let { predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it) }
         val forecast = foodForecast ?: predictedBg
         val dosingForecast = if (foodSteps != null && currentBg > targetBg) {
-            val steps = DOSING_AHEAD_MIN / 5
-            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick.take(steps), fadeMins = fadeMins, food = foodSteps.take(steps))
+            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = foodSteps.take(DOSING_AHEAD_MIN / 5))
         } else predictedBg
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid

@@ -29,6 +29,13 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `carbs count at the share Fill in plans`() {
+        val f = MealFoodForecast.foodToCome(dinner, T0, 0.0, 0.0, 5.0, carbShare = 0.8)!!
+        assertEquals(40.0, f.carbsG, 1e-9)
+        assertEquals(30.0, f.fatProteinG, 1e-9)
+    }
+
+    @Test
     fun `a pre-bolus bigger than its part covers the other part too`() {
         val f = MealFoodForecast.foodToCome(dinner, T0, restU = 0.0, pbU = 8.0, carbRatio = 5.0)!!
         assertEquals(0.0, f.fatProteinG, 1e-9)
