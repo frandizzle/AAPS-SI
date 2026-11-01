@@ -83,13 +83,18 @@ internal fun ManualFoodDialog(onAdd: (FoodItem) -> Unit, onDismiss: () -> Unit) 
     var carbs by remember { mutableStateOf("") }
     var protein by remember { mutableStateOf("") }
     var fat by remember { mutableStateOf("") }
-    // An empty value counts as 0, except the weight, which has to be given.
+    // An empty value counts as 0. No weight: the food is only what was entered, for example just 30 g of carbs.
     fun num(text: String) = if (text.isBlank()) 0.0 else text.trim().replace(',', '.').toDoubleOrNull()
-    val g = num(grams)
     val c = num(carbs)
     val p = num(protein)
     val f = num(fat)
-    val item = if (g != null && c != null && p != null && f != null) manualFood(name, portion, g, c, p, f) else null
+    val g = if (grams.isBlank()) (if (c != null && p != null && f != null) c + p + f else null) else num(grams)
+    // No name: it is named after what was entered.
+    val autoName = if (c != null && p != null && f != null) {
+        if (p == 0.0 && f == 0.0) stringResource(UiStrings.si_food_manual_name_carbs, gramsText(c))
+        else stringResource(UiStrings.si_food_manual_name_all, gramsText(c), gramsText(p), gramsText(f))
+    } else ""
+    val item = if (g != null && c != null && p != null && f != null) manualFood(name.ifBlank { autoName }, portion, g, c, p, f) else null
     val tooMuch = g != null && g > 0.0 && c != null && p != null && f != null && c + p + f > g
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -98,7 +103,7 @@ internal fun ManualFoodDialog(onAdd: (FoodItem) -> Unit, onDismiss: () -> Unit) 
             Column(verticalArrangement = Arrangement.spacedBy(AapsSpacing.small)) {
                 OutlinedTextField(
                     value = name, onValueChange = { name = it.take(MAX_NAME) }, singleLine = true,
-                    label = { Text(stringResource(UiStrings.si_food_save_name)) }, modifier = Modifier.fillMaxWidth()
+                    label = { Text(stringResource(UiStrings.si_food_manual_name)) }, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = portion, onValueChange = { portion = it.take(MAX_NAME) }, singleLine = true,
@@ -118,6 +123,9 @@ internal fun ManualFoodDialog(onAdd: (FoodItem) -> Unit, onDismiss: () -> Unit) 
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(CoreUiStrings.cancel)) } }
     )
 }
+
+/** Grams for a name: whole grams without a decimal point, 12.5 as it is. */
+private fun gramsText(g: Double): String = if (g % 1.0 == 0.0) g.toLong().toString() else g.toString()
 
 @Composable
 private fun NumberField(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier = Modifier.fillMaxWidth()) =

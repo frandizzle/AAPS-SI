@@ -135,6 +135,14 @@ class SavedFoodsTest {
     }
 
     @Test
+    fun `just carbs, with their own weight, is a food`() {
+        val item = manualFood("30 g carbs", "", 30.0, 30.0, 0.0, 0.0)!!
+        assertEquals(30.0, item.carbsG, 1e-9)
+        assertEquals(100.0, item.carbsPer100, 1e-9)
+        assertEquals(60.0, item.copy(quantity = 2.0).carbsG, 1e-9)
+    }
+
+    @Test
     fun `numbers that cannot be right are refused`() {
         assertNull(manualFood("Curry", "", 0.0, 10.0, 0.0, 0.0))
         assertNull(manualFood("Curry", "", 100.0, -1.0, 0.0, 0.0))
