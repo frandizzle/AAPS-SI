@@ -485,11 +485,14 @@
     <string name="si_food_log_anyway">Log anyway</string>
     <string name="si_food_manual_title">Type in a food</string>
     <string name="si_food_manual_portion">Portion, for example 1 wrap (you can leave it empty)</string>
-    <string name="si_food_manual_grams">Weight (g)</string>
+    <string name="si_food_manual_grams">Weight in g (you can leave it empty)</string>
     <string name="si_food_manual_carbs">Carbs (g)</string>
     <string name="si_food_manual_protein">Protein (g)</string>
     <string name="si_food_manual_fat">Fat (g)</string>
-    <string name="si_food_manual_hint">Enter what this weight holds, as on the label or in the recipe. Carbs without fibre.</string>
+    <string name="si_food_manual_hint">Enter what this weight holds, as on the label or in the recipe. Carbs without fibre. With no weight, the food is just the carbs, protein and fat you enter, for example 30 g of carbs.</string>
+    <string name="si_food_manual_name">Name (you can leave it empty)</string>
+    <string name="si_food_manual_name_carbs" comment="%1$s=grams of carbs, without unit. The name of a food typed in with only carbs. Example: 30 g carbs">%1$s g carbs</string>
+    <string name="si_food_manual_name_all" comment="%1$s=carbs, %2$s=protein, %3$s=fat, all in grams without unit. The name of a food typed in without a name. Example: 30 g carbs, 10 g protein, 5 g fat">%1$s g carbs, %2$s g protein, %3$s g fat</string>
     <string name="si_food_manual_invalid">Carbs, protein and fat together cannot be more than the weight</string>
     <string name="si_food_scan_title">Point the camera at the barcode</string>
     <string name="si_food_camera_refused">Scanning needs the camera. Allow it to scan barcodes.</string>
