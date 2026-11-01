@@ -246,7 +246,7 @@ jobs:
             -Dkotlin.daemon.jvm.options="-Xmx2g" \
             -Dkotlin.compiler.execution.strategy="in-process" \
             -Dorg.gradle.daemon=true \
-            -Dorg.gradle.workers.max=8 \
+            -Dorg.gradle.workers.max=4 \
             -Dorg.gradle.caching=true \
             -Pandroid.injected.signing.store.file="$RUNNER_TEMP/keystore/keystore.jks" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
