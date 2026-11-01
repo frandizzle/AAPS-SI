@@ -17,6 +17,7 @@ import org.json.JSONObject
  * @param mealG        the whole meal as estimated, scaled the same way
  * @param carbsUntilMs the carbs eaten so far should have come in by this time
  * @param fatProteinFromMs the fat and protein start to come in at this time
+ * @param carbTopUp    whether the carbs pre-bolus 1 holds back count yet
  */
 data class StillToCome(
     val modeStartMs: Long,
@@ -25,7 +26,8 @@ data class StillToCome(
     val fatProteinG: Double,
     val mealG: Double,
     val carbsUntilMs: Long,
-    val fatProteinFromMs: Long = 0L
+    val fatProteinFromMs: Long = 0L,
+    val carbTopUp: CarbTopUp = CarbTopUp.WAITING
 )
 
 /**
@@ -58,7 +60,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
         var carbsUntilMs: Long  = modeStartMs + MealFoodForecast.CARBS_MIN * 60_000L,
         val learn:       Boolean = true,
         /** The fat and protein start to come in at this time. */
-        var fatProteinFromMs: Long = modeStartMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
+        var fatProteinFromMs: Long = modeStartMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
+        var carbTopUp: CarbTopUp = CarbTopUp.WAITING
     )
 
     private val pending = mutableListOf<Pending>()
@@ -126,6 +129,22 @@ class MealEstimateCalibrationImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: logged food changed by ${"%.0f".format(carbEquivG)} g, meal now ${"%.0f".format(found.carbEquivG)} g")
     }
 
+    /**
+     * Moves the held back carbs of the meal started at [modeStartMs] on, see [MealFoodForecast.carbTopUp]. Call once per
+     * loop cycle while the meal runs.
+     */
+    fun updateCarbTopUp(modeStartMs: Long, nowMs: Long, bgMgdl: Double, delta: Double, shortAvgDelta: Double) {
+        val changed = synchronized(this) {
+            pending.firstOrNull { it.modeStartMs == modeStartMs }?.let { p ->
+                val next = MealFoodForecast.carbTopUp(p.carbTopUp, nowMs - modeStartMs, bgMgdl, delta, shortAvgDelta)
+                (next != p.carbTopUp).also { p.carbTopUp = next }
+            } ?: false
+        }
+        if (!changed) return
+        save()
+        aapsLogger.debug(LTag.APS, "MealEstimateCalibration: held back carbs of the meal at $modeStartMs now ${stillToCome(modeStartMs, nowMs)?.carbTopUp}")
+    }
+
     override fun dropEstimate(modeStartMs: Long) {
         val removed = synchronized(this) { pending.removeAll { it.modeStartMs == modeStartMs } }
         if (!removed) return
@@ -173,7 +192,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
             fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceAtLeast(0.0),
             mealG = p.carbEquivG * f,
             carbsUntilMs = p.carbsUntilMs,
-            fatProteinFromMs = p.fatProteinFromMs
+            fatProteinFromMs = p.fatProteinFromMs,
+            carbTopUp = p.carbTopUp
         )
     }
 
@@ -226,7 +246,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("s", it.modeStartMs).put("e", it.windowEndMs).put("ce", it.carbEquivG)
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
-                                .put("fs", it.fatProteinFromMs))
+                                .put("fs", it.fatProteinFromMs).put("tu", it.carbTopUp.name))
                     }
                 })
         }
@@ -246,7 +266,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                     pending.add(Pending(start, o.getLong("e"), o.getDouble("ce"), o.getDouble("c"), o.getDouble("p"), o.getDouble("f"),
                                         o.optDouble("t", 0.0), o.optInt("n", 0),
                                         o.optLong("cu", start + MealFoodForecast.CARBS_MIN * 60_000L), o.optBoolean("l", true),
-                                        o.optLong("fs", start + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L)))
+                                        o.optLong("fs", start + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L),
+                                        CarbTopUp.entries.find { it.name == o.optString("tu") } ?: CarbTopUp.WAITING))
                 }
             }
         } catch (e: Exception) {

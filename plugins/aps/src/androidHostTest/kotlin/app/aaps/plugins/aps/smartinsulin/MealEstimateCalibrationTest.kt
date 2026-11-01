@@ -202,6 +202,16 @@ class MealEstimateCalibrationTest {
         assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)
     }
 
+    @Test
+    fun `the held back carbs follow BG, and that survives a restart`() {
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
+        cal.updateCarbTopUp(T0, T0 + 20 * MIN, 120.0, 0.0, 0.0)
+        assertEquals(CarbTopUp.WAITING, cal.stillToCome(T0, T0 + 20 * MIN)!!.carbTopUp)
+        cal.updateCarbTopUp(T0, T0 + 25 * MIN, 125.0, 3.0, 2.0)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(CarbTopUp.GIVEN, cal.stillToCome(T0, T0 + 30 * MIN)!!.carbTopUp)
+    }
+
     private companion object {
 
         const val MIN = 60_000L

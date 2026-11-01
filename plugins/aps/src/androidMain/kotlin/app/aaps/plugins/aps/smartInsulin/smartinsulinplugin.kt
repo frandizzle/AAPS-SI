@@ -2162,11 +2162,12 @@ open class SmartInsulinPlugin @Inject constructor(
         val microBolusAllowed = constraintsChecker.isSMBModeEnabled(ConstraintObject(tempBasalFallback.not(), aapsLogger)).value()
 
         // The running meal's food still to come, from its estimate, for the forecast. Pre-boluses still
-        // waiting are taken off: their insulin is coming anyway. Only in the Smart Meal mode that recorded the
+        // waiting are taken off: their insulin is coming anyway. The carbs pre-bolus 1 holds back count once BG rises. Only in the Smart Meal mode that recorded the
         // estimate: Protein/Fat and the UAM modes dose from ISF and what BG does, also when Protein/Fat follows
         // the meal, so they never see it.
         val foodToCome = mealOverrideManager.activeState
             ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
+            ?.also { s -> mealEstimateCalibration.updateCarbTopUp(s.triggerTimeMs, now, glucoseStatus.glucose, glucoseStatus.delta, glucoseStatus.shortAvgDelta) }
             ?.let { s -> mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.let { s to it } }
             ?.let { (s, still) ->
                 MealFoodForecast.foodToCome(

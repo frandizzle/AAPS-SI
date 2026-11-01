@@ -407,6 +407,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             addRow("Food still to come: ${"%.0f".format(f.totalG)} g",
                    "${"%.0f".format(f.carbsG)} g carbs, ${"%.0f".format(f.fatProteinG)} g fat and protein (as carbs)" +
                        (if (f.coveredG >= 1.0) ". ${"%.0f".format(f.coveredG)} g more is for the waiting pre-boluses." else ".") +
+                       (if (f.heldBackCarbsG >= 1.0) " ${"%.0f".format(f.heldBackCarbsG)} g more carbs count once BG rises, so a meal smaller than estimated gets no insulin for them." else "") +
                        (if (d.fatProteinStartsInMin > 0 && f.fatProteinG >= 1.0) " The fat and protein start to count in ${d.fatProteinStartsInMin} min." else "") +
                        " The loop gives insulin for it as it comes in, while BG is not falling.",
                    SiTone.INFO)
