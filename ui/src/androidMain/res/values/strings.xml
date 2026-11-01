@@ -427,11 +427,9 @@
     <string name="si_food_fill_in">Fill in insulin plan</string>
     <string name="si_food_clear">Clear</string>
     <string name="si_food_fill_hint">Fills the length, DURA, pre-boluses and Protein/Fat below. Pre-bolus 1 is for the carbs, pre-bolus 2 for the fat and protein wave (1 hour in), and on a heavy meal pre-bolus 3 for what is left of it. Check them before you start. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
-    <string name="si_food_plan_summary" comment="%1$s=insulin for carbs, %2$s=insulin for fat and protein, both with unit. Example: Needs about 9.0 U for carbs and 3.2 U for fat and protein">Needs about %1$s for carbs and %2$s for fat and protein</string>
     <string name="si_food_plan_factor" comment="%1$s=learned factor, %2$d=number of meals it is based on. Example: Learned from your meals: ×1.15 (8 meals)">Learned from your meals: ×%1$s (%2$d meals)</string>
     <string name="si_food_plan_parts" comment="%1$s=factor for carbs, %2$s=factor for the fat and protein wave, %3$s=factor for the tail, %4$d=number of meals. Example: Learned from your meals: carbs ×1.05, fat and protein ×1.20, tail ×0.90 (8 meals)">Learned from your meals: carbs ×%1$s, fat and protein ×%2$s, tail ×%3$s (%4$d meals)</string>
     <string name="si_food_plan_learning">Not learned from your meals yet: estimates are used as they are</string>
-    <string name="si_food_plan_capped">The plan was cut to your max pre-bolus settings</string>
     <string name="si_food_no_ratio">There is no carb ratio in the profile, so no plan could be made</string>
     <string name="si_food_my_foods">My foods</string>
     <string name="si_food_type_in">Type in</string>
@@ -457,7 +455,21 @@
     <string name="si_food_speed_normal" comment="Short chip label: this food's carbs raise blood glucose at a normal speed. Tap to change.">Normal</string>
     <string name="si_food_speed_slow" comment="Short chip label: this food's carbs raise blood glucose slowly (low glycaemic index). Tap to change.">Slow</string>
     <string name="si_food_log_treating_low" comment="Checkbox next to Log only: the food is eaten to fix a low blood glucose.">Treating a low</string>
-    <string name="si_food_log_counts_hint">A meal is running, so food you log counts as its food: the loop knows it is coming. Tick Treating a low for carbs eaten to fix a low. They are logged for calories only, so the loop does not give insulin for them.</string>
+    <string name="si_food_total" comment="%1$s=carbs in grams, %2$s=protein in grams, %3$s=fat in grams, %4$s=calories, all without unit. Example: Total: 22 g carbs, 30 g protein, 1 g fat, 320 kcal">Total: %1$s g carbs, %2$s g protein, %3$s g fat, %4$s kcal</string>
+    <string name="si_food_needs" comment="Label in the insulin summary, the amount follows on the right">Food needs</string>
+    <string name="si_food_needs_parts" comment="%1$s=insulin for carbs, %2$s=insulin for fat and protein, both with unit. Example: Carbs 3.05 U, fat and protein 1.80 U">Carbs %1$s, fat and protein %2$s</string>
+    <string name="si_food_now_pb1" comment="Label in the insulin summary, the amount follows on the right">Pre-bolus 1, now</string>
+    <string name="si_food_now" comment="Label in the insulin summary: insulin given now, the amount follows on the right">Now</string>
+    <string name="si_food_later" comment="Label in the insulin summary: insulin the pre-boluses give later, the amount follows on the right">Later, by pre-boluses</string>
+    <string name="si_food_why_held">Nothing now: BG is low or falling. The loop gives insulin when BG rises.</string>
+    <string name="si_food_why_iob">Less now, to stay within max IOB.</string>
+    <string name="si_food_why_balance">Less now: the insulin on board already covers part of it. The loop gives more if BG rises.</string>
+    <string name="si_food_why_capped">Cut to your max pre-bolus settings. The loop covers the rest as BG rises.</string>
+    <string name="si_food_how_it_works">How this works</string>
+    <string name="si_food_hold_to_save">Hold a food to save it to My foods. Tap a food in the row at the top to add it again.</string>
+    <string name="si_food_log_for_loop" comment="Button: the logged food counts for the loop, so it gives insulin as the food comes in">For the loop</string>
+    <string name="si_food_log_choice">A meal is running. Food for the loop counts as its food, so the loop gives insulin as it comes in. Carbs to treat a low are logged for calories only, so the loop does not give insulin for them.</string>
+    <string name="si_food_log_was_low">BG was low in the last 30 minutes.</string>
     <string name="si_food_speed_hint">Fast, Normal or Slow on a food is how fast its carbs raise BG. It changes when the loop expects them, not how much insulin they get. Tap it to change.</string>
     <string name="si_food_fast_wait" comment="%1$d=minutes to wait. Example: Fast carbs: wait about 15 min after pre-bolus 1 before eating.">Fast carbs: wait about %1$d min after pre-bolus 1 before eating.</string>
     <string name="si_food_meal_wait" comment="%1$d=minutes from pre-bolus 1 until BG usually starts to rise with this meal, %2$d=minutes to wait. Example: With this meal BG usually starts to rise 5 min after pre-bolus 1. Wait about 15 min after pre-bolus 1 before eating.">With this meal BG usually starts to rise %1$d min after pre-bolus 1. Wait about %2$d min after pre-bolus 1 before eating.</string>
@@ -511,10 +523,6 @@
     <string name="si_add_dura">Turn on DURA</string>
     <string name="si_add_hint">Fill in from the food above, or type the insulin yourself. Food without an estimate is not used to learn from this meal.</string>
     <string name="si_add_hint_fired">Pre-bolus 2 and 3 have fired or are not planned, so the loop covers the rest of this food.</string>
-    <string name="si_add_plan_held">Nothing now, because BG is low or falling. The loop gives insulin when BG rises.</string>
-    <string name="si_add_plan_balance">Less now: the insulin on board and still to come already covers part of this food and what is left of the meal, as a bolus calculator works it out. The loop gives more if BG rises.</string>
-    <string name="si_add_plan_iob">The insulin now was cut so IOB stays within max IOB</string>
-    <string name="si_add_plan_capped">Less than the food needs: the plan was cut to your max pre-bolus and to what is left of the max for the whole meal (Smart Insulin settings, meal modes). The loop covers the rest as BG rises.</string>
     <string name="si_add_button" comment="%1$s=name of the running meal mode. Example: Add to Dinner">Add to %1$s</string>
     <string name="si_add_button_units" comment="%1$s=name of the running meal mode, %2$s=insulin without unit. Example: Add to Dinner · 2.5 U">Add to %1$s · %2$s U</string>
     <string name="si_add_note" comment="Note saved with the bolus. %1$s=name of the meal mode. Example: SmartMeal Dinner added food">SmartMeal %1$s added food</string>

@@ -75,7 +75,7 @@ class SavedFoodsTest {
         recent = SavedFoodList.remember(recent, listOf(food("Yoghurt"), food("wrap")))
         assertEquals(listOf("Yoghurt", "wrap"), recent.map { it.name })
         assertEquals(1.0, recent[1].quantity, 1e-9)
-        repeat(20) { recent = SavedFoodList.remember(recent, listOf(food("Food $it"))) }
+        repeat(SavedFoodList.MAX_RECENT + 5) { recent = SavedFoodList.remember(recent, listOf(food("Food $it"))) }
         assertEquals(SavedFoodList.MAX_RECENT, recent.size)
     }
 

@@ -70,6 +70,9 @@ data class MealTotals(val carbsG: Double, val fibreG: Double, val proteinG: Doub
     /** Carbs plus the carb equivalent of fat and protein. */
     val carbEquivG: Double get() = carbsG + fpu * FPU_CARB_G
 
+    /** Energy as on food labels: 4 kcal per gram of carbs and protein, 2 per gram of fibre, 9 per gram of fat. */
+    val kcal: Double get() = carbsG * 4.0 + fibreG * 2.0 + proteinG * 4.0 + fatG * 9.0
+
     companion object {
 
         const val FPU_CARB_G = 10.0

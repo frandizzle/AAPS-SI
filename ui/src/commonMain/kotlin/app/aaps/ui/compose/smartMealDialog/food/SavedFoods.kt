@@ -43,7 +43,7 @@ object SavedFoodList {
 
     const val MAX_SAVED = 100
     const val MAX_ITEMS = 30
-    const val MAX_RECENT = 10
+    const val MAX_RECENT = 30
     const val MAX_NAME = 60
 
     /** Most used first, then most recently used. */
