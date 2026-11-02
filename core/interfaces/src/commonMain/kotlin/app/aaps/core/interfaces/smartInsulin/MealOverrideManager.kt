@@ -110,6 +110,14 @@ interface MealOverrideManager {
      */
     fun setPreBolus1Rest(restU: Double)
 
+    /**
+     * Gives pre-bolus 2 and 3 together as [pieces] smaller doses, [SPREAD_GAP_MIN] apart from the pre-bolus 2 time,
+     * each only through the safety gates. Call it right after [activateOverride]. For a meal of fat and protein with
+     * almost no carbs: it raises BG slowly over hours, so one large dose can work before the food does. See
+     * [spreadPieces].
+     */
+    fun spreadPreBoluses(pieces: Int)
+
     /** Cancels the rest of pre-bolus 1 if it still waits. */
     fun cancelPreBolus1Rest()
 
@@ -209,6 +217,32 @@ interface MealOverrideManager {
         // [PB1_REST_UNTIL_MIN]: by then pre-bolus 2 and the loop take over.
         const val PB1_REST_FROM_MIN  = 15
         const val PB1_REST_UNTIL_MIN = 45
+
+        /** A meal with fewer carbs than this gives pre-bolus 2 and 3 in pieces. */
+        const val SPREAD_MAX_CARBS_G = 10.0
+        /** At most this many pieces, and none smaller than [SPREAD_MIN_PIECE_U]. */
+        const val SPREAD_PIECES      = 6
+        const val SPREAD_MIN_PIECE_U = 0.3
+        /**
+         * Minutes between pieces. Fast insulin needs about 15 to 20 min to show on BG, so by then the gates see a little
+         * of the last piece; closer pieces would make the "not falling" gate check almost nothing.
+         */
+        const val SPREAD_GAP_MIN     = 20
+        /** Pieces are rounded down to this, a bolus step most pumps can give. The last piece is what is left. */
+        const val SPREAD_STEP_U      = 0.05
+
+        /**
+         * How many pieces pre-bolus 2 and 3 are given as, or 0 for the usual doses: only for a meal with almost no carbs,
+         * and only when the insulin is enough for 2 pieces of at least [SPREAD_MIN_PIECE_U].
+         *
+         * @param carbsG the meal's carbs, from its food list
+         * @param fatProteinU pre-bolus 2 and 3 together
+         */
+        fun spreadPieces(carbsG: Double, fatProteinU: Double): Int {
+            if (carbsG >= SPREAD_MAX_CARBS_G) return 0
+            val pieces = minOf(SPREAD_PIECES, (fatProteinU / SPREAD_MIN_PIECE_U + 1e-9).toInt())
+            return if (pieces >= 2) pieces else 0
+        }
         /** BG counts as rising from this change per 5 min, in mg/dL (about 0.1 mmol), with the 15 min average also up. */
         const val PB1_REST_RISE_MGDL = 2.0
         /** A smaller rest is left to the loop. */

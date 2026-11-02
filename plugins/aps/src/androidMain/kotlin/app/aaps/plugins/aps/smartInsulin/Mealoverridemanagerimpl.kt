@@ -75,6 +75,10 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus1RestU",   s.preBolus1RestU)
             if (s.preBolus1RestFiredMs != null) put("preBolus1RestFiredMs", s.preBolus1RestFiredMs)
             if (s.preBolus1PlannedU != null) put("preBolus1PlannedU", s.preBolus1PlannedU)
+            put("preBolus2Pieces",  s.preBolus2Pieces)
+            put("preBolus2PiecesGiven", s.preBolus2PiecesGiven)
+            put("preBolus2GivenU",  s.preBolus2GivenU)
+            if (s.preBolus2LastPieceMs != null) put("preBolus2LastPieceMs", s.preBolus2LastPieceMs)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -112,7 +116,11 @@ class MealOverrideManagerImpl @Inject constructor(
                 afterActivityPct = json.optInt("afterActivityPct", 0),
                 preBolus1RestU   = json.optDouble("preBolus1RestU", 0.0),
                 preBolus1RestFiredMs = if (json.has("preBolus1RestFiredMs")) json.getLong("preBolus1RestFiredMs") else null,
-                preBolus1PlannedU = if (json.has("preBolus1PlannedU")) json.getDouble("preBolus1PlannedU") else null
+                preBolus1PlannedU = if (json.has("preBolus1PlannedU")) json.getDouble("preBolus1PlannedU") else null,
+                preBolus2Pieces  = json.optInt("preBolus2Pieces", 0),
+                preBolus2PiecesGiven = json.optInt("preBolus2PiecesGiven", 0),
+                preBolus2GivenU  = json.optDouble("preBolus2GivenU", 0.0),
+                preBolus2LastPieceMs = if (json.has("preBolus2LastPieceMs")) json.getLong("preBolus2LastPieceMs") else null
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -191,7 +199,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val preBolus2SecondsRemaining: Long? get() {
         val s = _state?.takeIf { it.preBolus2Pending } ?: return null
-        return (s.preBolus2FireAtMs - System.currentTimeMillis()) / 1000
+        return (s.preBolus2NextAtMs - System.currentTimeMillis()) / 1000
     }
 
     /** PB3 seconds remaining — returns null if PB2 hasn't fired yet (PB3 timer hasn't started).
@@ -285,7 +293,7 @@ class MealOverrideManagerImpl @Inject constructor(
                 iobU              = lastIob,
                 deltaMgdl         = lastDelta,
                 shortAvgDeltaMgdl = lastShortAvgDelta,
-                doseU             = s.preBolus2U,
+                doseU             = if (s.preBolus2Spread) s.preBolus2NextPieceU else s.preBolus2U,
                 loopRestraining   = loopRestraining
             )
         }
@@ -334,19 +342,23 @@ class MealOverrideManagerImpl @Inject constructor(
         val s   = _state ?: return ""
         if (s.preBolus2U <= 0.0) return ""  // PB2 never requested
         val now = System.currentTimeMillis()
-        // What is still to come shows its dose, for example "PB2 (2.40 U): 32min 57s".
-        val pb2 = "PB2 (${"%.2f".format(s.preBolus2U)} U)"
+        // What is still to come shows its dose, for example "PB2 (2.40 U): 32min 57s", or in pieces
+        // "PB2 piece 2 of 6 (0.55 U): 12min 3s".
+        val doseU = if (s.preBolus2Spread) s.preBolus2NextPieceU else s.preBolus2U
+        val pb2 = if (s.preBolus2Spread) "PB2 piece ${s.preBolus2PiecesGiven + 1} of ${s.preBolus2Pieces} (${"%.2f".format(doseU)} U)"
+                  else "PB2 (${"%.2f".format(s.preBolus2U)} U)"
+        val nextAt = s.preBolus2NextAtMs
         return when {
             // Discarded (-1L) or already fired (positive timestamp)
             s.preBolus2FiredMs != null && s.preBolus2FiredMs == -1L ->
-                "PB2: cancelled"
+                if (s.preBolus2GivenU > 0.0) "PB2: stopped after ${"%.2f".format(s.preBolus2GivenU)} U" else "PB2: cancelled"
             s.preBolus2FiredMs != null && s.preBolus2FiredMs!! > 0L -> {
                 val firedMins = (now - s.preBolus2FiredMs!!) / 60_000
                 "PB2: delivered ${firedMins}min ago"
             }
             // Counting down
-            now < s.preBolus2FireAtMs -> {
-                val secsLeft = (s.preBolus2FireAtMs - now) / 1000
+            now < nextAt -> {
+                val secsLeft = (nextAt - now) / 1000
                 if (secsLeft >= 60)
                     "$pb2: ${secsLeft / 60}min ${secsLeft % 60}s"
                 else
@@ -355,7 +367,7 @@ class MealOverrideManagerImpl @Inject constructor(
             // Time elapsed — show safety block reasons if any
             else -> {
                 val reasons = safetyBlockReasons(
-                    lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta, s.preBolus2U
+                    lastBgMgdl, lastIob, lastMaxIob, lastTargetMgdl, lastDelta, lastShortAvgDelta, doseU
                 )
                 if (reasons.isEmpty()) "$pb2: waiting for next loop cycle"
                 else "$pb2 waiting: ${reasons.joinToString(", ")}"
@@ -461,7 +473,8 @@ class MealOverrideManagerImpl @Inject constructor(
         if (activeMealMode == null) return false
         val s = _state ?: return false
         // A pre-bolus that has fired or was cancelled is not brought back: the loop covers that part.
-        val pb2Add = if (s.preBolus2Pending) preBolus2AddU.coerceAtLeast(0.0) else 0.0
+        // In pieces, pre-bolus 3 is part of pre-bolus 2, so what is added to it goes there too.
+        val pb2Add = if (s.preBolus2Pending) preBolus2AddU.coerceAtLeast(0.0) + (if (s.preBolus2Spread) preBolus3AddU.coerceAtLeast(0.0) else 0.0) else 0.0
         val pb3Add = if (s.preBolus3Pending) preBolus3AddU.coerceAtLeast(0.0) else 0.0
         val duraNew = duraEnabled && !s.duraEnabled
         _state = s.copy(
@@ -518,6 +531,16 @@ class MealOverrideManagerImpl @Inject constructor(
         _state = s.copy(preBolus1RestU = restU, preBolus1RestFiredMs = null)
         persistState()
         aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 1 rest ${restU}U once BG rises")
+    }
+
+    override fun spreadPreBoluses(pieces: Int) {
+        val s = _state ?: return
+        if (pieces < 2 || !s.preBolus2Pending) return
+        // Pre-bolus 3 becomes part of pre-bolus 2: one stream of pieces, each through the gates.
+        val pb3 = if (s.preBolus3Pending) s.preBolus3U else 0.0
+        _state = s.copy(preBolus2U = s.preBolus2U + pb3, preBolus3U = 0.0, preBolus3DelayMs = 0L, preBolus2Pieces = pieces)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 2 ${s.preBolus2U + pb3}U in $pieces pieces")
     }
 
     override fun preBolus1Delivered(deliveredU: Double) {
@@ -689,15 +712,17 @@ class MealOverrideManagerImpl @Inject constructor(
         lastDelta         = glucoseStatus.delta
         lastShortAvgDelta = glucoseStatus.shortAvgDelta
 
-        // Not time yet
-        if (now < s.preBolus2FireAtMs) {
-            val minsLeft = (s.preBolus2FireAtMs - now) / 60_000
+        // Not time yet. In pieces: the next piece's time.
+        if (now < s.preBolus2NextAtMs) {
+            val minsLeft = (s.preBolus2NextAtMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin PB2: ${minsLeft}min until scheduled delivery")
             return
         }
 
         // ── Safety checks ─────────────────────────────────────────────────────
 
+        // In pieces only the next piece is given now; the gates are checked again before each one.
+        val doseU = if (s.preBolus2Spread) s.preBolus2NextPieceU else s.preBolus2U
         val reasons = safetyBlockReasons(
             bgMgdl        = currentBgMgdl,
             iob           = currentIob,
@@ -705,7 +730,7 @@ class MealOverrideManagerImpl @Inject constructor(
             targetMgdl    = profileTarget,
             delta         = glucoseStatus.delta,
             shortAvgDelta = glucoseStatus.shortAvgDelta,
-            doseU         = s.preBolus2U
+            doseU         = doseU
         )
 
         if (reasons.isNotEmpty()) {
@@ -721,20 +746,28 @@ class MealOverrideManagerImpl @Inject constructor(
         }
 
         // ── Fire ─────────────────────────────────────────────────────────────
+        val piece = s.preBolus2PiecesGiven + 1
         aapsLogger.debug(LTag.APS,
-                         "SmartInsulin PB2 FIRING: ${s.preBolus2U}U bg=${String.format("%.1f", currentBgMgdl/18.0)} " +
+                         "SmartInsulin PB2 FIRING: ${doseU}U" + (if (s.preBolus2Spread) " piece $piece of ${s.preBolus2Pieces}" else "") +
+                             " bg=${String.format("%.1f", currentBgMgdl/18.0)} " +
                              "iob=${String.format("%.2f", currentIob)}U target=${String.format("%.1f", profileTarget/18.0)}")
 
         val bolusInfo = DetailedBolusInfo().apply {
-            insulin   = s.preBolus2U
-            notes     = "SmartMeal ${s.mode.label} pre-bolus 2 (protein/fat cover)"
+            insulin   = doseU
+            notes     = "SmartMeal ${s.mode.label} pre-bolus 2 (protein/fat cover)" + (if (s.preBolus2Spread) " piece $piece of ${s.preBolus2Pieces}" else "")
             timestamp = dateUtil.now()
         }
 
         // Mark as fired *before* delivery to prevent double-fire if loop cycles quickly.
         // Capture the exact state we're acting on — if _state changes before callback
-        // (e.g. user cancels), we don't overwrite the new state.
-        val firedState = s.copy(preBolus2FiredMs = now)
+        // (e.g. user cancels), we don't overwrite the new state. In pieces, pre-bolus 2 is fired once the last one is.
+        val firedState =
+            if (s.preBolus2Spread)
+                s.copy(
+                    preBolus2PiecesGiven = piece, preBolus2GivenU = s.preBolus2GivenU + doseU, preBolus2LastPieceMs = now,
+                    preBolus2FiredMs = if (piece >= s.preBolus2Pieces) now else null
+                )
+            else s.copy(preBolus2FiredMs = now)
         _state = firedState
         persistState()
 
@@ -749,11 +782,14 @@ class MealOverrideManagerImpl @Inject constructor(
                 // Automatic retry risks double-dosing. User must manually deliver if still needed.
                 // Cascade: PB3 can never fire now (no valid timing reference) — cancel it too.
                 // Only update state if it hasn't been changed by a cancel or new activation.
+                // In pieces the pieces left stop too, and the failed piece does not count as given.
                 if (_state == firedState) {
                     val pb3Cascade = firedState.preBolus3Pending
                     _state = firedState.copy(
                         preBolus2FiredMs = -1L,
-                        preBolus3FiredMs = if (pb3Cascade) -1L else firedState.preBolus3FiredMs
+                        preBolus3FiredMs = if (pb3Cascade) -1L else firedState.preBolus3FiredMs,
+                        preBolus2PiecesGiven = s.preBolus2PiecesGiven,
+                        preBolus2GivenU = s.preBolus2GivenU
                     )
                     persistState()
                     if (pb3Cascade) {
@@ -766,7 +802,7 @@ class MealOverrideManagerImpl @Inject constructor(
                     AlarmSound.BOLUS_ERROR
                 )
             } else {
-                aapsLogger.debug(LTag.APS, "SmartInsulin PB2 delivered OK: ${s.preBolus2U}U")
+                aapsLogger.debug(LTag.APS, "SmartInsulin PB2 delivered OK: ${doseU}U")
             }
         }
     }

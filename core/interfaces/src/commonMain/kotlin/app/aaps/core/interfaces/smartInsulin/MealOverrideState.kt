@@ -1,5 +1,7 @@
 package app.aaps.core.interfaces.smartInsulin
 
+import kotlin.math.floor
+
 /**
  * Immutable snapshot of an active meal mode override.
  *
@@ -16,6 +18,10 @@ package app.aaps.core.interfaces.smartInsulin
  *                       it really gave. Null when it gave all of it.
  * [afterActivityPct] — how much less insulin this meal gets after exercise, in percent; 0 = none. The loop makes the
  *                      mode's ISF weaker by the same share, and the meal learners do not judge the meal.
+ * [preBolus2Pieces]  — pre-bolus 2 is given as this many pieces, [MealOverrideManager.SPREAD_GAP_MIN] apart, each
+ *                      only through the safety gates. 0 = one dose. Pre-bolus 3 is then part of pre-bolus 2.
+ * [preBolus2PiecesGiven], [preBolus2GivenU], [preBolus2LastPieceMs] — the pieces given so far, their insulin, and
+ *                      when the last one was given.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -36,7 +42,11 @@ data class MealOverrideState(
     val afterActivityPct: Int     = 0,
     val preBolus1RestU:   Double  = 0.0,
     val preBolus1RestFiredMs: Long? = null,
-    val preBolus1PlannedU: Double? = null
+    val preBolus1PlannedU: Double? = null,
+    val preBolus2Pieces:  Int     = 0,
+    val preBolus2PiecesGiven: Int = 0,
+    val preBolus2GivenU:  Double  = 0.0,
+    val preBolus2LastPieceMs: Long? = null
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
@@ -49,9 +59,37 @@ data class MealOverrideState(
     val preBolus1RestPending: Boolean
         get() = preBolus1RestU > 0.0 && preBolus1RestFiredMs == null
 
-    /** True if a second bolus was requested and hasn't fired yet */
+    /** True if a second bolus was requested and hasn't fired yet. In pieces: until the last piece is given. */
     val preBolus2Pending: Boolean
         get() = preBolus2U > 0.0 && preBolus2FiredMs == null
+
+    /** Pre-bolus 2 is given in pieces. */
+    val preBolus2Spread: Boolean
+        get() = preBolus2Pieces > 1
+
+    /** Pre-bolus 2 insulin still to come: all of it, or what the pieces have not given yet. */
+    val preBolus2WaitingU: Double
+        get() = if (preBolus2Pending) (preBolus2U - preBolus2GivenU).coerceAtLeast(0.0) else 0.0
+
+    val preBolus3WaitingU: Double
+        get() = if (preBolus3Pending) preBolus3U else 0.0
+
+    /** When the next piece may be given: at the pre-bolus 2 time, then [MealOverrideManager.SPREAD_GAP_MIN] after the last one. */
+    val preBolus2NextAtMs: Long
+        get() = preBolus2LastPieceMs?.let { it + MealOverrideManager.SPREAD_GAP_MIN * 60_000L } ?: preBolus2FireAtMs
+
+    /**
+     * The next piece: what is left shared over the pieces left, rounded down to [MealOverrideManager.SPREAD_STEP_U].
+     * The last piece is all that is left. A piece that waits for the gates stays the same size, so pieces never add up.
+     */
+    val preBolus2NextPieceU: Double
+        get() {
+            val left = (preBolus2U - preBolus2GivenU).coerceAtLeast(0.0)
+            val piecesLeft = preBolus2Pieces - preBolus2PiecesGiven
+            if (piecesLeft <= 1) return left
+            val step = MealOverrideManager.SPREAD_STEP_U
+            return (floor(left / piecesLeft / step + ROUNDING_U) * step).coerceAtLeast(step).coerceAtMost(left)
+        }
 
     /** Wall-clock time PB2 should fire */
     val preBolus2FireAtMs: Long
@@ -69,7 +107,7 @@ data class MealOverrideState(
     val plannedTotalU: Double
         get() = (doseU ?: 0.0) + addedU +
             (if (preBolus1RestFiredMs == null || preBolus1RestFiredMs > 0L) preBolus1RestU else 0.0) +
-            (if (preBolus2FiredMs != -1L) preBolus2U else 0.0) +
+            (if (preBolus2FiredMs != -1L) preBolus2U else preBolus2GivenU) +
             (if (preBolus3FiredMs != -1L) preBolus3U else 0.0)
 
     /** Fire time for PB3: preBolus3DelayMs relative to PB2 fire time.

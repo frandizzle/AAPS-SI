@@ -441,8 +441,10 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         } else if (d.pb2Status.isNotEmpty() || d.pb2GateData != null) {
             val gate     = d.pb2GateData
             val isActive = d.pb2Status.contains("active")
-            // The dose still to come, for example "Pre-bolus 2 (2.40U)".
-            val pb2 = if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${"%.2f".format(d.pb2PlannedU)}U)" else "Pre-bolus 2"
+            // The dose still to come, for example "Pre-bolus 2 (2.40U)", or in pieces "Pre-bolus 2 (3.20U), piece 2 of 6 (0.55U)".
+            val piece = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U\)""").find(d.pb2Status)?.groupValues
+            val pb2 = (if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${"%.2f".format(d.pb2PlannedU)}U)" else "Pre-bolus 2") +
+                (piece?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
             val pb2Primary = when {
                 d.pb2Status.contains("due") -> "$pb2 — ready to deliver now"
                 Regex("""(\d+)min""").containsMatchIn(d.pb2Status) -> {

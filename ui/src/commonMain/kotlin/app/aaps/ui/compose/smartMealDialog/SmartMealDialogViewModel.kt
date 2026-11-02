@@ -203,6 +203,16 @@ data class SmartMealDialogUiState(
 
     val foodTotals: MealTotals get() = foodItems.totals()
 
+    /**
+     * How many pieces pre-bolus 2 and 3 are given as, 0 for the usual doses. Only for a meal from a food list with
+     * almost no carbs: without a list nothing says what the pre-boluses are for.
+     */
+    val spreadPieces: Int get() = if (foodItems.isEmpty() || pb2() <= 0.0) 0 else MealOverrideManager.spreadPieces(foodTotals.carbsG, pb2() + pb3())
+
+    /** Pre-bolus 2 and 3 as they will be given: 0 when off, never above the max pre-bolus. */
+    fun pb2(): Double = if (pb2Enabled && pb2U > 0.0) pb2U.coerceAtMost(maxPreBolus) else 0.0
+    fun pb3(): Double = if (pb3Enabled && pb3U > 0.0) pb3U.coerceAtMost(maxPreBolus) else 0.0
+
     /** The after-activity cut this new meal gets, in percent; 0 when off. */
     val afterActivityPct: Int get() = if (afterActivityOn) afterActivity?.cutPct ?: 0 else 0
 
@@ -307,8 +317,8 @@ class SmartMealDialogViewModel(
                 pb2Status = mealOverrideManager.preBolus2StatusText,
                 pb3Pending = mealOverrideManager.preBolus3Pending,
                 pb3Status = mealOverrideManager.preBolus3StatusText,
-                runningPb2WaitingU = running?.takeIf { r -> r.preBolus2Pending }?.preBolus2U ?: 0.0,
-                runningPb3WaitingU = running?.takeIf { r -> r.preBolus3Pending }?.preBolus3U ?: 0.0,
+                runningPb2WaitingU = running?.preBolus2WaitingU ?: 0.0,
+                runningPb3WaitingU = running?.preBolus3WaitingU ?: 0.0,
                 runningDura = running?.duraEnabled == true,
                 runningPfAfter = running?.pfAfter == true,
                 runningAfterActivityPct = running?.afterActivityPct ?: 0,
@@ -685,8 +695,7 @@ class SmartMealDialogViewModel(
             if (state.addMode) {
                 val running = mealOverrideManager.activeState ?: return@launch
                 val now = readNow()
-                val waitingU = (if (running.preBolus2Pending) running.preBolus2U else 0.0) +
-                    (if (running.preBolus3Pending) running.preBolus3U else 0.0) +
+                val waitingU = running.preBolus2WaitingU + running.preBolus3WaitingU +
                     (if (running.preBolus1RestPending) running.preBolus1RestU else 0.0)
                 // Without the running meal's food, or BG, there is nothing to weigh the insulin on board against.
                 val balance = mealEstimateCalibration.foodStillToComeG(running.triggerTimeMs)?.let { food ->
@@ -703,8 +712,8 @@ class SmartMealDialogViewModel(
                     state.foodTotals, settings,
                     RunningMeal(
                         plannedTotalU = running.plannedTotalU,
-                        pb2WaitingU = if (running.preBolus2Pending) running.preBolus2U else 0.0,
-                        pb3WaitingU = if (running.preBolus3Pending) running.preBolus3U else 0.0,
+                        pb2WaitingU = running.preBolus2WaitingU,
+                        pb3WaitingU = running.preBolus3WaitingU,
                         minutesLeft = state.activeRemainingMin,
                         iobRoomU = now.maxIobU - now.iobU,
                         holdNow = now.holdNow,
@@ -790,8 +799,6 @@ class SmartMealDialogViewModel(
     /** Only with pre-bolus 1 on: the rest is the part of it that waits. */
     private fun SmartMealDialogUiState.pb1Rest(): Double = if (pb1Enabled && pb1RestU > 0.0) pb1RestU.coerceAtMost(maxPreBolus) else 0.0
 
-    private fun SmartMealDialogUiState.pb2(): Double = if (pb2Enabled && pb2U > 0.0) pb2U.coerceAtMost(maxPreBolus) else 0.0
-    private fun SmartMealDialogUiState.pb3(): Double = if (pb3Enabled && pb3U > 0.0) pb3U.coerceAtMost(maxPreBolus) else 0.0
 
     private fun fmtU(u: Double, step: Double) = decimalFormatter.toPumpSupportedBolus(u, step)
     private fun fmtBg(v: Double, mmol: Boolean) = if (mmol) decimalFormatter.to2Decimal(v) else decimalFormatter.to0Decimal(v)
@@ -1047,6 +1054,8 @@ class SmartMealDialogViewModel(
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             if (state.pb1Rest() > 0.0) mealOverrideManager.setPreBolus1Rest(state.pb1Rest())
+            // Fat and protein with almost no carbs: pre-bolus 2 and 3 as small pieces, each through the gates.
+            state.spreadPieces.takeIf { it > 0 }?.let { mealOverrideManager.spreadPreBoluses(it) }
             // A meal cut after exercise says nothing about how much insulin the food needs, so it is not learned from.
             if (state.afterActivityPct > 0) mealOverrideManager.setAfterActivityCut(state.afterActivityPct)
             recordEstimate(state)

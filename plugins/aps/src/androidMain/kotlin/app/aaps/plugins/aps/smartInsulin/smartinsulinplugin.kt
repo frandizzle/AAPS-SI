@@ -2235,7 +2235,7 @@ open class SmartInsulinPlugin @Inject constructor(
                 MealFoodForecast.foodToCome(
                     still, now,
                     restU = if (s.preBolus1RestPending) s.preBolus1RestU else 0.0,
-                    pbU = (if (s.preBolus2Pending) s.preBolus2U else 0.0) + (if (s.preBolus3Pending) s.preBolus3U else 0.0),
+                    pbU = s.preBolus2WaitingU + s.preBolus3WaitingU,
                     carbRatio = profile.getIc(),
                     fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
                 )
