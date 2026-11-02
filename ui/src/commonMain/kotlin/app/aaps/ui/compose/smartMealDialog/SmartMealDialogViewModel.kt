@@ -43,6 +43,7 @@ import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
 import app.aaps.ui.UiStrings
+import app.aaps.ui.compose.smartMealDialog.food.AustralianFoods
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
@@ -151,6 +152,13 @@ data class SmartMealDialogUiState(
     val lookupBusy: Boolean = false,
     val lookupError: FoodLookupResult.Reason? = null,
     val lookupDetail: String = "",
+    /** Products found by the last online food search, best first. Plain foods are searched on the phone. */
+    val searchProducts: List<FoodItem> = emptyList(),
+    /** What the last online search was for, so its results are not shown for other words. */
+    val searchedFor: String = "",
+    val searchBusy: Boolean = false,
+    val searchError: FoodLookupResult.Reason? = null,
+    val searchErrorDetail: String = "",
     /** The plan from the last "Fill in", shown as a summary. Null before. */
     val plan: MealPlan? = null,
     /** True when "Fill in" found no carb ratio in the profile. */
@@ -426,6 +434,24 @@ class SmartMealDialogViewModel(
         lookup { mealFoodRepository.lookupBarcode(code) to false }
     }
 
+    /** Searches Open Food Facts for products. Asked for, never as the user types: the search allows only 10 a minute. */
+    fun searchProducts(query: String) {
+        val q = query.trim()
+        if (uiState.value.searchBusy || q.length < AustralianFoods.MIN_QUERY) return
+        _uiState.update { it.copy(searchBusy = true, searchError = null, searchErrorDetail = "", searchProducts = emptyList(), searchedFor = q) }
+        appScope.launch {
+            val result = mealFoodRepository.searchProducts(q)
+            _uiState.update { s ->
+                when (result) {
+                    is FoodLookupResult.Success -> s.copy(searchBusy = false, searchProducts = result.items)
+                    is FoodLookupResult.Failure -> s.copy(searchBusy = false, searchError = result.reason, searchErrorDetail = result.detail)
+                }
+            }
+        }
+    }
+
+    fun clearSearch() = _uiState.update { it.copy(searchProducts = emptyList(), searchedFor = "", searchError = null, searchErrorDetail = "") }
+
     private fun lookup(request: suspend () -> Pair<FoodLookupResult, Boolean>) {
         _uiState.update { it.copy(lookupBusy = true, lookupError = null, lookupDetail = "") }
         appScope.launch {
@@ -522,8 +548,8 @@ class SmartMealDialogViewModel(
 
     // ── My foods ─────────────────────────────────────────────────────────────
 
-    /** Adds a food typed in by hand. It goes to the recent list too, so it can be saved later. */
-    fun addManualFood(item: FoodItem) {
+    /** Adds a food typed in by hand or picked in the food search. It goes to the recent list too, so it can be saved later. */
+    fun addFood(item: FoodItem) {
         savedFoodStore.remember(listOf(item))
         addItems(listOf(item), null)
     }

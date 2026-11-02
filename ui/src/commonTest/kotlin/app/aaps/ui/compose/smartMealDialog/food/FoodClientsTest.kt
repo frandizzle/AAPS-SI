@@ -19,7 +19,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** The Gemini meal estimate and the Open Food Facts barcode lookup, against scripted answers. */
+/** The Gemini meal estimate and the Open Food Facts barcode lookup and product search, against scripted answers. */
 class FoodClientsTest {
 
     private val json = headersOf(HttpHeaders.ContentType, "application/json")
@@ -212,5 +212,38 @@ class FoodClientsTest {
         assertEquals(FoodLookupResult.Reason.NOT_FOUND, assertIs<FoodLookupResult.Failure>(r).reason)
         assertEquals("", lastUrl)
         assertNull(lastKey)
+    }
+
+    // --- Open Food Facts search ---
+
+    private val wraps = """{"count":2,"hits":[
+        {"code":"9305000010198","brands":["Mission"],"product_name":"Carb Balance Spinach wraps","serving_quantity":43,"serving_size":"1 wrap (43 g)",
+         "countries_tags":["en:australia"],"nutriments":{"carbohydrates_100g":22.5,"fiber_100g":31,"proteins_100g":12.9,"fat_100g":6.46}},
+        {"code":"12562886","brands":["Mission"],"product_name":"mission","countries_tags":["en:australia"]}
+    ]}"""
+
+    @Test
+    fun `a product search keeps the products with nutrition and asks for Australian ones`() = runTest {
+        val r = OpenFoodFactsClient(http(HttpStatusCode.OK, wraps)).search("mission wraps")
+        val item = assertIs<FoodLookupResult.Success>(r).items.single()
+        // The brand comes as a list from the search.
+        assertEquals("Mission Carb Balance Spinach wraps", item.name)
+        assertEquals(43.0, item.baseGrams, 1e-9)
+        assertEquals("1 wrap (43 g)", item.portion)
+        assertEquals(FoodSource.SEARCH, item.source)
+        assertTrue(lastUrl.startsWith(OpenFoodFactsClient.SEARCH_URL))
+        assertTrue(lastUrl.contains("en%3Aaustralia"), lastUrl)
+    }
+
+    @Test
+    fun `a search with no products with nutrition finds nothing`() = runTest {
+        val r = OpenFoodFactsClient(http(HttpStatusCode.OK, """{"count":0,"hits":[]}""")).search("zzz")
+        assertEquals(FoodLookupResult.Reason.NOT_FOUND, assertIs<FoodLookupResult.Failure>(r).reason)
+    }
+
+    @Test
+    fun `too many searches is the limit`() = runTest {
+        val r = OpenFoodFactsClient(http(HttpStatusCode.TooManyRequests, "")).search("wraps")
+        assertEquals(FoodLookupResult.Reason.LIMIT_REACHED, assertIs<FoodLookupResult.Failure>(r).reason)
     }
 }

@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -86,6 +87,7 @@ internal fun SmartMealFoodContent(
     val df = viewModel.decimalFormatter
     var showMyFoods by remember { mutableStateOf(false) }
     var showManual by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
     var savingMeal by remember { mutableStateOf(false) }
     var savingIndex by remember { mutableStateOf<Int?>(null) }
     var showHelp by remember { mutableStateOf(false) }
@@ -113,6 +115,7 @@ internal fun SmartMealFoodContent(
                 SourceButton(Icons.Filled.PhotoLibrary, stringResource(UiStrings.si_food_pick_photo), onClick = photoLauncher.pickPhoto)
             }
             if (canScan) SourceButton(Icons.Filled.QrCodeScanner, stringResource(UiStrings.si_food_scan), enabled = !state.lookupBusy, onClick = onScan)
+            SourceButton(Icons.Filled.Search, stringResource(UiStrings.si_food_search)) { showSearch = true }
             SourceButton(Icons.Filled.Bookmarks, stringResource(UiStrings.si_food_my_foods)) { showMyFoods = true }
             SourceButton(Icons.Filled.Keyboard, stringResource(UiStrings.si_food_type_in)) { showManual = true }
         }
@@ -247,8 +250,17 @@ internal fun SmartMealFoodContent(
             dismissButton = { TextButton(onClick = viewModel::cancelLogCheck) { Text(stringResource(CoreUiStrings.cancel)) } }
         )
     }
+    if (showSearch)
+        FoodSearchDialog(
+            state = state,
+            df = { df.to0Decimal(it) },
+            onSearchProducts = viewModel::searchProducts,
+            onAdd = viewModel::addFood,
+            onAddSaved = viewModel::addSavedFood,
+            onDismiss = { showSearch = false; viewModel.clearSearch() }
+        )
     if (showManual)
-        ManualFoodDialog(onAdd = { viewModel.addManualFood(it); showManual = false }, onDismiss = { showManual = false })
+        ManualFoodDialog(onAdd = { viewModel.addFood(it); showManual = false }, onDismiss = { showManual = false })
     if (savingMeal)
         SaveNameDialog(
             title = stringResource(UiStrings.si_food_save_meal),
@@ -272,9 +284,10 @@ private const val QUICK_SAVED = 10
 /** A portion that is only a weight, like "160 g" or "160.0g": the weight is shown anyway. */
 private val GRAMS_ONLY = Regex("""^\d+([.,]\d+)?\s*g$""")
 
-/** Half servings for a packet, quarter portions for an estimate. */
+/** Half servings for a packet or 100 g, quarter portions for an estimate. */
 private fun quantityStep(item: FoodItem): Double =
-    if (item.source == FoodSource.BARCODE || item.source == FoodSource.MANUAL) 0.5 else SmartMealDialogViewModel.QUANTITY_STEP
+    if (item.source == FoodSource.BARCODE || item.source == FoodSource.MANUAL || item.source == FoodSource.SEARCH) 0.5
+    else SmartMealDialogViewModel.QUANTITY_STEP
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -421,7 +434,7 @@ internal fun Hint(text: String, modifier: Modifier = Modifier) =
     Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = modifier)
 
 @Composable
-private fun lookupErrorText(reason: FoodLookupResult.Reason, detail: String): String = when (reason) {
+internal fun lookupErrorText(reason: FoodLookupResult.Reason, detail: String): String = when (reason) {
     FoodLookupResult.Reason.NOT_SET_UP    -> stringResource(UiStrings.si_food_err_not_set_up)
     FoodLookupResult.Reason.OFFLINE       -> stringResource(UiStrings.si_food_err_offline)
     FoodLookupResult.Reason.INVALID_KEY   -> stringResource(UiStrings.si_food_err_invalid_key)

@@ -14,7 +14,7 @@ import io.ktor.client.plugins.HttpTimeout
 import kotlinx.coroutines.withContext
 
 /**
- * Meal estimates (Google Gemini) and barcode lookups (Open Food Facts) for the Smart Meal dialog.
+ * Meal estimates (Google Gemini), barcode lookups and product searches (Open Food Facts) for the Smart Meal dialog.
  *
  * Ktor, so it runs on every target. Nothing here doses: the result only fills the dialog, and the user
  * confirms as for any other meal.
@@ -52,6 +52,12 @@ class MealFoodRepository(
     suspend fun lookupBarcode(barcode: String): FoodLookupResult {
         if (!receiverStatusStore.isConnected) return FoodLookupResult.Failure(FoodLookupResult.Reason.OFFLINE)
         return withContext(aapsIoDispatcher) { openFoodFacts.lookup(barcode) }
+    }
+
+    /** Packaged products sold in Australia, from Open Food Facts. Plain foods are in [AustralianFoods], on the phone. */
+    suspend fun searchProducts(query: String): FoodLookupResult {
+        if (!receiverStatusStore.isConnected) return FoodLookupResult.Failure(FoodLookupResult.Reason.OFFLINE)
+        return withContext(aapsIoDispatcher) { openFoodFacts.search(query) }
     }
 
     companion object {

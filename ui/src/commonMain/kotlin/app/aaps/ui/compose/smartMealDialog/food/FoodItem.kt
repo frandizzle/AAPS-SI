@@ -4,8 +4,11 @@ import androidx.compose.runtime.Immutable
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import kotlin.math.roundToInt
 
-/** Where a food came from. [SAVED] is anything added from My foods, so a new estimate does not replace it. */
-enum class FoodSource { ESTIMATE, BARCODE, MANUAL, SAVED }
+/**
+ * Where a food came from. [SAVED] is anything added from My foods, so a new estimate does not replace it. [SEARCH] is
+ * a food picked from the food search: the Australian food table or an Open Food Facts product.
+ */
+enum class FoodSource { ESTIMATE, BARCODE, MANUAL, SAVED, SEARCH }
 
 /**
  * How fast a food's carbs raise BG, like a rough glycaemic index. It only changes when the loop expects the carbs,

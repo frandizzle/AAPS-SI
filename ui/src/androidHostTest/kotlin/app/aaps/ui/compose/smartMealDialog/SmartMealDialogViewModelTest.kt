@@ -587,7 +587,7 @@ internal class SmartMealDialogViewModelTest {
             assertThat(afterActivity).isEqualTo(AfterActivity(60, 15))
             assertThat(afterActivityOn).isFalse()
         }
-        sut.addManualFood(dessert(carbs = 10.0).copy(source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 10.0).copy(source = FoodSource.MANUAL))
         sut.fillInFromFood()
         assertThat(sut.uiState.value.pb1U).isWithin(1e-9).of(2.0)
         // On: what was filled in is cut, and the next Fill in plans with the cut.
@@ -619,7 +619,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
         build()
         // 30 g at 5 g/U = 6 U; the max pre-bolus is 4 U.
-        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(source = FoodSource.MANUAL))
         sut.fillInFromFood()
         with(sut.uiState.value) {
             assertThat(pb1U).isWithin(1e-9).of(4.0)
@@ -635,7 +635,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
         assertThat(sut.uiState.value.afterActivity).isNull()
-        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(source = FoodSource.MANUAL))
         sut.updateAfterActivity(true)
         assertThat(sut.uiState.value.afterActivityOn).isFalse()
         sut.prepareAndConfirm()
@@ -656,7 +656,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
         bg(150.0)
         build()
-        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(source = FoodSource.MANUAL))
         sut.fillInFromFood()
         // 30 g at 5 g/U = 6 U, 20 % less, half of it now.
         assertThat(sut.uiState.value.addNowU).isWithin(1e-9).of(2.4)
@@ -680,8 +680,8 @@ internal class SmartMealDialogViewModelTest {
         whenever(dateUtil.now()).thenReturn(NOW)
         whenever { mealFoodRepository.estimate(any(), anyOrNull()) }.thenReturn(FoodLookupResult.Success(listOf(dessert())))
         build()
-        sut.addManualFood(dessert(carbs = 20.0).copy(name = "Wrap", source = FoodSource.MANUAL))
-        sut.addManualFood(dessert(carbs = 0.0, protein = 25.0).copy(name = "Turkey", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 20.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 0.0, protein = 25.0).copy(name = "Turkey", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
         assertThat(sut.uiState.value.lastSave).isEqualTo(SaveResult.SAVED)
         sut.clearFood()
@@ -704,7 +704,7 @@ internal class SmartMealDialogViewModelTest {
     fun `My foods is kept in the settings`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert().copy(name = "Biscoff", source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(name = "Biscoff", source = FoodSource.MANUAL))
         sut.saveFood(0, "Biscoff")
         verify(preferences).put(eq(StringNonKey.ApsSmartInsulinSavedFoods), argThat { contains("Biscoff") })
         sut.renameSavedFood("Biscoff", "Biscoff biscuit")
@@ -724,7 +724,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
         whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
         build()
-        sut.addManualFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
         sut.clearFood()
         sut.addSavedFood(sut.uiState.value.savedFoods.single())
@@ -749,11 +749,11 @@ internal class SmartMealDialogViewModelTest {
     fun `a saved meal with other food added is only learned as any meal`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
         sut.clearFood()
         sut.addSavedFood(sut.uiState.value.savedFoods.single())
-        sut.addManualFood(dessert().copy(name = "Chips", source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(name = "Chips", source = FoodSource.MANUAL))
         assertThat(sut.uiState.value.sourceMeal).isNull()
         sut.prepareAndConfirm()
         sut.commit(null)
@@ -765,7 +765,7 @@ internal class SmartMealDialogViewModelTest {
     fun `renaming or deleting a saved meal keeps its learning with it`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Wrap")
         sut.renameSavedFood("Wrap", "Turkey wrap")
         verify(savedMealLearning).rename("Wrap", "Turkey wrap")
@@ -778,7 +778,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
         listOf("Wrap", "Turkey", "Cheese").forEach { n ->
-            sut.addManualFood(dessert().copy(name = n, source = FoodSource.MANUAL))
+            sut.addFood(dessert().copy(name = n, source = FoodSource.MANUAL))
             sut.saveFood(0, n)
             sut.clearFood()
         }
@@ -799,7 +799,7 @@ internal class SmartMealDialogViewModelTest {
     fun `changing a saved meal keeps its learning only for a small change`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert(carbs = 40.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 40.0).copy(name = "Wrap", source = FoodSource.MANUAL))
         sut.saveMeal("Turkey wrap")
         sut.clearFood()
 
@@ -811,7 +811,7 @@ internal class SmartMealDialogViewModelTest {
         assertThat(sut.uiState.value.editingMeal).isNull()
 
         sut.editSavedFood(sut.uiState.value.savedFoods.single())
-        sut.addManualFood(dessert(carbs = 60.0).copy(name = "Chips", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 60.0).copy(name = "Chips", source = FoodSource.MANUAL))
         sut.saveChanges()
         verify(savedMealLearning).forget("Turkey wrap")
         assertThat(sut.uiState.value.savedFoods.single().items.map { it.name }).containsExactly("Wrap", "Chips")
@@ -825,7 +825,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(mealEstimateCalibration.factor).thenReturn(1.0)
         build()
         // 60 g protein and 40 g fat: 6 FPU.
-        sut.addManualFood(dessert(carbs = 10.0, protein = 60.0, fat = 40.0).copy(name = "Steak", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 10.0, protein = 60.0, fat = 40.0).copy(name = "Steak", source = FoodSource.MANUAL))
         sut.fillInFromFood()
         with(sut.uiState.value) {
             assertThat(duraEnabled).isFalse()
@@ -840,7 +840,7 @@ internal class SmartMealDialogViewModelTest {
     fun `log only counts the food without a meal or insulin`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert(carbs = 20.0, protein = 5.0, fat = 10.0).copy(name = "Biscuits", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 20.0, protein = 5.0, fat = 10.0).copy(name = "Biscuits", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(foodLog).add(FoodLogEntry(NOW, "Biscuits", 20.0, 0.0, 5.0, 10.0))
         with(sut.uiState.value) {
@@ -856,13 +856,13 @@ internal class SmartMealDialogViewModelTest {
         val running = dinnerRunning()
         build()
         assertThat(sut.uiState.value.logTreatingLow).isFalse()
-        sut.addManualFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(mealEstimateCalibration).logFood(
             eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), eq(0.0)
         )
         sut.updateLogTreatingLow(true)
-        sut.addManualFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))
+        sut.addFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(foodLog, times(2)).add(any())
         verify(mealEstimateCalibration, times(1)).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
@@ -872,7 +872,7 @@ internal class SmartMealDialogViewModelTest {
     fun `food logged with no meal running is for calories only`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert().copy(source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(source = FoodSource.MANUAL))
         sut.logOnly()
         verify(mealEstimateCalibration, never()).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
@@ -889,7 +889,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
         // 734 g of fat: about 6600 kcal.
-        sut.addManualFood(dessert(fat = 100.0).copy(name = "Typo", baseGrams = 734.0, source = FoodSource.MANUAL))
+        sut.addFood(dessert(fat = 100.0).copy(name = "Typo", baseGrams = 734.0, source = FoodSource.MANUAL))
         sut.logOnly()
         verify(foodLog, never()).add(any())
         assertThat(sut.uiState.value.logCheckKcal).isNotNull()
@@ -902,7 +902,7 @@ internal class SmartMealDialogViewModelTest {
     fun `a started meal and food added to it are logged`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         build()
-        sut.addManualFood(dessert().copy(name = "Pasta", source = FoodSource.MANUAL))
+        sut.addFood(dessert().copy(name = "Pasta", source = FoodSource.MANUAL))
         sut.prepareAndConfirm()
         sut.commit(null)
         verify(foodLog).add(argThat { name == "Pasta" })

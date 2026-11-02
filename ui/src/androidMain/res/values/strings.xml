@@ -433,6 +433,19 @@
     <string name="si_food_no_ratio">There is no carb ratio in the profile, so no plan could be made</string>
     <string name="si_food_my_foods">My foods</string>
     <string name="si_food_type_in">Type in</string>
+    <string name="si_food_search" comment="Short button label under an icon: search a food database by name">Search</string>
+    <string name="si_food_search_title">Search foods</string>
+    <string name="si_food_search_hint">Food name, for example chicken thigh</string>
+    <string name="si_food_search_mine">My foods</string>
+    <string name="si_food_search_plain">Plain foods</string>
+    <string name="si_food_search_products">Products</string>
+    <string name="si_food_search_online">Search products online</string>
+    <string name="si_food_search_none">Nothing found.</string>
+    <string name="si_food_search_type_more">Type at least 2 letters.</string>
+    <string name="si_food_search_added" comment="%1$s=name of the food just added to the meal. Example: Added: Chicken, thigh, baked">Added: %1$s</string>
+    <string name="si_food_search_per_100" comment="%1$s=carbs, %2$s=protein, %3$s=fat, all in grams per 100 g of the food, without unit. Example: Per 100 g: 0 g carbs, 24 g protein, 9 g fat">Per 100 g: %1$s g carbs, %2$s g protein, %3$s g fat</string>
+    <string name="si_food_search_per_100ml" comment="%1$s=carbs, %2$s=protein, %3$s=fat, all in grams per 100 mL of a drink, without unit. Example: Per 100 mL: 5 g carbs, 3 g protein, 1 g fat">Per 100 mL: %1$s g carbs, %2$s g protein, %3$s g fat</string>
+    <string name="si_food_search_credit">Plain foods: Australian Food Composition Database, © Food Standards Australia New Zealand. Products: Open Food Facts, made by its users, so check the values on the pack.</string>
     <string name="si_food_save_meal">Save as meal</string>
     <string name="si_food_save_item">Save to My foods</string>
     <string name="si_food_save_name">Name</string>
