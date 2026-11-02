@@ -87,3 +87,28 @@ internal fun reboundWindowMs(baseMins: Int, relowCount: Int, rollercoasters: Int
         .coerceAtMost(SmartInsulinPlugin.ROLLER_REBOUND_EXTENSION_MAX_MS)
     return baseMs + relowMs + rollerMs
 }
+
+/** In a meal mode, a dip that stayed within this of the low guard does not hold the pre-boluses back. 0.3 mmol/L. */
+internal const val MEAL_SHALLOW_DIP_MGDL = 5.4
+
+/**
+ * Whether the recovery window after a low holds back the waiting pre-boluses.
+ *
+ * In a meal mode a shallow dip is usually the gap before the food comes in, and BG rising after it is the meal: holding
+ * pre-bolus 2 then only makes it late. A deeper low, or food eaten since BG went low, still holds it back: that rise can
+ * be the carbs that treated the low, and a fixed pre-bolus on top of them would bring the next low.
+ *
+ * @param minBgMgdl  the lowest BG of this low
+ * @param foodSinceLow food logged or carbs entered since BG went low
+ */
+internal fun reboundHoldsPreBoluses(
+    inReboundWindow: Boolean,
+    inMealMode: Boolean,
+    minBgMgdl: Double,
+    lowGuardMgdl: Double,
+    foodSinceLow: Boolean
+): Boolean {
+    if (!inReboundWindow) return false
+    if (!inMealMode || foodSinceLow) return true
+    return minBgMgdl < lowGuardMgdl - MEAL_SHALLOW_DIP_MGDL
+}

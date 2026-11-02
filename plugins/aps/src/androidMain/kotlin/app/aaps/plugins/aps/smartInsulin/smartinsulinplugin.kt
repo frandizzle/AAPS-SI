@@ -185,6 +185,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
     var bgWentLow: Boolean = false
     var minBgDuringLow: Double = Double.MAX_VALUE
+    /** When BG went below the low guard, for food eaten since then. 0 when it is not low. */
+    var lowStartMs: Long = 0L
     var iobAtLowTime: Double = 0.0
     var shortAvgDeltaAtLow: Double = 0.0
     var secondLowOccurred: Boolean = false
@@ -426,7 +428,7 @@ open class SmartInsulinPlugin @Inject constructor(
         aggressionLearner.reset(); basalLearner.reset(); circadianLearner.reset(); profileLearner.resetProfiles()
         modeIsfLearner.reset(); uamEntryFractionLearner.reset(); duraStrengthLearner.reset()
         bgWentLow = false; reboundWindowStartMs = 0L; learningDirtyUntilMs = 0L
-        previousMealModeForLockout = MealMode.FASTING; minBgDuringLow = Double.MAX_VALUE
+        previousMealModeForLockout = MealMode.FASTING; minBgDuringLow = Double.MAX_VALUE; lowStartMs = 0L
         iobAtLowTime = 0.0; shortAvgDeltaAtLow = 0.0; secondLowOccurred = false
         softLandingBypass = false; uamEntrySmbsDelivered = 0; uamEntryModeStartMs = 0L
         relowTracker.reset()
@@ -1247,6 +1249,17 @@ open class SmartInsulinPlugin @Inject constructor(
         return boluses + (rateInForce - profileBasal) * hours
     }
 
+    /** Food logged in the Smart Meal dialog, or carbs entered, from [fromMs] to [now]. True when it cannot be read. */
+    private suspend fun foodSince(fromMs: Long, now: Long): Boolean {
+        if (fromMs <= 0L) return false
+        if (foodLog.entries(fromMs, now + 1).isNotEmpty()) return true
+        return try {
+            persistenceLayer.getCarbsFromTimeToTimeExpanded(fromMs, now, true).any { it.amount > 0.0 }
+        } catch (e: Exception) {
+            aapsLogger.error(LTag.APS, "SmartInsulin rebound: carbs read failed: ${e.message}"); true
+        }
+    }
+
     private fun postSiteCheckNotification(text: String) {
         notificationManager.post(
             id      = NotificationId.SITE_CHECK,
@@ -1772,8 +1785,12 @@ open class SmartInsulinPlugin @Inject constructor(
             // Rebound state and the previous decision are both carried over from the last cycle —
             // this call runs before determine_basal, so that is the freshest view available.
             // In a meal mode a zero temp does not count: it comes from a prediction that sees the
-            // insulin but not the food still coming, see MealOverrideManager.onLoopCycle.
-            loopRestraining = inReboundWindow ||
+            // insulin but not the food still coming, see MealOverrideManager.onLoopCycle. Nor does a
+            // shallow dip with no food eaten since: see reboundHoldsPreBoluses.
+            loopRestraining = reboundHoldsPreBoluses(
+                inReboundWindow, inMealMode = mealOverrideManager.activeMealMode != null, minBgMgdl = minBgDuringLow,
+                lowGuardMgdl = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard), foodSinceLow = inReboundWindow && foodSince(lowStartMs, now)
+            ) ||
                 (mealOverrideManager.activeMealMode == null && previousAPSResult?.let { it.rate == 0.0 && it.duration > 0 } ?: false)
         )
 
@@ -2180,7 +2197,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
-            if (!bgWentLow) { iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
+            if (!bgWentLow) { lowStartMs = now; iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
             else if (reboundWindowStartMs > 0L) {
                 // BG had come back above the guard and the recovery window was running — now it's
                 // below again. A real rebound in between (a decent rise, or held a while) makes this
@@ -2201,7 +2218,7 @@ open class SmartInsulinPlugin @Inject constructor(
             relowTracker.recordAboveGuard(glucoseStatus.glucose, glucoseStatus.date)
         }
         if (bgWentLow && reboundWindowStartMs > 0L && !inReboundWindow) {
-            reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; secondLowOccurred = false; softLandingBypass = false
+            reboundWindowStartMs = 0L; bgWentLow = false; minBgDuringLow = Double.MAX_VALUE; lowStartMs = 0L; secondLowOccurred = false; softLandingBypass = false
             relowTracker.reset()
         }
 

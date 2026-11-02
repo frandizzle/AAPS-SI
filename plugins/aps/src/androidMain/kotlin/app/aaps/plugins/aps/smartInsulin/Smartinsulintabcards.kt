@@ -561,7 +561,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                    "Blocked below ${fmtDelta(MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL)}", shortOk)
 
         addGateRow(if (gate.loopRestraining) "Loop: holding insulin back — waiting" else "Loop: not holding insulin back",
-                   "Held while BG recovers from a low. Outside a meal mode also while the loop runs a zero temp.", !gate.loopRestraining)
+                   "Held while BG recovers from a low. In a meal mode only after a low more than 0.3 mmol under the low guard, or food eaten since it. Outside a meal mode also while the loop runs a zero temp.", !gate.loopRestraining)
     }
 
     fun buildLearningCard(d: SmartInsulinPlugin.FragmentData): SiCardContent =

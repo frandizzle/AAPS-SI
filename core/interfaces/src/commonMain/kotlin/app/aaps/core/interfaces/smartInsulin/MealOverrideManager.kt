@@ -165,7 +165,9 @@ interface MealOverrideManager {
      *   it can land as a fixed dose at the moment the loop has decided to deliver nothing. In a meal
      *   mode a zero temp does not count: the loop's prediction sees only the insulin, not the food
      *   still coming, so after any real pre-bolus it predicts a low and would hold pre-bolus 2 and 3
-     *   nearly every time. BG falling is checked by the pre-bolus itself.
+     *   nearly every time. Nor does a rebound window after a shallow dip with no food eaten since:
+     *   in a meal mode that dip is usually the gap before the food comes in. BG falling is checked by
+     *   the pre-bolus itself.
      */
     fun onLoopCycle(
         glucoseStatus:   GlucoseStatus,
