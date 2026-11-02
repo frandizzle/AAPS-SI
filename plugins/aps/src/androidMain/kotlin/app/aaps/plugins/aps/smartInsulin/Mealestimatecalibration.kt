@@ -17,6 +17,8 @@ import org.json.JSONObject
  * @param mealG        the whole meal as estimated, scaled the same way
  * @param carbsUntilMs the carbs eaten so far should have come in by this time
  * @param fatProteinFromMs the fat and protein start to come in at this time
+ * @param fatProteinMealG  all the meal's fat and protein, scaled the same way, for the rate it comes in at
+ * @param fatProteinMin    minutes all of it takes to come in from [fatProteinFromMs], see `MealFoodForecast.fatProteinMinutes`
  */
 data class StillToCome(
     val modeStartMs: Long,
@@ -25,7 +27,9 @@ data class StillToCome(
     val fatProteinG: Double,
     val mealG: Double,
     val carbsUntilMs: Long,
-    val fatProteinFromMs: Long = 0L
+    val fatProteinFromMs: Long = 0L,
+    val fatProteinMealG: Double = 0.0,
+    val fatProteinMin: Int = 0
 )
 
 /**
@@ -234,7 +238,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
             fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceAtLeast(0.0),
             mealG = p.carbEquivG * f,
             carbsUntilMs = p.carbsUntilMs,
-            fatProteinFromMs = p.fatProteinFromMs
+            fatProteinFromMs = p.fatProteinFromMs,
+            fatProteinMealG = fatProtein,
+            fatProteinMin = MealFoodForecast.fatProteinMinutes((p.carbEquivG - p.carbsG).coerceAtLeast(0.0) / FPU_CARB_G)
         )
     }
 

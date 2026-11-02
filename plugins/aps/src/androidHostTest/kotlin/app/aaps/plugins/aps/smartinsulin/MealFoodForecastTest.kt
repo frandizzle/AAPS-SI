@@ -114,6 +114,46 @@ class MealFoodForecastTest {
         assertEquals(30.0 / 39 * 10.0, after[30], 1e-9)  // spread from 45 min to the end of the window
     }
 
+    @Test
+    fun `fat and protein take longer the more there is`() {
+        assertEquals(180, MealFoodForecast.fatProteinMinutes(0.5))
+        assertEquals(180, MealFoodForecast.fatProteinMinutes(1.0))
+        assertEquals(240, MealFoodForecast.fatProteinMinutes(2.0))
+        assertEquals(300, MealFoodForecast.fatProteinMinutes(3.0))
+        assertEquals(480, MealFoodForecast.fatProteinMinutes(10.0))
+    }
+
+    @Test
+    fun `fat and protein come in at the meal's steady rate, not squeezed into the time left`() {
+        // 30 g of fat and protein over 4 h: 0.625 g every 5 min. A 3 h window, 2 h in, nothing shown yet: the fade
+        // leaves 30 g x 1/3 x 1.5 = 15 g. Before, those 15 g were squeezed into the last hour, twice the rate, so the
+        // forecast climbed steeply. Now they come in at the same 0.625 g and finish an hour after the window.
+        val steak = StillToCome(
+            modeStartMs = T0, windowEndMs = T0 + 3 * HOUR, carbsG = 0.0, fatProteinG = 30.0, mealG = 30.0, carbsUntilMs = T0,
+            fatProteinFromMs = T0, fatProteinMealG = 30.0, fatProteinMin = 240
+        )
+        val now = T0 + 2 * HOUR
+        val f = MealFoodForecast.foodToCome(steak, now, 0.0, 0.0, 5.0)!!
+        assertEquals(15.0, f.fatProteinG, 1e-9)
+        assertEquals(now + 2 * HOUR, f.fatProteinUntilMs)
+        val steps = MealFoodForecast.steps(f, now, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 48)
+        assertEquals(0.625 * 10.0, steps[0], 1e-9)
+        assertEquals(0.625 * 10.0, steps[23], 1e-9)
+        assertEquals(0.0, steps[24], 1e-9)
+    }
+
+    @Test
+    fun `the share Fill in plans sets the rate too`() {
+        // At 70 %, 30 g over 4 h is 21 g: 0.4375 g every 5 min, all 21 g in over the 4 h.
+        val steak = StillToCome(
+            modeStartMs = T0, windowEndMs = T0 + 6 * HOUR, carbsG = 0.0, fatProteinG = 30.0, mealG = 30.0, carbsUntilMs = T0,
+            fatProteinFromMs = T0, fatProteinMealG = 30.0, fatProteinMin = 240
+        )
+        val f = MealFoodForecast.foodToCome(steak, T0, 0.0, 0.0, 5.0, fatProteinShare = 0.7)!!
+        assertEquals(T0 + 4 * HOUR, f.fatProteinUntilMs)
+        assertEquals(0.4375 * 10.0, MealFoodForecast.steps(f, T0, 50.0, 0.0, 48)[0], 1e-9)
+    }
+
     private companion object {
 
         const val MIN = 60_000L

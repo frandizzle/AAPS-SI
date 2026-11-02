@@ -10,7 +10,7 @@ import kotlin.math.min
  * but split by how fast it comes in. Grams of carb equivalent.
  *
  * @param carbsUntilMs      the carbs should have come in by this time
- * @param fatProteinUntilMs the fat and protein should have come in by this time: the end of the meal's window
+ * @param fatProteinUntilMs the fat and protein still to come are in by this time, at the meal's own rate
  * @param carbRatio         grams per unit, to turn the food into BG
  * @param coveredG          food the waiting pre-boluses will cover, already taken off; for the reason string
  * @param fatProteinFromMs  the fat and protein start to come in at this time; before it, the forecast leaves them out
@@ -33,8 +33,10 @@ data class FoodToCome(
  * instead of predicting a low from the insulin on board alone. See `DetermineBasalSmartInsulin`.
  *
  * The carbs are counted as coming in evenly until [FoodToCome.carbsUntilMs] (by default [CARBS_MIN] after they were
- * eaten, sooner for fast food and later for slow food),
- * the fat and protein evenly until the end of the meal's window. Fat and protein only start to raise BG
+ * eaten, sooner for fast food and later for slow food). The fat and protein come in at one steady rate, the meal's
+ * whole fat and protein over [fatProteinMinutes]: they raise BG slowly and evenly, so BG holds a little higher for
+ * hours rather than spiking. Fat and protein that come in later than expected stay at that rate and finish later;
+ * they are never squeezed into the time left. Fat and protein only start to raise BG
  * [FAT_PROTEIN_START_MIN] after they are eaten, so until then they are left out of the forecast: the loop does
  * not give insulin for them at the start of the meal. Food the waiting pre-boluses will cover is
  * taken off first, so the loop does not give insulin that a pre-bolus is about to give. Food that does not show
@@ -50,6 +52,12 @@ object MealFoodForecast {
     const val FADE_SLACK = 1.5
     /** Less food than this is not worth forecasting. */
     const val MIN_FOOD_G = 2.0
+    /** Fat and protein of one fat-protein unit (100 kcal) take this long to come in, from when they start... */
+    const val FAT_PROTEIN_MIN_PER_FPU1 = 180
+    /** ...one more hour for each unit more... */
+    const val FAT_PROTEIN_MIN_PER_FPU = 60
+    /** ...and at most this long, as for the largest meals of the usual fat and protein rule. */
+    const val FAT_PROTEIN_MAX_MIN = 480
     /** Food is spread over at least this many 5-min steps: carbs 30 min, fat and protein 1 hour. */
     private const val MIN_CARB_STEPS = 6
     private const val MIN_FAT_PROTEIN_STEPS = 12
@@ -67,8 +75,9 @@ object MealFoodForecast {
      */
     fun foodToCome(still: StillToCome, nowMs: Long, restU: Double, pbU: Double, carbRatio: Double, fatProteinShare: Double = 1.0): FoodToCome? {
         if (carbRatio <= 0.0) return null
+        val share = fatProteinShare.coerceIn(0.0, 1.0)
         var carbs = still.carbsG
-        var fatProtein = still.fatProteinG * fatProteinShare.coerceIn(0.0, 1.0)
+        var fatProtein = still.fatProteinG * share
         // Each waiting pre-bolus covers its own part first; what is left of it covers the other part.
         var restG = restU.coerceAtLeast(0.0) * carbRatio
         var pbG = pbU.coerceAtLeast(0.0) * carbRatio
@@ -88,7 +97,25 @@ object MealFoodForecast {
             fatProtein *= share
         }
         if (carbs + fatProtein < MIN_FOOD_G) return null
-        return FoodToCome(carbs, still.carbsUntilMs, fatProtein, still.windowEndMs, carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs)
+        return FoodToCome(carbs, still.carbsUntilMs, fatProtein, fatProteinUntil(still, share, fatProtein, nowMs), carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs)
+    }
+
+    /**
+     * Minutes a meal's fat and protein take to come in, from when they start: 3 h for one fat-protein unit (100 kcal),
+     * an hour more for each unit more, at most 8 h. Close to the usual fat and protein rule (Warsaw method), without its
+     * jumps.
+     */
+    fun fatProteinMinutes(fpu: Double): Int =
+        (FAT_PROTEIN_MIN_PER_FPU1 + FAT_PROTEIN_MIN_PER_FPU * (fpu - 1.0).coerceAtLeast(0.0)).coerceAtMost(FAT_PROTEIN_MAX_MIN.toDouble()).toInt()
+
+    /**
+     * When the [leftG] of fat and protein still to come are in, at the meal's steady rate: all its fat and protein over
+     * [StillToCome.fatProteinMin]. Without a rate (no duration known) the end of the meal's window, as before.
+     */
+    private fun fatProteinUntil(still: StillToCome, share: Double, leftG: Double, nowMs: Long): Long {
+        val perStepG = still.fatProteinMealG * share / (still.fatProteinMin / 5.0)
+        if (still.fatProteinMin <= 0 || perStepG <= 0.0 || leftG <= 0.0) return still.windowEndMs
+        return max(nowMs, still.fatProteinFromMs) + ceil(leftG / perStepG).toLong() * STEP_MS
     }
 
     /**
