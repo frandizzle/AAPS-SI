@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
@@ -118,7 +119,7 @@ fun FoodLogSection(
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { changing = e }) {
             Text(timeFmt.format(Date(e.timeMs)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
-                Text(e.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                Text(e.name, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Text(
                     "%.0f g carbs · %.0f g protein · %.0f g fat".format(e.carbsG, e.proteinG, e.fatG),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
