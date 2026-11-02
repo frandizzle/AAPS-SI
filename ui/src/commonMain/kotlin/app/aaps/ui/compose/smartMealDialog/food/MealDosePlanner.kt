@@ -54,6 +54,7 @@ data class MealPlanSettings(
  * @param capped     the plan was cut to the max pre-bolus or max total
  * @param pb1RestU   the part of pre-bolus 1 above the max pre-bolus, given 15 to 45 min in only if BG rises; 0 when none.
  *                   See `MealOverrideManager.PB1_REST_FROM_MIN`.
+ * @param cutForBalance pre-bolus 1 was cut because the insulin on board already covers part of the food, see [InsulinBalance]
  */
 data class MealPlan(
     val pb1U: Double,
@@ -65,7 +66,8 @@ data class MealPlan(
     val carbsU: Double,
     val fatProteinU: Double,
     val capped: Boolean,
-    val pb1RestU: Double = 0.0
+    val pb1RestU: Double = 0.0,
+    val cutForBalance: Boolean = false
 )
 
 /**
@@ -91,13 +93,13 @@ data class RunningMeal(
 )
 
 /**
- * BG, insulin and food of a running meal, for the dose now, like Loop's bolus calculator: the dose brings the BG
- * expected once all of it has acted to target. BG values in mg/dL; the ISF is the profile's, not a meal mode's.
+ * BG, insulin and food on board, for the dose now, like Loop's bolus calculator: the dose brings the BG expected
+ * once all of it has acted to target. BG values in mg/dL; the ISF is the profile's, not a meal mode's.
  *
  * @param trendMgdl        how far BG moves in the next 15 min if its trend goes on
  * @param iobU             insulin on board
  * @param waitingU         pre-boluses of the running meal still to come: insulin for its food that is not on board yet
- * @param foodStillToComeG the running meal's food that has not come in yet, as carb equivalent in grams
+ * @param foodStillToComeG food eaten before that has not come in yet, as carb equivalent in grams
  */
 data class InsulinBalance(
     val bgMgdl: Double,
@@ -147,7 +149,11 @@ object MealDosePlanner {
     /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
     const val FPU_HEAVY_MEAL = 3.0
 
-    fun plan(totals: MealTotals, settings: MealPlanSettings): MealPlan {
+    /**
+     * @param balance BG, insulin and earlier food now, to cut pre-bolus 1 when the insulin on board already covers part of
+     *                the food. It only cuts, never adds: a BG above target is left to the loop. Null: no cut.
+     */
+    fun plan(totals: MealTotals, settings: MealPlanSettings, balance: InsulinBalance? = null): MealPlan {
         val ratio = settings.carbRatio.takeIf { it > 0.0 } ?: return empty(totals)
         val carbsU = totals.carbsG * settings.factor / ratio
         val (fatProteinU, fp2, fp3) = fatProteinDoses(totals.fpu, ratio, settings)
@@ -172,6 +178,16 @@ object MealDosePlanner {
         // Checked before rounding: rounding each pre-bolus down to the pump step is not a cut.
         val capped = pb1 + rest + pb2 + pb3 + settings.bolusStep < wanted
 
+        // As a bolus calculator, for the carbs given now: the rest goes first, it would come later anyway.
+        // Pre-bolus 2 and 3 are not cut, they check BG themselves before they fire.
+        val balanceU = balance?.let { neededNow(it, totals.carbsG * settings.factor, ratio) }
+        val cutForBalance = balanceU != null && pb1 + rest > 0.0 && balanceU < pb1 + rest - settings.bolusStep / 2
+        if (cutForBalance) {
+            val keep = max(0.0, balanceU!!)
+            rest = min(rest, max(0.0, keep - pb1))
+            pb1 = min(pb1, keep)
+        }
+
         pb1 = floorToStep(pb1, settings.bolusStep)
         rest = floorToStep(rest, settings.bolusStep)
         pb2 = floorToStep(pb2, settings.bolusStep)
@@ -192,7 +208,8 @@ object MealDosePlanner {
             carbsU = carbsU,
             fatProteinU = fatProteinU,
             capped = capped,
-            pb1RestU = rest
+            pb1RestU = rest,
+            cutForBalance = cutForBalance
         )
     }
 

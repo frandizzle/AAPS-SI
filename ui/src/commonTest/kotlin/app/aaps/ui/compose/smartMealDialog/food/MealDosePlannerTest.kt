@@ -105,6 +105,51 @@ class MealDosePlannerTest {
         assertEquals(0.0, MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 9.0, maxTotalU = 15.0)).pb1RestU, 1e-9)
     }
 
+    /** BG 6.6 mmol, flat, at a target of 5.5 and a profile ISF of 1.8 mmol/U, nothing on board. */
+    private val start = InsulinBalance(
+        bgMgdl = 119.0, trendMgdl = 0.0, targetMgdl = 99.0, isfMgdl = 32.4, iobU = 0.0, waitingU = 0.0, foodStillToComeG = 0.0
+    )
+
+    @Test
+    fun `insulin on board for earlier food is not taken off pre-bolus 1`() {
+        // A 16 g snack with 1.3 U left from dinner: 0.62 - 1.3 + 3.2 = 2.52 U needed, so the 2.56 U plan is barely cut.
+        val alone = MealDosePlanner.plan(meal(16.0), settings, start.copy(iobU = 1.3))
+        assertEquals(2.5, alone.pb1U, 1e-9)
+        assertTrue(alone.cutForBalance)
+        // With 10 g of dinner still to come, that insulin is for it, and the plan stays.
+        val dinner = MealDosePlanner.plan(meal(16.0), settings, start.copy(iobU = 1.3, foodStillToComeG = 10.0))
+        assertEquals(2.55, dinner.pb1U, 1e-9)
+        assertFalse(dinner.cutForBalance)
+    }
+
+    @Test
+    fun `a meal soon after a correction gets less now`() {
+        // BG 7.8 falling 0.5 mmol in 15 min, 3 U on board: 0.99 - 3 + 8 = 5.99 U, less than the 6.4 U plan.
+        val p = MealDosePlanner.plan(meal(40.0), settings, start.copy(bgMgdl = 140.0, trendMgdl = -9.0, iobU = 3.0))
+        assertEquals(5.95, p.pb1U, 1e-9)
+        assertTrue(p.cutForBalance)
+        assertFalse(p.capped)
+        // Much more on board than the food needs: nothing now.
+        val none = MealDosePlanner.plan(meal(40.0), settings, start.copy(iobU = 10.0))
+        assertEquals(0.0, none.pb1U, 1e-9)
+    }
+
+    @Test
+    fun `a high BG does not add to pre-bolus 1`() {
+        val p = MealDosePlanner.plan(meal(40.0), settings, start.copy(bgMgdl = 250.0))
+        assertEquals(6.4, p.pb1U, 1e-9)
+        assertFalse(p.cutForBalance)
+    }
+
+    @Test
+    fun `the rest of pre-bolus 1 is cut first`() {
+        // 9 U wanted as 6 U now and 3 U later; 4 U on board and BG at target leave 11.25 - 4 = 7.25 U.
+        val p = MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 6.0, maxTotalU = 15.0), start.copy(bgMgdl = 99.0, iobU = 4.0))
+        assertEquals(6.0, p.pb1U, 1e-9)
+        assertEquals(1.25, p.pb1RestU, 1e-9)
+        assertTrue(p.cutForBalance)
+    }
+
     @Test
     fun `a rest is never more than one max pre-bolus, and a small one is left to the loop`() {
         // 20 U for pre-bolus 1 with a max of 6 U: 6 U now, 6 U later, the rest is cut.

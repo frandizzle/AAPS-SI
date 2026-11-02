@@ -76,6 +76,12 @@ interface MealEstimateCalibration {
      */
     fun foodStillToComeG(modeStartMs: Long): Double?
 
+    /**
+     * The food of all meals whose window is still open at [nowMs] that has not come in yet, as carb equivalent in
+     * grams. A new meal weighs the insulin on board against it, so insulin given for that food is not taken as spare.
+     */
+    fun openMealsStillToComeG(nowMs: Long): Double
+
     companion object {
 
         /** Minutes carbs of normal speed take to come in, from when they are eaten. */

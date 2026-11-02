@@ -204,6 +204,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
         return stillToCome(p).let { it.carbsG + it.fatProteinG }
     }
 
+    override fun openMealsStillToComeG(nowMs: Long): Double =
+        synchronized(this) { pending.filter { nowMs <= it.windowEndMs } }.sumOf { stillToCome(it).let { c -> c.carbsG + c.fatProteinG } }
+
     /**
      * The food still to come of the meals started before the one at [modeStartMs] whose window is still open at [nowMs]:
      * a snack, or a meal replaced by this one. Their food keeps coming in on its own timing, so the loop's forecast counts

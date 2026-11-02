@@ -732,7 +732,19 @@ class SmartMealDialogViewModel(
                 }
                 return@launch
             }
-            val plan = MealDosePlanner.plan(state.foodTotals, settings)
+            // Insulin on board is weighed against all food still to come: of earlier meals, and carbs entered outside
+            // this dialog, so insulin given for that food is not taken as spare. Without BG there is no cut.
+            val now = readNow()
+            val cobG = runCatching { iobCobCalculator.getCobInfo("SmartMeal").displayCob }.getOrNull() ?: 0.0
+            val balance = now.bgMgdl?.let { bg ->
+                profile?.let { p ->
+                    InsulinBalance(
+                        bgMgdl = bg, trendMgdl = now.trendMgdl, targetMgdl = p.getTargetMgdl(), isfMgdl = p.getIsfMgdl("SmartMeal"),
+                        iobU = now.iobU, waitingU = 0.0, foodStillToComeG = mealEstimateCalibration.openMealsStillToComeG(dateUtil.now()) + cobG
+                    )
+                }
+            }
+            val plan = MealDosePlanner.plan(state.foodTotals, settings, balance)
             // A saved meal that has learned when BG starts to rise says how long to wait itself.
             val gs = glucoseStatusProvider.glucoseStatusData
             val fastWait = if (own == null && plan.pb1U > 0.0) profile?.let { p ->
@@ -757,7 +769,7 @@ class SmartMealDialogViewModel(
     }
 
     /**
-     * BG and IOB right now, as limits for a dose given during a running meal.
+     * BG and IOB right now, to weigh pre-bolus 1 against, and as limits for a dose given during a running meal.
      *
      * @param bgMgdl    null when there is no BG reading
      * @param trendMgdl how far BG moves in the next 15 min if its trend goes on
