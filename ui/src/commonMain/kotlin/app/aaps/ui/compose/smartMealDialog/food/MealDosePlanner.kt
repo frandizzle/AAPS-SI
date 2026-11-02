@@ -169,6 +169,8 @@ object MealDosePlanner {
         rest = min(rest, left).also { left -= it }
         pb2 = min(pb2, left).also { left -= it }
         pb3 = min(pb3, left)
+        // Checked before rounding: rounding each pre-bolus down to the pump step is not a cut.
+        val capped = pb1 + rest + pb2 + pb3 + settings.bolusStep < wanted
 
         pb1 = floorToStep(pb1, settings.bolusStep)
         rest = floorToStep(rest, settings.bolusStep)
@@ -189,7 +191,7 @@ object MealDosePlanner {
             durationMin = durationFor(totals.fpu),
             carbsU = carbsU,
             fatProteinU = fatProteinU,
-            capped = pb1 + rest + pb2 + pb3 + settings.bolusStep < wanted,
+            capped = capped,
             pb1RestU = rest
         )
     }

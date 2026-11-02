@@ -83,6 +83,17 @@ class MealDosePlannerTest {
     }
 
     @Test
+    fun `rounding each pre-bolus down to the pump step is not a cut`() {
+        // 23 g carbs: 3.68 U, given as 3.65. 3.34 FPU at 70 %, half each: 2.338 U, given as 2.30 twice.
+        // Together 0.1 U is lost to rounding, more than one step, but no limit cut anything.
+        val p = MealDosePlanner.plan(meal(23.0, protein = 52.0, fat = 14.0), settings.copy(pb3SharePct = 50, maxPreBolusU = 6.0, maxTotalU = 15.0))
+        assertEquals(3.65, p.pb1U, 1e-9)
+        assertEquals(2.30, p.pb2U, 1e-9)
+        assertEquals(2.30, p.pb3U, 1e-9)
+        assertFalse(p.capped)
+    }
+
+    @Test
     fun `pre-bolus 1 above the max pre-bolus is given later as its rest`() {
         // 56.25 g at 5 g/U, 80 % = 9 U; the max pre-bolus is 6 U.
         val p = MealDosePlanner.plan(meal(56.25), settings.copy(maxPreBolusU = 6.0, maxTotalU = 15.0))
