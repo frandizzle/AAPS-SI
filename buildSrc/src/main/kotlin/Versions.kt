@@ -5,7 +5,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 object Versions {
 
     // On change edit aaps-ci.yml
-    const val appVersion = "4.0.0"
+    // "-si": this fork, not the official release. The "-" also lets it build with uncommitted changes.
+    const val appVersion = "4.0.0-si"
     const val versionCode = 1500
 
     const val compileSdk = 37
