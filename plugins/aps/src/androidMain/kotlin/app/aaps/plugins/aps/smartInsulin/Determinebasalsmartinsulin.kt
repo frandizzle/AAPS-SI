@@ -127,7 +127,14 @@ class DetermineBasalSmartInsulin @Inject constructor(
         foodFadeMins:             Int = DEFAULT_FOOD_FADE_MINS,
         /** The running meal's food still to come, from its estimate; null when there is none. See [MealFoodForecast]. */
         foodToCome:               FoodToCome? = null,
-        earlierFood:              List<FoodToCome> = emptyList()
+        earlierFood:              List<FoodToCome> = emptyList(),
+        /**
+         * The food of the meals with a food list that has not come in yet, in grams, also what waiting pre-boluses
+         * cover; null when the running meal has no food list. It limits how much more rise the forecast expects.
+         */
+        foodListG:                Double? = null,
+        /** Grams per unit, to turn [foodListG] into BG. */
+        carbRatio:                Double = 0.0
     ): APSResult {
 
         val result = apsResultProvider()
@@ -219,7 +226,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // two after the raw CGM has slowed. Its delta is never above the smoothed one, so this can
         // only lower ci - and with it the predicted rise and the insulin asked for.
         val turnedDelta = riseTurn?.takeIf { it.level != RiseTurnGuard.Level.NONE }?.deltaMgdl ?: glucoseStatus.delta
-        val ci  = (min(glucoseStatus.shortAvgDelta, min(glucoseStatus.delta, turnedDelta)) - bgi).coerceAtMost(CI_MAX_MGDL_PER_5MIN)
+        val ciSeen = (min(glucoseStatus.shortAvgDelta, min(glucoseStatus.delta, turnedDelta)) - bgi).coerceAtMost(CI_MAX_MGDL_PER_5MIN)
 
         // Every insulinReq-style division below uses this rather than dosingIsfMgdl directly.
         // dosingIsfMgdl is profileISF scaled by learned multipliers and aggressiveness; if any of
@@ -232,8 +239,18 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // says it stops within the hour while the insulin keeps working. The forecast then shows a
         // low that does not come, and the low guard holds insulin back at high BG. The user sets
         // the fade per meal; Fasting and a fall keep 60 min.
-        val fadeMins = if (mealMode != MealMode.FASTING && ci > 0.0)
+        val fadeMins = if (mealMode != MealMode.FASTING && ciSeen > 0.0)
             foodFadeMins.coerceIn(DEFAULT_FOOD_FADE_MINS, MAX_FOOD_FADE_MINS) else DEFAULT_FOOD_FADE_MINS
+
+        // As in Loop: with a food list, the rise BG shows is that food coming in, so it cannot go on for more than
+        // the food still to come can add. A fast food (milk, juice) gives a steep rise for a short time; carrying
+        // that steepness on for the whole fade asked for insulin for food that was never eaten, and once the food
+        // was in, BG fell with all that insulin on board. [FOOD_RISE_SLACK] leaves room for food counted a little
+        // low. Only a rise is limited; a fall is never touched.
+        val riseCapMgdl = foodListG?.takeIf { carbRatio > 0.0 && mealMode != MealMode.FASTING }
+            ?.let { it.coerceAtLeast(0.0) * FOOD_RISE_SLACK * dosingIsfMgdl / carbRatio }
+        val riseAheadMgdl = ciSeen.coerceAtLeast(0.0) * fadeSum(fadeMins, bgiPerTick.size)
+        val ci = if (riseCapMgdl != null && riseAheadMgdl > riseCapMgdl) ciSeen * riseCapMgdl / riseAheadMgdl else ciSeen
         val predictedBg = predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins)
 
         // ── Food still to come ────────────────────────────────────────────────
@@ -250,7 +267,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // about two thirds of its work after 2 hours, and cutting it off there gave insulin again for food the
         // pre-bolus already covers. Under target, or for lowering basal, all the food counts.
         val bgNotFalling = delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-        val ciAheadMgdl = if (ci > 0.0) bgiPerTick.indices.sumOf { i -> ci * (1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0))) } else 0.0
+        val ciAheadMgdl = if (ci > 0.0) ci * fadeSum(fadeMins, bgiPerTick.size) else 0.0
         // The earlier meals' food first: it came first, so the rise BG shows is more likely theirs.
         val foods = earlierFood + listOfNotNull(foodToCome)
         val foodSteps = foods.takeIf { it.isNotEmpty() && mealMode != MealMode.FASTING && bgNotFalling }
@@ -347,6 +364,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (mealMode != MealMode.FASTING) {
             val food = if (isMmol) String.format(Locale.US, "%.2f", ci / MMOL_TO_MGDL) else String.format(Locale.US, "%.1f", ci)
             sb.append(" | food=$food/5m fade=${fadeMins}m")
+            if (ci < ciSeen) sb.append(" (rise ${fmt(riseAheadMgdl, isMmol)}->${fmt(riseCapMgdl ?: 0.0, isMmol)}: food left)")
         }
         // The meal's food still to come, and whether the forecast used it.
         foodToCome?.let { f ->
@@ -630,6 +648,10 @@ class DetermineBasalSmartInsulin @Inject constructor(
     private fun postPeakMin(curve: List<Double>, peakTicks: Int, currentBg: Double): Double =
         (if (curve.size > peakTicks) curve.drop(peakTicks) else curve).minOrNull() ?: currentBg
 
+    /** How many steps of the rise now the forecast adds up, over [steps] steps, as it fades to zero over [fadeMins]. */
+    private fun fadeSum(fadeMins: Int, steps: Int): Double =
+        (0 until steps).sumOf { i -> 1.0 - minOf(1.0, (i + 1) / (fadeMins / 5.0)) }
+
     /**
      * Stock oref IOBpredBGs: BG now, plus insulin per step, plus ci fading to zero over 60 minutes.
      *
@@ -663,6 +685,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val MAX_FOOD_FADE_MINS                  = 180
         /** In a meal with food still to come, extra insulin weighs the food and insulin of this many minutes ahead. */
         const val DOSING_AHEAD_MIN                    = 120
+        /** The rise the forecast expects may be at most this many times what the food list still has to come. */
+        const val FOOD_RISE_SLACK                     = 1.5
 
     }
 }

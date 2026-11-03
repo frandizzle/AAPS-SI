@@ -180,7 +180,8 @@ class DetermineBasalSmartInsulinTest {
         riseTurn:          RiseTurnGuard.Result? = null,
         mealMode:          MealMode             = MealMode.FASTING,
         foodFadeMins:      Int                  = 60,
-        foodToCome:        FoodToCome?          = null
+        foodToCome:        FoodToCome?          = null,
+        foodListG:         Double?              = null
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -217,7 +218,9 @@ class DetermineBasalSmartInsulinTest {
             uamSmbFraction        = uamSmbFraction,
             riseTurn              = riseTurn,
             foodFadeMins          = foodFadeMins,
-            foodToCome            = foodToCome
+            foodToCome            = foodToCome,
+            foodListG             = foodListG,
+            carbRatio             = 5.0
         )
         return fakeResult
     }
@@ -582,6 +585,24 @@ class DetermineBasalSmartInsulinTest {
         // target, so next to nothing extra.
         val forFar = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = far)
         assertTrue(forFar.smb <= 0.1, forFar.reason)
+    }
+
+    @Test fun `a steep rise from a small fast food is not carried on past the food left`() {
+        // Morning coffee: BG 7.5 rising 0.8 mmol per 5 min, the milk nearly all in. Carried on over the hour, that rise
+        // is far more than 4 g of milk can still add (4 g x 10 mg/dL per g x 1.5 = 60 mg/dL).
+        midDinner(bg = 135.0, delta = 14.4)
+        val iob = flatIobArray(iob = 1.5, activity = 0.01)
+        val noList = invoke(iobArray = iob, mealMode = MealMode.BREAKFAST, maxSmbU = 4.0)
+        val noListSmb = noList.smb
+        assertTrue(noListSmb > 0.0, noList.reason)
+        val coffee = invoke(iobArray = iob, mealMode = MealMode.BREAKFAST, maxSmbU = 4.0, foodListG = 4.0)
+        val coffeeSmb = coffee.smb
+        assertTrue(coffee.reason.contains("food left"), coffee.reason)
+        assertTrue(coffeeSmb < noListSmb, "without a food list $noListSmb, with 4 g left $coffeeSmb")
+        // A big meal still to come does not limit the same rise.
+        val meal = invoke(iobArray = iob, mealMode = MealMode.BREAKFAST, maxSmbU = 4.0, foodListG = 60.0)
+        assertFalse(meal.reason.contains("food left"), meal.reason)
+        assertEquals(noListSmb, meal.smb, 1e-9)
     }
 
     @Test fun `a heavy steak dinner is dosed for the next 2 hours of it now, the rest later`() {

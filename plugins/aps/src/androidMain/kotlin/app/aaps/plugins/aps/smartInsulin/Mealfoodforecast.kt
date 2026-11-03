@@ -33,7 +33,9 @@ data class FoodToCome(
  * instead of predicting a low from the insulin on board alone. See `DetermineBasalSmartInsulin`.
  *
  * The carbs are counted as coming in evenly until [FoodToCome.carbsUntilMs] (by default [CARBS_MIN] after they were
- * eaten, sooner for fast food and later for slow food). The fat and protein come in at one steady rate, the meal's
+ * eaten, sooner for fast food and later for slow food). Carbs that come in slower than that keep coming at the meal's
+ * own rate, so the time is stretched, as Loop does, up to [CARBS_STRETCH] times the meal's time: the loop then doses
+ * for them as they come instead of expecting all that is left at once. The fat and protein come in at one steady rate, the meal's
  * whole fat and protein over [fatProteinMinutes]: they raise BG slowly and evenly, so BG holds a little higher for
  * hours rather than spiking. Fat and protein that come in later than expected stay at that rate and finish later;
  * they are never squeezed into the time left. Fat and protein only start to raise BG
@@ -46,6 +48,8 @@ object MealFoodForecast {
 
     /** Minutes carbs of normal speed take to come in, from when they are eaten. A meal's own speed may change it. */
     const val CARBS_MIN = MealEstimateCalibration.DEFAULT_CARBS_MIN
+    /** Carbs that come in slower than expected may take at most this many times the meal's carb time, as in Loop. */
+    const val CARBS_STRETCH = 1.5
     /** Minutes after they are eaten that fat and protein start to raise BG. */
     const val FAT_PROTEIN_START_MIN = 45
     /** The food still to come may be at most this many times the meal's share of the time left. */
@@ -97,7 +101,19 @@ object MealFoodForecast {
             fatProtein *= share
         }
         if (carbs + fatProtein < MIN_FOOD_G) return null
-        return FoodToCome(carbs, still.carbsUntilMs, fatProtein, fatProteinUntil(still, share, fatProtein, nowMs), carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs)
+        return FoodToCome(carbs, carbsUntil(still, nowMs), fatProtein, fatProteinUntil(still, share, fatProtein, nowMs), carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs)
+    }
+
+    /**
+     * When the carbs still to come are in: at the meal's own rate (all its carbs over [StillToCome.carbsMin]), but not
+     * sooner than planned, and not later than [CARBS_STRETCH] times the meal's carb time. Without a rate, as planned.
+     */
+    internal fun carbsUntil(still: StillToCome, nowMs: Long): Long {
+        if (still.carbsMin <= 0 || still.carbsMealG <= 0.0 || still.carbsG <= 0.0) return still.carbsUntilMs
+        val carbMs = still.carbsMin * 60_000L
+        val atRate = nowMs + (still.carbsG / still.carbsMealG * carbMs).toLong()
+        val latest = still.carbsUntilMs + ((CARBS_STRETCH - 1.0) * carbMs).toLong()
+        return min(latest, max(still.carbsUntilMs, atRate))
     }
 
     /**

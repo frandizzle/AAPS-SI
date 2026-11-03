@@ -2253,6 +2253,13 @@ open class SmartInsulinPlugin @Inject constructor(
                 )
             }
         lastEarlierFoodG = earlierFood.sumOf { it.totalG }
+        // The meals with a food list: their food still to come limits the rise the forecast expects, also what the
+        // waiting pre-boluses cover (that food still raises BG). A meal whose food is nearly all in counts as 0, so a
+        // rise then is not carried on. Null without a food list: the UAM modes and Fasting are not limited.
+        val hasFoodList = earlierFood.isNotEmpty() || mealOverrideManager.activeState
+            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
+            ?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs) != null } == true
+        val foodListG = if (hasFoodList) (earlierFood + listOfNotNull(foodToCome)).sumOf { it.totalG + it.coveredG } else null
 
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
         // null with nothing said about it — every other early return sets a reason the user can
@@ -2303,7 +2310,9 @@ open class SmartInsulinPlugin @Inject constructor(
             riseTurn                 = riseTurnNow(glucoseStatus.delta),
             foodFadeMins             = foodFadeMins(mealMode),
             foodToCome               = foodToCome,
-            earlierFood              = earlierFood
+            earlierFood              = earlierFood,
+            foodListG                = foodListG,
+            carbRatio                = profile.getIc()
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)

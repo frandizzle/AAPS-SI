@@ -98,6 +98,21 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `carbs that come in slower keep the meal's rate, up to one and a half times its time`() {
+        // 50 g over 2 hours: 25 g an hour.
+        val timed = dinner.copy(carbsMealG = 50.0, carbsMin = 120)
+        // On time: half of it in after an hour, the rest by the 2 hours.
+        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(timed.copy(carbsG = 25.0), T0 + HOUR))
+        // None of it in after an hour: the 50 g take 2 hours more at that rate, so they are in by 3 hours, not 2.
+        val late = MealFoodForecast.foodToCome(timed, T0 + HOUR, 0.0, 0.0, 5.0)!!
+        assertEquals(T0 + 3 * HOUR, late.carbsUntilMs)
+        // Never later than 3 hours: 30 g left at 2.5 hours are in by then.
+        assertEquals(T0 + 3 * HOUR, MealFoodForecast.carbsUntil(timed.copy(carbsG = 30.0), T0 + 2 * HOUR + 30 * MIN))
+        // Without the meal's carb time, as planned.
+        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(dinner, T0 + HOUR))
+    }
+
+    @Test
     fun `late carbs are still spread over at least half an hour`() {
         val f = MealFoodForecast.foodToCome(dinner, T0 + 2 * HOUR + 30 * MIN, 0.0, 0.0, 5.0)!!
         val steps = MealFoodForecast.steps(f, T0 + 2 * HOUR + 30 * MIN, 50.0, 0.0, 48)
