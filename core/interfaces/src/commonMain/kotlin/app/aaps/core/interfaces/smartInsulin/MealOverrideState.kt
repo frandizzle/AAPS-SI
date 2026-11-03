@@ -104,6 +104,18 @@ data class MealOverrideState(
             return (floor(left / piecesLeft / step + ROUNDING_U) * step).coerceAtLeast(step).coerceAtMost(left)
         }
 
+    /**
+     * The insulin of the waiting pre-boluses that can still be given with [iobU] on board: a pre-bolus never takes IOB
+     * past [maxIobU], so what does not fit never comes. The rest of pre-bolus 1 comes first, then pre-bolus 2 and 3.
+     * The loop's forecast takes off only the food this insulin covers, and gives the insulin for the rest itself.
+     */
+    fun waitingThatFits(iobU: Double, maxIobU: Double): WaitingInsulin {
+        val roomU = (maxIobU - iobU).coerceAtLeast(0.0)
+        val restU = (if (preBolus1RestPending) preBolus1RestU else 0.0).coerceAtMost(roomU)
+        val preBolusU = (preBolus2WaitingU + preBolus3WaitingU).coerceAtMost(roomU - restU)
+        return WaitingInsulin(restU, preBolusU)
+    }
+
     /** Wall-clock time PB2 should fire */
     val preBolus2FireAtMs: Long
         get() = triggerTimeMs + preBolus2DelayMs
@@ -136,3 +148,6 @@ data class MealOverrideState(
         private const val ROUNDING_U = 1e-9
     }
 }
+
+/** Insulin of waiting pre-boluses, see [MealOverrideState.waitingThatFits]: [restU] of pre-bolus 1, [preBolusU] of pre-bolus 2 and 3. */
+data class WaitingInsulin(val restU: Double, val preBolusU: Double)

@@ -153,6 +153,12 @@ interface MealOverrideManager {
     /** Why a meal mode was made longer, see [extendWhileFoodComes]. */
     enum class Extension { BG_RISING, FOOD_LEFT }
 
+    /**
+     * Insulin a pre-bolus started to give in the last [onLoopCycle], 0 when none fired. The bolus is not in IOB yet, so
+     * the loop gives no SMB and no temp above basal in that same cycle: it would dose as if the pre-bolus were not there.
+     */
+    val preBolusThisCycleU: Double
+
     /** Cancels the rest of pre-bolus 1 if it still waits. */
     fun cancelPreBolus1Rest()
 

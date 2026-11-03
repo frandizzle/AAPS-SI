@@ -134,7 +134,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
          */
         foodListG:                Double? = null,
         /** Grams per unit, to turn [foodListG] into BG. */
-        carbRatio:                Double = 0.0
+        carbRatio:                Double = 0.0,
+        /**
+         * A pre-bolus started to give this much insulin this cycle. It is not in [iobArray] yet, so this cycle gives no SMB
+         * and no temp above basal: it would dose as if the pre-bolus were not there. Lowering basal still works.
+         */
+        preBolusThisCycleU:       Double = 0.0
     ): APSResult {
 
         val result = apsResultProvider()
@@ -405,6 +410,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
         if (sessionStatusText.isNotEmpty()) sb.append(" | $sessionStatusText")
         if (afterActivityText.isNotEmpty()) sb.append(" | $afterActivityText")
+        if (preBolusThisCycleU > 0.0) sb.append(" | pre-bolus ${"%.2f".format(Locale.US, preBolusThisCycleU)}U this cycle: no extra")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
         if (cgmWarmupReason.isNotEmpty()) sb.append(" | $cgmWarmupReason")
@@ -478,7 +484,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // insulinReq is based on predictedMin gap to target — self-limits as
                 // prediction curve drops. No iobSufficient gate; existing IOB is already
                 // baked into predictedMin so there's no double-dosing risk.
+                val preBolusNow = preBolusThisCycleU > 0.0
                 val smbAllowed = microBolusAllowed &&
+                    !preBolusNow &&
                     !highTempTargetActive &&
                     bgClearsGuard &&
                     insulinReq > 0.0
@@ -500,7 +508,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 // SMBs but still needs elevated TBR to bring predMin to the temp target.
                 // insulinReq is already computed against targetBg (which IS the temp target
                 // when active), so TBR naturally aims for 6.5 not 5.5.
-                val tbrCorrectionU  = if (insulinReq > 0.0) insulinReq * aggressiveness else 0.0
+                val tbrCorrectionU  = if (insulinReq > 0.0 && !preBolusNow) insulinReq * aggressiveness else 0.0
                 val remainingU      = (tbrCorrectionU - constrainedSmb).coerceAtLeast(0.0)
 
                 // Max IOB is a red line for EXTRA insulin: this cycle's SMB plus the above-basal part

@@ -253,20 +253,25 @@ class MealOverrideManagerImpl @Inject constructor(
 
     /**
      * Why the rest of pre-bolus 1 does not fire yet. Like pre-bolus 2, but BG need not be above target: it
-     * must be rising, which is the sign that the food is coming in.
+     * must be rising, which is the sign that the food is coming in. When not all of [restU] fits under max IOB it gives
+     * [doseU], the part that does, see [restDoseU]; only a part too small to be worth a bolus waits.
      */
-    private fun restBlockReasons(bgMgdl: Double, iob: Double, maxIob: Double, delta: Double, shortAvgDelta: Double, doseU: Double): List<String> {
+    private fun restBlockReasons(bgMgdl: Double, iob: Double, maxIob: Double, delta: Double, shortAvgDelta: Double, restU: Double, doseU: Double): List<String> {
         val reasons = mutableListOf<String>()
         if (bgMgdl < MealOverrideManager.MIN_BG_FOR_PB2_MGDL) reasons += "BG too low"
         if (delta < MealOverrideManager.PB1_REST_RISE_MGDL || shortAvgDelta <= 0.0) reasons += "BG not rising yet"
         if (iob >= maxIob * MealOverrideManager.MAX_IOB_HEADROOM_RATIO) reasons += "IOB too high"
-        if (iob + doseU > maxIob) reasons += "IOB would go past max"
+        if (doseU < minOf(restU, MealOverrideManager.PB1_REST_MIN_U) - ROUNDING_U) reasons += "IOB would go past max"
         if (loopRestraining) reasons += "Loop restraining insulin"
         return reasons
     }
 
     // Set from onLoopCycle each cycle — see the loopRestraining parameter on MealOverrideManager.
     @Volatile private var loopRestraining = false
+
+    // Set from onLoopCycle each cycle: the pre-bolus it started to give, see MealOverrideManager.preBolusThisCycleU.
+    @Volatile override var preBolusThisCycleU = 0.0
+        private set
 
     // Cache last known glucose values so statusText can reflect safety state between loop cycles
     @Volatile private var lastBgMgdl        = 0.0
@@ -336,7 +341,7 @@ class MealOverrideManagerImpl @Inject constructor(
             fired != null && fired > 0L -> "PB1 rest: delivered ${(now - fired) / 60_000}min ago"
             now < fromMs -> "$rest: checks BG in ${(fromMs - now + 59_999) / 60_000}min"
             else -> {
-                val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta, s.preBolus1RestU)
+                val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta, s.preBolus1RestU, restDoseU(s.preBolus1RestU, lastIob, lastMaxIob))
                 val leftMin = (s.triggerTimeMs + MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L - now).coerceAtLeast(0L) / 60_000
                 if (reasons.isEmpty()) "$rest: waiting for next loop cycle"
                 else "$rest waiting: ${reasons.joinToString(", ")} (${leftMin}min left)"
@@ -671,6 +676,7 @@ class MealOverrideManagerImpl @Inject constructor(
         loopRestraining: Boolean
     ) {
         this.loopRestraining = loopRestraining
+        preBolusThisCycleU = 0.0
         val s = _state ?: return
         // The rest of pre-bolus 1 comes first. One bolus per cycle, so the loop sees it before anything else fires.
         if (s.preBolus1RestPending && processPreBolus1Rest(glucoseStatus, iobArray, maxIobU)) return
@@ -718,24 +724,27 @@ class MealOverrideManagerImpl @Inject constructor(
             aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest: BG did not rise in time, ${s.preBolus1RestU}U not given")
             return false
         }
-        val reasons = restBlockReasons(glucoseStatus.glucose, currentIob, maxIobU, glucoseStatus.delta, glucoseStatus.shortAvgDelta, s.preBolus1RestU)
+        val doseU = restDoseU(s.preBolus1RestU, currentIob, maxIobU)
+        val reasons = restBlockReasons(glucoseStatus.glucose, currentIob, maxIobU, glucoseStatus.delta, glucoseStatus.shortAvgDelta, s.preBolus1RestU, doseU)
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest BLOCKED: ${reasons.joinToString(", ")}")
             return false
         }
 
         aapsLogger.debug(LTag.APS,
-                         "SmartInsulin PB1 rest FIRING: ${s.preBolus1RestU}U bg=${String.format("%.1f", glucoseStatus.glucose / 18.0)} " +
+                         "SmartInsulin PB1 rest FIRING: ${doseU}U of ${s.preBolus1RestU}U bg=${String.format("%.1f", glucoseStatus.glucose / 18.0)} " +
                              "delta=${String.format("%.1f", glucoseStatus.delta)} iob=${String.format("%.2f", currentIob)}U")
         val bolusInfo = DetailedBolusInfo().apply {
-            insulin   = s.preBolus1RestU
+            insulin   = doseU
             notes     = "SmartMeal ${s.mode.label} pre-bolus 1 rest (BG rising)"
             timestamp = dateUtil.now()
         }
-        // Marked as fired before delivery, as pre-bolus 2 is, so a quick next cycle cannot fire it twice.
-        val firedState = s.copy(preBolus1RestFiredMs = now)
+        // Marked as fired before delivery, as pre-bolus 2 is, so a quick next cycle cannot fire it twice. Only what was
+        // given stays as the rest: the part that did not fit under max IOB is left to the loop, which now sees its food.
+        val firedState = s.copy(preBolus1RestU = doseU, preBolus1RestFiredMs = now)
         _state = firedState
         persistState()
+        preBolusThisCycleU = doseU
         appScope.launch {
             val result = commandQueue.bolus(bolusInfo)
             if (!result.success) {
@@ -751,7 +760,7 @@ class MealOverrideManagerImpl @Inject constructor(
                     AlarmSound.BOLUS_ERROR
                 )
             } else {
-                aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest delivered OK: ${s.preBolus1RestU}U")
+                aapsLogger.debug(LTag.APS, "SmartInsulin PB1 rest delivered OK: ${doseU}U")
             }
         }
         return true
@@ -844,6 +853,7 @@ class MealOverrideManagerImpl @Inject constructor(
             else s.copy(preBolus2FiredMs = now)
         _state = firedState
         persistState()
+        preBolusThisCycleU = doseU
 
         // Launched rather than awaited: 4.0's bolus is suspend, and awaiting it here would hold the
         // loop cycle for the whole delivery. The old callback didn't, and neither does this.
@@ -975,6 +985,7 @@ class MealOverrideManagerImpl @Inject constructor(
         val firedState = s.copy(preBolus3FiredMs = now)
         _state = firedState
         persistState()
+        preBolusThisCycleU = s.preBolus3U
 
         // Launched rather than awaited: 4.0's bolus is suspend, and awaiting it here would hold the
         // loop cycle for the whole delivery. The old callback didn't, and neither does this.
@@ -1005,6 +1016,16 @@ class MealOverrideManagerImpl @Inject constructor(
         const val STOPPED_MIN_DIFF_U = 0.05
         /** Doubles of insulin closer than this are the same amount. */
         private const val ROUNDING_U = 1e-6
+
+        /**
+         * The rest of pre-bolus 1 to give with [iobU] on board: all of [restU] when it fits under [maxIobU], else the part
+         * that does, rounded down to a bolus step. The rest of it is left to the loop.
+         */
+        fun restDoseU(restU: Double, iobU: Double, maxIobU: Double): Double {
+            val step = MealOverrideManager.SPREAD_STEP_U
+            val roomU = floor((maxIobU - iobU).coerceAtLeast(0.0) / step + ROUNDING_U) * step
+            return minOf(restU, roomU)
+        }
         /** Pre-bolus 1 is given right after the mode starts: its record is looked for this long after the start. */
         const val PB1_RECORD_WINDOW_MS = 10 * 60_000L
         /** And this long before it, for a clock a little out between the mode start and the bolus record. */

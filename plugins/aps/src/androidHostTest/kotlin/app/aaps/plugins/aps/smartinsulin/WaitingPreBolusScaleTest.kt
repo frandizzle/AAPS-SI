@@ -2,6 +2,7 @@ package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.queue.CommandQueue
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.interfaces.smartInsulin.WaitingInsulin
 import app.aaps.core.keys.StringNonKey
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import kotlinx.coroutines.CoroutineScope
@@ -119,6 +120,19 @@ class WaitingPreBolusScaleTest {
         }
         m.scaleWaitingPreBoluses(carbsFactor = 1.0, fatProteinFactor = 0.3, maxPreBolusU = 6.0)
         assertFalse(m.activeState!!.preBolus2Pending)
+    }
+
+    @Test
+    fun `the forecast counts only the waiting pre-boluses that fit under max IOB`() {
+        val s = dinner().activeState!!
+        // Room for all: the rest, then pre-bolus 2 and 3.
+        assertEquals(WaitingInsulin(restU = 6.0, preBolusU = 4.0), s.waitingThatFits(iobU = 2.0, maxIobU = 12.0))
+        // As at a dinner: 8.32 U on board, max 12. Only 3.68 U can still come, all of it the rest.
+        val tight = s.waitingThatFits(iobU = 8.32, maxIobU = 12.0)
+        assertEquals(3.68, tight.restU, 1e-9)
+        assertEquals(0.0, tight.preBolusU, 1e-9)
+        // At max IOB nothing waiting can come, so none of its food is taken off.
+        assertEquals(WaitingInsulin(0.0, 0.0), s.waitingThatFits(iobU = 12.5, maxIobU = 12.0))
     }
 
     @Test

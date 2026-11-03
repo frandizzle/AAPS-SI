@@ -2252,16 +2252,20 @@ open class SmartInsulinPlugin @Inject constructor(
         val fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
         val mealWithList = mealOverrideManager.activeState?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
         val runningStill = mealWithList?.let { mealEstimateCalibration.stillToCome(it.triggerTimeMs, now) }
-        val foodToCome = mealWithList?.let { s ->
-            runningStill?.let { still ->
-                MealFoodForecast.foodToCome(
-                    still, now,
-                    restU = if (s.preBolus1RestPending) s.preBolus1RestU else 0.0,
-                    pbU = s.preBolus2WaitingU + s.preBolus3WaitingU,
-                    carbRatio = profile.getIc(),
-                    fatProteinShare = fatProteinShare
-                )
-            }
+        // Only the waiting pre-boluses that can still be given under max IOB are taken off: one that does not fit never
+        // comes, and counting its food as covered made the loop suspend through a rise, waiting for insulin that could not
+        // come. A pre-bolus that fired this cycle is not in IOB yet, so it is added.
+        val waiting = mealWithList?.waitingThatFits(
+            (iobArray.firstOrNull()?.iob ?: 0.0) + mealOverrideManager.preBolusThisCycleU, constraintsChecker.getMaxIOBAllowed().value()
+        )
+        val foodToCome = runningStill?.let { still ->
+            MealFoodForecast.foodToCome(
+                still, now,
+                restU = waiting?.restU ?: 0.0,
+                pbU = waiting?.preBolusU ?: 0.0,
+                carbRatio = profile.getIc(),
+                fatProteinShare = fatProteinShare
+            )
         }
         lastFoodToCome = foodToCome
         // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
@@ -2330,7 +2334,8 @@ open class SmartInsulinPlugin @Inject constructor(
             foodToCome               = foodToCome,
             earlierFood              = earlierFood,
             foodListG                = foodListG,
-            carbRatio                = profile.getIc()
+            carbRatio                = profile.getIc(),
+            preBolusThisCycleU       = mealOverrideManager.preBolusThisCycleU
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)

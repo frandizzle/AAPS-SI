@@ -181,7 +181,8 @@ class DetermineBasalSmartInsulinTest {
         mealMode:          MealMode             = MealMode.FASTING,
         foodFadeMins:      Int                  = 60,
         foodToCome:        FoodToCome?          = null,
-        foodListG:         Double?              = null
+        foodListG:         Double?              = null,
+        preBolusThisCycleU: Double              = 0.0
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -220,7 +221,8 @@ class DetermineBasalSmartInsulinTest {
             foodFadeMins          = foodFadeMins,
             foodToCome            = foodToCome,
             foodListG             = foodListG,
-            carbRatio             = 5.0
+            carbRatio             = 5.0,
+            preBolusThisCycleU    = preBolusThisCycleU
         )
         return fakeResult
     }
@@ -347,6 +349,19 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(r.smb > 0.0, "SMB should be > 0 when above target, got ${r.smb}")
         assertTrue(r.smb < 0.8, "SMB should be < full correction, got ${r.smb}")
         assertTrue(r.reason.contains("NORMAL"))
+    }
+
+    @Test fun `a cycle in which a pre-bolus went in gives no SMB and nothing above basal`() {
+        // High and above target: without the pre-bolus this gets an SMB and a high temp.
+        whenever(glucoseStatus.glucose).thenReturn(180.0)
+        whenever(glucoseStatus.shortAvgDelta).thenReturn(0.5)
+        val without = invoke(iobArray = flatIobArray(0.0, 0.0))
+        assertTrue(extraU(without) > 0.0, "should give extra without a pre-bolus, got ${extraU(without)}")
+        // The pre-bolus is not in IOB yet, so the loop must not dose as if it were not there.
+        val r = invoke(iobArray = flatIobArray(0.0, 0.0), preBolusThisCycleU = 3.0)
+        assertEquals(0.0, r.smb, 0.001)
+        assertTrue(r.rate <= 1.0 + 1e-9, "rate should be at most basal, got ${r.rate}")
+        assertTrue(r.reason.contains("pre-bolus 3.00U this cycle: no extra"))
     }
 
     @Test fun `NORMAL zone blocks SMB when microBolusAllowed is false`() {
