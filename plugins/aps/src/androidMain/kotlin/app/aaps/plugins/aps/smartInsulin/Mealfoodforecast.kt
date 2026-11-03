@@ -106,6 +106,12 @@ object MealFoodForecast {
     }
 
     /**
+     * All of [still]'s food still to come, in grams of carb equivalent, at the share of the fat and protein that needs
+     * insulin, as [foodToCome] counts it, but before anything is taken off for waiting pre-boluses or the fade.
+     */
+    fun foodLeftG(still: StillToCome, fatProteinShare: Double): Double = still.carbsG + still.fatProteinG * fatProteinShare.coerceIn(0.0, 1.0)
+
+    /**
      * When a part of the carbs still to come is in: at its own rate (all of it over [CarbsPart.minutes]), but not sooner
      * than planned, and not later than [CARBS_STRETCH] times its time. Without a rate, as planned.
      */

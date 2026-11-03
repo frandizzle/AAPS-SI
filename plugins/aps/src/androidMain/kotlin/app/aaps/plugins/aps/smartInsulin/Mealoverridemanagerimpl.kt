@@ -26,6 +26,7 @@ import org.json.JSONObject
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
+import kotlin.math.abs
 
 @SingleIn(AppScope::class)
 class MealOverrideManagerImpl @Inject constructor(
@@ -79,6 +80,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus2PiecesGiven", s.preBolus2PiecesGiven)
             put("preBolus2GivenU",  s.preBolus2GivenU)
             if (s.preBolus2LastPieceMs != null) put("preBolus2LastPieceMs", s.preBolus2LastPieceMs)
+            put("preBolus2LoopU",   s.preBolus2LoopU)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -120,7 +122,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus2Pieces  = json.optInt("preBolus2Pieces", 0),
                 preBolus2PiecesGiven = json.optInt("preBolus2PiecesGiven", 0),
                 preBolus2GivenU  = json.optDouble("preBolus2GivenU", 0.0),
-                preBolus2LastPieceMs = if (json.has("preBolus2LastPieceMs")) json.getLong("preBolus2LastPieceMs") else null
+                preBolus2LastPieceMs = if (json.has("preBolus2LastPieceMs")) json.getLong("preBolus2LastPieceMs") else null,
+                preBolus2LoopU   = json.optDouble("preBolus2LoopU", 0.0)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -345,7 +348,8 @@ class MealOverrideManagerImpl @Inject constructor(
         // What is still to come shows its dose, for example "PB2 (2.40 U): 32min 57s", or in pieces
         // "PB2 piece 2 of 6 (0.55 U): 12min 3s".
         val doseU = if (s.preBolus2Spread) s.preBolus2NextPieceU else s.preBolus2U
-        val pb2 = if (s.preBolus2Spread) "PB2 piece ${s.preBolus2PiecesGiven + 1} of ${s.preBolus2Pieces} (${"%.2f".format(doseU)} U)"
+        val loop = if (s.preBolus2LoopU > 0.0) ", loop gave ${"%.2f".format(s.preBolus2LoopU)} U" else ""
+        val pb2 = if (s.preBolus2Spread) "PB2 piece ${s.preBolus2PiecesGiven + 1} of ${s.preBolus2Pieces} (${"%.2f".format(doseU)} U$loop)"
                   else "PB2 (${"%.2f".format(s.preBolus2U)} U)"
         val nextAt = s.preBolus2NextAtMs
         return when {
@@ -543,6 +547,18 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 2 ${s.preBolus2U + pb3}U in $pieces pieces")
     }
 
+    override fun countLoopSmb(smbU: Double) {
+        val s = _state ?: return
+        if (!s.preBolus2Spread || !s.preBolus2Pending) return
+        // Never more than the pieces had left, so a piece already given is never taken back.
+        val loopU = smbU.coerceIn(0.0, (s.preBolus2U - s.preBolus2GivenU).coerceAtLeast(0.0))
+        if (abs(loopU - s.preBolus2LoopU) < ROUNDING_U) return
+        val done = s.preBolus2U - s.preBolus2GivenU - loopU < MealOverrideManager.SPREAD_STEP_U
+        _state = s.copy(preBolus2LoopU = loopU, preBolus2FiredMs = if (done) System.currentTimeMillis() else null)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin PB2: loop gave ${"%.2f".format(loopU)}U of it" + if (done) ", pre-bolus 2 done" else "")
+    }
+
     override fun preBolus1Delivered(deliveredU: Double) {
         val s = _state ?: return
         val doseU = s.doseU ?: return
@@ -712,8 +728,12 @@ class MealOverrideManagerImpl @Inject constructor(
         lastDelta         = glucoseStatus.delta
         lastShortAvgDelta = glucoseStatus.shortAvgDelta
 
-        // Not time yet. In pieces: the next piece's time.
-        if (now < s.preBolus2NextAtMs) {
+        // Not time yet. In pieces: the next piece's time. The first piece comes sooner, from PB1_REST_FROM_MIN, once BG
+        // shows the fat and protein coming in: a meal of almost only protein can raise BG well before pre-bolus 2's time.
+        val risingEarly = s.preBolus2Spread && s.preBolus2LastPieceMs == null &&
+            now - s.triggerTimeMs >= MealOverrideManager.PB1_REST_FROM_MIN * 60_000L &&
+            glucoseStatus.delta >= MealOverrideManager.PB1_REST_RISE_MGDL && glucoseStatus.shortAvgDelta > 0.0
+        if (now < s.preBolus2NextAtMs && !risingEarly) {
             val minsLeft = (s.preBolus2NextAtMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin PB2: ${minsLeft}min until scheduled delivery")
             return
@@ -765,7 +785,8 @@ class MealOverrideManagerImpl @Inject constructor(
             if (s.preBolus2Spread)
                 s.copy(
                     preBolus2PiecesGiven = piece, preBolus2GivenU = s.preBolus2GivenU + doseU, preBolus2LastPieceMs = now,
-                    preBolus2FiredMs = if (piece >= s.preBolus2Pieces) now else null
+                    // Done after the last piece, or sooner when the loop gave part of it and nothing is left.
+                    preBolus2FiredMs = if (piece >= s.preBolus2Pieces || s.preBolus2LeftU - doseU < MealOverrideManager.SPREAD_STEP_U) now else null
                 )
             else s.copy(preBolus2FiredMs = now)
         _state = firedState
@@ -929,6 +950,8 @@ class MealOverrideManagerImpl @Inject constructor(
 
         /** Less than this short of the planned pre-bolus 1 is rounding, not a stopped bolus. */
         const val STOPPED_MIN_DIFF_U = 0.05
+        /** Doubles of insulin closer than this are the same amount. */
+        private const val ROUNDING_U = 1e-6
         /** Pre-bolus 1 is given right after the mode starts: its record is looked for this long after the start. */
         const val PB1_RECORD_WINDOW_MS = 10 * 60_000L
         /** And this long before it, for a clock a little out between the mode start and the bolus record. */

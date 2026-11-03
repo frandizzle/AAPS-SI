@@ -1780,6 +1780,17 @@ open class SmartInsulinPlugin @Inject constructor(
         if (mealOverrideManager.takeProteinFatFollowOn() && glucoseStatus.glucose > profile.getTargetMgdl())
             uamController.startProteinFat(glucoseStatus.glucose / 18.0)
 
+        // Pre-bolus 2 in pieces is a budget for the fat and protein: the SMBs the loop gave in this meal come off it, so
+        // the loop can give it sooner when BG shows the food and the pieces give what is left. A failed read takes nothing
+        // off: the pieces then give it all, as planned.
+        mealOverrideManager.activeState?.takeIf { it.preBolus2Spread && it.preBolus2Pending }?.let { s ->
+            val smbU = try {
+                persistenceLayer.getBolusesFromTimeToTime(s.triggerTimeMs, now, true).filter { it.type == BS.Type.SMB }.sumOf { it.amount }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SmartInsulin PB2: SMB read failed: ${e.message}"); null
+            }
+            smbU?.let { mealOverrideManager.countLoopSmb(it) }
+        }
         mealOverrideManager.onLoopCycle(
             glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
             // Rebound state and the previous decision are both carried over from the last cycle —
@@ -2228,38 +2239,35 @@ open class SmartInsulinPlugin @Inject constructor(
         // waiting are taken off: their insulin is coming anyway. All the carbs count. Only in the Smart Meal mode that recorded the
         // estimate: Protein/Fat and the UAM modes dose from ISF and what BG does, also when Protein/Fat follows
         // the meal, so they never see it.
-        val foodToCome = mealOverrideManager.activeState
-            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
-            ?.let { s -> mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.let { s to it } }
-            ?.let { (s, still) ->
+        val fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
+        val mealWithList = mealOverrideManager.activeState?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
+        val runningStill = mealWithList?.let { mealEstimateCalibration.stillToCome(it.triggerTimeMs, now) }
+        val foodToCome = mealWithList?.let { s ->
+            runningStill?.let { still ->
                 MealFoodForecast.foodToCome(
                     still, now,
                     restU = if (s.preBolus1RestPending) s.preBolus1RestU else 0.0,
                     pbU = s.preBolus2WaitingU + s.preBolus3WaitingU,
                     carbRatio = profile.getIc(),
-                    fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
+                    fatProteinShare = fatProteinShare
                 )
             }
+        }
         lastFoodToCome = foodToCome
         // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
         // replaced or ended, but the food was not. Its pre-boluses no longer wait, so nothing is taken off for them.
-        val earlierFood = mealOverrideManager.activeState
-            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
-            ?.let { s -> mealEstimateCalibration.earlierToCome(s.triggerTimeMs, now) }.orEmpty()
-            .mapNotNull { still ->
-                MealFoodForecast.foodToCome(
-                    still, now, restU = 0.0, pbU = 0.0, carbRatio = profile.getIc(),
-                    fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
-                )
-            }
+        val earlierStill = mealWithList?.let { mealEstimateCalibration.earlierToCome(it.triggerTimeMs, now) }.orEmpty()
+        val earlierFood = earlierStill.mapNotNull { still ->
+            MealFoodForecast.foodToCome(still, now, restU = 0.0, pbU = 0.0, carbRatio = profile.getIc(), fatProteinShare = fatProteinShare)
+        }
         lastEarlierFoodG = earlierFood.sumOf { it.totalG }
-        // The meals with a food list: their food still to come limits the rise the forecast expects, also what the
-        // waiting pre-boluses cover (that food still raises BG). A meal whose food is nearly all in counts as 0, so a
-        // rise then is not carried on. Null without a food list: the UAM modes and Fasting are not limited.
-        val hasFoodList = earlierFood.isNotEmpty() || mealOverrideManager.activeState
-            ?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
-            ?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs) != null } == true
-        val foodListG = if (hasFoodList) (earlierFood + listOfNotNull(foodToCome)).sumOf { it.totalG + it.coveredG } else null
+        // The meals with a food list: all their food still to come limits the rise the forecast expects, also what the
+        // waiting pre-boluses cover and what is too little to forecast: that food still raises BG. It is read from the
+        // meals themselves, not from the forecast's share of them: a meal of almost only protein drops out of the forecast
+        // once its few carbs are in, while all its protein, covered by pre-bolus 2, is still to come. A meal whose food is
+        // all in counts as 0, so a rise then is not carried on. Null without a food list: UAM modes and Fasting are not limited.
+        val hasFoodList = earlierStill.isNotEmpty() || mealWithList?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs) != null } == true
+        val foodListG = if (hasFoodList) (earlierStill + listOfNotNull(runningStill)).sumOf { MealFoodForecast.foodLeftG(it, fatProteinShare) } else null
 
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
         // null with nothing said about it — every other early return sets a reason the user can

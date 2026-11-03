@@ -22,6 +22,8 @@ import kotlin.math.floor
  *                      only through the safety gates. 0 = one dose. Pre-bolus 3 is then part of pre-bolus 2.
  * [preBolus2PiecesGiven], [preBolus2GivenU], [preBolus2LastPieceMs] — the pieces given so far, their insulin, and
  *                      when the last one was given.
+ * [preBolus2LoopU]   — SMBs the loop gave in this meal, taken off the pieces still to come, see
+ *                      [MealOverrideManager.countLoopSmb]. Never more than the pieces had left.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -46,7 +48,8 @@ data class MealOverrideState(
     val preBolus2Pieces:  Int     = 0,
     val preBolus2PiecesGiven: Int = 0,
     val preBolus2GivenU:  Double  = 0.0,
-    val preBolus2LastPieceMs: Long? = null
+    val preBolus2LastPieceMs: Long? = null,
+    val preBolus2LoopU:   Double  = 0.0
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
@@ -67,9 +70,13 @@ data class MealOverrideState(
     val preBolus2Spread: Boolean
         get() = preBolus2Pieces > 1
 
-    /** Pre-bolus 2 insulin still to come: all of it, or what the pieces have not given yet. */
+    /** Pre-bolus 2 insulin still to come: all of it, or what the pieces and the loop have not given yet. */
     val preBolus2WaitingU: Double
-        get() = if (preBolus2Pending) (preBolus2U - preBolus2GivenU).coerceAtLeast(0.0) else 0.0
+        get() = if (preBolus2Pending) preBolus2LeftU else 0.0
+
+    /** What the pieces still have to give: pre-bolus 2 less the pieces given and the loop's SMBs taken off them. */
+    val preBolus2LeftU: Double
+        get() = (preBolus2U - preBolus2GivenU - preBolus2LoopU).coerceAtLeast(0.0)
 
     val preBolus3WaitingU: Double
         get() = if (preBolus3Pending) preBolus3U else 0.0
@@ -81,11 +88,14 @@ data class MealOverrideState(
     /**
      * The next piece: what is left shared over the pieces left, rounded down to [MealOverrideManager.SPREAD_STEP_U].
      * The last piece is all that is left. A piece that waits for the gates stays the same size, so pieces never add up.
+     * When the loop has given part of it, fewer pieces share what is left, none smaller than
+     * [MealOverrideManager.SPREAD_MIN_PIECE_U].
      */
     val preBolus2NextPieceU: Double
         get() {
-            val left = (preBolus2U - preBolus2GivenU).coerceAtLeast(0.0)
-            val piecesLeft = preBolus2Pieces - preBolus2PiecesGiven
+            val left = preBolus2LeftU
+            val bigEnough = (left / MealOverrideManager.SPREAD_MIN_PIECE_U + ROUNDING_U).toInt().coerceAtLeast(1)
+            val piecesLeft = minOf(preBolus2Pieces - preBolus2PiecesGiven, bigEnough)
             if (piecesLeft <= 1) return left
             val step = MealOverrideManager.SPREAD_STEP_U
             return (floor(left / piecesLeft / step + ROUNDING_U) * step).coerceAtLeast(step).coerceAtMost(left)

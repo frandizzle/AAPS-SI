@@ -130,6 +130,15 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `all the food still to come counts for the rise limit, also what pre-boluses cover`() {
+        // A protein lunch: 1 g of carbs left and 20 g of fat and protein, at 70 %.
+        val lunch = dinner.copy(carbsG = 1.0, fatProteinG = 20.0)
+        assertEquals(15.0, MealFoodForecast.foodLeftG(lunch, 0.7), 1e-9)
+        // The forecast's share, with the pre-boluses' part taken off, is too little to forecast; the food is still coming.
+        assertNull(MealFoodForecast.foodToCome(lunch, T0, 0.0, 3.0, 5.0, 0.7))
+    }
+
+    @Test
     fun `late carbs are still spread over at least half an hour`() {
         val f = MealFoodForecast.foodToCome(dinner, T0 + 2 * HOUR + 30 * MIN, 0.0, 0.0, 5.0)!!
         val steps = MealFoodForecast.steps(f, T0 + 2 * HOUR + 30 * MIN, 50.0, 0.0, 48)

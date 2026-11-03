@@ -112,11 +112,21 @@ interface MealOverrideManager {
 
     /**
      * Gives pre-bolus 2 and 3 together as [pieces] smaller doses, [SPREAD_GAP_MIN] apart from the pre-bolus 2 time,
-     * each only through the safety gates. Call it right after [activateOverride]. For a meal of fat and protein with
+     * each only through the safety gates. Together they are a budget for the fat and protein: the first piece comes
+     * sooner if BG shows the food coming in, and SMBs the loop gives in the meal come off the pieces, see
+     * [countLoopSmb]. Call it right after [activateOverride]. For a meal of fat and protein with
      * almost no carbs: it raises BG slowly over hours, so one large dose can work before the food does. See
      * [spreadPieces].
      */
     fun spreadPreBoluses(pieces: Int)
+
+    /**
+     * The SMBs the loop has given since the running meal started, [smbU] in all. With pre-bolus 2 in pieces they come off
+     * the pieces still to come, so the loop and the pieces never both give insulin for the same fat and protein: the
+     * loop gives it sooner when BG shows the food, and the pieces give what is left on time. Once the loop has given it
+     * all, pre-bolus 2 is done. Call it every loop cycle, before [onLoopCycle].
+     */
+    fun countLoopSmb(smbU: Double)
 
     /** Cancels the rest of pre-bolus 1 if it still waits. */
     fun cancelPreBolus1Rest()
