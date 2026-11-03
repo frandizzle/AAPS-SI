@@ -103,7 +103,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
          * The carbs by speed, as eaten: their grams only share out [carbsG], which stays the total. Empty for a meal
          * saved before parts existed: all its carbs are then one part.
          */
-        val slots: MutableList<CarbSlot> = mutableListOf()
+        val slots: MutableList<CarbSlot> = mutableListOf(),
+        /**
+         * The meal's mode has ended and the loop went back to Fasting or a UAM mode: the loop is done with its food. It is
+         * no longer counted as food from before in a later meal. It is still judged for learning when its window ends.
+         */
+        var closed: Boolean = false
     )
 
     /** Carbs of one speed eaten at one time: [grams] due by [untilMs], [minutes] after they were eaten. */
@@ -271,15 +276,15 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     override fun openMealsStillToComeG(nowMs: Long): Double =
-        synchronized(this) { pending.filter { nowMs <= it.windowEndMs } }.sumOf { stillToCome(it).let { c -> c.carbsG + c.fatProteinG } }
+        synchronized(this) { pending.filter { !it.closed && nowMs <= it.windowEndMs } }.sumOf { stillToCome(it).let { c -> c.carbsG + c.fatProteinG } }
 
     /**
      * The food still to come of the meals started before the one at [modeStartMs] whose window is still open at [nowMs]:
      * a snack, or a meal replaced by this one. Their food keeps coming in on its own timing, so the loop's forecast counts
-     * it next to this meal's.
+     * it next to this meal's. A meal that is [closed] is not counted.
      */
     fun earlierToCome(modeStartMs: Long, nowMs: Long): List<StillToCome> =
-        synchronized(this) { pending.filter { it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it) }
+        synchronized(this) { pending.filter { !it.closed && it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it) }
 
     /**
      * The food still to come of the estimated meal started at [modeStartMs], for the loop's forecast; null when it has
@@ -357,6 +362,19 @@ class MealEstimateCalibrationImpl @Inject constructor(
     }
 
     /**
+     * Closes the meals started before [beforeMs]: their mode has ended and the loop is back in Fasting or a UAM mode.
+     * The loop has stopped counting their food, so a later meal does not count it again. Without this, the fat and
+     * protein of a dinner that BG never showed came back as food from before when a snack started, and the loop gave
+     * insulin for it a second time.
+     */
+    fun closeMeals(beforeMs: Long) {
+        val closed = synchronized(this) { pending.filter { !it.closed && it.modeStartMs < beforeMs }.onEach { it.closed = true } }
+        if (closed.isEmpty()) return
+        save()
+        closed.forEach { aapsLogger.debug(LTag.APS, "MealEstimateCalibration: meal at ${it.modeStartMs} closed, its food no longer counts as food from before") }
+    }
+
+    /**
      * Marks the meals running at [nowMs] as eaten around exercise. Exercise makes BG drop, which the meal tracker
      * would read as less food, so those meals do not teach the factor that the estimates are too high.
      */
@@ -417,6 +435,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("c", it.carbsG).put("p", it.proteinG).put("f", it.fatG)
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
                                 .put("fs", it.fatProteinFromMs).put("x", it.exercised).put("cm", it.carbsMin).put("sb", it.seenBeforeAddG).put("eg", it.estimatedG)
+                                .put("cl", it.closed)
                                 .put("cp", JSONArray().apply { it.slots.forEach { s -> put(JSONArray().put(s.grams).put(s.untilMs).put(s.minutes)) } }))
                     }
                 })
@@ -442,7 +461,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                         o.optDouble("sb", 0.0), o.optDouble("eg", o.getDouble("ce")),
                                         slots = o.optJSONArray("cp")?.let { cp ->
                                             (0 until cp.length()).map { j -> cp.getJSONArray(j).let { s -> CarbSlot(s.getDouble(0), s.getLong(1), s.getInt(2)) } }
-                                        }.orEmpty().toMutableList()))
+                                        }.orEmpty().toMutableList(),
+                                        closed = o.optBoolean("cl", false)))
                 }
             }
         } catch (e: Exception) {

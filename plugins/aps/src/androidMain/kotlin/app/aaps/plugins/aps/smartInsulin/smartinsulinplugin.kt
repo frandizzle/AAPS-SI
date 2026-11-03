@@ -2268,6 +2268,10 @@ open class SmartInsulinPlugin @Inject constructor(
             )
         }
         lastFoodToCome = foodToCome
+        // Back in Fasting or a UAM mode, the meals before are closed: the loop is done with their food, so a later meal
+        // does not count it again. A UAM mode keeps food logged while it runs, which has the UAM mode's start.
+        if (mealMode == MealMode.FASTING) mealEstimateCalibration.closeMeals(beforeMs = now)
+        else if (currentModeIsUam) mealOverrideManager.activeState?.let { mealEstimateCalibration.closeMeals(beforeMs = it.triggerTimeMs) }
         // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
         // replaced or ended, but the food was not. Its pre-boluses no longer wait, so nothing is taken off for them.
         val earlierStill = mealWithList?.let { mealEstimateCalibration.earlierToCome(it.triggerTimeMs, now) }.orEmpty()

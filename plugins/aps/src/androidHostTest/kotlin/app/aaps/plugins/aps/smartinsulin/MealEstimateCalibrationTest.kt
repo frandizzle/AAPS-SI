@@ -283,6 +283,30 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `a meal whose mode ended is closed and does not count as earlier food again`() {
+        // A dinner with fat and protein BG never showed, its mode over, the loop back in Fasting.
+        cal.recordEstimate(T0, T0 + 6 * HOUR, 60.0, 20.0, 20.0, 20.0)
+        cal.closeMeals(beforeMs = T0 + 4 * HOUR)
+        // A snack after it: the dinner's food is not counted a second time.
+        cal.recordEstimate(T0 + 5 * HOUR, T0 + 7 * HOUR, 20.0, 16.0, 2.0, 6.0)
+        assertEquals(0, cal.earlierToCome(T0 + 5 * HOUR, T0 + 5 * HOUR).size)
+        assertEquals(20.0, cal.openMealsStillToComeG(T0 + 5 * HOUR), 1e-9)
+        // The snack's own food still counts, and a meal started later is not closed.
+        assertEquals(20.0, cal.foodStillToComeG(T0 + 5 * HOUR)!!, 1e-9)
+        cal.closeMeals(beforeMs = T0 + 5 * HOUR)
+        assertEquals(20.0, cal.openMealsStillToComeG(T0 + 5 * HOUR), 1e-9)
+    }
+
+    @Test
+    fun `a closed meal stays closed over a restart`() {
+        cal.recordEstimate(T0, T0 + 6 * HOUR, 60.0, 20.0, 20.0, 20.0)
+        cal.closeMeals(beforeMs = T0 + HOUR)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        cal.recordEstimate(T0 + 2 * HOUR, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0)
+        assertEquals(0, cal.earlierToCome(T0 + 2 * HOUR, T0 + 2 * HOUR).size)
+    }
+
+    @Test
     fun `a meal after a snack still coming counts the snack as earlier food, and neither is learned from`() {
         cal.logFood(T0, T0 + HOUR, 40.0, 40.0, 0.0, 0.0, eatenMs = T0)
         cal.recordEstimate(T0 + HOUR, T0 + 4 * HOUR, 60.0, 60.0, 0.0, 0.0)
