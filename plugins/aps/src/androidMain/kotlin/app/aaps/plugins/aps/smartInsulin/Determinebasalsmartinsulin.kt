@@ -266,7 +266,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         //
         // Only while BG is not falling: a fall says the food is not coming in now, and then the forecast
         // is the insulin alone, so the low guard works exactly as without food. For extra insulin the food
-        // only counts above target, and only the food due in the next [DOSING_AHEAD_MIN]: food further off is
+        // only counts above target, and only the food due in the next [DOSING_AHEAD_MIN], or [DOSING_AHEAD_FAT_PROTEIN_MIN]
+        // while fat and protein are still to come: they come in over hours, and 2 hours of them against all the insulin
+        // on board looked covered while BG stayed high all evening. Food further off is
         // given for as it comes nearer, not all at once. That food is weighed against all the insulin on board,
         // like a bolus calculator weighs carbs on board against IOB: a pre-bolus given just now has done only
         // about two thirds of its work after 2 hours, and cutting it off there gave insulin again for food the
@@ -279,8 +281,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
             ?.let { MealFoodForecast.steps(it, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
         val foodForecast = foodSteps?.let { predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it) }
         val forecast = foodForecast ?: predictedBg
+        val dosingAheadMin = if (foods.sumOf { it.fatProteinG } >= DOSING_FAT_PROTEIN_MIN_G) DOSING_AHEAD_FAT_PROTEIN_MIN else DOSING_AHEAD_MIN
         val dosingForecast = if (foodSteps != null && currentBg > targetBg) {
-            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = foodSteps.take(DOSING_AHEAD_MIN / 5))
+            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = foodSteps.take(dosingAheadMin / 5))
         } else predictedBg
 
         // predictedMin: only look after insulin peak (plus a 10 min buffer) to avoid
@@ -693,6 +696,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val MAX_FOOD_FADE_MINS                  = 180
         /** In a meal with food still to come, extra insulin weighs the food and insulin of this many minutes ahead. */
         const val DOSING_AHEAD_MIN                    = 120
+        /** ...and this many while at least [DOSING_FAT_PROTEIN_MIN_G] of fat and protein (as carbs) are still to come. */
+        const val DOSING_AHEAD_FAT_PROTEIN_MIN        = 180
+        const val DOSING_FAT_PROTEIN_MIN_G            = 5.0
         /** The rise the forecast expects may be at most this many times what the food list still has to come. */
         const val FOOD_RISE_SLACK                     = 1.5
 

@@ -556,7 +556,8 @@ class DetermineBasalSmartInsulinTest {
 
         val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
         assertFalse(withFood.reason.contains("SUSPEND"), withFood.reason)
-        assertTrue(withFood.reason.contains("cob=60g(carbs 30 over 60m fp 30)"), withFood.reason)
+        // "over 60m", or 59 when a minute turns between building the food and reading it on a busy machine.
+        assertTrue(Regex("""cob=60g\(carbs 30 over (59|60)m fp 30\)""").containsMatchIn(withFood.reason), withFood.reason)
         assertTrue(withFood.reason.contains("NORMAL"), withFood.reason)
     }
 
@@ -586,7 +587,7 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(withFood.smb > 0.0, withFood.reason)
     }
 
-    @Test fun `extra insulin is for the food due in the next 2 hours, not for food hours away`() {
+    @Test fun `extra insulin is for the food due in the next hours, not for food far away`() {
         midDinner(bg = 130.0)
         val now = System.currentTimeMillis()
         val iob = flatIobArray(iob = 3.0, activity = 0.03)
@@ -596,8 +597,8 @@ class DetermineBasalSmartInsulinTest {
         val forSoon = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = soon)
         val soonSmb = forSoon.smb
         assertTrue(soonSmb > 0.5, forSoon.reason)
-        // The same 40 g spread over 12 hours: only a sixth is due in the next 2 hours. It lands about at
-        // target, so next to nothing extra.
+        // The same 40 g of fat and protein spread over 12 hours: only a quarter is due in the next 3 hours. It lands
+        // about at target, so next to nothing extra.
         val forFar = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = far)
         assertTrue(forFar.smb <= 0.1, forFar.reason)
     }
@@ -620,8 +621,8 @@ class DetermineBasalSmartInsulinTest {
         assertEquals(noListSmb, meal.smb, 1e-9)
     }
 
-    @Test fun `a heavy steak dinner is dosed for the next 2 hours of it now, the rest later`() {
-        // 60 g of fat and protein (as carbs) over a 6 h meal: about 20 g is due in the next 2 hours.
+    @Test fun `a heavy steak dinner is dosed for the next 3 hours of it now, the rest later`() {
+        // 60 g of fat and protein (as carbs) over a 6 h meal: about 30 g is due in the next 3 hours.
         midDinner(bg = 130.0)
         val now = System.currentTimeMillis()
         val iob = flatIobArray(iob = 3.0, activity = 0.03)
@@ -633,6 +634,20 @@ class DetermineBasalSmartInsulinTest {
         val fast = steak.copy(fatProteinUntilMs = now + 2 * 60 * 60_000L)
         val forFast = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = fast)
         assertTrue(forFast.smb > steakSmb, "steak $steakSmb, all within 2 h ${forFast.smb}")
+    }
+
+    @Test fun `with fat and protein to come it looks 3 hours ahead, with carbs only 2`() {
+        // The same 60 g over 6 hours: as fat and protein, 30 g counts now, as slow carbs 20 g. The insulin keeps working
+        // after the food counted runs out, so the forecast falls from there: the more food counted, the higher its low.
+        midDinner(bg = 130.0)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 3.0, activity = 0.025)
+        val fatProtein = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 60.0, fatProteinUntilMs = now + 6 * 60 * 60_000L, carbRatio = 5.0)
+        val carbs = FoodToCome(carbsG = 60.0, carbsUntilMs = now + 6 * 60 * 60_000L, fatProteinG = 0.0, fatProteinUntilMs = now, carbRatio = 5.0)
+        val forFatProtein = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = fatProtein)
+        val fatProteinSmb = forFatProtein.smb
+        val forCarbs = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = carbs)
+        assertTrue(fatProteinSmb > forCarbs.smb, "fat and protein $fatProteinSmb, slow carbs ${forCarbs.smb}")
     }
 
     @Test fun `no extra insulin for carbs a pre-bolus just given already covers`() {
