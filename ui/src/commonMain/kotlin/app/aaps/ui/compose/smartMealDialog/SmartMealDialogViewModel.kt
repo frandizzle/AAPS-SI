@@ -59,6 +59,7 @@ import app.aaps.ui.compose.smartMealDialog.food.SaveResult
 import app.aaps.ui.compose.smartMealDialog.food.SavedFood
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodStore
+import app.aaps.ui.compose.smartMealDialog.food.carbParts
 import app.aaps.ui.compose.smartMealDialog.food.carbsMin
 import app.aaps.ui.compose.smartMealDialog.food.estimateFactor
 import app.aaps.ui.compose.smartMealDialog.food.estimatedCarbEquivG
@@ -381,7 +382,27 @@ class SmartMealDialogViewModel(
     fun updatePb1(v: Double) = _uiState.update { it.copy(pb1U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun addPb1(increment: Double) = _uiState.update { it.copy(pb1U = (it.pb1U + increment).coerceAtMost(it.maxPreBolus)) }
     fun updatePb1Rest(v: Double) = _uiState.update { it.copy(pb1RestU = v.coerceIn(0.0, it.maxPreBolus)) }
-    fun updatePb2Enabled(v: Boolean) = _uiState.update { it.copy(pb2Enabled = v) }
+    /**
+     * For a meal the plan gave no pre-bolus 2 because the user switched it off before, switching it on fills in what the
+     * plan would give: pre-bolus 2 and 3 and a mode long enough for the fat and protein. Switching it off again puts the
+     * short mode back, unless the user changed the length.
+     */
+    fun updatePb2Enabled(v: Boolean) = _uiState.update { s ->
+        val plan = s.plan
+        val full = plan?.withPb2
+        when {
+            plan == null || full == null -> s.copy(pb2Enabled = v)
+            v                            -> s.copy(
+                pb2Enabled = true, pb2U = full.pb2U, pb2DelayMinutes = full.pb2DelayMin,
+                pb3Enabled = full.pb3U > 0.0, pb3U = full.pb3U, pb3DelayMinutes = full.pb3DelayMin,
+                durationMinutes = maxOf(s.durationMinutes, full.durationMin)
+            )
+            else                         -> s.copy(
+                pb2Enabled = false, pb3Enabled = false,
+                durationMinutes = if (s.durationMinutes == full.durationMin) plan.durationMin else s.durationMinutes
+            )
+        }
+    }
     fun updatePb2(v: Double) = _uiState.update { it.copy(pb2U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun updatePb2Delay(v: Double) = _uiState.update { it.copy(pb2DelayMinutes = v.toInt().coerceIn(5, 120)) }
     fun updatePb3Enabled(v: Boolean) = _uiState.update { it.copy(pb3Enabled = v) }
@@ -527,7 +548,7 @@ class SmartMealDialogViewModel(
         if (running != null && state.canAdd && !state.logTreatingLow) {
             val t = state.foodTotals
             mealEstimateCalibration.logFood(
-                running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbsMin(),
+                running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbParts(),
                 state.foodItems.estimatedCarbEquivG()
             )
         }
@@ -547,10 +568,13 @@ class SmartMealDialogViewModel(
         return wasLow(readings + listOfNotNull(glucoseStatusProvider.glucoseStatusData?.glucose), preferences.getRaw(UnitDoubleKey.ApsSmartInsulinLowGuard))
     }
 
+    /** The meal's name: the saved meal it is, or its foods. */
+    private fun mealName(state: SmartMealDialogUiState): String = state.sourceMeal ?: state.foodItems.joinToString(", ") { it.name }
+
     private fun logEntry(state: SmartMealDialogUiState): FoodLogEntry? {
         if (state.foodItems.isEmpty()) return null
         val t = state.foodTotals
-        val name = (state.sourceMeal ?: state.foodItems.joinToString(", ") { it.name }).take(MAX_LOG_NAME)
+        val name = mealName(state).take(MAX_LOG_NAME)
         return FoodLogEntry(dateUtil.now(), name, t.carbsG, t.fibreG, t.proteinG, t.fatG)
     }
 
@@ -699,7 +723,8 @@ class SmartMealDialogViewModel(
                 tailFactor = learned?.tailFactor?.times(share),
                 pb2DelayMin = timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
                 pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
-                bolusStep = state.bolusStep
+                bolusStep = state.bolusStep,
+                fatProteinPreBoluses = state.addMode || !savedFoodStore.pb2Off(mealName(state))
             )
             if (state.addMode) {
                 val running = mealOverrideManager.activeState ?: return@launch
@@ -727,7 +752,8 @@ class SmartMealDialogViewModel(
                         iobRoomU = now.maxIobU - now.iobU,
                         holdNow = now.holdNow,
                         balance = balance
-                    )
+                    ),
+                    state.foodItems.carbParts()
                 )
                 _uiState.update {
                     it.copy(
@@ -753,7 +779,7 @@ class SmartMealDialogViewModel(
                     )
                 }
             }
-            val plan = MealDosePlanner.plan(state.foodTotals, settings, balance)
+            val plan = MealDosePlanner.plan(state.foodTotals, settings, balance, state.foodItems.carbParts())
             // A saved meal that has learned when BG starts to rise says how long to wait itself.
             val gs = glucoseStatusProvider.glucoseStatusData
             val fastWait = if (own == null && plan.pb1U > 0.0) profile?.let { p ->
@@ -977,6 +1003,20 @@ class SmartMealDialogViewModel(
     }
 
     /**
+     * Pre-bolus 2 switched off for a meal the plan gave one is kept for that meal, so next time it gets none (a morning
+     * coffee with milk). Switching it on again for such a meal forgets it.
+     */
+    private fun rememberPb2Choice(state: SmartMealDialogUiState) {
+        val plan = state.plan ?: return
+        if (state.foodItems.isEmpty()) return
+        val name = mealName(state)
+        when {
+            plan.pb2U > 0.0 && !state.pb2Enabled                    -> savedFoodStore.setPb2Off(name, true)
+            plan.pb2LeftOut && state.pb2Enabled && state.pb2U > 0.0 -> savedFoodStore.setPb2Off(name, false)
+        }
+    }
+
+    /**
      * Remembers what the food list said, so the meal tracker can later tell how this user's meals compare
      * with estimates, and the loop knows the food still to come. The watch window covers a following
      * Protein/Fat too. A meal cut after exercise is not learned from, but its food still counts.
@@ -991,7 +1031,7 @@ class SmartMealDialogViewModel(
             windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
             carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG,
             learn = state.afterActivityPct == 0,
-            carbsMin = state.foodItems.carbsMin(),
+            carbParts = state.foodItems.carbParts(),
             estimatedG = state.foodItems.estimatedCarbEquivG()
         )
     }
@@ -1033,7 +1073,7 @@ class SmartMealDialogViewModel(
                 val modeEndMs = maxOf(running.modeExpiryMs, endMs)
                 val pfMin = if (state.pfAfter || running.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
                 val t = state.foodTotals
-                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now(), state.foodItems.carbsMin(),
+                mealEstimateCalibration.addToEstimate(startMs, modeEndMs + pfMin * 60_000L, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, dateUtil.now(), state.foodItems.carbParts(),
                     state.foodItems.estimatedCarbEquivG())
             }
         }
@@ -1050,6 +1090,7 @@ class SmartMealDialogViewModel(
                 deliver(bolusId)
                 return@launch
             }
+            rememberPb2Choice(state)
             val mode = state.mode
             isfKeyFor(mode)?.let { preferences.put(it, toMgdl(state.isf)) }
             val duraFloorMgdl = if (state.duraEnabled) toMgdl(state.duraFloor) else 0.0

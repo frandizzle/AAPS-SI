@@ -1,6 +1,9 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
+import app.aaps.core.interfaces.smartInsulin.CarbPart
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -21,6 +24,8 @@ import kotlin.math.min
  * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
+ * @param fatProteinPreBoluses false for a meal the user gives no pre-bolus 2 (a morning coffee): its fat and protein are
+ *                         left to the loop, and they do not make the mode longer
  */
 data class MealPlanSettings(
     val carbPct: Int,
@@ -34,7 +39,8 @@ data class MealPlanSettings(
     val waveFactor: Double? = null,
     val tailFactor: Double? = null,
     val pb2DelayMin: Int = MealDosePlanner.PB2_DELAY_MIN,
-    val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN
+    val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN,
+    val fatProteinPreBoluses: Boolean = true
 )
 
 /**
@@ -55,6 +61,8 @@ data class MealPlanSettings(
  * @param pb1RestU   the part of pre-bolus 1 above the max pre-bolus, given 15 to 45 min in only if BG rises; 0 when none.
  *                   See `MealOverrideManager.PB1_REST_FROM_MIN`.
  * @param cutForBalance pre-bolus 1 was cut because the insulin on board already covers part of the food, see [InsulinBalance]
+ * @param withPb2     the same plan with pre-bolus 2, for a meal the user gives none
+ *                    ([MealPlanSettings.fatProteinPreBoluses]) but that would get one; switching pre-bolus 2 on fills it in
  */
 data class MealPlan(
     val pb1U: Double,
@@ -67,8 +75,13 @@ data class MealPlan(
     val fatProteinU: Double,
     val capped: Boolean,
     val pb1RestU: Double = 0.0,
-    val cutForBalance: Boolean = false
-)
+    val cutForBalance: Boolean = false,
+    val withPb2: MealPlan? = null
+) {
+
+    /** The meal would get a pre-bolus 2, but the user gives it none. */
+    val pb2LeftOut: Boolean get() = withPb2 != null
+}
 
 /**
  * The meal mode that is running when more food is added to it.
@@ -144,23 +157,24 @@ object MealDosePlanner {
     const val PB3_DELAY_MIN = 90
     /** Below this many fat-protein units there is no pre-bolus 2: the loop covers so little by itself. */
     const val FPU_PB2 = 1.0
-    /** Food added with this many fat-protein units keeps the mode on as long as a meal of it would. */
-    const val FPU_SLOW_MEAL = 2.0
     /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
     const val FPU_HEAVY_MEAL = 3.0
 
     /**
      * @param balance BG, insulin and earlier food now, to cut pre-bolus 1 when the insulin on board already covers part of
      *                the food. It only cuts, never adds: a BG above target is left to the loop. Null: no cut.
+     * @param carbParts the carbs by speed, for how long the mode lasts; empty: all at normal speed
      */
-    fun plan(totals: MealTotals, settings: MealPlanSettings, balance: InsulinBalance? = null): MealPlan {
+    fun plan(totals: MealTotals, settings: MealPlanSettings, balance: InsulinBalance? = null, carbParts: List<CarbPart> = emptyList()): MealPlan {
         val ratio = settings.carbRatio.takeIf { it > 0.0 } ?: return empty(totals)
         val carbsU = totals.carbsG * settings.factor / ratio
         val (fatProteinU, fp2, fp3) = fatProteinDoses(totals.fpu, ratio, settings)
+        val withPb2 = if (settings.fatProteinPreBoluses) null
+        else plan(totals, settings.copy(fatProteinPreBoluses = true), balance, carbParts).takeIf { it.pb2U > 0.0 }
 
         var pb1 = carbsU * settings.carbPct / 100.0
-        var pb2 = fp2
-        var pb3 = fp3
+        var pb2 = if (settings.fatProteinPreBoluses) fp2 else 0.0
+        var pb3 = if (settings.fatProteinPreBoluses) fp3 else 0.0
         val wanted = pb1 + pb2 + pb3
 
         // Each pre-bolus within its own cap, then all together within the total. The first one is
@@ -204,12 +218,20 @@ object MealDosePlanner {
             pb2DelayMin = settings.pb2DelayMin,
             pb3U = pb3,
             pb3DelayMin = settings.pb3DelayMin,
-            durationMin = durationFor(totals.fpu),
+            durationMin = durationFor(
+                totals, carbParts, withFatProtein = settings.fatProteinPreBoluses,
+                lastPreBolusMin = when {
+                    pb3 > 0.0 -> settings.pb2DelayMin + settings.pb3DelayMin
+                    pb2 > 0.0 -> settings.pb2DelayMin
+                    else      -> 0
+                }
+            ),
             carbsU = carbsU,
             fatProteinU = fatProteinU,
             capped = capped,
             pb1RestU = rest,
-            cutForBalance = cutForBalance
+            cutForBalance = cutForBalance,
+            withPb2 = withPb2
         )
     }
 
@@ -218,12 +240,13 @@ object MealDosePlanner {
      * first part of the meal, which the plan only partly covered. IOB and BG are used as limits instead.
      *
      * The carbs are given now. The fat and protein dose goes into pre-bolus 2 and 3 only while they still
-     * wait, split as for a new meal when both wait. If they have fired, no new one is made: for fat and
-     * protein the mode runs longer, as long as a new meal with that much fat and protein would.
+     * wait, split as for a new meal when both wait. If they have fired, no new one is made. The mode runs at least
+     * until the added food is in, from now, as for a new meal of it; it never gets shorter.
+     *
+     * @param carbParts the added carbs by speed; empty: all at normal speed
      */
-    fun planAddition(totals: MealTotals, settings: MealPlanSettings, running: RunningMeal): MealAddition {
-        val slow = totals.fpu >= FPU_SLOW_MEAL
-        val minutesLeft = max(running.minutesLeft, if (slow) durationFor(totals.fpu) else ADD_MIN_LEFT_MIN)
+    fun planAddition(totals: MealTotals, settings: MealPlanSettings, running: RunningMeal, carbParts: List<CarbPart> = emptyList()): MealAddition {
+        val minutesLeft = max(running.minutesLeft, durationFor(totals, carbParts))
         val ratio = settings.carbRatio.takeIf { it > 0.0 }
             ?: return MealAddition(0.0, 0.0, 0.0, minutesLeft, 0.0, 0.0, false, false, false)
         val carbsU = totals.carbsG * settings.factor / ratio
@@ -375,24 +398,40 @@ object MealDosePlanner {
     const val INSULIN_START_MIN = 20
     const val MAX_WAIT_MIN = 20
 
-    /** Food added to a running meal keeps the mode on for at least this long, so the loop still treats it as a meal. */
-    const val ADD_MIN_LEFT_MIN = 120
+    /** A meal mode lasts at least this long... */
+    const val MIN_MODE_MIN = 90
+    /** ...and at most this long: after that the loop's own fasting settings handle what is left. */
+    const val MAX_MODE_MIN = 420
+    /** It lasts at least this long after the last pre-bolus, so that pre-bolus has time to act within the meal. */
+    const val AFTER_LAST_PRE_BOLUS_MIN = 60
 
     /**
-     * Warsaw method: the more fat and protein, the longer the meal keeps acting. The mode has to cover all
-     * of it, since DURA and Protein/Fat are not turned on after it. Kept to 6 h even for the heaviest meals:
-     * after that the loop's own fasting settings handle what is left, and a long meal mode with a strong
-     * meal ISF is a risk of its own.
+     * How long the meal mode lasts: as long as its food takes to come in, so a fast snack is short and a big fatty meal
+     * long. The mode has to cover all of it, since DURA and Protein/Fat are not turned on after it, and the loop only
+     * sees the food while the mode runs.
+     *
+     * - Carbs: the slowest part's time, times [MealEstimateCalibration.CARBS_STRETCH], as late carbs may take that long.
+     * - Fat and protein: from [FPU_PB2] fat-protein units, they start [MealEstimateCalibration.FAT_PROTEIN_START_MIN]
+     *   after eating and then take [MealEstimateCalibration.fatProteinMinutes]. Less is left to the loop, as for
+     *   pre-bolus 2, and so is all of it for a meal the user gives no pre-bolus 2 ([withFatProtein] false).
+     * - At least [AFTER_LAST_PRE_BOLUS_MIN] after the last pre-bolus.
+     *
+     * Rounded up to 15 min, from [MIN_MODE_MIN] to [MAX_MODE_MIN].
+     *
+     * @param carbParts the carbs by speed; empty: all of [MealTotals.carbsG] at normal speed
+     * @param lastPreBolusMin when the last pre-bolus fires, minutes from the start; 0 for none
      */
-    fun durationFor(fpu: Double): Int = when {
-        fpu < 2.0 -> 180
-        fpu < 3.0 -> 240
-        fpu < 4.0 -> 300
-        else      -> 360
+    fun durationFor(totals: MealTotals, carbParts: List<CarbPart>, lastPreBolusMin: Int = 0, withFatProtein: Boolean = true): Int {
+        val parts = carbParts.ifEmpty { listOf(CarbPart(totals.carbsG, MealEstimateCalibration.DEFAULT_CARBS_MIN)) }.filter { it.carbsG > 0.0 }
+        val carbsMin = parts.maxOfOrNull { ceil(it.minutes * MealEstimateCalibration.CARBS_STRETCH).toInt() } ?: 0
+        val fatProteinMin = if (withFatProtein && totals.fpu >= FPU_PB2) MealEstimateCalibration.FAT_PROTEIN_START_MIN + MealEstimateCalibration.fatProteinMinutes(totals.fpu) else 0
+        val preBolusMin = if (lastPreBolusMin > 0) lastPreBolusMin + AFTER_LAST_PRE_BOLUS_MIN else 0
+        val min = maxOf(MIN_MODE_MIN, carbsMin, fatProteinMin, preBolusMin)
+        return ((min + 14) / 15 * 15).coerceAtMost(MAX_MODE_MIN)
     }
 
     private fun empty(totals: MealTotals) =
-        MealPlan(0.0, 0.0, PB2_DELAY_MIN, 0.0, PB3_DELAY_MIN, durationFor(totals.fpu), 0.0, 0.0, false)
+        MealPlan(0.0, 0.0, PB2_DELAY_MIN, 0.0, PB3_DELAY_MIN, durationFor(totals, emptyList()), 0.0, 0.0, false)
 
     private fun floorToStep(u: Double, step: Double): Double =
         if (step <= 0.0) u else floor(u / step + 1e-9) * step

@@ -347,6 +347,7 @@ private fun PlanSummary(state: SmartMealDialogUiState, df: DecimalFormatter, fmt
                     val laterU = plan.pb1RestU + plan.pb2U + plan.pb3U
                     if (laterU > 0.0) AmountRow(stringResource(UiStrings.si_food_later), fmtU(laterU))
                     if (plan.cutForBalance) Why(stringResource(UiStrings.si_food_why_balance))
+                    if (plan.pb2LeftOut && !state.pb2Enabled) Why(stringResource(UiStrings.si_food_pb2_left_out), warning = false)
                     if (plan.capped) Why(stringResource(UiStrings.si_food_why_capped))
                     state.fastCarbsWaitMin?.let { Why(stringResource(UiStrings.si_food_fast_wait, it), warning = false) }
                 }

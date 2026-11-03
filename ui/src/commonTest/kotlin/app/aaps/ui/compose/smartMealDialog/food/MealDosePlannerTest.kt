@@ -1,5 +1,6 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
+import app.aaps.core.interfaces.smartInsulin.CarbPart
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -45,7 +46,8 @@ class MealDosePlannerTest {
         assertEquals(2.9, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
         assertEquals(MealDosePlanner.PB2_DELAY_MIN, p.pb2DelayMin)
-        assertEquals(240, p.durationMin)
+        // The fat and protein start at 45 min and take 3 h 6 min: 4 h 51, up to 5 h.
+        assertEquals(300, p.durationMin)
     }
 
     @Test
@@ -59,7 +61,7 @@ class MealDosePlannerTest {
         assertEquals(4.55, p.pb2U, 1e-9)    // 60 % of 7.63 U, down to the bolus step
         assertEquals(3.05, p.pb3U, 1e-9)    // 40 % of 7.63 U
         assertEquals(MealDosePlanner.PB3_DELAY_MIN, p.pb3DelayMin)
-        assertEquals(360, p.durationMin)
+        assertEquals(MealDosePlanner.MAX_MODE_MIN, p.durationMin)
     }
 
     @Test
@@ -230,11 +232,40 @@ class MealDosePlannerTest {
     }
 
     @Test
-    fun `the length follows the fat and protein units`() {
-        assertEquals(180, MealDosePlanner.durationFor(1.9))
-        assertEquals(240, MealDosePlanner.durationFor(2.0))
-        assertEquals(300, MealDosePlanner.durationFor(3.0))
-        assertEquals(360, MealDosePlanner.durationFor(4.0))
+    fun `a meal given no pre-bolus 2 leaves its fat and protein to the loop`() {
+        // A big latte: 1.17 fat-protein units would give a pre-bolus 2 and a mode for the fat and protein.
+        val latte = meal(10.0, protein = 9.0, fat = 9.0)
+        val usual = MealDosePlanner.plan(latte, settings, carbParts = listOf(CarbPart(10.0, 75)))
+        assertTrue(usual.pb2U > 0.0)
+        assertEquals(240, usual.durationMin)
+        val off = MealDosePlanner.plan(latte, settings.copy(fatProteinPreBoluses = false), carbParts = listOf(CarbPart(10.0, 75)))
+        assertEquals(0.0, off.pb2U, 1e-9)
+        assertTrue(off.pb2LeftOut)
+        assertFalse(off.capped)
+        assertEquals(120, off.durationMin)
+        // The plan with it is kept, to fill in if the user switches pre-bolus 2 on this time.
+        assertEquals(usual.pb2U, off.withPb2!!.pb2U, 1e-9)
+        assertEquals(usual.durationMin, off.withPb2!!.durationMin)
+        assertEquals(usual.pb1U, off.pb1U, 1e-9)
+        // Too little fat and protein for a pre-bolus 2 anyway: nothing was left out.
+        assertFalse(MealDosePlanner.plan(meal(10.0), settings.copy(fatProteinPreBoluses = false)).pb2LeftOut)
+    }
+
+    @Test
+    fun `the mode lasts as long as its food takes to come in`() {
+        // Coffee with 200 mL of milk: 10 g of fast milk sugar, under 1 fat-protein unit: 75 min x 1.5, up to 2 h.
+        assertEquals(120, MealDosePlanner.durationFor(meal(10.0, protein = 6.8, fat = 6.8), listOf(CarbPart(10.0, 75))))
+        // Lunch: 50 g normal and 2 units, pre-bolus 2 at 1 h: the fat and protein, 45 min + 4 h.
+        assertEquals(285, MealDosePlanner.durationFor(meal(50.0, protein = 25.0, fat = 11.1), listOf(CarbPart(50.0, 120)), lastPreBolusMin = 60))
+        // Slow pizza with 3 units: 45 min + 5 h.
+        assertEquals(345, MealDosePlanner.durationFor(meal(60.0, protein = 30.0, fat = 20.0), listOf(CarbPart(60.0, 180))))
+        // A huge meal stops at 7 h.
+        assertEquals(MealDosePlanner.MAX_MODE_MIN, MealDosePlanner.durationFor(meal(100.0, protein = 80.0, fat = 40.0), emptyList()))
+        // Slow carbs alone: 3 h x 1.5.
+        assertEquals(270, MealDosePlanner.durationFor(meal(40.0), listOf(CarbPart(40.0, 180))))
+        // A late pre-bolus keeps it on an hour past it; no food at all is the shortest mode.
+        assertEquals(270, MealDosePlanner.durationFor(meal(10.0), listOf(CarbPart(10.0, 75)), lastPreBolusMin = 210))
+        assertEquals(MealDosePlanner.MIN_MODE_MIN, MealDosePlanner.durationFor(meal(0.0), emptyList()))
     }
 
     @Test
@@ -261,7 +292,8 @@ class MealDosePlannerTest {
         assertEquals(4.0, a.nowU, 1e-9)
         assertEquals(0.0, a.pb2AddU, 1e-9)
         assertEquals(0.0, a.pb3AddU, 1e-9)
-        assertEquals(MealDosePlanner.ADD_MIN_LEFT_MIN, a.minutesLeft)
+        // At least until the dessert is in: 2 h x 1.5.
+        assertEquals(180, a.minutesLeft)
         assertFalse(a.capped)
     }
 
@@ -271,7 +303,7 @@ class MealDosePlannerTest {
         val a = MealDosePlanner.planAddition(meal(20.0, protein = 20.0, fat = 15.0), settings.copy(maxTotalU = 20.0), fired)
         assertEquals(0.0, a.pb2AddU, 1e-9)
         assertEquals(0.0, a.pb3AddU, 1e-9)
-        assertEquals(240, a.minutesLeft)
+        assertEquals(300, a.minutesLeft)
     }
 
     @Test

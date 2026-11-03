@@ -181,13 +181,18 @@ object SavedFoodCodec {
         return o.mapNotNull { (name, v) -> FoodSpeed.entries.find { it.name == (v as? JsonPrimitive)?.content }?.let { name to it } }.toMap()
     }
 
+    fun encodeNames(names: Collection<String>): String = buildJsonArray { names.forEach { add(JsonPrimitive(it)) } }.toString()
+
+    fun decodeNames(text: String): Set<String> = array(text).mapNotNull { (it as? JsonPrimitive)?.content?.takeIf { n -> n.isNotBlank() } }.toSet()
+
     private fun array(text: String): JsonArray =
         if (text.isBlank()) JsonArray(emptyList()) else runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonArray ?: JsonArray(emptyList())
 }
 
 /**
- * My foods, the recent list and the food speeds, kept in the settings. My foods and the speeds go with a settings
- * export, so a new phone keeps them. The recent list does not: it is only a short memory of this phone's last lookups.
+ * My foods, the recent list, the food speeds and the meals without pre-bolus 2, kept in the settings. All but the recent
+ * list go with a settings export, so a new phone keeps them; the recent list is only a short memory of this phone's
+ * last lookups.
  */
 @SingleIn(AppScope::class)
 @Inject
@@ -214,14 +219,28 @@ class SavedFoodStore(private val preferences: Preferences) {
 
     fun speedFor(item: FoodItem): FoodSpeed? = speeds[speedKey(item)]
 
-    /** Remembers [speed] for [item]. The oldest is forgotten past [MAX_SPEEDS]. */
+    /** Remembers [speed] for [item]. The oldest is forgotten past [MAX_REMEMBERED]. */
     fun rememberSpeed(item: FoodItem, speed: FoodSpeed) {
         val key = speedKey(item)
-        speeds = (speeds - key + (key to speed)).entries.toList().takeLast(MAX_SPEEDS).associate { it.key to it.value }
+        speeds = (speeds - key + (key to speed)).entries.toList().takeLast(MAX_REMEMBERED).associate { it.key to it.value }
         preferences.put(StringNonKey.ApsSmartInsulinFoodSpeeds, SavedFoodCodec.encodeSpeeds(speeds))
     }
 
-    private fun speedKey(item: FoodItem) = item.name.trim().lowercase()
+    private fun speedKey(item: FoodItem) = nameKey(item.name)
+
+    /** Meals the user gives no pre-bolus 2, by name: the fat and protein of a morning coffee is left to the loop. */
+    private var withoutPb2: Set<String> = SavedFoodCodec.decodeNames(preferences.get(StringNonKey.ApsSmartInsulinMealsWithoutPb2))
+
+    fun pb2Off(mealName: String): Boolean = nameKey(mealName) in withoutPb2
+
+    /** Remembers or forgets that [mealName] gets no pre-bolus 2. The oldest is forgotten past [MAX_REMEMBERED]. */
+    fun setPb2Off(mealName: String, off: Boolean) {
+        val key = nameKey(mealName)
+        withoutPb2 = (if (off) withoutPb2 - key + key else withoutPb2 - key).toList().takeLast(MAX_REMEMBERED).toSet()
+        preferences.put(StringNonKey.ApsSmartInsulinMealsWithoutPb2, SavedFoodCodec.encodeNames(withoutPb2))
+    }
+
+    private fun nameKey(name: String) = name.trim().lowercase()
 
     fun remember(items: List<FoodItem>) {
         if (items.isEmpty()) return
@@ -236,6 +255,6 @@ class SavedFoodStore(private val preferences: Preferences) {
 
     companion object {
 
-        const val MAX_SPEEDS = 200
+        const val MAX_REMEMBERED = 200
     }
 }

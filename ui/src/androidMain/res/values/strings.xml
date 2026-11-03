@@ -478,6 +478,7 @@
     <string name="si_food_why_held">Nothing now: BG is low or falling. The loop gives insulin when BG rises.</string>
     <string name="si_food_why_iob">Less now, to stay within max IOB.</string>
     <string name="si_food_why_balance">Less now: the insulin on board already covers part of it. The loop gives more if BG rises.</string>
+    <string name="si_food_pb2_left_out">No pre-bolus 2: you switched it off for this meal before, so the loop covers its fat and protein. Switch it on to give one again.</string>
     <string name="si_food_why_capped">Cut to your max pre-bolus settings. The loop covers the rest as BG rises.</string>
     <string name="si_food_how_it_works">How this works</string>
     <string name="si_food_hold_to_save">Hold a food to save it to My foods. Tap a food in the row at the top to add it again.</string>

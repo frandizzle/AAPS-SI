@@ -1,5 +1,6 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
+import app.aaps.core.interfaces.smartInsulin.CarbPart
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -114,6 +115,13 @@ class SavedFoodsTest {
         // Fast bread with a fatty burger is normal.
         assertEquals(120, listOf(item(40.0, 0.0, FoodSpeed.FAST), item(0.0, FAT_SLOWS_G, FoodSpeed.NORMAL)).carbsMin())
         assertEquals(120, emptyList<FoodItem>().carbsMin())
+        // The parts by speed: juice and pizza stay apart, fastest first, two foods of one speed add up.
+        assertEquals(
+            listOf(CarbPart(30.0, 75), CarbPart(50.0, 180)),
+            listOf(item(40.0, 0.0, FoodSpeed.SLOW), item(30.0, 0.0, FoodSpeed.FAST), item(10.0, 0.0, FoodSpeed.SLOW)).carbParts()
+        )
+        // With a fatty food, the fast part is normal.
+        assertEquals(listOf(CarbPart(40.0, 120)), listOf(item(40.0, 0.0, FoodSpeed.FAST), item(0.0, FAT_SLOWS_G, FoodSpeed.NORMAL)).carbParts())
     }
 
     @Test

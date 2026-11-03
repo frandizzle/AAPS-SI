@@ -1,6 +1,7 @@
 package app.aaps.ui.compose.smartMealDialog.food
 
 import androidx.compose.runtime.Immutable
+import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import kotlin.math.roundToInt
 
@@ -110,14 +111,23 @@ data class MealTotals(val carbsG: Double, val fibreG: Double, val proteinG: Doub
 }
 
 /**
- * Minutes the meal's carbs take to come in: the speed of each food, weighted by its carbs. Fat slows the stomach, so
- * a meal with at least [FAT_SLOWS_G] of fat is never faster than normal. Normal when the meal has no carbs.
+ * The meal's carbs by speed, so the loop expects each at its own time: juice with pizza is a quick rise and then a long
+ * tail, not one average. Fat slows the stomach, so in a meal with at least [FAT_SLOWS_G] of fat, fast food counts as
+ * normal. Fastest first; empty when the meal has no carbs.
  */
+fun List<FoodItem>.carbParts(): List<CarbPart> {
+    val fatty = sumOf { it.fatG } >= FAT_SLOWS_G
+    return filter { it.carbsG > 0.0 }
+        .groupBy { if (fatty && it.speed == FoodSpeed.FAST) FoodSpeed.NORMAL else it.speed }
+        .map { (speed, items) -> CarbPart(items.sumOf { it.carbsG }, speed.carbsMin) }
+        .sortedBy { it.minutes }
+}
+
+/** Minutes the meal's carbs take to come in: its [carbParts] weighted by their carbs. Normal when it has no carbs. */
 fun List<FoodItem>.carbsMin(): Int {
-    val carbs = sumOf { it.carbsG }
-    if (carbs <= 0.0) return FoodSpeed.NORMAL.carbsMin
-    val min = (sumOf { it.carbsG * it.speed.carbsMin } / carbs).roundToInt()
-    return if (sumOf { it.fatG } >= FAT_SLOWS_G) maxOf(min, FoodSpeed.NORMAL.carbsMin) else min
+    val parts = carbParts()
+    val carbs = parts.sumOf { it.carbsG }
+    return if (carbs > 0.0) (parts.sumOf { it.carbsG * it.minutes } / carbs).roundToInt() else FoodSpeed.NORMAL.carbsMin
 }
 
 /** Fat in a meal from which its carbs are never counted as faster than normal. */

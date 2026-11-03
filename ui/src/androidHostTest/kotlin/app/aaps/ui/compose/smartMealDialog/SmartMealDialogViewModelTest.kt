@@ -22,6 +22,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
+import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.AfterActivity
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
@@ -143,6 +144,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinFoodSpeeds)).thenReturn("")
+        whenever(preferences.get(StringNonKey.ApsSmartInsulinMealsWithoutPb2)).thenReturn("")
         whenever(mealOverrideManager.preBolus1RestStatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus2StatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus3StatusText).thenReturn("")
@@ -565,11 +567,12 @@ internal class SmartMealDialogViewModelTest {
             assertThat(addNowU).isWithin(1e-9).of(3.0)
             assertThat(addPb2U).isEqualTo(0.0)
             assertThat(addPb3U).isEqualTo(0.0)
-            assertThat(addMinutesLeft).isEqualTo(120)
+            // At least until its 30 g of normal carbs are in: 2 h x 1.5.
+            assertThat(addMinutesLeft).isEqualTo(180)
         }
         sut.prepareAndConfirm()
         sut.commit(null)
-        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0), any(), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), any())
+        verify(mealEstimateCalibration).addToEstimate(eq(running.triggerTimeMs), any(), eq(30.0), eq(30.0), eq(0.0), eq(0.0), any(), eq(listOf(CarbPart(30.0, MealEstimateCalibration.DEFAULT_CARBS_MIN))), any())
         verify(mealEstimateCalibration, never()).dropEstimate(any())
         // More food: the meal no longer stands for one saved meal.
         verify(savedMealLearning).dropMeal(running.triggerTimeMs)
@@ -608,7 +611,7 @@ internal class SmartMealDialogViewModelTest {
         verify(mealOverrideManager).setAfterActivityCut(15)
         verify(savedMealLearning, never()).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
         // Its food still counts as food still to come, but it is not learned from.
-        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), any())
+        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), any(), any())
     }
 
     @Test
@@ -846,8 +849,53 @@ internal class SmartMealDialogViewModelTest {
         with(sut.uiState.value) {
             assertThat(duraEnabled).isFalse()
             assertThat(pfAfter).isFalse()
-            assertThat(durationMinutes).isEqualTo(360)
+            assertThat(durationMinutes).isEqualTo(MealDosePlanner.MAX_MODE_MIN)
         }
+    }
+
+    @Test
+    fun `pre-bolus 2 switched off for a meal stays off for it, until switched on again`() {
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
+        whenever(dateUtil.now()).thenReturn(NOW)
+        build()
+        // A big latte: 10 g of milk sugar and 1.17 fat-protein units, enough for a pre-bolus 2.
+        fun latte() {
+            sut.clearFood()
+            sut.addFood(dessert(carbs = 10.0, protein = 9.0, fat = 9.0).copy(name = "Latte", source = FoodSource.MANUAL, speed = FoodSpeed.FAST))
+            sut.fillInFromFood()
+        }
+        latte()
+        assertThat(sut.uiState.value.pb2Enabled).isTrue()
+        sut.updatePb2Enabled(false)
+        sut.prepareAndConfirm()
+        sut.commit(null)
+
+        latte()
+        with(sut.uiState.value) {
+            assertThat(pb2Enabled).isFalse()
+            assertThat(plan!!.pb2LeftOut).isTrue()
+            // Its fat and protein are left to the loop, so they do not make the mode longer.
+            assertThat(durationMinutes).isEqualTo(120)
+        }
+        // Switching it on fills in what the plan would give, and a mode long enough for the fat and protein.
+        sut.updatePb2Enabled(true)
+        with(sut.uiState.value) {
+            assertThat(pb2U).isGreaterThan(0.0)
+            assertThat(durationMinutes).isEqualTo(240)
+        }
+        // Off again: the short mode is back.
+        sut.updatePb2Enabled(false)
+        assertThat(sut.uiState.value.durationMinutes).isEqualTo(120)
+        sut.updatePb2Enabled(true)
+        sut.prepareAndConfirm()
+        sut.commit(null)
+
+        latte()
+        assertThat(sut.uiState.value.pb2Enabled).isTrue()
     }
 
     // --- Food log ---
@@ -875,7 +923,7 @@ internal class SmartMealDialogViewModelTest {
         sut.addFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
         sut.logOnly()
         verify(mealEstimateCalibration).logFood(
-            eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(MealEstimateCalibration.DEFAULT_CARBS_MIN), eq(0.0)
+            eq(running.triggerTimeMs), eq(running.modeExpiryMs), any(), eq(36.0), eq(4.0), eq(16.0), eq(NOW), eq(listOf(CarbPart(36.0, MealEstimateCalibration.DEFAULT_CARBS_MIN))), eq(0.0)
         )
         sut.updateLogTreatingLow(true)
         sut.addFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))

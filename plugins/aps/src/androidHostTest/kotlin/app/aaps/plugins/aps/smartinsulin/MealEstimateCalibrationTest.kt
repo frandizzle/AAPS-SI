@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import app.aaps.core.interfaces.logging.AAPSLogger
+import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -219,14 +220,28 @@ class MealEstimateCalibrationTest {
 
     @Test
     fun `fast carbs are expected sooner and slow ones later, also for food added later and after a restart`() {
-        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0, carbsMin = 75)
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0, carbParts = listOf(CarbPart(40.0, 75)))
         assertEquals(T0 + 75 * MIN, cal.stillToCome(T0, T0)!!.carbsUntilMs)
-        cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR, carbsMin = 180)
+        cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR, carbParts = listOf(CarbPart(20.0, 180)))
         cal = MealEstimateCalibrationImpl(sp, csv, log)
-        assertEquals(T0 + 4 * HOUR, cal.stillToCome(T0, T0 + HOUR)!!.carbsUntilMs)
+        val still = cal.stillToCome(T0, T0 + HOUR)!!
+        assertEquals(T0 + 4 * HOUR, still.carbsUntilMs)
+        // Each keeps its own time, also after the restart.
+        assertEquals(listOf(T0 + 75 * MIN to 40.0, T0 + 4 * HOUR to 20.0), still.parts.map { it.untilMs to it.leftG })
         cal.onEpisode(episode(T0, 60.0))
         cal.onCycle(T0 + 4 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         verify(csv).logEstimate(eq(T0), eq(60.0), eq(0.0), eq(0.0), eq(60.0), eq(60.0), eq(1.0), eq(1.0), eq(75))
+    }
+
+    @Test
+    fun `a meal of fast and slow food keeps both, and what BG showed comes off the fast part first`() {
+        // 20 g of juice (fast) with 40 g of pizza carbs (slow).
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 60.0, 60.0, 0.0, 0.0, carbParts = listOf(CarbPart(20.0, 75), CarbPart(40.0, 180)))
+        assertEquals(T0 + 3 * HOUR, cal.stillToCome(T0, T0)!!.carbsUntilMs)
+        cal.onEpisode(episode(T0, 25.0))
+        val still = cal.stillToCome(T0, T0 + HOUR)!!
+        assertEquals(35.0, still.carbsG, 1e-9)
+        assertEquals(listOf(0.0, 35.0), still.parts.map { it.leftG })
     }
 
     @Test

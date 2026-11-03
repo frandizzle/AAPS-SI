@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -98,18 +99,34 @@ class MealFoodForecastTest {
     }
 
     @Test
-    fun `carbs that come in slower keep the meal's rate, up to one and a half times its time`() {
+    fun `carbs that come in slower keep their rate, up to one and a half times their time`() {
         // 50 g over 2 hours: 25 g an hour.
-        val timed = dinner.copy(carbsMealG = 50.0, carbsMin = 120)
+        val part = CarbsPart(leftG = 50.0, mealG = 50.0, untilMs = T0 + 2 * HOUR, minutes = 120)
         // On time: half of it in after an hour, the rest by the 2 hours.
-        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(timed.copy(carbsG = 25.0), T0 + HOUR))
+        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(part.copy(leftG = 25.0), T0 + HOUR))
         // None of it in after an hour: the 50 g take 2 hours more at that rate, so they are in by 3 hours, not 2.
-        val late = MealFoodForecast.foodToCome(timed, T0 + HOUR, 0.0, 0.0, 5.0)!!
+        val late = MealFoodForecast.foodToCome(dinner.copy(carbParts = listOf(part)), T0 + HOUR, 0.0, 0.0, 5.0)!!
         assertEquals(T0 + 3 * HOUR, late.carbsUntilMs)
         // Never later than 3 hours: 30 g left at 2.5 hours are in by then.
-        assertEquals(T0 + 3 * HOUR, MealFoodForecast.carbsUntil(timed.copy(carbsG = 30.0), T0 + 2 * HOUR + 30 * MIN))
-        // Without the meal's carb time, as planned.
-        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(dinner, T0 + HOUR))
+        assertEquals(T0 + 3 * HOUR, MealFoodForecast.carbsUntil(part.copy(leftG = 30.0), T0 + 2 * HOUR + 30 * MIN))
+        // Without a known time, as planned.
+        assertEquals(T0 + 2 * HOUR, MealFoodForecast.carbsUntil(part.copy(minutes = 0), T0 + HOUR))
+    }
+
+    @Test
+    fun `fast and slow food in one meal give a quick rise and then a long tail`() {
+        // 20 g of juice over 75 min and 40 g of pizza carbs over 3 hours, nothing in yet.
+        val parts = listOf(CarbsPart(20.0, 20.0, T0 + 75 * MIN, 75), CarbsPart(40.0, 40.0, T0 + 3 * HOUR, 180))
+        val meal = dinner.copy(carbsG = 60.0, fatProteinG = 0.0, mealG = 60.0, carbsUntilMs = T0 + 3 * HOUR, carbParts = parts)
+        val f = MealFoodForecast.foodToCome(meal, T0, 0.0, 0.0, 5.0)!!
+        val steps = MealFoodForecast.steps(f, T0, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 48)
+        // 10 mg/dL per gram: the juice over 15 steps and the pizza over 36 at first, then the pizza alone.
+        assertEquals((20.0 / 15 + 40.0 / 36) * 10.0, steps[0], 1e-9)
+        assertEquals(40.0 / 36 * 10.0, steps[20], 1e-9)
+        assertEquals(600.0, steps.sum(), 1e-6)
+        // A rise of 20 g already showing is the juice.
+        val seen = MealFoodForecast.steps(f, T0, isfMgdl = 50.0, ciAheadMgdl = 200.0, count = 48)
+        assertEquals(40.0 / 36 * 10.0, seen[0], 1e-9)
     }
 
     @Test
@@ -131,11 +148,11 @@ class MealFoodForecastTest {
 
     @Test
     fun `fat and protein take longer the more there is`() {
-        assertEquals(180, MealFoodForecast.fatProteinMinutes(0.5))
-        assertEquals(180, MealFoodForecast.fatProteinMinutes(1.0))
-        assertEquals(240, MealFoodForecast.fatProteinMinutes(2.0))
-        assertEquals(300, MealFoodForecast.fatProteinMinutes(3.0))
-        assertEquals(480, MealFoodForecast.fatProteinMinutes(10.0))
+        assertEquals(180, MealEstimateCalibration.fatProteinMinutes(0.5))
+        assertEquals(180, MealEstimateCalibration.fatProteinMinutes(1.0))
+        assertEquals(240, MealEstimateCalibration.fatProteinMinutes(2.0))
+        assertEquals(300, MealEstimateCalibration.fatProteinMinutes(3.0))
+        assertEquals(480, MealEstimateCalibration.fatProteinMinutes(10.0))
     }
 
     @Test

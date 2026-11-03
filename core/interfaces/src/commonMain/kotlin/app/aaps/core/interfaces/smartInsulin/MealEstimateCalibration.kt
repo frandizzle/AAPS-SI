@@ -1,6 +1,12 @@
 package app.aaps.core.interfaces.smartInsulin
 
 /**
+ * The carbs of a meal that come in at one speed: [carbsG] grams over [minutes] from when they are eaten. A meal of
+ * juice and pizza has a fast part and a slow part, so the loop expects a quick rise and then a long tail.
+ */
+data class CarbPart(val carbsG: Double, val minutes: Int)
+
+/**
  * Learns how a meal estimate (from a photo, a description or a barcode) compares with what the meal
  * really needed, so the insulin planned from the next estimate fits this user.
  *
@@ -27,14 +33,14 @@ interface MealEstimateCalibration {
      * @param fatG          estimated fat
      * @param learn         false for a meal that says nothing about the estimates, for example one given less
      *                      insulin after exercise. Its food still counts as food still to come.
-     * @param carbsMin      minutes the carbs take to come in, from how fast the foods are
+     * @param carbParts     the carbs by how fast they come in; empty: all of [carbsG] at normal speed
      * @param estimatedG    the part of [carbEquivG] from a photo or description estimate. Only that part is scaled by
      *                      [factor], and only a meal that is all estimated teaches it. The rest is exact: scanned,
      *                      typed in or saved.
      */
     fun recordEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true,
-        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
+        carbParts: List<CarbPart> = emptyList(), estimatedG: Double = carbEquivG
     )
 
     /**
@@ -42,13 +48,13 @@ interface MealEstimateCalibration {
      * of the watch window. Does nothing when the meal has no estimate: the tracker would then see more
      * food than was estimated.
      *
-     * @param eatenMs  when the added food is eaten: its carbs are expected to come in over the next [carbsMin] minutes
-     * @param carbsMin minutes the added carbs take to come in, from how fast the foods are
+     * @param eatenMs  when the added food is eaten: its carbs are expected to come in from then, at their speeds
+     * @param carbParts the added carbs by how fast they come in, see [recordEstimate]
      * @param estimatedG the part of [carbEquivG] from a photo or description estimate, see [recordEstimate]
      */
     fun addToEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
-        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
+        carbParts: List<CarbPart> = emptyList(), estimatedG: Double = carbEquivG
     )
 
     /**
@@ -58,12 +64,12 @@ interface MealEstimateCalibration {
      *
      * @param modeEndMs when the mode ends; the food is watched at least until its carbs should have come in
      * @param eatenMs   when the food is eaten
-     * @param carbsMin  minutes its carbs take to come in, from how fast the foods are
+     * @param carbParts its carbs by how fast they come in, see [recordEstimate]
      * @param estimatedG the part of [carbEquivG] from a photo or description estimate, see [recordEstimate]
      */
     fun logFood(
         modeStartMs: Long, modeEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, eatenMs: Long,
-        carbsMin: Int = DEFAULT_CARBS_MIN, estimatedG: Double = carbEquivG
+        carbParts: List<CarbPart> = emptyList(), estimatedG: Double = carbEquivG
     )
 
     /** The meal got food that was not estimated, for example a dose typed by hand, so it is not used to learn. */
@@ -86,5 +92,23 @@ interface MealEstimateCalibration {
 
         /** Minutes carbs of normal speed take to come in, from when they are eaten. */
         const val DEFAULT_CARBS_MIN = 120
+        /** Carbs that come in slower than expected may take at most this many times their carb time, as in Loop. */
+        const val CARBS_STRETCH = 1.5
+        /** Minutes after they are eaten that fat and protein start to raise BG. */
+        const val FAT_PROTEIN_START_MIN = 45
+        /** Fat and protein of one fat-protein unit (100 kcal) take this long to come in, from when they start... */
+        const val FAT_PROTEIN_MIN_PER_FPU1 = 180
+        /** ...one more hour for each unit more... */
+        const val FAT_PROTEIN_MIN_PER_FPU = 60
+        /** ...and at most this long, as for the largest meals of the usual fat and protein rule. */
+        const val FAT_PROTEIN_MAX_MIN = 480
+
+        /**
+         * Minutes a meal's fat and protein take to come in, from when they start: 3 h for one fat-protein unit (100 kcal),
+         * an hour more for each unit more, at most 8 h. Close to the usual fat and protein rule (Warsaw method), without its
+         * jumps. The loop's forecast and the length of a meal mode both use it.
+         */
+        fun fatProteinMinutes(fpu: Double): Int =
+            (FAT_PROTEIN_MIN_PER_FPU1 + FAT_PROTEIN_MIN_PER_FPU * (fpu - 1.0).coerceAtLeast(0.0)).coerceAtMost(FAT_PROTEIN_MAX_MIN.toDouble()).toInt()
     }
 }
