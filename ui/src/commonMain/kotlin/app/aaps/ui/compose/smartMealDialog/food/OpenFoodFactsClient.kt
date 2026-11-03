@@ -106,15 +106,18 @@ internal class OpenFoodFactsClient(private val http: HttpClient) {
         val name = listOfNotNull(brand?.substringBefore(',')?.trim()?.takeIf { it.isNotEmpty() },
                                  product.str("product_name")?.trim()?.takeIf { it.isNotEmpty() })
             .joinToString(" ").ifEmpty { code }
+        val protein = (n.num("proteins_100g") ?: 0.0).coerceIn(0.0, 100.0)
+        val fat = (n.num("fat_100g") ?: 0.0).coerceIn(0.0, 100.0)
         return FoodItem(
             name = name,
             baseGrams = serving ?: 100.0,
             portion = if (serving != null) product.str("serving_size")?.trim().orEmpty() else "",
             carbsPer100 = carbs.coerceIn(0.0, 100.0),
             fibrePer100 = fibre.coerceIn(0.0, 100.0),
-            proteinPer100 = (n.num("proteins_100g") ?: 0.0).coerceIn(0.0, 100.0),
-            fatPer100 = (n.num("fat_100g") ?: 0.0).coerceIn(0.0, 100.0),
-            source = source
+            proteinPer100 = protein,
+            fatPer100 = fat,
+            source = source,
+            speed = FoodSpeed.guess(carbs, n.num("sugars_100g"), fibre, protein, fat)
         )
     }
 

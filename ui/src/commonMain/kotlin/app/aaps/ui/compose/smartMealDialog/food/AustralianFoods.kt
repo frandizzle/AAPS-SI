@@ -6,15 +6,17 @@ package app.aaps.ui.compose.smartMealDialog.food
  */
 internal object AustralianFoods {
 
-    /** One food of the table, per 100 g. [liquid] foods are per 100 mL, taken as 100 g. */
-    data class Food(val name: String, val carbs: Double, val fibre: Double, val protein: Double, val fat: Double, val liquid: Boolean) {
+    /** One food of the table, per 100 g. [liquid] foods are per 100 mL, taken as 100 g. [sugars] is null when not known. */
+    data class Food(
+        val name: String, val carbs: Double, val fibre: Double, val protein: Double, val fat: Double, val liquid: Boolean, val sugars: Double? = null
+    ) {
 
         internal val words: List<String> = words(name)
 
         fun toItem(): FoodItem = FoodItem(
             name = name, baseGrams = 100.0, portion = "",
             carbsPer100 = carbs, fibrePer100 = fibre, proteinPer100 = protein, fatPer100 = fat,
-            source = FoodSource.SEARCH
+            source = FoodSource.SEARCH, speed = FoodSpeed.guess(carbs, sugars, fibre, protein, fat)
         )
     }
 
@@ -25,14 +27,15 @@ internal object AustralianFoods {
 
     internal fun parse(chunks: List<String>): List<Food> = chunks.flatMap { it.lineSequence() }.mapNotNull { line ->
         val f = line.split('|')
-        if (f.size < 5) return@mapNotNull null
+        if (f.size < 6) return@mapNotNull null
         Food(
             name = f[0],
             carbs = f[1].toDoubleOrNull() ?: return@mapNotNull null,
             fibre = f[2].toDoubleOrNull() ?: 0.0,
             protein = f[3].toDoubleOrNull() ?: 0.0,
             fat = f[4].toDoubleOrNull() ?: 0.0,
-            liquid = f.getOrNull(5) == "l"
+            liquid = f.getOrNull(6) == "l",
+            sugars = f[5].toDoubleOrNull()
         )
     }
 

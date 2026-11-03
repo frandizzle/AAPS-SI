@@ -45,6 +45,7 @@ import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
 import app.aaps.ui.compose.smartMealDialog.food.FoodSource
+import app.aaps.ui.compose.smartMealDialog.food.FoodSpeed
 import app.aaps.ui.compose.smartMealDialog.food.MealDosePlanner
 import app.aaps.ui.compose.smartMealDialog.food.MealFoodRepository
 import app.aaps.ui.compose.smartMealDialog.food.SaveResult
@@ -141,6 +142,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinLunchDuraStrength)).thenReturn(1.0)
         whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")
+        whenever(preferences.get(StringNonKey.ApsSmartInsulinFoodSpeeds)).thenReturn("")
         whenever(mealOverrideManager.preBolus1RestStatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus2StatusText).thenReturn("")
         whenever(mealOverrideManager.preBolus3StatusText).thenReturn("")
@@ -743,6 +745,20 @@ internal class SmartMealDialogViewModelTest {
         sut.commit(null)
         // 1.45 FPU is not heavy: all of it is the wave, and there is no pre-bolus 3.
         verify(savedMealLearning).recordMeal(eq("Turkey wrap"), eq(NOW), any(), any(), eq(0L), eq(20.0), eq(14.5), eq(0.0))
+    }
+
+    @Test
+    fun `a speed set for a food is used for it from then on`() {
+        build()
+        sut.addFood(dessert().copy(name = "Flat white", source = FoodSource.MANUAL))
+        sut.changeSpeed(0)
+        assertThat(sut.uiState.value.foodItems.single().speed).isEqualTo(FoodSpeed.SLOW)
+        sut.changeSpeed(0)
+        sut.clearFood()
+        // The same food again, from any source and in any case, comes in fast; another food does not.
+        sut.addFood(dessert().copy(name = "flat white ", source = FoodSource.SEARCH))
+        sut.addFood(dessert().copy(name = "Toast", source = FoodSource.MANUAL))
+        assertThat(sut.uiState.value.foodItems.map { it.speed }).containsExactly(FoodSpeed.FAST, FoodSpeed.NORMAL).inOrder()
     }
 
     @Test

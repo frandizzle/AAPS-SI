@@ -471,7 +471,7 @@ class SmartMealDialogViewModel(
                     is FoodLookupResult.Success -> {
                         savedFoodStore.remember(result.items)
                         val kept = if (replacesEstimate) s.foodItems.filter { it.source != FoodSource.ESTIMATE } else s.foodItems
-                        s.copy(lookupBusy = false, foodItems = kept + result.items, plan = null, addition = null, learnedTiming = null, recentFoods = savedFoodStore.recent, sourceMeal = null, loggedKcal = null)
+                        s.copy(lookupBusy = false, foodItems = kept + withRememberedSpeeds(result.items), plan = null, addition = null, learnedTiming = null, recentFoods = savedFoodStore.recent, sourceMeal = null, loggedKcal = null)
                     }
 
                     is FoodLookupResult.Failure -> s.copy(lookupBusy = false, lookupError = result.reason, lookupDetail = result.detail)
@@ -486,10 +486,15 @@ class SmartMealDialogViewModel(
         s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(quantity = q) }, plan = null, addition = null, learnedTiming = null)
     }
 
-    /** Changes how fast a food's carbs come in, to the next speed. */
-    fun changeSpeed(index: Int) = _uiState.update { s ->
-        val item = s.foodItems.getOrNull(index) ?: return@update s
-        s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = item.copy(speed = item.speed.next()) }, plan = null, addition = null, learnedTiming = null)
+    /** Changes how fast a food's carbs come in, to the next speed, and keeps it for that food from now on. */
+    fun changeSpeed(index: Int) {
+        val item = uiState.value.foodItems.getOrNull(index) ?: return
+        val speed = item.speed.next()
+        savedFoodStore.rememberSpeed(item, speed)
+        _uiState.update { s ->
+            if (s.foodItems.getOrNull(index)?.name != item.name) s
+            else s.copy(foodItems = s.foodItems.toMutableList().also { it[index] = it[index].copy(speed = speed) }, plan = null, addition = null, learnedTiming = null)
+        }
     }
 
     fun removeFood(index: Int) = _uiState.update { s ->
@@ -640,10 +645,14 @@ class SmartMealDialogViewModel(
     private fun learnedMeals(): Map<String, LearnedMeal> =
         savedFoodStore.foods.mapNotNull { f -> savedMealLearning.learned(f.name)?.let { f.name to it } }.toMap()
 
+    /** A speed the user set for a food wins over the guess of any source. */
+    private fun withRememberedSpeeds(items: List<FoodItem>): List<FoodItem> =
+        items.map { i -> savedFoodStore.speedFor(i)?.let { i.copy(speed = it) } ?: i }
+
     /** @param sourceMeal the saved meal the list now is, or null when it is no longer one saved meal */
     private fun addItems(items: List<FoodItem>, sourceMeal: String?) = _uiState.update {
         it.copy(
-            foodItems = it.foodItems + items, plan = null, addition = null, learnedTiming = null, lastSave = null, sourceMeal = sourceMeal, loggedKcal = null,
+            foodItems = it.foodItems + withRememberedSpeeds(items), plan = null, addition = null, learnedTiming = null, lastSave = null, sourceMeal = sourceMeal, loggedKcal = null,
             savedFoods = savedFoodStore.foods, recentFoods = savedFoodStore.recent, learnedMeals = learnedMeals()
         )
     }

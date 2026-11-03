@@ -24,6 +24,33 @@ enum class FoodSpeed(val carbsMin: Int) {
 
     /** The next speed, for the chip that is tapped to change it. */
     fun next(): FoodSpeed = entries[(ordinal + 1) % entries.size]
+
+    companion object {
+
+        /** Fast: at least this share of the carbs is sugar... */
+        const val FAST_SUGAR_SHARE = 0.6
+        /** ...and fibre, protein and fat together are at most this share of the carbs (juice, lollies, most fruit). */
+        const val FAST_MAX_OTHER_SHARE = 0.25
+        /** Slow: fibre, protein and fat together are at least this share of the carbs (pizza, nuts, milk). */
+        const val SLOW_MIN_OTHER_SHARE = 0.75
+
+        /**
+         * A guess from the label, per 100 g, for food that comes without a speed (a scan or the food search). Sugar with
+         * little else comes in fast; fibre, protein and fat slow the carbs down. Starch is left at normal: white bread
+         * and wholegrain bread look too alike on a label. The user can still change it.
+         *
+         * @param sugars null when the label does not give them; then the guess is only normal or slow
+         */
+        fun guess(carbs: Double, sugars: Double?, fibre: Double, protein: Double, fat: Double): FoodSpeed {
+            if (carbs <= 0.0) return NORMAL
+            val other = fibre + protein + fat
+            return when {
+                other >= carbs * SLOW_MIN_OTHER_SHARE                                                       -> SLOW
+                sugars != null && sugars >= carbs * FAST_SUGAR_SHARE && other <= carbs * FAST_MAX_OTHER_SHARE -> FAST
+                else                                                                                        -> NORMAL
+            }
+        }
+    }
 }
 
 /**

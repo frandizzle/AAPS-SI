@@ -188,6 +188,17 @@ class FoodClientsTest {
     }
 
     @Test
+    fun `a scanned product gets a speed from its label`() {
+        val client = OpenFoodFactsClient(HttpClient(MockEngine { respond("") }))
+        fun speed(nutriments: String) =
+            assertIs<FoodLookupResult.Success>(client.parse("""{"status":1,"product":{"product_name":"X","nutriments":{$nutriments}}}""", "12345678")).items.single().speed
+        assertEquals(FoodSpeed.FAST, speed(""""carbohydrates_100g":11,"sugars_100g":10.5,"proteins_100g":0.5"""))
+        assertEquals(FoodSpeed.SLOW, speed(""""carbohydrates_100g":27,"sugars_100g":3,"proteins_100g":11,"fat_100g":10,"fiber_100g":2"""))
+        // Without sugars on the label it is never guessed fast.
+        assertEquals(FoodSpeed.NORMAL, speed(""""carbohydrates_100g":11,"proteins_100g":0.5"""))
+    }
+
+    @Test
     fun `a US only label has its fibre taken off the carbs`() {
         val r = OpenFoodFactsClient(HttpClient(MockEngine { respond("") })).parse(
             """{"status":1,"product":{"product_name":"Bran","countries_tags":["en:united-states"],"nutriments":{"carbohydrates_100g":70,"fiber_100g":30}}}""",

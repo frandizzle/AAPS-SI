@@ -110,7 +110,7 @@ object SavedFoodList {
     fun forMeal(item: FoodItem): FoodItem = item.copy(source = FoodSource.SAVED)
 }
 
-/** Reads and writes My foods and the recent list as JSON. A broken value reads as an empty list. */
+/** Reads and writes My foods, the recent list and the food speeds as JSON. A broken value reads as empty. */
 object SavedFoodCodec {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -174,13 +174,20 @@ object SavedFoodCodec {
         )
     }
 
+    fun encodeSpeeds(speeds: Map<String, FoodSpeed>): String = buildJsonObject { speeds.forEach { (name, speed) -> put(name, speed.name) } }.toString()
+
+    fun decodeSpeeds(text: String): Map<String, FoodSpeed> {
+        val o = (if (text.isBlank()) null else runCatching { json.parseToJsonElement(text) }.getOrNull()) as? JsonObject ?: return emptyMap()
+        return o.mapNotNull { (name, v) -> FoodSpeed.entries.find { it.name == (v as? JsonPrimitive)?.content }?.let { name to it } }.toMap()
+    }
+
     private fun array(text: String): JsonArray =
         if (text.isBlank()) JsonArray(emptyList()) else runCatching { json.parseToJsonElement(text) }.getOrNull() as? JsonArray ?: JsonArray(emptyList())
 }
 
 /**
- * My foods and the recent list, kept in the settings. My foods goes with a settings export, so a new phone
- * keeps it. The recent list does not: it is only a short memory of this phone's last lookups.
+ * My foods, the recent list and the food speeds, kept in the settings. My foods and the speeds go with a settings
+ * export, so a new phone keeps them. The recent list does not: it is only a short memory of this phone's last lookups.
  */
 @SingleIn(AppScope::class)
 @Inject
@@ -201,6 +208,21 @@ class SavedFoodStore(private val preferences: Preferences) {
     fun delete(name: String) = storeFoods(SavedFoodList.delete(foods, name))
     fun rename(name: String, newName: String) = storeFoods(SavedFoodList.rename(foods, name, newName))
 
+    /** The speed the user set for a food, by its name; it is used from then on for that food from any source. */
+    var speeds: Map<String, FoodSpeed> = SavedFoodCodec.decodeSpeeds(preferences.get(StringNonKey.ApsSmartInsulinFoodSpeeds))
+        private set
+
+    fun speedFor(item: FoodItem): FoodSpeed? = speeds[speedKey(item)]
+
+    /** Remembers [speed] for [item]. The oldest is forgotten past [MAX_SPEEDS]. */
+    fun rememberSpeed(item: FoodItem, speed: FoodSpeed) {
+        val key = speedKey(item)
+        speeds = (speeds - key + (key to speed)).entries.toList().takeLast(MAX_SPEEDS).associate { it.key to it.value }
+        preferences.put(StringNonKey.ApsSmartInsulinFoodSpeeds, SavedFoodCodec.encodeSpeeds(speeds))
+    }
+
+    private fun speedKey(item: FoodItem) = item.name.trim().lowercase()
+
     fun remember(items: List<FoodItem>) {
         if (items.isEmpty()) return
         recent = SavedFoodList.remember(recent, items)
@@ -210,5 +232,10 @@ class SavedFoodStore(private val preferences: Preferences) {
     private fun storeFoods(list: List<SavedFood>) {
         foods = SavedFoodList.sorted(list)
         preferences.put(StringNonKey.ApsSmartInsulinSavedFoods, SavedFoodCodec.encodeFoods(foods))
+    }
+
+    companion object {
+
+        const val MAX_SPEEDS = 200
     }
 }

@@ -16,7 +16,7 @@ import zipfile
 
 NS = {'m': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
 # Columns of the nutrient profile sheets, per 100 g or per 100 mL.
-NAME, PROTEIN, FAT, FIBRE, CARBS = 3, 7, 9, 11, 38
+NAME, PROTEIN, FAT, FIBRE, SUGARS, CARBS = 3, 7, 9, 11, 19, 38
 # A Kotlin string constant may be at most 65535 bytes.
 CHUNK_BYTES = 60000
 
@@ -39,7 +39,9 @@ def rows(z, shared, sheet):
             yield [out.get(i, '') for i in range(max(out) + 1)]
 
 
-def num(text):
+def num(text, blank='0'):
+    if not text.strip():
+        return blank
     try:
         v = round(float(text), 1)
     except ValueError:
@@ -58,7 +60,7 @@ def main(path):
             name = ' '.join(r[NAME].split())
             if not name or any(c in name for c in '|$"\\'):
                 continue
-            fields = [name, num(r[CARBS]), num(r[FIBRE]), num(r[PROTEIN]), num(r[FAT])]
+            fields = [name, num(r[CARBS]), num(r[FIBRE]), num(r[PROTEIN]), num(r[FAT]), num(r[SUGARS], blank='')]
             if liquid:
                 fields.append('l')
             lines.append('|'.join(fields))
@@ -76,12 +78,12 @@ def main(path):
     print('//')
     print('// Australian Food Composition Database - Release 3, (c) Food Standards Australia New Zealand,')
     print('// https://www.foodstandards.gov.au/science-data/food-nutrient-databases/afcd, used under the')
-    print('// Creative Commons Attribution 4.0 licence. Only the name, available carbohydrate, fibre, protein')
-    print('// and fat of each food are kept. FSANZ does not endorse this app.')
+    print('// Creative Commons Attribution 4.0 licence. Only the name, available carbohydrate, fibre, protein,')
+    print('// fat and total sugars of each food are kept. FSANZ does not endorse this app.')
     print()
     print('/**')
-    print(' * One food per line: name|carbs|fibre|protein|fat, grams per 100 g. A last field "l" means per 100 mL.')
-    print(' * Carbs are available carbohydrate without sugar alcohols, as on Australian labels.')
+    print(' * One food per line: name|carbs|fibre|protein|fat|sugars, grams per 100 g; sugars may be empty when not known.')
+    print(' * A last field "l" means per 100 mL. Carbs are available carbohydrate without sugar alcohols, as on Australian labels.')
     print(' */')
     print('internal val australianFoodData: List<String> = listOf(')
     for i, chunk in enumerate(chunks):
