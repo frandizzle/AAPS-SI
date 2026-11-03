@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
+import app.aaps.core.interfaces.smartInsulin.FoodLogItem
 import app.aaps.core.keys.StringNonKey
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -59,7 +60,11 @@ class FoodLogImpl @Inject constructor(
         val json = synchronized(this) {
             JSONArray().apply {
                 log.forEach {
-                    put(JSONObject().put("t", it.timeMs).put("n", it.name).put("c", it.carbsG).put("fi", it.fibreG).put("p", it.proteinG).put("f", it.fatG))
+                    val o = JSONObject().put("t", it.timeMs).put("n", it.name).put("c", it.carbsG).put("fi", it.fibreG).put("p", it.proteinG).put("f", it.fatG)
+                    if (it.items.isNotEmpty()) o.put("i", JSONArray().apply {
+                        it.items.forEach { f -> put(JSONObject().put("n", f.name).put("g", f.grams).put("c", f.carbsG).put("fi", f.fibreG).put("p", f.proteinG).put("f", f.fatG)) }
+                    })
+                    put(o)
                 }
             }
         }
@@ -73,7 +78,13 @@ class FoodLogImpl @Inject constructor(
             val a = JSONArray(raw)
             for (i in 0 until a.length()) {
                 val o = a.getJSONObject(i)
-                log.add(FoodLogEntry(o.getLong("t"), o.optString("n", ""), o.optDouble("c", 0.0), o.optDouble("fi", 0.0), o.optDouble("p", 0.0), o.optDouble("f", 0.0)))
+                val items = o.optJSONArray("i")?.let { a2 ->
+                    (0 until a2.length()).map { j ->
+                        val f = a2.getJSONObject(j)
+                        FoodLogItem(f.optString("n", ""), f.optDouble("g", 0.0), f.optDouble("c", 0.0), f.optDouble("fi", 0.0), f.optDouble("p", 0.0), f.optDouble("f", 0.0))
+                    }
+                }.orEmpty()
+                log.add(FoodLogEntry(o.getLong("t"), o.optString("n", ""), o.optDouble("c", 0.0), o.optDouble("fi", 0.0), o.optDouble("p", 0.0), o.optDouble("f", 0.0), items))
             }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "FoodLog: could not read saved log: ${e.message}")

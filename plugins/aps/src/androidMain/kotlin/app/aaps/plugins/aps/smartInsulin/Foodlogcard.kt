@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -24,7 +26,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -49,11 +50,11 @@ import java.util.Locale
  *
  * @param daysBack 0 for today
  * @param onDelete asks before removing an entry
- * @param onScale  changes how much of an entry was eaten, for example 0.5 for half
+ * @param onChange changes how much of an entry was eaten: the entry as it was, and as it is now
  */
 @Composable
 fun FoodLogSection(
-    day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (Int) -> Unit, onDelete: (Long, String) -> Unit, onScale: (FoodLogEntry, Double) -> Unit
+    day: SmartInsulinPlugin.FoodDay, daysBack: Int, onDaysBack: (Int) -> Unit, onDelete: (Long, String) -> Unit, onChange: (FoodLogEntry, FoodLogEntry) -> Unit
 ) {
     var changing by remember { mutableStateOf<FoodLogEntry?>(null) }
     val colors = AapsTheme.generalColors
@@ -132,31 +133,67 @@ fun FoodLogSection(
     if (day.entries.isNotEmpty())
         Text("Tap an entry to change how much was eaten.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-    changing?.let { e -> AmountDialog(e, onSave = { onScale(e, it); changing = null }, onDismiss = { changing = null }) }
+    changing?.let { e -> AmountDialog(e, onSave = { onChange(e, it); changing = null }, onDismiss = { changing = null }) }
 }
 
-/** How much of a logged food was really eaten, as a share of what was logged: ×0.5 for half, ×2 for twice. */
+/**
+ * How much of a logged food was really eaten, as a share of what was logged: ×0.5 for half, ×2 for twice. When the
+ * entry kept its foods, each is listed with its weight, carbs, protein and fat, and can be changed on its own, for
+ * example half the chips and all the chicken. The top control sets all of them together.
+ */
 @Composable
-private fun AmountDialog(entry: FoodLogEntry, onSave: (Double) -> Unit, onDismiss: () -> Unit) {
-    var factor by remember { mutableDoubleStateOf(1.0) }
+private fun AmountDialog(entry: FoodLogEntry, onSave: (FoodLogEntry) -> Unit, onDismiss: () -> Unit) {
+    val count = entry.items.size.coerceAtLeast(1)
+    var factors by remember { mutableStateOf(List(count) { 1.0 }) }
+    val changed = entry.withAmounts(factors)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("How much was eaten?") },
         text = {
-            Column {
-                Text(entry.name, style = MaterialTheme.typography.bodyMedium)
-                SiSpacer(8)
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (entry.items.isEmpty()) {
+                    Text(entry.name, style = MaterialTheme.typography.bodyMedium)
+                    SiSpacer(8)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { factor = (factor - AMOUNT_STEP).coerceAtLeast(AMOUNT_STEP) }) { Icon(Icons.Filled.Remove, contentDescription = "Less") }
-                    Text("×%.2f".format(factor), style = MaterialTheme.typography.titleLarge)
-                    IconButton(onClick = { factor = (factor + AMOUNT_STEP).coerceAtMost(MAX_AMOUNT) }) { Icon(Icons.Filled.Add, contentDescription = "More") }
-                    Text("%,.0f kcal".format(entry.kcal * factor), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 8.dp))
+                    if (entry.items.isNotEmpty()) Text("All", style = MaterialTheme.typography.titleMedium)
+                    // Mixed amounts show no single factor; a step then starts from all of it.
+                    AmountStepper(factors.distinct().singleOrNull(), min = AMOUNT_STEP, large = true) { f -> factors = List(count) { f } }
+                    Text("%,.0f kcal".format(changed.kcal), style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(start = 8.dp))
+                }
+                entry.items.forEachIndexed { i, item ->
+                    val now = item.times(factors[i])
+                    SiSpacer(10)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(item.name, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                        AmountStepper(factors[i], min = 0.0, large = false) { f -> factors = factors.toMutableList().also { it[i] = f } }
+                    }
+                    Text(
+                        "%.0f g · %.0f g carbs · %.0f g protein · %.0f g fat".format(now.grams, now.carbsG, now.proteinG, now.fatG),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(factor) }, enabled = factor != 1.0) { Text("Save") } },
+        confirmButton = {
+            TextButton(onClick = { onSave(changed) }, enabled = factors.any { it != 1.0 } && changed.kcal > 0.0) { Text("Save") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+/** − ×1.00 +, in steps of [AMOUNT_STEP] from [min] to [MAX_AMOUNT]. A null [factor] shows none and steps from 1. */
+@Composable
+private fun AmountStepper(factor: Double?, min: Double, large: Boolean, onChange: (Double) -> Unit) {
+    val from = factor ?: 1.0
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { onChange((from - AMOUNT_STEP).coerceAtLeast(min)) }) { Icon(Icons.Filled.Remove, contentDescription = "Less") }
+        Text(
+            factor?.let { "×%.2f".format(it) } ?: "×–",
+            style = if (large) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleSmall
+        )
+        IconButton(onClick = { onChange((from + AMOUNT_STEP).coerceAtMost(MAX_AMOUNT)) }) { Icon(Icons.Filled.Add, contentDescription = "More") }
+    }
 }
 
 private const val AMOUNT_STEP = 0.25

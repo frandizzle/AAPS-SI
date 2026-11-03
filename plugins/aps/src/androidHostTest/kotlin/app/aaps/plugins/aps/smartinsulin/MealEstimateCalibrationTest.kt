@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
@@ -188,16 +189,30 @@ class MealEstimateCalibrationTest {
         // A cup of milk, 10 g carbs, 9 g protein, 9 g fat: 1.17 fat-protein units = 11.7 g.
         cal.recordEstimate(T0, T0 + 3 * HOUR, 21.7, 10.0, 9.0, 9.0)
         // Only a quarter of it was drunk.
-        cal.changeLoggedFood(T0 + 10_000L, -7.5, -6.75, -6.75)
+        val change = cal.changeLoggedFood(T0 + 10_000L, -7.5, -6.75, -6.75)!!
         val still = cal.stillToCome(T0, T0)!!
         assertEquals(2.5, still.carbsG, 1e-9)
         assertEquals(21.7 / 4, still.carbsG + still.fatProteinG, 1e-9)
+        // What is left of the meal, for its waiting pre-boluses.
+        assertEquals(T0, change.modeStartMs)
+        assertEquals(0.25, change.carbsFactor, 1e-9)
+        assertEquals(0.25, change.fatProteinFactor, 1e-9)
+    }
+
+    @Test
+    fun `a smaller side of carbs leaves the fat and protein as they were`() {
+        // Schnitzel and chips: 60 g carbs, and 20 g protein and 20 g fat, 2.6 fat-protein units = 26 g.
+        cal.recordEstimate(T0, T0 + 3 * HOUR, 86.0, 60.0, 20.0, 20.0)
+        // Half the chips: 15 g carbs less.
+        val change = cal.changeLoggedFood(T0 + 10_000L, -15.0, 0.0, 0.0)!!
+        assertEquals(0.75, change.carbsFactor, 1e-9)
+        assertEquals(1.0, change.fatProteinFactor, 1e-9)
     }
 
     @Test
     fun `a removed food leaves nothing, and food from another time changes no meal`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
-        cal.changeLoggedFood(T0 + 4 * HOUR, -40.0, 0.0, 0.0)   // after the window
+        assertNull(cal.changeLoggedFood(T0 + 4 * HOUR, -40.0, 0.0, 0.0))   // after the window
         assertEquals(40.0, cal.foodStillToComeG(T0)!!, 1e-9)
         cal.changeLoggedFood(T0, -40.0, 0.0, 0.0)
         assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)

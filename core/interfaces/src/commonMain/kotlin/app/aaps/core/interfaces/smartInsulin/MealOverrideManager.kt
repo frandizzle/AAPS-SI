@@ -128,6 +128,31 @@ interface MealOverrideManager {
      */
     fun countLoopSmb(smbU: Double)
 
+    /**
+     * Keeps the running meal mode going while its food still comes in. When the mode ends within [EXTEND_CHECK_MIN]
+     * minutes and BG still rises, or its food list still has food to come, it ends [EXTEND_STEP_MIN] minutes from now.
+     * At most [EXTEND_MAX_MIN] minutes more in all, and never longer than [MAX_MODE_MIN] from the start. Without this the
+     * mode can end in the middle of a late rise from its own food, and UAM then starts a new meal on that rise. Only for
+     * a meal the user started, not a UAM mode. Call it every loop cycle, before the meal mode is read.
+     *
+     * @param shortAvgDeltaMgdl the BG change per 5 min over the last 15 min
+     * @param foodLeftG the meal's food still to come from its food list, or null without one
+     * @return why the mode was made longer, or null when it was not
+     */
+    fun extendWhileFoodComes(nowMs: Long, shortAvgDeltaMgdl: Double, foodLeftG: Double?): Extension?
+
+    /**
+     * The user changed how much of the running meal's food was eaten: [carbsFactor] of its carbs and [fatProteinFactor]
+     * of its fat and protein are left, for example 0.75 for three quarters. The pre-boluses still waiting change the
+     * same way, since they were planned for the food as it was: the rest of pre-bolus 1 with the carbs, pre-bolus 2
+     * and 3 with the fat and protein. Insulin already given stays as it is. A pre-bolus that grows never goes past
+     * [maxPreBolusU], or past its own size if that was already more.
+     */
+    fun scaleWaitingPreBoluses(carbsFactor: Double, fatProteinFactor: Double, maxPreBolusU: Double)
+
+    /** Why a meal mode was made longer, see [extendWhileFoodComes]. */
+    enum class Extension { BG_RISING, FOOD_LEFT }
+
     /** Cancels the rest of pre-bolus 1 if it still waits. */
     fun cancelPreBolus1Rest()
 
@@ -221,6 +246,21 @@ interface MealOverrideManager {
         const val DELTA_INSTANT_BLOCK_MGDL    = -2.0   // single reading: -2 mg/dL = ~-0.11 mmol/5min
         const val SHORT_AVG_DELTA_BLOCK_MGDL  = -3.0   // avg of last 3: -3 mg/dL = ~-0.17 mmol/5min
         const val DEFAULT_MODE_WINDOW_MS  = 3 * 60 * 60 * 1000L
+
+        /** A meal mode lasts at most this long: after that the loop's own fasting settings handle what is left. */
+        const val MAX_MODE_MIN = 420
+
+        // A meal mode made longer while its food still comes in, see extendWhileFoodComes.
+        /** It is checked when it ends within this many minutes: two loop cycles, so one missed cycle does not end it. */
+        const val EXTEND_CHECK_MIN    = 10
+        /** Each time it ends this many minutes from now. */
+        const val EXTEND_STEP_MIN     = 15
+        /** At most this many minutes more in all. */
+        const val EXTEND_MAX_MIN      = 90
+        /** BG counts as still rising from this change per 5 min over the last 15 min, in mg/dL (0.1 mmol). */
+        const val EXTEND_RISE_MGDL    = 1.8
+        /** The food list counts as still coming in above this many grams. */
+        const val EXTEND_FOOD_LEFT_G  = 5.0
 
         // Pre-bolus 1 rest: the part of pre-bolus 1 above the max pre-bolus. It is given once BG shows the
         // food coming in, not before [PB1_REST_FROM_MIN] minutes after the start, and dropped after

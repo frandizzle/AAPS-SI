@@ -39,6 +39,7 @@ import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
+import app.aaps.core.interfaces.smartInsulin.FoodLogItem
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SavedMealLearning
@@ -575,7 +576,8 @@ class SmartMealDialogViewModel(
         if (state.foodItems.isEmpty()) return null
         val t = state.foodTotals
         val name = mealName(state).take(MAX_LOG_NAME)
-        return FoodLogEntry(dateUtil.now(), name, t.carbsG, t.fibreG, t.proteinG, t.fatG)
+        val items = state.foodItems.map { FoodLogItem(it.name, it.grams, it.carbsG, it.fibreG, it.proteinG, it.fatG) }
+        return FoodLogEntry(dateUtil.now(), name, t.carbsG, t.fibreG, t.proteinG, t.fatG, items)
     }
 
     /** More than [FoodLog.CHECK_KCAL], or a food with more carbs, protein and fat than its own weight (bad label data). */

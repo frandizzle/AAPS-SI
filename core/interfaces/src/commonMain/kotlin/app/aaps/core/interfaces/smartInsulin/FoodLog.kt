@@ -5,6 +5,7 @@ package app.aaps.core.interfaces.smartInsulin
  *
  * @param timeMs when it was logged; also tells entries apart
  * @param name   what was eaten, in the user's words or from the estimate
+ * @param items  each food of it, as the meal listed them; empty for entries logged before foods were kept
  */
 data class FoodLogEntry(
     val timeMs: Long,
@@ -12,11 +13,49 @@ data class FoodLogEntry(
     val carbsG: Double,
     val fibreG: Double,
     val proteinG: Double,
-    val fatG: Double
+    val fatG: Double,
+    val items: List<FoodLogItem> = emptyList()
 ) {
 
     /** Energy as on food labels: 4 kcal per gram of carbs and protein, 2 per gram of fibre, 9 per gram of fat. */
     val kcal: Double get() = carbsG * 4.0 + fibreG * 2.0 + proteinG * 4.0 + fatG * 9.0
+
+    /** This entry with all of it [factor] times as much: 0.5 for half. */
+    fun times(factor: Double): FoodLogEntry = withAmounts(List(items.size.coerceAtLeast(1)) { factor })
+
+    /**
+     * This entry with each food [factors] times as much, one factor per food in [items] (a missing one is 1). The totals
+     * are then the foods added up. An entry without foods is all of it the first factor times as much.
+     */
+    fun withAmounts(factors: List<Double>): FoodLogEntry {
+        if (items.isEmpty()) {
+            val f = factors.firstOrNull() ?: 1.0
+            return copy(carbsG = carbsG * f, fibreG = fibreG * f, proteinG = proteinG * f, fatG = fatG * f)
+        }
+        val changed = items.mapIndexed { i, item -> item.times(factors.getOrElse(i) { 1.0 }) }
+        return copy(
+            items = changed, carbsG = changed.sumOf { it.carbsG }, fibreG = changed.sumOf { it.fibreG },
+            proteinG = changed.sumOf { it.proteinG }, fatG = changed.sumOf { it.fatG }
+        )
+    }
+}
+
+/** One food of a [FoodLogEntry], with its weight and what is in it, in grams. */
+data class FoodLogItem(
+    val name: String,
+    val grams: Double,
+    val carbsG: Double,
+    val fibreG: Double,
+    val proteinG: Double,
+    val fatG: Double
+) {
+
+    /** As [FoodLogEntry.kcal]. */
+    val kcal: Double get() = carbsG * 4.0 + fibreG * 2.0 + proteinG * 4.0 + fatG * 9.0
+
+    /** This food [factor] times as much. */
+    fun times(factor: Double): FoodLogItem =
+        copy(grams = grams * factor, carbsG = carbsG * factor, fibreG = fibreG * factor, proteinG = proteinG * factor, fatG = fatG * factor)
 }
 
 /**

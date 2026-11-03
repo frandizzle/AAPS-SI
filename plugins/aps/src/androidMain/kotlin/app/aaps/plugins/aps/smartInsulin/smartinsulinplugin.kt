@@ -1034,15 +1034,20 @@ open class SmartInsulinPlugin @Inject constructor(
 
     /** Removes a logged food. Its food is also taken off the meal it was logged in, so the loop stops counting it. */
     fun deleteFoodLogEntry(timeMs: Long) {
-        foodLog.entries(timeMs, timeMs + 1).firstOrNull()?.let { scaleFoodLogEntry(it, 0.0) }
+        foodLog.entries(timeMs, timeMs + 1).firstOrNull()?.let { changeFoodLogEntry(it, it.times(0.0)) }
         foodLog.delete(timeMs)
     }
 
-    /** Changes how much of a logged food was eaten: [factor] 0.5 for half. The meal it was logged in changes the same way. */
-    fun scaleFoodLogEntry(entry: FoodLogEntry, factor: Double) {
-        foodLog.update(entry.copy(carbsG = entry.carbsG * factor, fibreG = entry.fibreG * factor, proteinG = entry.proteinG * factor, fatG = entry.fatG * factor))
-        val change = factor - 1.0
-        mealEstimateCalibration.changeLoggedFood(entry.timeMs, entry.carbsG * change, entry.proteinG * change, entry.fatG * change)
+    /**
+     * Changes how much of a logged food was eaten, from [old] to [new]: all of it, or each of its foods. The meal it was
+     * logged in changes the same way, and when that meal is still running, so do its waiting pre-boluses: they were
+     * planned for the food as it was.
+     */
+    fun changeFoodLogEntry(old: FoodLogEntry, new: FoodLogEntry) {
+        foodLog.update(new)
+        val meal = mealEstimateCalibration.changeLoggedFood(old.timeMs, new.carbsG - old.carbsG, new.proteinG - old.proteinG, new.fatG - old.fatG) ?: return
+        if (mealOverrideManager.activeState?.triggerTimeMs != meal.modeStartMs) return
+        mealOverrideManager.scaleWaitingPreBoluses(meal.carbsFactor, meal.fatProteinFactor, sp.getDouble(DoubleKey.ApsSmartInsulinMaxPreBolus.key, DoubleKey.ApsSmartInsulinMaxPreBolus.defaultValue))
     }
 
     // ── Learning journal digest for the continuous learners ───────────────────
@@ -1542,6 +1547,11 @@ open class SmartInsulinPlugin @Inject constructor(
         val autosensResult = AutosensResult()
         val iobArray = iobCobCalculator.calculateIobArrayForSMB(autosensResult, SMBDefaults.exercise_mode, SMBDefaults.half_basal_exercise_target, isTempTarget)
         val mealData = iobCobCalculator.getMealDataWithWaitingForCalculationFinish()
+        // A meal mode does not end while its own food still raises BG: else UAM starts a new meal on that late rise, with
+        // its own ISF and a large first SMB. Done before the mode is read, so this cycle already runs in the longer mode.
+        val mealExtension = mealOverrideManager.activeState?.let { s ->
+            mealOverrideManager.extendWhileFoodComes(now, glucoseStatus.shortAvgDelta, mealEstimateCalibration.foodStillToComeG(s.triggerTimeMs))
+        }
         var mealMode = MealModeDetector.detect(mealOverrideManager)
 
         if (!lockoutTrackerInitialized) { previousMealModeForLockout = mealMode; lockoutTrackerInitialized = true }
@@ -2340,6 +2350,12 @@ open class SmartInsulinPlugin @Inject constructor(
             else                           -> profile.getBasal()
         }
         podBoostDosedLastCycle = NewPodBoost.addedInsulin(podBoostDose, apsResult.smb, basalNowU)
+
+        when (mealExtension) {
+            MealOverrideManager.Extension.BG_RISING -> apsResult.reason += " | mode longer: BG rising"
+            MealOverrideManager.Extension.FOOD_LEFT -> apsResult.reason += " | mode longer: food left"
+            null                                    -> Unit
+        }
 
         // Increment UAM entry SMB counter if an entry-fraction SMB was delivered
         val fractionUsed = uamSmbFraction

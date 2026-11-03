@@ -401,7 +401,7 @@ object MealDosePlanner {
     /** A meal mode lasts at least this long... */
     const val MIN_MODE_MIN = 90
     /** ...and at most this long: after that the loop's own fasting settings handle what is left. */
-    const val MAX_MODE_MIN = 420
+    const val MAX_MODE_MIN = MealOverrideManager.MAX_MODE_MIN
     /** It lasts at least this long after the last pre-bolus, so that pre-bolus has time to act within the meal. */
     const val AFTER_LAST_PRE_BOLUS_MIN = 60
 

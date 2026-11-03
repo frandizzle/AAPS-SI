@@ -27,6 +27,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
 import kotlin.math.abs
+import kotlin.math.floor
 
 @SingleIn(AppScope::class)
 class MealOverrideManagerImpl @Inject constructor(
@@ -81,6 +82,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus2GivenU",  s.preBolus2GivenU)
             if (s.preBolus2LastPieceMs != null) put("preBolus2LastPieceMs", s.preBolus2LastPieceMs)
             put("preBolus2LoopU",   s.preBolus2LoopU)
+            put("extendedMs",       s.extendedMs)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -123,7 +125,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus2PiecesGiven = json.optInt("preBolus2PiecesGiven", 0),
                 preBolus2GivenU  = json.optDouble("preBolus2GivenU", 0.0),
                 preBolus2LastPieceMs = if (json.has("preBolus2LastPieceMs")) json.getLong("preBolus2LastPieceMs") else null,
-                preBolus2LoopU   = json.optDouble("preBolus2LoopU", 0.0)
+                preBolus2LoopU   = json.optDouble("preBolus2LoopU", 0.0),
+                extendedMs       = json.optLong("extendedMs", 0L)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -557,6 +560,56 @@ class MealOverrideManagerImpl @Inject constructor(
         _state = s.copy(preBolus2LoopU = loopU, preBolus2FiredMs = if (done) System.currentTimeMillis() else null)
         persistState()
         aapsLogger.debug(LTag.APS, "SmartInsulin PB2: loop gave ${"%.2f".format(loopU)}U of it" + if (done) ", pre-bolus 2 done" else "")
+    }
+
+    override fun extendWhileFoodComes(nowMs: Long, shortAvgDeltaMgdl: Double, foodLeftG: Double?): MealOverrideManager.Extension? {
+        val s = _state ?: return null
+        if (s.mode.isUam) return null
+        val leftMs = s.modeExpiryMs - nowMs
+        if (leftMs <= 0L || leftMs > MealOverrideManager.EXTEND_CHECK_MIN * 60_000L) return null
+        val why = when {
+            shortAvgDeltaMgdl >= MealOverrideManager.EXTEND_RISE_MGDL     -> MealOverrideManager.Extension.BG_RISING
+            (foodLeftG ?: 0.0) > MealOverrideManager.EXTEND_FOOD_LEFT_G -> MealOverrideManager.Extension.FOOD_LEFT
+            else                                                         -> return null
+        }
+        val latestMs = minOf(
+            s.modeExpiryMs - s.extendedMs + MealOverrideManager.EXTEND_MAX_MIN * 60_000L,
+            s.triggerTimeMs + MealOverrideManager.MAX_MODE_MIN * 60_000L
+        )
+        val expiryMs = minOf(nowMs + MealOverrideManager.EXTEND_STEP_MIN * 60_000L, latestMs)
+        if (expiryMs <= s.modeExpiryMs) return null
+        _state = s.copy(modeExpiryMs = expiryMs, extendedMs = s.extendedMs + expiryMs - s.modeExpiryMs)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin mode ${s.mode.label} made longer ($why): ends in ${(expiryMs - nowMs) / 60_000L} min")
+        return why
+    }
+
+    override fun scaleWaitingPreBoluses(carbsFactor: Double, fatProteinFactor: Double, maxPreBolusU: Double) {
+        val s = _state ?: return
+        // Rounded down to a bolus step most pumps can give, so a smaller meal never rounds up.
+        fun scaled(u: Double, factor: Double): Double {
+            val capU = if (factor > 1.0) maxOf(u, maxPreBolusU) else u
+            val step = MealOverrideManager.SPREAD_STEP_U
+            return floor((u * factor).coerceIn(0.0, capU) / step + ROUNDING_U) * step
+        }
+        val restU = if (s.preBolus1RestPending) scaled(s.preBolus1RestU, carbsFactor) else s.preBolus1RestU
+        // In pieces only what the pieces still have to give changes: what they and the loop gave stays.
+        val doneU = s.preBolus2GivenU + s.preBolus2LoopU
+        val pb2U = if (s.preBolus2Pending) doneU + scaled(s.preBolus2LeftU, fatProteinFactor) else s.preBolus2U
+        val pb2Done = s.preBolus2Spread && s.preBolus2Pending && pb2U - doneU < MealOverrideManager.SPREAD_STEP_U
+        val pb3U = if (s.preBolus3Pending) scaled(s.preBolus3U, fatProteinFactor) else s.preBolus3U
+        if (abs(restU - s.preBolus1RestU) < ROUNDING_U && abs(pb2U - s.preBolus2U) < ROUNDING_U && abs(pb3U - s.preBolus3U) < ROUNDING_U) return
+        _state = s.copy(
+            preBolus1RestU = restU,
+            preBolus2U = pb2U,
+            preBolus2FiredMs = if (pb2Done) System.currentTimeMillis() else s.preBolus2FiredMs,
+            preBolus3U = pb3U
+        )
+        persistState()
+        aapsLogger.debug(
+            LTag.APS, "SmartInsulin ${s.mode.label}: food changed, waiting pre-boluses now rest ${"%.2f".format(restU)}U, " +
+                "pb2 ${"%.2f".format(pb2U)}U, pb3 ${"%.2f".format(pb3U)}U"
+        )
     }
 
     override fun preBolus1Delivered(deliveredU: Double) {

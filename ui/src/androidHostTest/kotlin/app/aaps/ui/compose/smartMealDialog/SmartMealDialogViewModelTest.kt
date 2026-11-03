@@ -26,6 +26,7 @@ import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.FoodLog
 import app.aaps.core.interfaces.smartInsulin.AfterActivity
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
+import app.aaps.core.interfaces.smartInsulin.FoodLogItem
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.LearnedMeal
 import app.aaps.core.interfaces.smartInsulin.MealMode
@@ -906,7 +907,8 @@ internal class SmartMealDialogViewModelTest {
         build()
         sut.addFood(dessert(carbs = 20.0, protein = 5.0, fat = 10.0).copy(name = "Biscuits", source = FoodSource.MANUAL))
         sut.logOnly()
-        verify(foodLog).add(FoodLogEntry(NOW, "Biscuits", 20.0, 0.0, 5.0, 10.0))
+        // Each food is kept with its weight, so the amount of one can be changed later.
+        verify(foodLog).add(FoodLogEntry(NOW, "Biscuits", 20.0, 0.0, 5.0, 10.0, listOf(FoodLogItem("Biscuits", 100.0, 20.0, 0.0, 5.0, 10.0))))
         with(sut.uiState.value) {
             assertThat(foodItems).isEmpty()
             assertThat(loggedKcal).isWithin(1e-9).of(190.0)

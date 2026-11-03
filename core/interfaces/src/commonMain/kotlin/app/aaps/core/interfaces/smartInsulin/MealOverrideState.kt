@@ -24,6 +24,8 @@ import kotlin.math.floor
  *                      when the last one was given.
  * [preBolus2LoopU]   — SMBs the loop gave in this meal, taken off the pieces still to come, see
  *                      [MealOverrideManager.countLoopSmb]. Never more than the pieces had left.
+ * [extendedMs]       — how much later the mode ends than it was set to, because its food still came in, see
+ *                      [MealOverrideManager.extendWhileFoodComes].
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -49,7 +51,8 @@ data class MealOverrideState(
     val preBolus2PiecesGiven: Int = 0,
     val preBolus2GivenU:  Double  = 0.0,
     val preBolus2LastPieceMs: Long? = null,
-    val preBolus2LoopU:   Double  = 0.0
+    val preBolus2LoopU:   Double  = 0.0,
+    val extendedMs:       Long    = 0L
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was

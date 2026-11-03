@@ -40,6 +40,14 @@ data class StillToCome(
 }
 
 /**
+ * How a meal changed when the user changed how much of a logged food was eaten: [carbsFactor] of its carbs and
+ * [fatProteinFactor] of its fat and protein are left, for example 0.75 for three quarters.
+ *
+ * @param modeStartMs the meal mode the food was logged in
+ */
+data class LoggedFoodChange(val modeStartMs: Long, val carbsFactor: Double, val fatProteinFactor: Double)
+
+/**
  * The carbs of a meal that come in at one speed.
  *
  * @param leftG   still to come
@@ -211,23 +219,36 @@ class MealEstimateCalibrationImpl @Inject constructor(
      * nothing. The changes are new minus old, in grams, so a smaller amount gives negative numbers.
      *
      * @param loggedMs when the food was logged
+     * @return how the meal changed, so its waiting pre-boluses can change the same way, or null when no meal had it
      */
-    fun changeLoggedFood(loggedMs: Long, carbsG: Double, proteinG: Double, fatG: Double) {
+    fun changeLoggedFood(loggedMs: Long, carbsG: Double, proteinG: Double, fatG: Double): LoggedFoodChange? {
         val carbEquivG = carbsG + (fatG * 9.0 + proteinG * 4.0) / 100.0 * FPU_CARB_G
+        var change: LoggedFoodChange? = null
         val found = synchronized(this) {
             pending.filter { matches(it, loggedMs) }.maxByOrNull { it.modeStartMs }?.also {
+                val carbsBefore = it.carbsG
+                val fatProteinBefore = it.carbEquivG - it.carbsG
                 val share = if (it.carbEquivG > 0.0) it.estimatedG / it.carbEquivG else 1.0
                 it.carbEquivG = (it.carbEquivG + carbEquivG).coerceAtLeast(0.0)
                 it.estimatedG = it.carbEquivG * share
                 it.carbsG = (it.carbsG + carbsG).coerceAtLeast(0.0)
                 it.proteinG = (it.proteinG + proteinG).coerceAtLeast(0.0)
                 it.fatG = (it.fatG + fatG).coerceAtLeast(0.0)
+                change = LoggedFoodChange(
+                    it.modeStartMs,
+                    carbsFactor = factorOf(carbsBefore, it.carbsG),
+                    fatProteinFactor = factorOf(fatProteinBefore, it.carbEquivG - it.carbsG)
+                )
             }
         }
-        if (found == null) return
+        if (found == null) return null
         save()
         aapsLogger.debug(LTag.APS, "MealEstimateCalibration: logged food changed by ${"%.0f".format(carbEquivG)} g, meal now ${"%.0f".format(found.carbEquivG)} g")
+        return change
     }
+
+    /** [after] as a share of [before]; 1 when there was nothing before, since then nothing was planned for it. */
+    private fun factorOf(before: Double, after: Double): Double = if (before > 0.0) (after / before).coerceAtLeast(0.0) else 1.0
 
     override fun dropEstimate(modeStartMs: Long) {
         val removed = synchronized(this) { pending.removeAll { it.modeStartMs == modeStartMs } }
