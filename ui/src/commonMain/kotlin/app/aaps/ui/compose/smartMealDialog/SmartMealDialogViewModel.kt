@@ -559,11 +559,11 @@ class SmartMealDialogViewModel(
             _uiState.update { it.copy(logCheckKcal = entry.kcal) }
             return
         }
-        foodLog.add(entry)
         // Food eaten while a meal mode runs is food the loop should know is coming. A low treatment is not: the
         // loop would give insulin for it once BG is back up, and take the treatment away.
-        val running = mealOverrideManager.activeState
-        if (running != null && state.canAdd && !state.logTreatingLow) {
+        val running = mealOverrideManager.activeState?.takeIf { state.canAdd && !state.logTreatingLow }
+        foodLog.add(entry.copy(mealSnack = running != null, forLowG = if (state.logTreatingLow) entry.carbsG else 0.0))
+        if (running != null) {
             val t = state.foodTotals
             mealEstimateCalibration.logFood(
                 running.triggerTimeMs, running.modeExpiryMs, t.carbEquivG, t.carbsG, t.proteinG, t.fatG, entry.timeMs, state.foodItems.carbParts(),

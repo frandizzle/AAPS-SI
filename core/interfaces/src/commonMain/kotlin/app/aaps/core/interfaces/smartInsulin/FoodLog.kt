@@ -14,7 +14,11 @@ data class FoodLogEntry(
     val fibreG: Double,
     val proteinG: Double,
     val fatG: Double,
-    val items: List<FoodLogItem> = emptyList()
+    val items: List<FoodLogItem> = emptyList(),
+    /** Logged with "Log only" while a meal ran: the loop counts it as food of that meal, and no insulin was given with it. */
+    val mealSnack: Boolean = false,
+    /** Grams of its carbs that treated a low. The loop gives no insulin for them. */
+    val forLowG: Double = 0.0
 ) {
 
     /** Energy as on food labels: 4 kcal per gram of carbs and protein, 2 per gram of fibre, 9 per gram of fat. */

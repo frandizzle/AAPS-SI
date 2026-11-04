@@ -61,6 +61,8 @@ class FoodLogImpl @Inject constructor(
             JSONArray().apply {
                 log.forEach {
                     val o = JSONObject().put("t", it.timeMs).put("n", it.name).put("c", it.carbsG).put("fi", it.fibreG).put("p", it.proteinG).put("f", it.fatG)
+                    if (it.mealSnack) o.put("ms", true)
+                    if (it.forLowG > 0.0) o.put("lo", it.forLowG)
                     if (it.items.isNotEmpty()) o.put("i", JSONArray().apply {
                         it.items.forEach { f -> put(JSONObject().put("n", f.name).put("g", f.grams).put("c", f.carbsG).put("fi", f.fibreG).put("p", f.proteinG).put("f", f.fatG)) }
                     })
@@ -84,7 +86,12 @@ class FoodLogImpl @Inject constructor(
                         FoodLogItem(f.optString("n", ""), f.optDouble("g", 0.0), f.optDouble("c", 0.0), f.optDouble("fi", 0.0), f.optDouble("p", 0.0), f.optDouble("f", 0.0))
                     }
                 }.orEmpty()
-                log.add(FoodLogEntry(o.getLong("t"), o.optString("n", ""), o.optDouble("c", 0.0), o.optDouble("fi", 0.0), o.optDouble("p", 0.0), o.optDouble("f", 0.0), items))
+                log.add(
+                    FoodLogEntry(
+                        o.getLong("t"), o.optString("n", ""), o.optDouble("c", 0.0), o.optDouble("fi", 0.0), o.optDouble("p", 0.0), o.optDouble("f", 0.0), items,
+                        mealSnack = o.optBoolean("ms", false), forLowG = o.optDouble("lo", 0.0)
+                    )
+                )
             }
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "FoodLog: could not read saved log: ${e.message}")

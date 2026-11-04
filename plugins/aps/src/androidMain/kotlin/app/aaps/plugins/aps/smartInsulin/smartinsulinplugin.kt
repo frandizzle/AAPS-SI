@@ -93,6 +93,7 @@ import kotlin.math.roundToInt
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
 import kotlin.math.floor
+import kotlin.math.min
 
 @SingleIn(AppScope::class)
 open class SmartInsulinPlugin @Inject constructor(
@@ -1044,8 +1045,11 @@ open class SmartInsulinPlugin @Inject constructor(
      * planned for the food as it was.
      */
     fun changeFoodLogEntry(old: FoodLogEntry, new: FoodLogEntry) {
-        foodLog.update(new)
-        val meal = mealEstimateCalibration.changeLoggedFood(old.timeMs, new.carbsG - old.carbsG, new.proteinG - old.proteinG, new.fatG - old.fatG) ?: return
+        // Carbs that treated a low are not in the meal, so only the rest of the carbs changes it.
+        val changed = new.copy(forLowG = min(old.forLowG, new.carbsG))
+        foodLog.update(changed)
+        val carbsChangeG = (changed.carbsG - changed.forLowG) - (old.carbsG - old.forLowG)
+        val meal = mealEstimateCalibration.changeLoggedFood(old.timeMs, carbsChangeG, new.proteinG - old.proteinG, new.fatG - old.fatG) ?: return
         if (mealOverrideManager.activeState?.triggerTimeMs != meal.modeStartMs) return
         mealOverrideManager.scaleWaitingPreBoluses(meal.carbsFactor, meal.fatProteinFactor, sp.getDouble(DoubleKey.ApsSmartInsulinMaxPreBolus.key, DoubleKey.ApsSmartInsulinMaxPreBolus.defaultValue))
     }
@@ -1255,6 +1259,20 @@ open class SmartInsulinPlugin @Inject constructor(
     }
 
     /** Food logged in the Smart Meal dialog, or carbs entered, from [fromMs] to [now]. True when it cannot be read. */
+    /**
+     * Food logged as a snack in the meal just before a low that starts at [lowStartMs] was most likely eaten for it, or
+     * did not come in as planned. Its carbs are taken out of the meal ([LowFoodAllocation]), so the loop gives no insulin
+     * for them when BG comes back up. Its fat and protein stay in the meal: they come in hours later.
+     */
+    private fun moveFoodToLow(lowStartMs: Long) {
+        val entries = foodLog.entries(lowStartMs - LowFoodAllocation.WINDOW_MS, lowStartMs)
+        LowFoodAllocation.carbsForLow(entries, lowStartMs).forEach { (entry, grams) ->
+            if (mealEstimateCalibration.changeLoggedFood(entry.timeMs, -grams, 0.0, 0.0) == null) return@forEach
+            foodLog.update(entry.copy(forLowG = grams))
+            aapsLogger.debug(LTag.APS, "SmartInsulin low: ${"%.0f".format(grams)} g carbs of ${entry.name} moved from the meal to the low")
+        }
+    }
+
     private suspend fun foodSince(fromMs: Long, now: Long): Boolean {
         if (fromMs <= 0L) return false
         if (foodLog.entries(fromMs, now + 1).isNotEmpty()) return true
@@ -2218,7 +2236,7 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
-            if (!bgWentLow) { lowStartMs = now; iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
+            if (!bgWentLow) { lowStartMs = now; moveFoodToLow(now); iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
             else if (reboundWindowStartMs > 0L) {
                 // BG had come back above the guard and the recovery window was running — now it's
                 // below again. A real rebound in between (a decent rise, or held a while) makes this

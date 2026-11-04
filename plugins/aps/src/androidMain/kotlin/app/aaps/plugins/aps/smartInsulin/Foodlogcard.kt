@@ -125,6 +125,8 @@ fun FoodLogSection(
                     "%.0f g carbs · %.0f g protein · %.0f g fat".format(e.carbsG, e.proteinG, e.fatG),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (e.forLowG > 0.0)
+                    Text("%.0f g of the carbs treated a low".format(e.forLowG), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("%,.0f kcal".format(e.kcal), style = MaterialTheme.typography.labelLarge)
             IconButton(onClick = { onDelete(e.timeMs, e.name) }) { Icon(Icons.Filled.Delete, contentDescription = "Delete") }

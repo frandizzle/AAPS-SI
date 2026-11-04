@@ -49,6 +49,16 @@ class FoodLogTest {
     }
 
     @Test
+    fun `a snack in a meal and carbs that treated a low survive a restart`() {
+        foodLog.add(entry(T0).copy(mealSnack = true, forLowG = 14.0))
+        foodLog = FoodLogImpl(sp, log)
+        with(foodLog.entries(T0, T0 + DAY).single()) {
+            assertEquals(true, mealSnack)
+            assertEquals(14.0, forLowG, 1e-9)
+        }
+    }
+
+    @Test
     fun `old days are removed and the rest survives a restart`() {
         foodLog.add(entry(T0, "Old"))
         foodLog.add(entry(T0 + (FoodLog.DAYS_KEPT + 2) * DAY, "New"))

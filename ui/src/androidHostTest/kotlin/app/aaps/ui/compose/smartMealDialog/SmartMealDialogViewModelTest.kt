@@ -1048,8 +1048,14 @@ internal class SmartMealDialogViewModelTest {
         sut.updateLogTreatingLow(true)
         sut.addFood(dessert(carbs = 15.0).copy(name = "Jelly beans", source = FoodSource.MANUAL))
         sut.logOnly()
-        verify(foodLog, times(2)).add(any())
+        val logged = argumentCaptor<FoodLogEntry>()
+        verify(foodLog, times(2)).add(logged.capture())
         verify(mealEstimateCalibration, times(1)).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        // The rings are meal food without insulin, so they can go to a low later. The jelly beans treated a low already.
+        assertThat(logged.firstValue.mealSnack).isTrue()
+        assertThat(logged.firstValue.forLowG).isEqualTo(0.0)
+        assertThat(logged.secondValue.mealSnack).isFalse()
+        assertThat(logged.secondValue.forLowG).isWithin(1e-9).of(15.0)
     }
 
     @Test
