@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.net.Uri
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
@@ -314,8 +315,10 @@ class AlarmNotificationManager(
         // audible from the notification regardless of whether the alarm activity ever launches.
         // Not while DND is on and the override is off: DND would let this CATEGORY_ALARM notification
         // ring, so the silent channel is used and only the vibration is left, see DoNotDisturbRule.
+        // The eat reminder on a phone on silent or vibrate: the same, it shows and vibrates without a sound.
         val channelId =
             if (DoNotDisturbRule.staysQuiet(overrideDnd, mgr.currentInterruptionFilter)) CHANNEL_SILENT_URGENT
+            else if (DoNotDisturbRule.eatReminderStaysQuiet(sound, context.getSystemService(AudioManager::class.java).ringerMode)) CHANNEL_SILENT
             else channelIdForSound(sound ?: AlarmSound.ERROR, overrideDnd)
 
         // Mute action so the user can silence the looping alarm straight from the lock-screen

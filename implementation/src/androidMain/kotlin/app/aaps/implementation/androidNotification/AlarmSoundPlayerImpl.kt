@@ -3,6 +3,7 @@ package app.aaps.implementation.androidNotification
 import android.app.NotificationManager
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.os.Build
@@ -38,6 +39,7 @@ import kotlin.math.pow
  *
  * Do Not Disturb: with the override off the sound is not started while Do Not Disturb is on, see
  * [DoNotDisturbRule]. With it on the alarm stream is used, and the Do Not Disturb profile decides.
+ * The eat reminder is quiet while the phone is on silent or vibrate, see [DoNotDisturbRule.eatReminderStaysQuiet].
  */
 @ContributesBinding(AppScope::class)
 @SingleIn(AppScope::class)
@@ -51,6 +53,7 @@ class AlarmSoundPlayerImpl(
 
     private val handler = Handler(Looper.getMainLooper())
     private val notificationManager get() = context.getSystemService(NotificationManager::class.java)
+    private val audioManager get() = context.getSystemService(AudioManager::class.java)
 
     // --- main-looper-confined state ---
     private var player: MediaPlayer? = null
@@ -118,6 +121,10 @@ class AlarmSoundPlayerImpl(
         val overrideDnd = preferences.get(BooleanKey.AlertOverrideDoNotDisturb)
         if (DoNotDisturbRule.staysQuiet(overrideDnd, notificationManager.currentInterruptionFilter)) {
             aapsLogger.debug(LTag.CORE, "AlarmSoundPlayer: Do Not Disturb is on and the override is off, the alarm stays quiet")
+            return
+        }
+        if (DoNotDisturbRule.eatReminderStaysQuiet(currentSound, audioManager.ringerMode)) {
+            aapsLogger.debug(LTag.CORE, "AlarmSoundPlayer: the phone is on silent or vibrate, the eat reminder stays quiet")
             return
         }
         val audioAttrs = AudioAttributes.Builder()

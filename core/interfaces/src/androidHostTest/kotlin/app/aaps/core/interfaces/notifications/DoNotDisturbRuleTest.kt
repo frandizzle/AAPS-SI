@@ -1,6 +1,7 @@
 package app.aaps.core.interfaces.notifications
 
 import android.app.NotificationManager
+import android.media.AudioManager
 import com.google.common.truth.Truth.assertThat
 import com.google.common.truth.Truth.assertWithMessage
 import org.junit.jupiter.api.Test
@@ -16,6 +17,17 @@ class DoNotDisturbRuleTest {
         NotificationManager.INTERRUPTION_FILTER_ALARMS,
         NotificationManager.INTERRUPTION_FILTER_NONE
     )
+
+    @Test
+    fun `the eat reminder follows the ringer, and no other alarm does`() {
+        assertThat(DoNotDisturbRule.eatReminderStaysQuiet(AlarmSound.EAT_REMINDER, AudioManager.RINGER_MODE_NORMAL)).isFalse()
+        assertThat(DoNotDisturbRule.eatReminderStaysQuiet(AlarmSound.EAT_REMINDER, AudioManager.RINGER_MODE_SILENT)).isTrue()
+        assertThat(DoNotDisturbRule.eatReminderStaysQuiet(AlarmSound.EAT_REMINDER, AudioManager.RINGER_MODE_VIBRATE)).isTrue()
+        AlarmSound.entries.filter { it != AlarmSound.EAT_REMINDER }.forEach {
+            assertWithMessage("sound $it").that(DoNotDisturbRule.eatReminderStaysQuiet(it, AudioManager.RINGER_MODE_SILENT)).isFalse()
+        }
+        assertThat(DoNotDisturbRule.eatReminderStaysQuiet(null, AudioManager.RINGER_MODE_SILENT)).isFalse()
+    }
 
     @Test
     fun `with Do Not Disturb off the alarm plays, whatever the setting`() {

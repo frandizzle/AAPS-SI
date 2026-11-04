@@ -1,6 +1,7 @@
 package app.aaps.core.interfaces.notifications
 
 import android.app.NotificationManager
+import android.media.AudioManager
 
 /**
  * The "Override Do Not Disturb mode" setting (`AlertOverrideDoNotDisturb`), as the one rule every alarm
@@ -28,6 +29,15 @@ object DoNotDisturbRule {
      * counts as Do Not Disturb off: when in doubt, a medical alarm sounds.
      */
     fun staysQuiet(overrideDnd: Boolean, interruptionFilter: Int): Boolean = !overrideDnd && isDndOn(interruptionFilter)
+
+    /**
+     * True when the "time to eat" alarm ([AlarmSound.EAT_REMINDER]) must not make a sound: the phone is on silent or
+     * vibrate. It is a reminder the user asked for, not a medical alarm, so it follows the ringer as a normal
+     * notification does. It still shows and vibrates. Every other alarm is not changed by this.
+     * [ringerMode] is `AudioManager.ringerMode`.
+     */
+    fun eatReminderStaysQuiet(sound: AlarmSound?, ringerMode: Int): Boolean =
+        sound == AlarmSound.EAT_REMINDER && ringerMode != AudioManager.RINGER_MODE_NORMAL
 
     private fun isDndOn(interruptionFilter: Int): Boolean =
         interruptionFilter == NotificationManager.INTERRUPTION_FILTER_PRIORITY ||
