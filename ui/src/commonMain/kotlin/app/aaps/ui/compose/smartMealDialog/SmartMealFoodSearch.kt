@@ -41,6 +41,7 @@ import app.aaps.ui.UiStrings
 import app.aaps.ui.compose.smartMealDialog.food.AustralianFoods
 import app.aaps.ui.compose.smartMealDialog.food.FoodItem
 import app.aaps.ui.compose.smartMealDialog.food.FoodLookupResult
+import app.aaps.ui.compose.smartMealDialog.food.MealTotals
 import app.aaps.ui.compose.smartMealDialog.food.SavedFood
 import app.aaps.ui.compose.smartMealDialog.food.SavedFoodList
 
@@ -95,12 +96,12 @@ internal fun FoodSearchDialog(
                     if (saved.isNotEmpty() || recent.isNotEmpty()) item { SectionTitle(stringResource(UiStrings.si_food_search_mine)) }
                     items(saved, key = { "saved:" + it.name }) { food ->
                         val t = food.totals
-                        ResultRow(food.name, stringResource(UiStrings.si_food_subtitle_totals, df(t.carbsG), df(t.proteinG), df(t.fatG))) {
+                        ResultRow(food.name, stringResource(UiStrings.si_food_totals_kcal, df(t.carbsG), df(t.proteinG), df(t.fatG), df(t.kcal))) {
                             onAddSaved(food); added = food.name
                         }
                     }
                     items(recent) { item ->
-                        ResultRow(item.name, stringResource(UiStrings.si_food_item_detail, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG))) {
+                        ResultRow(item.name, stringResource(UiStrings.si_food_item_detail_kcal, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG), df(item.kcal))) {
                             onAdd(item); added = item.name
                         }
                     }
@@ -109,7 +110,7 @@ internal fun FoodSearchDialog(
                     // A drink is in the table twice, per 100 g and per 100 mL.
                     items(plain, key = { "plain:" + it.name + ":" + it.liquid }) { food ->
                         val per = if (food.liquid) UiStrings.si_food_search_per_100ml else UiStrings.si_food_search_per_100
-                        ResultRow(food.name, stringResource(per, df(food.carbs), df(food.protein), df(food.fat))) {
+                        ResultRow(food.name, stringResource(per, df(food.carbs), df(food.protein), df(food.fat), df(MealTotals.kcal(food.carbs, food.fibre, food.protein, food.fat)))) {
                             onAdd(food.toItem()); added = food.name
                         }
                     }
@@ -132,7 +133,7 @@ internal fun FoodSearchDialog(
                         }
                     }
                     items(products) { item ->
-                        val detail = stringResource(UiStrings.si_food_item_detail, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG))
+                        val detail = stringResource(UiStrings.si_food_item_detail_kcal, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG), df(item.kcal))
                         ResultRow(item.name, if (item.portion.isNotBlank()) item.portion else null, detail) { onAdd(item); added = item.name }
                     }
                     item { Hint(stringResource(UiStrings.si_food_search_credit), Modifier.padding(top = AapsSpacing.medium)) }

@@ -86,6 +86,7 @@ data class FoodItem(
     val fibreG: Double get() = fibrePer100 * grams / 100.0
     val proteinG: Double get() = proteinPer100 * grams / 100.0
     val fatG: Double get() = fatPer100 * grams / 100.0
+    val kcal: Double get() = MealTotals.kcal(carbsG, fibreG, proteinG, fatG)
 }
 
 /** What a meal adds up to. */
@@ -102,11 +103,14 @@ data class MealTotals(val carbsG: Double, val fibreG: Double, val proteinG: Doub
     val carbEquivG: Double get() = carbsG + fpu * FPU_CARB_G
 
     /** Energy as on food labels: 4 kcal per gram of carbs and protein, 2 per gram of fibre, 9 per gram of fat. */
-    val kcal: Double get() = carbsG * 4.0 + fibreG * 2.0 + proteinG * 4.0 + fatG * 9.0
+    val kcal: Double get() = kcal(carbsG, fibreG, proteinG, fatG)
 
     companion object {
 
         const val FPU_CARB_G = 10.0
+
+        /** Energy as on food labels: 4 kcal per gram of carbs and protein, 2 per gram of fibre, 9 per gram of fat. */
+        fun kcal(carbsG: Double, fibreG: Double, proteinG: Double, fatG: Double): Double = carbsG * 4.0 + fibreG * 2.0 + proteinG * 4.0 + fatG * 9.0
     }
 }
 

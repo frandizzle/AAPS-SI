@@ -314,7 +314,7 @@ private fun FoodRow(
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    stringResource(UiStrings.si_food_item_detail, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG)),
+                    stringResource(UiStrings.si_food_item_detail_kcal, df(item.grams), df(item.carbsG), df(item.proteinG), df(item.fatG), df(item.kcal)),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f)
                 )
                 IconButton(onClick = onLess) { Icon(Icons.Filled.Remove, contentDescription = stringResource(UiStrings.si_food_less)) }
