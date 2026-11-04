@@ -5,6 +5,7 @@ import app.aaps.core.data.pump.defs.PumpDescription
 import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.data.ui.ConfirmationRole
+import app.aaps.core.interfaces.alerts.EatReminder
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.bolus.BatchAction
@@ -39,6 +40,7 @@ import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.StringNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
@@ -107,6 +109,7 @@ internal class SmartMealDialogViewModelTest {
     private val glucoseStatusProvider: GlucoseStatusProvider = mock()
     private val iobCobCalculator: IobCobCalculator = mock()
     private val constraintsChecker: ConstraintsChecker = mock()
+    private val eatReminder: EatReminder = mock()
     private val maxIob: Constraint<Double> = mock()
 
     private val scope = CoroutineScope(UnconfinedTestDispatcher())
@@ -126,7 +129,7 @@ internal class SmartMealDialogViewModelTest {
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
             batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, foodLog, recentActivity, mealEstimateCalibration,
-            glucoseStatusProvider, iobCobCalculator, constraintsChecker, scope
+            glucoseStatusProvider, iobCobCalculator, constraintsChecker, eatReminder, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
     }
@@ -202,19 +205,21 @@ internal class SmartMealDialogViewModelTest {
         val duraOn = argumentCaptor<Boolean>()
         val duraFloor = argumentCaptor<Double>()
         val duraStrength = argumentCaptor<Double>()
+        val eatDelay = argumentCaptor<Long>()
         verify(mealOverrideManager).activateOverride(
             mode.capture(), dose.capture(), eq(0), window.capture(), pb2.capture(), pb2Delay.capture(),
-            pb3.capture(), pb3Delay.capture(), duraOn.capture(), duraFloor.capture(), duraStrength.capture()
+            pb3.capture(), pb3Delay.capture(), duraOn.capture(), duraFloor.capture(), duraStrength.capture(), eatDelay.capture()
         )
         return ActivateArgs(
             mode.firstValue, dose.allValues.firstOrNull(), window.firstValue, pb2.firstValue, pb2Delay.firstValue,
-            pb3.firstValue, pb3Delay.firstValue, duraOn.firstValue, duraFloor.firstValue, duraStrength.firstValue
+            pb3.firstValue, pb3Delay.firstValue, duraOn.firstValue, duraFloor.firstValue, duraStrength.firstValue, eatDelay.firstValue
         )
     }
 
     private data class ActivateArgs(
         val mode: MealMode, val doseU: Double?, val windowMs: Long, val pb2U: Double, val pb2DelayMs: Long,
-        val pb3U: Double, val pb3DelayMs: Long, val duraOn: Boolean, val duraFloorMgdl: Double, val duraStrength: Double
+        val pb3U: Double, val pb3DelayMs: Long, val duraOn: Boolean, val duraFloorMgdl: Double, val duraStrength: Double,
+        val eatDelayMs: Long
     )
 
     // ── Units ────────────────────────────────────────────────────────────────
@@ -325,13 +330,62 @@ internal class SmartMealDialogViewModelTest {
         assertThat(bolus.carbs).isEqualTo(0)
         // Prepared, not delivered: nothing is committed or activated until the user confirms.
         verifyBlocking(batchExecutor, never()) { commit(any(), any(), any(), any()) }
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
 
         val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
         assertThat(confirm.bolusId).isEqualTo(42L)
         sut.commit(confirm.bolusId)
         assertThat(activateCaptured().doseU).isWithin(1e-9).of(1.5)
         verifyBlocking(batchExecutor) { commit(eq(42L), eq(Sources.InsulinDialog), any(), any()) }
+    }
+
+    @Test
+    fun `eat in 20 min gives pre-bolus 1 now, moves the meal's times and rings when it is time to eat`() {
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updatePb2Enabled(true)
+        sut.updateEatIn(20)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        sut.commit(confirm.bolusId)
+
+        val args = activateCaptured()
+        val min = 60_000L
+        assertThat(args.eatDelayMs).isEqualTo(20 * min)
+        assertThat(args.windowMs).isEqualTo((20 + sut.uiState.value.durationMinutes) * min)
+        assertThat(args.pb2DelayMs).isEqualTo((20 + sut.uiState.value.pb2DelayMinutes) * min)
+        verify(eatReminder).start(20 * min)
+        verify(preferences).put(IntNonKey.ApsSmartInsulinEatInMinutes, 20)
+    }
+
+    @Test
+    fun `without pre-bolus 1 there is nothing to wait for, so eat in is not used`() {
+        build()
+        sut.updateEatIn(20)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        sut.commit(confirm.bolusId)
+
+        assertThat(activateCaptured().eatDelayMs).isEqualTo(0L)
+        verify(eatReminder, never()).start(any())
+    }
+
+    @Test
+    fun `a pre-bolus 1 that was not given starts no alarm`() {
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Rejected(FailureReason.entries.first()))
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updateEatIn(15)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        sut.commit(confirm.bolusId)
+
+        verify(eatReminder, never()).start(any())
     }
 
     @Test
@@ -462,7 +516,7 @@ internal class SmartMealDialogViewModelTest {
     fun `commit without a confirmation does nothing`() {
         build()
         sut.commit(null)
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
 
     // ── Input limits ─────────────────────────────────────────────────────────
@@ -528,7 +582,7 @@ internal class SmartMealDialogViewModelTest {
         verify(mealOverrideManager).addToMeal(
             eq(2.0), eq(0.5), eq(0.0), eq(NOW + 80 * 60_000L), eq(false), any(), any(), eq(false)
         )
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         verify(mealEstimateCalibration).dropEstimate(running.triggerTimeMs)
         verifyBlocking(batchExecutor) { commit(eq(7L), eq(Sources.InsulinDialog), any(), any()) }
     }
@@ -612,7 +666,7 @@ internal class SmartMealDialogViewModelTest {
         verify(mealOverrideManager).setAfterActivityCut(15)
         verify(savedMealLearning, never()).recordMeal(anyOrNull(), any(), any(), any(), any(), any(), any(), any())
         // Its food still counts as food still to come, but it is not learned from.
-        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), any(), any())
+        verify(mealEstimateCalibration).recordEstimate(any(), any(), any(), any(), any(), any(), eq(false), any(), any(), any())
     }
 
     @Test
@@ -913,7 +967,7 @@ internal class SmartMealDialogViewModelTest {
             assertThat(foodItems).isEmpty()
             assertThat(loggedKcal).isWithin(1e-9).of(190.0)
         }
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
     }
 
     @Test

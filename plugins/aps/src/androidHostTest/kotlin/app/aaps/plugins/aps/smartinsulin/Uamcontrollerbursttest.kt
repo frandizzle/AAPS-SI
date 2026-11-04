@@ -92,10 +92,10 @@ class UamControllerBurstTest {
     )
 
     private fun verifyFired(times: Int = 1) =
-        verify(mealOverrideManager, times(times)).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, times(times)).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L))
 
     private fun verifyNotFired() =
-        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        verify(mealOverrideManager, never()).activateOverride(any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L))
 
     // ── Test 1: 3-reading accumulation ───────────────────────────────────────
 
@@ -247,7 +247,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 7.49, tMs = 601_000L)         // blip — costs 0.01, not everything
         cycle(bgMmol = 8.00, tMs = 901_000L)         // 1.00 above the trough -> fires
         verify(mealOverrideManager).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -257,7 +257,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 7.5, tMs = 301_000L)
         cycle(bgMmol = 8.0, tMs = 601_000L)
         verify(mealOverrideManager).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -269,7 +269,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 6.9, tMs = 601_000L)          // new trough
         cycle(bgMmol = 7.6, tMs = 901_000L)          // only 0.7 above it — no fire
         verify(mealOverrideManager, never()).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -285,7 +285,7 @@ class UamControllerBurstTest {
             bg += 0.1; t += 300_000L
         }
         verify(mealOverrideManager, never()).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -300,7 +300,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 7.5, tMs = 301_000L, mode = MealMode.LUNCH)
         cycle(bgMmol = 8.0, tMs = 601_000L)   // mode ended; +1.0 above the 7.0 still in the window
         verify(mealOverrideManager).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -312,7 +312,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 5.5, tMs = 301_000L, low = true)
         cycle(bgMmol = 7.0, tMs = 601_000L)   // +3.0 above the low, but that trough is excluded
         verify(mealOverrideManager, never()).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 
@@ -323,7 +323,7 @@ class UamControllerBurstTest {
         cycle(bgMmol = 6.5, tMs = 601_000L)
         cycle(bgMmol = 7.0, tMs = 901_000L)    // +1.0 above 6.0
         verify(mealOverrideManager).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
     }
 

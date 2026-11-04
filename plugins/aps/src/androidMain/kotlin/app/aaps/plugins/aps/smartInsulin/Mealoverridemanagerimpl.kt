@@ -83,6 +83,7 @@ class MealOverrideManagerImpl @Inject constructor(
             if (s.preBolus2LastPieceMs != null) put("preBolus2LastPieceMs", s.preBolus2LastPieceMs)
             put("preBolus2LoopU",   s.preBolus2LoopU)
             put("extendedMs",       s.extendedMs)
+            put("eatDelayMs",       s.eatDelayMs)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -126,7 +127,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus2GivenU  = json.optDouble("preBolus2GivenU", 0.0),
                 preBolus2LastPieceMs = if (json.has("preBolus2LastPieceMs")) json.getLong("preBolus2LastPieceMs") else null,
                 preBolus2LoopU   = json.optDouble("preBolus2LoopU", 0.0),
-                extendedMs       = json.optLong("extendedMs", 0L)
+                extendedMs       = json.optLong("extendedMs", 0L),
+                eatDelayMs       = json.optLong("eatDelayMs", 0L)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -334,7 +336,7 @@ class MealOverrideManagerImpl @Inject constructor(
         val now = System.currentTimeMillis()
         val rest = "PB1 rest (${"%.2f".format(s.preBolus1RestU)} U)"
         val fired = s.preBolus1RestFiredMs
-        val fromMs = s.triggerTimeMs + MealOverrideManager.PB1_REST_FROM_MIN * 60_000L
+        val fromMs = s.eatAtMs + MealOverrideManager.PB1_REST_FROM_MIN * 60_000L
         return when {
             fired == -1L -> "PB1 rest: cancelled"
             fired == -2L -> "PB1 rest: not given, BG did not rise in time"
@@ -342,7 +344,7 @@ class MealOverrideManagerImpl @Inject constructor(
             now < fromMs -> "$rest: checks BG in ${(fromMs - now + 59_999) / 60_000}min"
             else -> {
                 val reasons = restBlockReasons(lastBgMgdl, lastIob, lastMaxIob, lastDelta, lastShortAvgDelta, s.preBolus1RestU, restDoseU(s.preBolus1RestU, lastIob, lastMaxIob))
-                val leftMin = (s.triggerTimeMs + MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L - now).coerceAtLeast(0L) / 60_000
+                val leftMin = (s.eatAtMs + MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L - now).coerceAtLeast(0L) / 60_000
                 if (reasons.isEmpty()) "$rest: waiting for next loop cycle"
                 else "$rest waiting: ${reasons.joinToString(", ")} (${leftMin}min left)"
             }
@@ -445,7 +447,8 @@ class MealOverrideManagerImpl @Inject constructor(
         preBolus3DelayMs: Long,
         duraEnabled:      Boolean,
         duraFloorMgdl:    Double,
-        duraStrength:     Double
+        duraStrength:     Double,
+        eatDelayMs:       Long
     ) {
         val now = System.currentTimeMillis()
         _state = MealOverrideState(
@@ -461,7 +464,8 @@ class MealOverrideManagerImpl @Inject constructor(
             preBolus3FiredMs = null,
             duraEnabled      = duraEnabled,
             duraFloorMgdl    = duraFloorMgdl,
-            duraStrength     = duraStrength
+            duraStrength     = duraStrength,
+            eatDelayMs       = eatDelayMs.coerceAtLeast(0L)
         )
         pfFollowOnDue = false  // a new mode owns the time now
         persistState()
@@ -469,7 +473,8 @@ class MealOverrideManagerImpl @Inject constructor(
                          "SmartInsulin override: mode=${mode.label} modeTTL=${modeWindowMs / 60_000}min" +
                              (if (preBolus2U > 0.0) " pb2=${preBolus2U}U in ${preBolus2DelayMs / 60_000}min" else "") +
                              (if (preBolus3U > 0.0) " pb3=${preBolus3U}U ${preBolus3DelayMs / 60_000}min after pb2" else "") +
-                             (if (duraEnabled) " dura=on floor=${duraFloorMgdl}mg/dL strength=${duraStrength}" else ""))
+                             (if (duraEnabled) " dura=on floor=${duraFloorMgdl}mg/dL strength=${duraStrength}" else "") +
+                             (if (eatDelayMs > 0L) " eat in ${eatDelayMs / 60_000}min" else ""))
     }
 
     override fun addToMeal(
@@ -715,7 +720,8 @@ class MealOverrideManagerImpl @Inject constructor(
         lastDelta         = glucoseStatus.delta
         lastShortAvgDelta = glucoseStatus.shortAvgDelta
 
-        val elapsedMs = now - s.triggerTimeMs
+        // Counted from when the meal is eaten: with "Eat in" the food starts later than the mode.
+        val elapsedMs = now - s.eatAtMs
         if (elapsedMs < MealOverrideManager.PB1_REST_FROM_MIN * 60_000L) return false
         if (elapsedMs > MealOverrideManager.PB1_REST_UNTIL_MIN * 60_000L) {
             // BG never showed the food: the meal was smaller or slower than planned. Pre-bolus 2 and the loop cover the rest.
@@ -793,7 +799,7 @@ class MealOverrideManagerImpl @Inject constructor(
         // Not time yet. In pieces: the next piece's time. The first piece comes sooner, from PB1_REST_FROM_MIN, once BG
         // shows the fat and protein coming in: a meal of almost only protein can raise BG well before pre-bolus 2's time.
         val risingEarly = s.preBolus2Spread && s.preBolus2LastPieceMs == null &&
-            now - s.triggerTimeMs >= MealOverrideManager.PB1_REST_FROM_MIN * 60_000L &&
+            now - s.eatAtMs >= MealOverrideManager.PB1_REST_FROM_MIN * 60_000L &&
             glucoseStatus.delta >= MealOverrideManager.PB1_REST_RISE_MGDL && glucoseStatus.shortAvgDelta > 0.0
         if (now < s.preBolus2NextAtMs && !risingEarly) {
             val minsLeft = (s.preBolus2NextAtMs - now) / 60_000

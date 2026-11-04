@@ -69,6 +69,12 @@ interface MealOverrideManager {
     /** Seconds until pre-bolus 3 fire time. Returns null if PB2 not yet fired. */
     val preBolus3SecondsRemaining: Long?
 
+    /**
+     * Starts a meal mode now.
+     *
+     * @param eatDelayMs the meal is eaten this long after now ("Eat in"), see [MealOverrideState.eatDelayMs]. The caller
+     *                   adds it to [modeWindowMs] and [preBolus2DelayMs] itself.
+     */
     fun activateOverride(
         mode:             MealMode,
         doseU:            Double?,
@@ -80,7 +86,8 @@ interface MealOverrideManager {
         preBolus3DelayMs: Long   = 0L,
         duraEnabled:      Boolean = false,
         duraFloorMgdl:    Double  = 0.0,
-        duraStrength:     Double  = 1.0
+        duraStrength:     Double  = 1.0,
+        eatDelayMs:       Long    = 0L
     )
 
     fun cancelOverride()

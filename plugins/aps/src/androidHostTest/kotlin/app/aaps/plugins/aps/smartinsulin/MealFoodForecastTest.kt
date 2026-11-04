@@ -114,6 +114,20 @@ class MealFoodForecastTest {
     }
 
     @Test
+    fun `food not eaten yet starts to come in when it is eaten`() {
+        // "Eat in" 20 min: 30 g over 60 min, eaten at 20 min, in by 80 min.
+        val part = CarbsPart(leftG = 30.0, mealG = 30.0, untilMs = T0 + 80 * MIN, minutes = 60, fromMs = T0 + 20 * MIN)
+        val f = FoodToCome(30.0, T0 + 80 * MIN, 0.0, T0 + 80 * MIN, 5.0, carbParts = listOf(part))
+        val steps = MealFoodForecast.steps(f, T0, isfMgdl = 50.0, ciAheadMgdl = 0.0, count = 24)
+        // Nothing in the first 20 min, then 30 g over the 12 steps of the hour after.
+        (0 until 4).forEach { assertEquals(0.0, steps[it], 1e-9) }
+        assertEquals(30.0 / 12 * 10.0, steps[4], 1e-9)
+        assertEquals(300.0, steps.sum(), 1e-6)
+        // Its rate counts from when it is eaten, not from now.
+        assertEquals(T0 + 80 * MIN, MealFoodForecast.carbsUntil(part, T0))
+    }
+
+    @Test
     fun `fast and slow food in one meal give a quick rise and then a long tail`() {
         // 20 g of juice over 75 min and 40 g of pizza carbs over 3 hours, nothing in yet.
         val parts = listOf(CarbsPart(20.0, 20.0, T0 + 75 * MIN, 75), CarbsPart(40.0, 40.0, T0 + 3 * HOUR, 180))

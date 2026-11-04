@@ -560,12 +560,16 @@
     <string name="si_confirm_replaces_pb">Its pre-bolus 2 and 3 that have not fired are dropped</string>
     <string name="si_confirm_mode">Meal mode: %1$s</string>
     <string name="si_confirm_duration">Duration: %1$d min</string>
+    <string name="si_confirm_eat_in" comment="%1$d=minutes. Example: Eat in 20 min: an alarm tells you when">Eat in %1$d min: an alarm tells you when</string>
     <string name="si_confirm_isf">ISF override: %1$s</string>
     <string name="si_confirm_isf_profile">ISF override: profile ISF</string>
     <string name="si_confirm_dura">DURA on: floor %1$s, strength %2$sx</string>
     <string name="si_confirm_pb1" comment="%1$s=insulin without unit. Example: Pre-bolus 1 now: 3.20 U">Pre-bolus 1 now: %1$s U</string>
     <string name="si_confirm_pb1_rest" comment="%1$s=insulin without unit, %2$d and %3$d=minutes. Example: Rest of pre-bolus 1: 3.00 U between 15 and 45 min, only once BG rises">Rest of pre-bolus 1: %1$s U between %2$d and %3$d min, only once BG rises</string>
     <string name="si_pb1_rest_label">Rest once BG rises</string>
+    <string name="si_eat_in_label">Eat in</string>
+    <string name="si_eat_in_now" comment="An Eat in choice: the meal is eaten right away">Now</string>
+    <string name="si_eat_in_hint" comment="%1$d=minutes. Example: Pre-bolus 1 is given now. An alarm rings in 20 min when it is time to eat. All times of the meal, pre-bolus 2 among them, count from then.">Pre-bolus 1 is given now. An alarm rings in %1$d min when it is time to eat. All times of the meal, pre-bolus 2 among them, count from then.</string>
     <string name="si_pb1_rest_hint" comment="%1$d and %2$d=minutes. Example: Above your max pre-bolus. Given between 15 and 45 min after the start, as soon as BG starts to rise. If BG does not rise, it is not given.">Above your max pre-bolus. Given between %1$d and %2$d min after the start, as soon as BG starts to rise. If BG does not rise, it is not given. 0 turns it off.</string>
     <string name="si_cancel_pb1_rest_confirm">Cancel the rest of pre-bolus 1? The meal mode will stay active.</string>
     <string name="si_confirm_pb2">Pre-bolus 2 in %2$d min: %1$s U (safety-gated)</string>

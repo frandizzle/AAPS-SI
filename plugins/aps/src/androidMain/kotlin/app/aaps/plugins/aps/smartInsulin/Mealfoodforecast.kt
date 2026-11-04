@@ -113,12 +113,13 @@ object MealFoodForecast {
 
     /**
      * When a part of the carbs still to come is in: at its own rate (all of it over [CarbsPart.minutes]), but not sooner
-     * than planned, and not later than [CARBS_STRETCH] times its time. Without a rate, as planned.
+     * than planned, and not later than [CARBS_STRETCH] times its time. Without a rate, as planned. Food not eaten yet
+     * ("Eat in") starts at [CarbsPart.fromMs].
      */
     internal fun carbsUntil(part: CarbsPart, nowMs: Long): Long {
         if (part.minutes <= 0 || part.mealG <= 0.0 || part.leftG <= 0.0) return part.untilMs
         val carbMs = part.minutes * 60_000L
-        val atRate = nowMs + (part.leftG / part.mealG * carbMs).toLong()
+        val atRate = max(nowMs, part.fromMs) + (part.leftG / part.mealG * carbMs).toLong()
         val latest = part.untilMs + ((CARBS_STRETCH - 1.0) * carbMs).toLong()
         return min(latest, max(part.untilMs, atRate))
     }
@@ -152,7 +153,8 @@ object MealFoodForecast {
      * The BG rise [food] adds at each 5-min step ahead, mg/dL. The rise BG already shows is in the forecast on
      * its own, fading out ([ciAheadMgdl] is all of it still to come), so that much food is taken off first,
      * carbs before fat and protein, and the same grams are not counted twice. Fat and protein that have not
-     * started yet ([FoodToCome.fatProteinFromMs]) add nothing.
+     * started yet ([FoodToCome.fatProteinFromMs]) add nothing. Carbs not eaten yet ("Eat in") start at
+     * [CarbsPart.fromMs].
      *
      * @param isfMgdl the same ISF the forecast uses for the insulin, so food and insulin are weighed alike
      */
@@ -164,12 +166,13 @@ object MealFoodForecast {
         val carbs = food.parts.sortedBy { it.untilMs }.map { part ->
             val left = (part.leftG - seenG).coerceAtLeast(0.0)
             seenG = (seenG - part.leftG).coerceAtLeast(0.0)
-            left to max(MIN_CARB_STEPS, ceil((part.untilMs - nowMs).toDouble() / STEP_MS).toInt())
+            val wait = max(0, ((part.fromMs - nowMs) / STEP_MS).toInt())
+            Triple(left, wait, max(wait + MIN_CARB_STEPS, ceil((part.untilMs - nowMs).toDouble() / STEP_MS).toInt()))
         }
         val fatProtein = if (nowMs < food.fatProteinFromMs) 0.0 else (food.fatProteinG - seenG).coerceAtLeast(0.0)
         val fatProteinSteps = max(MIN_FAT_PROTEIN_STEPS, ceil((food.fatProteinUntilMs - nowMs).toDouble() / STEP_MS).toInt())
         return List(count) { i ->
-            val g = carbs.sumOf { (left, steps) -> if (i < steps) left / steps else 0.0 } + (if (i < fatProteinSteps) fatProtein / fatProteinSteps else 0.0)
+            val g = carbs.sumOf { (left, wait, end) -> if (i in wait until end) left / (end - wait) else 0.0 } + (if (i < fatProteinSteps) fatProtein / fatProteinSteps else 0.0)
             g * csf
         }
     }

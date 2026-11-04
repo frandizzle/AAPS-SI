@@ -37,10 +37,12 @@ interface MealEstimateCalibration {
      * @param estimatedG    the part of [carbEquivG] from a photo or description estimate. Only that part is scaled by
      *                      [factor], and only a meal that is all estimated teaches it. The rest is exact: scanned,
      *                      typed in or saved.
+     * @param eatenMs       when the food is eaten: later than [modeStartMs] with "Eat in". Its carbs and fat and protein
+     *                      are expected from then.
      */
     fun recordEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean = true,
-        carbParts: List<CarbPart> = emptyList(), estimatedG: Double = carbEquivG
+        carbParts: List<CarbPart> = emptyList(), estimatedG: Double = carbEquivG, eatenMs: Long = modeStartMs
     )
 
     /**

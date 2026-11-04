@@ -298,6 +298,15 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `food eaten after the mode starts is expected from when it is eaten`() {
+        cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 30.0, 5.0, 2.0, carbParts = listOf(CarbPart(30.0, 60)), eatenMs = T0 + 20 * MIN)
+        val still = cal.stillToCome(T0, T0)!!
+        assertEquals(T0 + 20 * MIN, still.carbParts.single().fromMs)
+        assertEquals(T0 + 80 * MIN, still.carbsUntilMs)
+        assertEquals(T0 + 20 * MIN + MealFoodForecast.FAT_PROTEIN_START_MIN * MIN, still.fatProteinFromMs)
+    }
+
+    @Test
     fun `a closed meal stays closed over a restart`() {
         cal.recordEstimate(T0, T0 + 6 * HOUR, 60.0, 20.0, 20.0, 20.0)
         cal.closeMeals(beforeMs = T0 + HOUR)

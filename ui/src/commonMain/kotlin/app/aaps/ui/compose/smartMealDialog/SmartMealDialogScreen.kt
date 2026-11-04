@@ -77,6 +77,7 @@ import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.ui.CoreUiStrings
+import app.aaps.core.ui.compose.AapsSpacing
 import app.aaps.core.ui.compose.AapsTheme
 import app.aaps.core.ui.compose.AapsTopAppBar
 import app.aaps.core.ui.compose.NumberInputRow
@@ -436,6 +437,26 @@ fun SmartMealDialogScreen(
                             Text("+" + fmtU(inc))
                         }
                     }
+                }
+                // "Eat in": pre-bolus 1 now, an alarm when it is time to eat. Only for a new meal.
+                if (!state.addMode) {
+                    Text(
+                        stringResource(UiStrings.si_eat_in_label),
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(top = AapsSpacing.medium)
+                    )
+                    val choices = SmartMealDialogViewModel.EAT_IN_CHOICES
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        choices.forEachIndexed { i, min ->
+                            SegmentedButton(
+                                selected = state.eatInMinutes == min,
+                                onClick = { focusManager.clearFocus(); viewModel.updateEatIn(min) },
+                                shape = SegmentedButtonDefaults.itemShape(i, choices.size)
+                            ) { Text(if (min == 0) stringResource(UiStrings.si_eat_in_now) else stringResource(CoreUiStrings.format_mins, min)) }
+                        }
+                    }
+                    if (state.eatInMinutes > 0)
+                        Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_eat_in_hint, state.eatInMinutes))
                 }
                 // Shown when the plan has a rest, or one was typed in.
                 if (state.pb1RestU > 0.0) {

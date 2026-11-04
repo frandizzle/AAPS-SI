@@ -9,5 +9,7 @@ enum class IntNonKey(
 ) : IntNonPreferenceKey {
 
     ObjectivesManualEnacts("ObjectivesmanualEnacts", 0),
-    TddCycleOffset("tdd_cycle_offset", 0)
+    TddCycleOffset("tdd_cycle_offset", 0),
+    /** Smart Meal: the last "Eat in" choice, in minutes after pre-bolus 1; 0 = now. */
+    ApsSmartInsulinEatInMinutes("si_eat_in_minutes", 0)
 }

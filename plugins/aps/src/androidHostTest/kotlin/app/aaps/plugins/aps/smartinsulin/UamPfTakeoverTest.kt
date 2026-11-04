@@ -91,17 +91,17 @@ class UamPfTakeoverTest {
 
     private fun verifyTookOver() =
         verify(mealOverrideManager).activateOverride(
-            eq(MealMode.UAM_BREAKFAST), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            eq(MealMode.UAM_BREAKFAST), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
 
     private fun verifyNothingFired() =
         verify(mealOverrideManager, never()).activateOverride(
-            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            any(), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
 
     private fun verifyPfFired() =
         verify(mealOverrideManager).activateOverride(
-            eq(MealMode.UAM_PROTEIN_FAT), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any()
+            eq(MealMode.UAM_PROTEIN_FAT), anyOrNull(), any(), any(), any(), any(), any(), any(), any(), any(), any(), eq(0L)
         )
 
     /** Four flat readings in Fasting at [bgMmol] - one more than the 3 P/F needs. */

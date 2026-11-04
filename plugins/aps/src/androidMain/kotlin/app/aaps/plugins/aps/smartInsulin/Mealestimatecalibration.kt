@@ -54,8 +54,9 @@ data class LoggedFoodChange(val modeStartMs: Long, val carbsFactor: Double, val 
  * @param mealG   all of this part, scaled by the learned factor, for the rate it comes in at
  * @param untilMs it should have come in by this time
  * @param minutes how long it takes from when it is eaten; 0 = not known
+ * @param fromMs  when it is eaten: it starts to come in then. Later than the mode's start with "Eat in"; 0 = not known
  */
-data class CarbsPart(val leftG: Double, val mealG: Double, val untilMs: Long, val minutes: Int)
+data class CarbsPart(val leftG: Double, val mealG: Double, val untilMs: Long, val minutes: Int, val fromMs: Long = 0L)
 
 /**
  * Compares each estimated meal with the grams [MealAbsorptionTracker] saw for it, and keeps the ratio.
@@ -146,7 +147,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     override fun recordEstimate(
         modeStartMs: Long, windowEndMs: Long, carbEquivG: Double, carbsG: Double, proteinG: Double, fatG: Double, learn: Boolean, carbParts: List<CarbPart>,
-        estimatedG: Double
+        estimatedG: Double, eatenMs: Long
     ) {
         synchronized(this) {
             // A new estimate for the same meal mode replaces the old one.
@@ -156,8 +157,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
             val earlier = pending.filter { it.modeStartMs < modeStartMs && modeStartMs <= it.windowEndMs && stillToCome(it).let { c -> c.carbsG + c.fatProteinG } >= MealFoodForecast.MIN_FOOD_G }
             earlier.forEach { it.learn = false }
             pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn && earlier.isEmpty(),
-                                carbsUntilMs = modeStartMs + longestMin(carbParts) * 60_000L, carbsMin = averageMin(carbParts),
-                                slots = slotsOf(carbParts, carbsG, modeStartMs).toMutableList(), estimatedG = estimatedG.coerceIn(0.0, carbEquivG)))
+                                carbsUntilMs = eatenMs + longestMin(carbParts) * 60_000L, carbsMin = averageMin(carbParts),
+                                fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
+                                slots = slotsOf(carbParts, carbsG, eatenMs).toMutableList(), estimatedG = estimatedG.coerceIn(0.0, carbEquivG)))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
         save()
@@ -311,7 +313,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
         var seenLeft = seen
         val parts = slots.sortedBy { it.untilMs }.map { slot ->
             val mealG = if (slotsG > 0.0) carbs * slot.grams / slotsG else 0.0
-            CarbsPart((mealG - seenLeft).coerceAtLeast(0.0), mealG, slot.untilMs, slot.minutes).also { seenLeft = (seenLeft - mealG).coerceAtLeast(0.0) }
+            val fromMs = if (slot.minutes > 0) slot.untilMs - slot.minutes * 60_000L else 0L
+            CarbsPart((mealG - seenLeft).coerceAtLeast(0.0), mealG, slot.untilMs, slot.minutes, fromMs).also { seenLeft = (seenLeft - mealG).coerceAtLeast(0.0) }
         }
         return StillToCome(
             modeStartMs = p.modeStartMs,

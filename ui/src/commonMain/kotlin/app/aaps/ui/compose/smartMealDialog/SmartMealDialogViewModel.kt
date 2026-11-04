@@ -8,6 +8,7 @@ import app.aaps.core.data.ue.Sources
 import app.aaps.core.data.ui.ConfirmationLine
 import app.aaps.core.data.ui.ConfirmationRole
 import app.aaps.core.interfaces.InterfacesStrings
+import app.aaps.core.interfaces.alerts.EatReminder
 import app.aaps.core.interfaces.bolus.BatchAction
 import app.aaps.core.interfaces.bolus.BatchExecutor
 import app.aaps.core.interfaces.clientcontrol.ActionProgress
@@ -31,6 +32,7 @@ import app.aaps.core.interfaces.utils.Round
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.IntNonKey
 import app.aaps.core.keys.UnitDoubleKey
 import app.aaps.core.keys.interfaces.Preferences
 import app.aaps.core.ui.clientcontrol.failText
@@ -95,6 +97,8 @@ data class SmartMealDialogUiState(
     val pb1U: Double = 0.0,
     /** The part of pre-bolus 1 above the max pre-bolus, given 15 to 45 min in once BG rises; 0 = none. */
     val pb1RestU: Double = 0.0,
+    /** "Eat in": the meal is eaten this many minutes after pre-bolus 1, and an alarm says when; 0 = now. */
+    val eatInMinutes: Int = 0,
     val pb2Enabled: Boolean = false,
     val pb2U: Double = 0.0,
     val pb2DelayMinutes: Int = 30,
@@ -258,6 +262,7 @@ class SmartMealDialogViewModel(
     private val glucoseStatusProvider: GlucoseStatusProvider,
     private val iobCobCalculator: IobCobCalculator,
     private val constraintsChecker: ConstraintsChecker,
+    private val eatReminder: EatReminder,
     private val appScope: CoroutineScope
 ) : ViewModel() {
 
@@ -289,6 +294,7 @@ class SmartMealDialogViewModel(
                 pb2U = defaultPb2,
                 pb2DelayMinutes = preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins),
                 pb3U = defaultPb2,
+                eatInMinutes = preferences.get(IntNonKey.ApsSmartInsulinEatInMinutes).takeIf { it in EAT_IN_CHOICES } ?: 0,
                 estimatesEnabled = mealFoodRepository.estimatesEnabled,
                 calibrationFactor = mealEstimateCalibration.factor,
                 calibrationMeals = mealEstimateCalibration.mealsUsed,
@@ -380,6 +386,13 @@ class SmartMealDialogViewModel(
     fun updateDuraFloor(v: Double) = _uiState.update { it.copy(duraFloor = v.coerceAtLeast(0.0)) }
     fun updateDuraStrength(v: Double) = _uiState.update { it.copy(duraStrength = v.coerceIn(0.0, 5.0)) }
     fun updatePb1Enabled(v: Boolean) = _uiState.update { it.copy(pb1Enabled = v) }
+
+    /** One of [EAT_IN_CHOICES]; kept for the next meal. */
+    fun updateEatIn(minutes: Int) {
+        if (minutes !in EAT_IN_CHOICES) return
+        preferences.put(IntNonKey.ApsSmartInsulinEatInMinutes, minutes)
+        _uiState.update { it.copy(eatInMinutes = minutes) }
+    }
     fun updatePb1(v: Double) = _uiState.update { it.copy(pb1U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun addPb1(increment: Double) = _uiState.update { it.copy(pb1U = (it.pb1U + increment).coerceAtMost(it.maxPreBolus)) }
     fun updatePb1Rest(v: Double) = _uiState.update { it.copy(pb1RestU = v.coerceIn(0.0, it.maxPreBolus)) }
@@ -832,7 +845,11 @@ class SmartMealDialogViewModel(
 
     // ── Cancel what is running ───────────────────────────────────────────────
 
-    fun cancelMode() = mealOverrideManager.cancelOverride()
+    fun cancelMode() {
+        // A meal ended before it was eaten does not ring its "Eat in" alarm.
+        mealOverrideManager.activeState?.takeIf { it.eatDelayMs > 0L && dateUtil.now() < it.eatAtMs }?.let { eatReminder.stop() }
+        mealOverrideManager.cancelOverride()
+    }
     fun cancelPb1Rest() = mealOverrideManager.cancelPreBolus1Rest()
     fun cancelPb2() = mealOverrideManager.cancelPreBolus2()
     fun cancelPb3() = mealOverrideManager.cancelPreBolus3()
@@ -844,6 +861,9 @@ class SmartMealDialogViewModel(
 
     private fun SmartMealDialogUiState.pb1(): Double =
         if (pb1Enabled && pb1U > 0.0) Round.floorTo(pb1U.coerceAtMost(maxPreBolus), ch.bolusStep(pb1U)) else 0.0
+
+    /** "Eat in", only for a new meal with pre-bolus 1: without insulin first there is nothing to wait for. */
+    private fun SmartMealDialogUiState.eatInMin(): Int = if (!addMode && pb1() > 0.0) eatInMinutes else 0
 
     /** Only with pre-bolus 1 on: the rest is the part of it that waits. */
     private fun SmartMealDialogUiState.pb1Rest(): Double = if (pb1Enabled && pb1RestU > 0.0) pb1RestU.coerceAtMost(maxPreBolus) else 0.0
@@ -859,6 +879,7 @@ class SmartMealDialogViewModel(
             add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_replaces, running.label)))
             if (state.pb2Pending || state.pb3Pending) add(ConfirmationLine(ConfirmationRole.WARNING, rh.gs(UiStrings.si_confirm_replaces_pb)))
         }
+        state.eatInMin().takeIf { it > 0 }?.let { add(ConfirmationLine(ConfirmationRole.PRIMARY, rh.gs(UiStrings.si_confirm_eat_in, it))) }
         add(ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_duration, state.durationMinutes)))
         add(
             if (state.isf > 0.0) ConfirmationLine(ConfirmationRole.NORMAL, rh.gs(UiStrings.si_confirm_isf, "${fmtBg(state.isf, state.isMmol)} ${state.unitsLabel}"))
@@ -1027,10 +1048,12 @@ class SmartMealDialogViewModel(
         if (state.foodItems.isEmpty()) return
         val startMs = mealOverrideManager.modeStartMs.takeIf { it > 0L } ?: dateUtil.now()
         val pfMin = if (state.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
+        val eatIn = state.eatInMin()
         val t = state.foodTotals
         mealEstimateCalibration.recordEstimate(
             modeStartMs = startMs,
-            windowEndMs = startMs + (state.durationMinutes + pfMin) * 60_000L,
+            windowEndMs = startMs + (eatIn + state.durationMinutes + pfMin) * 60_000L,
+            eatenMs = startMs + eatIn * 60_000L,
             carbEquivG = t.carbEquivG, carbsG = t.carbsG, proteinG = t.proteinG, fatG = t.fatG,
             learn = state.afterActivityPct == 0,
             carbParts = state.foodItems.carbParts(),
@@ -1045,9 +1068,10 @@ class SmartMealDialogViewModel(
     private fun recordMealLearning(state: SmartMealDialogUiState) {
         if (state.foodItems.isEmpty()) return
         val startMs = mealOverrideManager.modeStartMs.takeIf { it > 0L } ?: dateUtil.now()
-        val modeEndMs = startMs + state.durationMinutes * 60_000L
+        val eatIn = state.eatInMin()
+        val modeEndMs = startMs + (eatIn + state.durationMinutes) * 60_000L
         val pfMin = if (state.pfAfter) preferences.get(IntKey.ApsSmartInsulinUamProteinFatDurationMins) else 0
-        val pb3DueMs = if (state.pb2() > 0.0 && state.pb3() > 0.0) startMs + (state.pb2DelayMinutes + state.pb3DelayMinutes) * 60_000L else 0L
+        val pb3DueMs = if (state.pb2() > 0.0 && state.pb3() > 0.0) startMs + (eatIn + state.pb2DelayMinutes + state.pb3DelayMinutes) * 60_000L else 0L
         val t = state.foodTotals
         val (waveG, tailG) = MealDosePlanner.fatProteinGrams(t.fpu, preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct))
         savedMealLearning.recordMeal(state.sourceMeal, startMs, modeEndMs, modeEndMs + pfMin * 60_000L, pb3DueMs, t.carbsG, waveG, tailG)
@@ -1103,18 +1127,21 @@ class SmartMealDialogViewModel(
             }
 
             val pb1 = if (bolusId != null) state.pb1() else 0.0
+            // "Eat in": pre-bolus 1 now, the food later. The meal's own times count from when it is eaten.
+            val eatInMs = state.eatInMin() * 60_000L
             mealOverrideManager.activateOverride(
                 mode = mode,
                 doseU = if (pb1 > 0.0) pb1 else null,
                 carbsG = 0,
-                modeWindowMs = state.durationMinutes * 60_000L,
+                modeWindowMs = eatInMs + state.durationMinutes * 60_000L,
                 preBolus2U = state.pb2(),
-                preBolus2DelayMs = if (state.pb2() > 0.0) state.pb2DelayMinutes * 60_000L else 0L,
+                preBolus2DelayMs = if (state.pb2() > 0.0) eatInMs + state.pb2DelayMinutes * 60_000L else 0L,
                 preBolus3U = state.pb3(),
                 preBolus3DelayMs = if (state.pb3() > 0.0) state.pb3DelayMinutes * 60_000L else 0L,
                 duraEnabled = state.duraEnabled,
                 duraFloorMgdl = duraFloorMgdl,
-                duraStrength = state.duraStrength
+                duraStrength = state.duraStrength,
+                eatDelayMs = eatInMs
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             if (state.pb1Rest() > 0.0) mealOverrideManager.setPreBolus1Rest(state.pb1Rest())
@@ -1125,23 +1152,29 @@ class SmartMealDialogViewModel(
             recordEstimate(state)
             if (state.afterActivityPct == 0) recordMealLearning(state)
             logEntry(state)?.let { foodLog.add(it) }
-            deliver(bolusId)
+            // The alarm only once pre-bolus 1 is given: without it there is nothing to wait for.
+            if (deliver(bolusId) && eatInMs > 0L) eatReminder.start(eatInMs)
         }
     }
 
-    private suspend fun deliver(bolusId: Long?) {
-        if (bolusId == null) return
+    /** True when the bolus was given. */
+    private suspend fun deliver(bolusId: Long?): Boolean {
+        if (bolusId == null) return false
         val result = batchExecutor.commit(bolusId, Sources.InsulinDialog, rh.gs(InterfacesStrings.bolus))
         if (result is ActionProgress.Rejected) {
             if (result.reason.isNotDeliveryError())
                 rxBus.send(EventShowDialog.Ok(title = rh.gs(InterfacesStrings.bolus), message = rh.gs(result.reason.failText())))
             else result.detail?.let { _sideEffect.tryEmit(SideEffect.ShowDeliveryError(it)) }
+            return false
         }
+        return true
     }
 
     companion object {
 
         const val QUANTITY_STEP = 0.25
+        /** The "Eat in" choices, in minutes after pre-bolus 1. NovoRapid and other slower insulins need 15 to 20 min. */
+        val EAT_IN_CHOICES = listOf(0, 15, 20)
         /** BG under the low guard this recently means food logged now is probably to treat the low. */
         const val LOW_RECENT_MS = 30 * 60_000L
 

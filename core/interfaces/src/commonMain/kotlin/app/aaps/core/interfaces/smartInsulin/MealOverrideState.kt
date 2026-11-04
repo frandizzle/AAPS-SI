@@ -26,6 +26,8 @@ import kotlin.math.floor
  *                      [MealOverrideManager.countLoopSmb]. Never more than the pieces had left.
  * [extendedMs]       — how much later the mode ends than it was set to, because its food still came in, see
  *                      [MealOverrideManager.extendWhileFoodComes].
+ * [eatDelayMs]       — the meal is eaten this long after the start ("Eat in"): pre-bolus 1 is given at the start so it
+ *                      has time to act. The rest of pre-bolus 1 counts its window from [eatAtMs]. 0 = eaten at the start.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -52,7 +54,8 @@ data class MealOverrideState(
     val preBolus2GivenU:  Double  = 0.0,
     val preBolus2LastPieceMs: Long? = null,
     val preBolus2LoopU:   Double  = 0.0,
-    val extendedMs:       Long    = 0L
+    val extendedMs:       Long    = 0L,
+    val eatDelayMs:       Long    = 0L
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
@@ -119,6 +122,9 @@ data class MealOverrideState(
     /** Wall-clock time PB2 should fire */
     val preBolus2FireAtMs: Long
         get() = triggerTimeMs + preBolus2DelayMs
+
+    /** When the meal is eaten: the start, or later with "Eat in". */
+    val eatAtMs: Long get() = triggerTimeMs + eatDelayMs
 
     /** True if PB2 fired successfully (positive timestamp) */
     val preBolus2FiredSuccessfully: Boolean

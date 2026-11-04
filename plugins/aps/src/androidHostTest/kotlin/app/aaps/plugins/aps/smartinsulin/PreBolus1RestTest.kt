@@ -30,7 +30,7 @@ class PreBolus1RestTest {
     private val commandQueue: CommandQueue = mock()
 
     /** A Dinner started [minAgo] minutes ago with a [restU] rest of pre-bolus 1 still waiting, restored from the settings. */
-    private fun dinner(minAgo: Int, restU: Double = 3.0): MealOverrideManagerImpl {
+    private fun dinner(minAgo: Int, restU: Double = 3.0, eatInMin: Int = 0): MealOverrideManagerImpl {
         val start = System.currentTimeMillis() - minAgo * 60_000L
         val json = JSONObject().apply {
             put("mode", MealMode.DINNER.name)
@@ -38,6 +38,7 @@ class PreBolus1RestTest {
             put("modeExpiryMs", start + 3 * 60 * 60_000L)
             put("doseU", 6.0)
             put("preBolus1RestU", restU)
+            put("eatDelayMs", eatInMin * 60_000L)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         val ok: PumpEnactResult = mock()
@@ -61,6 +62,19 @@ class PreBolus1RestTest {
         assertTrue(m.preBolus1RestPending)
         runBlocking { verify(commandQueue, never()).bolus(any()) }
         assertTrue(m.preBolus1RestStatusText.contains("checks BG in 5min"))
+    }
+
+    @Test
+    fun `with eat in, its window counts from when the meal is eaten`() {
+        // Eaten 20 min after the start, so 25 min in is only 5 min after eating.
+        val m = dinner(minAgo = 25, eatInMin = 20)
+        m.onLoopCycle(bg(120.0, 5.0, avgDelta = 3.0), iob(5.0), 12.0)
+        assertTrue(m.preBolus1RestPending)
+        assertTrue(m.preBolus1RestStatusText.contains("checks BG in 10min"))
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+        // 40 min in is 20 min after eating: it fires.
+        dinner(minAgo = 40, eatInMin = 20).onLoopCycle(bg(120.0, 5.0, avgDelta = 3.0), iob(5.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(any()) }
     }
 
     @Test
