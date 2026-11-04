@@ -21,6 +21,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
 import app.aaps.core.interfaces.rx.events.EventShowDialog
@@ -80,8 +81,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Immutable
 data class SmartMealDialogUiState(
@@ -263,6 +266,7 @@ class SmartMealDialogViewModel(
     private val iobCobCalculator: IobCobCalculator,
     private val constraintsChecker: ConstraintsChecker,
     private val eatReminder: EatReminder,
+    private val bolusProgressData: BolusProgressData,
     private val appScope: CoroutineScope
 ) : ViewModel() {
 
@@ -1153,8 +1157,24 @@ class SmartMealDialogViewModel(
             if (state.afterActivityPct == 0) recordMealLearning(state)
             logEntry(state)?.let { foodLog.add(it) }
             // The alarm only once pre-bolus 1 is given: without it there is nothing to wait for.
-            if (deliver(bolusId) && eatInMs > 0L) eatReminder.start(eatInMs)
+            if (deliver(bolusId) && eatInMs > 0L) {
+                // A big bolus takes minutes on the pump, so the wait counts from when all of it is in.
+                waitForBolusEnd()
+                // Not if the meal was cancelled while the bolus was given.
+                if (mealOverrideManager.activeState != null) eatReminder.start(eatInMs)
+            }
         }
+    }
+
+    /**
+     * Waits until the pump has given the whole bolus, or the user stopped it. The pump accepts the bolus before it
+     * gives it, so first wait for it to start. Gives up after [BOLUS_START_WAIT_MS] or [BOLUS_END_WAIT_MS], so the
+     * eat reminder is never lost.
+     */
+    private suspend fun waitForBolusEnd() {
+        val started = withTimeoutOrNull(BOLUS_START_WAIT_MS) { bolusProgressData.state.first { it != null && !it.isSMB } }
+        if (started == null) return
+        withTimeoutOrNull(BOLUS_END_WAIT_MS) { bolusProgressData.state.first { it == null || it.percent >= 100 || it.stopPressed } }
     }
 
     /** True when the bolus was given. */
@@ -1177,6 +1197,10 @@ class SmartMealDialogViewModel(
         val EAT_IN_CHOICES = listOf(0, 15, 20)
         /** BG under the low guard this recently means food logged now is probably to treat the low. */
         const val LOW_RECENT_MS = 30 * 60_000L
+        /** How long to wait for the pump to start pre-bolus 1 before the eat countdown starts anyway. */
+        const val BOLUS_START_WAIT_MS = 60_000L
+        /** How long to wait for the pump to finish pre-bolus 1 before the eat countdown starts anyway. */
+        const val BOLUS_END_WAIT_MS = 10 * 60_000L
 
         /** True when any of [readingsMgdl] is under [lowGuardMgdl]. */
         fun wasLow(readingsMgdl: List<Double>, lowGuardMgdl: Double): Boolean = lowGuardMgdl > 0.0 && readingsMgdl.any { it < lowGuardMgdl }

@@ -20,6 +20,7 @@ import app.aaps.core.interfaces.iob.IobCobCalculator
 import app.aaps.core.interfaces.plugin.ActivePlugin
 import app.aaps.core.interfaces.profile.ProfileFunction
 import app.aaps.core.interfaces.profile.ProfileUtil
+import app.aaps.core.interfaces.pump.BolusProgressData
 import app.aaps.core.interfaces.pump.PumpWithConcentration
 import app.aaps.core.interfaces.resources.TextResolver
 import app.aaps.core.interfaces.rx.bus.RxBus
@@ -60,6 +61,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import app.aaps.core.keys.interfaces.TextRef
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -112,7 +114,9 @@ internal class SmartMealDialogViewModelTest {
     private val eatReminder: EatReminder = mock()
     private val maxIob: Constraint<Double> = mock()
 
-    private val scope = CoroutineScope(UnconfinedTestDispatcher())
+    private val dispatcher = UnconfinedTestDispatcher()
+    private val scope = CoroutineScope(dispatcher)
+    private val bolusProgressData = BolusProgressData(ch, scope)
     private lateinit var sut: SmartMealDialogViewModel
     private val effects = mutableListOf<SmartMealDialogViewModel.SideEffect>()
 
@@ -129,7 +133,7 @@ internal class SmartMealDialogViewModelTest {
         sut = SmartMealDialogViewModel(
             mealOverrideManager, preferences, profileFunction, profileUtil, activePlugin, ch,
             batchExecutor, rxBus, rh, dateUtil, decimalFormatter, mealFoodRepository, savedFoodStore, savedMealLearning, foodLog, recentActivity, mealEstimateCalibration,
-            glucoseStatusProvider, iobCobCalculator, constraintsChecker, eatReminder, scope
+            glucoseStatusProvider, iobCobCalculator, constraintsChecker, eatReminder, bolusProgressData, scope
         )
         sut.sideEffect.onEach { effects += it }.launchIn(scope)
     }
@@ -350,7 +354,10 @@ internal class SmartMealDialogViewModelTest {
         sut.updateEatIn(20)
         sut.prepareAndConfirm()
         val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        whenever(mealOverrideManager.activeState).thenReturn(mock())
         sut.commit(confirm.bolusId)
+        bolusProgressData.start(2.0, isSMB = false)
+        bolusProgressData.updateProgress(100, TextRef.Literal(""))
 
         val args = activateCaptured()
         val min = 60_000L
@@ -359,6 +366,63 @@ internal class SmartMealDialogViewModelTest {
         assertThat(args.pb2DelayMs).isEqualTo((20 + sut.uiState.value.pb2DelayMinutes) * min)
         verify(eatReminder).start(20 * min)
         verify(preferences).put(IntNonKey.ApsSmartInsulinEatInMinutes, 20)
+    }
+
+    @Test
+    fun `the eat countdown starts only when the pump has given all of pre-bolus 1`() {
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updateEatIn(15)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        whenever(mealOverrideManager.activeState).thenReturn(mock())
+        sut.commit(confirm.bolusId)
+
+        verify(eatReminder, never()).start(any())
+        bolusProgressData.start(2.0, isSMB = false)
+        bolusProgressData.updateProgress(40, TextRef.Literal(""))
+        verify(eatReminder, never()).start(any())
+        bolusProgressData.updateProgress(100, TextRef.Literal(""))
+        verify(eatReminder).start(15 * 60_000L)
+    }
+
+    @Test
+    fun `the eat countdown starts anyway when the pump never reports the bolus`() {
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updateEatIn(15)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        whenever(mealOverrideManager.activeState).thenReturn(mock())
+        sut.commit(confirm.bolusId)
+
+        dispatcher.scheduler.advanceTimeBy(SmartMealDialogViewModel.BOLUS_START_WAIT_MS - 1)
+        verify(eatReminder, never()).start(any())
+        dispatcher.scheduler.advanceTimeBy(2)
+        verify(eatReminder).start(15 * 60_000L)
+    }
+
+    @Test
+    fun `no eat countdown when the meal was cancelled while the bolus was given`() {
+        whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
+        whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
+        build()
+        sut.updatePb1Enabled(true)
+        sut.updatePb1(2.0)
+        sut.updateEatIn(15)
+        sut.prepareAndConfirm()
+        val confirm = effects.single() as SmartMealDialogViewModel.SideEffect.ShowConfirmation
+        sut.commit(confirm.bolusId)
+        bolusProgressData.start(2.0, isSMB = false)
+        bolusProgressData.updateProgress(100, TextRef.Literal(""))
+
+        verify(eatReminder, never()).start(any())
     }
 
     @Test
