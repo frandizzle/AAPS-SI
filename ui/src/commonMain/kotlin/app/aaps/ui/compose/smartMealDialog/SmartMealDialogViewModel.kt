@@ -1193,8 +1193,8 @@ class SmartMealDialogViewModel(
     companion object {
 
         const val QUANTITY_STEP = 0.25
-        /** The "Eat in" choices, in minutes after pre-bolus 1. NovoRapid and other slower insulins need 15 to 20 min. */
-        val EAT_IN_CHOICES = listOf(0, 15, 20)
+        /** The "Eat in" choices, in minutes after pre-bolus 1. With NovoRapid: about 10 min when BG is in range, 15 to 20 min when it is high. */
+        val EAT_IN_CHOICES = listOf(0, 10, 15, 20)
         /** BG under the low guard this recently means food logged now is probably to treat the low. */
         const val LOW_RECENT_MS = 30 * 60_000L
         /** How long to wait for the pump to start pre-bolus 1 before the eat countdown starts anyway. */

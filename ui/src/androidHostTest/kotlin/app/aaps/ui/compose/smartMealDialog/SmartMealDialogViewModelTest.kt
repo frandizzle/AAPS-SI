@@ -369,6 +369,16 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
+    fun `eat in 10 min is a choice and is kept for the next meal, other values are not`() {
+        build()
+        sut.updateEatIn(10)
+        assertThat(sut.uiState.value.eatInMinutes).isEqualTo(10)
+        verify(preferences).put(IntNonKey.ApsSmartInsulinEatInMinutes, 10)
+        sut.updateEatIn(12)
+        assertThat(sut.uiState.value.eatInMinutes).isEqualTo(10)
+    }
+
+    @Test
     fun `the eat countdown starts only when the pump has given all of pre-bolus 1`() {
         whenever { batchExecutor.prepare(any(), any(), any()) }.thenReturn(ActionProgress.Prepared(id = 42L))
         whenever { batchExecutor.commit(any(), any(), any(), any()) }.thenReturn(ActionProgress.Applied)
