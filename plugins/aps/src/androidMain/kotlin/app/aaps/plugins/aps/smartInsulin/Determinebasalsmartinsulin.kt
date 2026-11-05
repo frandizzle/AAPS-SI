@@ -309,8 +309,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // 2 hours, when the fat and protein are still coming. The insulin is then counted for both, and BG sat
         // at 8 for hours with nothing given (5 Nov, a steak after lunch). Then extra insulin brings the lowest
         // point of the forecast with all the food up to target: all the food against all the insulin. It is
-        // still only the lowest point, so food that comes late is not given for now.
-        val fatProteinComingG = if (foodSteps != null && currentBg > targetBg)
+        // still only the lowest point, so food that comes late is not given for now. Only clearly above target:
+        // at 5.8 with a 5.5 target it gave a run of SMBs at night for fat and protein that is only an estimate.
+        val fatProteinComingG = if (foodSteps != null && currentBg >= targetBg + FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL)
             foods.filter { currentTime >= it.fatProteinFromMs }.sumOf { it.fatProteinG } else 0.0
         val fatProteinAllFood = fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G
         val predictedMin = if (fatProteinAllFood) max(predictedMinDosing, predictedMinAllFood) else predictedMinDosing
@@ -706,6 +707,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val DOSING_AHEAD_MIN                    = 120
         /** Fat and protein still to come (as carbs) from which extra insulin weighs all the food, not only [DOSING_AHEAD_MIN] of it. */
         const val FAT_PROTEIN_ALL_FOOD_MIN_G          = 10.0
+        /** How far above target BG must be before extra insulin weighs all the food: 1 mmol/L. */
+        const val FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL = 1.0 * MMOL_TO_MGDL
         /** The rise the forecast expects may be at most this many times what the food list still has to come. */
         const val FOOD_RISE_SLACK                     = 1.5
 

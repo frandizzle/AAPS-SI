@@ -656,6 +656,11 @@ class DetermineBasalSmartInsulinTest {
         // A little fat and protein left is not enough.
         val little = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak.copy(fatProteinG = 5.0))
         assertFalse(little.reason.contains("all food"), little.reason)
+        // Just above target (5.8 with a 5.5 target, that evening): the fat and protein are only an estimate, so
+        // only the next 2 hours of food count, as before.
+        midDinner(bg = 104.0)
+        val nearTarget = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak)
+        assertFalse(nearTarget.reason.contains("all food"), nearTarget.reason)
         // A falling BG says the food is not coming in: nothing extra.
         midDinner(bg = 144.0, delta = -5.0)
         val falling = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak)
