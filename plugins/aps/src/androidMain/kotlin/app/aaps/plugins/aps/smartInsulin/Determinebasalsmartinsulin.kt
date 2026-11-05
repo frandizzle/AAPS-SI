@@ -300,10 +300,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Full-curve min for SAFETY — suspends if BG predicted below lowGuard at any point
         val predictedMinSafety = forecast.minOrNull() ?: currentBg
         // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
-        val predictedMin = postPeakMin(dosingForecast, insulinPeakTicks, currentBg)
+        val predictedMinDosing = postPeakMin(dosingForecast, insulinPeakTicks, currentBg)
         // For lowering basal under target: all the food still to come, so basal is not cut mid-meal for food
         // that is further off than the dosing look-ahead.
         val predictedMinAllFood = postPeakMin(forecast, insulinPeakTicks, currentBg)
+        // Fat and protein that have started coming in, with a lot still to come: the 2 hours of food are weighed
+        // against all the insulin on board, and with a long insulin action much of that insulin works after the
+        // 2 hours, when the fat and protein are still coming. The insulin is then counted for both, and BG sat
+        // at 8 for hours with nothing given (5 Nov, a steak after lunch). Then extra insulin brings the lowest
+        // point of the forecast with all the food up to target: all the food against all the insulin. It is
+        // still only the lowest point, so food that comes late is not given for now.
+        val fatProteinComingG = if (foodSteps != null && currentBg > targetBg)
+            foods.filter { currentTime >= it.fatProteinFromMs }.sumOf { it.fatProteinG } else 0.0
+        val fatProteinAllFood = fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G
+        val predictedMin = if (fatProteinAllFood) max(predictedMinDosing, predictedMinAllFood) else predictedMinDosing
 
         // The 30 min point decides "falling into a low", so it stays on the insulin alone.
         val predictedAt30 = if (predictedBg.size > 5)  predictedBg[5]  else predictedBg.lastOrNull() ?: currentBg
@@ -379,6 +389,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (f.coveredG >= 1.0) sb.append(", ${"%.0f".format(Locale.US, f.coveredG)}g for pre-boluses")
             if (currentTime < f.fatProteinFromMs && f.fatProteinG >= 1.0) sb.append(", fp in ${(f.fatProteinFromMs - currentTime) / 60_000L}m")
             sb.append(")")
+            if (fatProteinAllFood) sb.append(" all food: fp coming")
             when {
                 foodForecast == null             -> sb.append(" not used: BG falling")
                 dosingForecast === predictedBg   -> sb.append(" low guard only: BG not above target")
@@ -693,6 +704,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val MAX_FOOD_FADE_MINS                  = 180
         /** In a meal with food still to come, extra insulin weighs the food and insulin of this many minutes ahead. */
         const val DOSING_AHEAD_MIN                    = 120
+        /** Fat and protein still to come (as carbs) from which extra insulin weighs all the food, not only [DOSING_AHEAD_MIN] of it. */
+        const val FAT_PROTEIN_ALL_FOOD_MIN_G          = 10.0
         /** The rise the forecast expects may be at most this many times what the food list still has to come. */
         const val FOOD_RISE_SLACK                     = 1.5
 

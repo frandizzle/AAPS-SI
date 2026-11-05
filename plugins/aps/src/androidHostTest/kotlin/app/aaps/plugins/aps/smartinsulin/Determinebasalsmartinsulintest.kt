@@ -636,6 +636,33 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(forFast.smb > steakSmb, "steak $steakSmb, all within 2 h ${forFast.smb}")
     }
 
+    @Test fun `fat and protein coming in with a lot still to come weigh all the food, so BG does not sit high`() {
+        // 5 Nov, a steak added to lunch: BG 8.0 flat, 3.67 U on board, 9 g of carbs and 27 g of fat and protein
+        // still to come, the fat and protein coming in since an hour. The next 2 hours of food against all the
+        // insulin asked for nothing, and the forecast with all the food sat at 8 for hours.
+        midDinner(bg = 144.0)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 3.67, activity = 0.0285)
+        val steak = FoodToCome(carbsG = 9.0, carbsUntilMs = now + 3 * 60 * 60_000L, fatProteinG = 27.0, fatProteinUntilMs = now + 4 * 60 * 60_000L,
+                               carbRatio = 5.0, fatProteinFromMs = now - 60 * 60_000L)
+        val coming = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak)
+        val comingSmb = coming.smb
+        val comingRate = coming.rate
+        assertTrue(coming.reason.contains("all food: fp coming"), coming.reason)
+        assertTrue(comingSmb > 0.0 || comingRate > 1.0, coming.reason)
+        // Before the fat and protein start, only the next 2 hours of food count, as before.
+        val notYet = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak.copy(fatProteinFromMs = now + 30 * 60_000L))
+        assertFalse(notYet.reason.contains("all food"), notYet.reason)
+        // A little fat and protein left is not enough.
+        val little = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak.copy(fatProteinG = 5.0))
+        assertFalse(little.reason.contains("all food"), little.reason)
+        // A falling BG says the food is not coming in: nothing extra.
+        midDinner(bg = 144.0, delta = -5.0)
+        val falling = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak)
+        assertFalse(falling.reason.contains("all food"), falling.reason)
+        assertEquals(0.0, falling.smb, 1e-9)
+    }
+
     @Test fun `no extra insulin for carbs a pre-bolus just given already covers`() {
         // Lunch on 1 Nov: BG 6.1 flat, pre-bolus 1 of 3.65 U given 4 min ago, 4.1 U on board, 22 g of carbs to
         // come, counted at the 80 % Fill in plans. The pre-bolus has done only a third of its work in the next
