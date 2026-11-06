@@ -30,6 +30,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
 import app.aaps.core.interfaces.utils.Round
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
@@ -743,7 +744,8 @@ class SmartMealDialogViewModel(
                 pb2DelayMin = timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
                 pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep,
-                fatProteinPreBoluses = state.addMode || !savedFoodStore.pb2Off(mealName(state))
+                fatProteinPreBoluses = state.addMode || !savedFoodStore.pb2Off(mealName(state)),
+                foodMatch = preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)
             )
             if (state.addMode) {
                 val running = mealOverrideManager.activeState ?: return@launch

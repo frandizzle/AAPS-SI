@@ -31,6 +31,18 @@ class MealDosePlannerTest {
     }
 
     @Test
+    fun `with food match pre-bolus 2 is half the fat and protein dose and there is no pre-bolus 3`() {
+        // 4 FPU = 8 U, 70 % of it = 5.6 U, half of that in pre-bolus 2. Without food match it is split over both.
+        val heavy = meal(20.0, protein = 60.0, fat = 17.8)
+        val before = MealDosePlanner.plan(heavy, settings)
+        assertTrue(before.pb3U > 0.0)
+        val p = MealDosePlanner.plan(heavy, settings.copy(foodMatch = true))
+        assertEquals(0.0, p.pb3U, 1e-9)
+        assertEquals((before.pb2U + before.pb3U) / 2, p.pb2U, 0.06)
+        assertEquals(before.pb1U, p.pb1U, 1e-9)
+    }
+
+    @Test
     fun `a little fat and protein gets no pre-bolus 2`() {
         // 0.85 FPU: the loop covers it.
         val p = MealDosePlanner.plan(meal(30.0, protein = 10.0, fat = 5.0), settings)

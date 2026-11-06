@@ -37,6 +37,7 @@ import app.aaps.core.interfaces.aps.APSResult
 import app.aaps.core.interfaces.aps.AutosensResult
 import app.aaps.core.interfaces.aps.CurrentTemp
 import app.aaps.core.interfaces.aps.GlucoseStatus
+import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.aps.OapsProfile
 import app.aaps.core.interfaces.configuration.Config
 import app.aaps.core.interfaces.constraints.Constraint
@@ -93,6 +94,7 @@ import kotlin.math.roundToInt
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.SingleIn
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.min
 
 @SingleIn(AppScope::class)
@@ -210,6 +212,9 @@ open class SmartInsulinPlugin @Inject constructor(
     private var lastModeStartSeenMs  = 0L
     /** The running meal's food still to come as the last cycle saw it, for the SI tab. */
     @Volatile private var lastFoodToCome: FoodToCome? = null
+    private val foodMatchSamples = ArrayDeque<FoodMatch.Sample>()
+    private var foodMatchMealMs = 0L
+    private var foodMatchGivenU = 0.0
     /** Grams of food still coming from meals before the running one, from the last cycle; for the SI tab. */
     @Volatile private var lastEarlierFoodG = 0.0
     /** The meal mode start the after-activity cut was last decided for, so a UAM mode is cut once, not every cycle. */
@@ -1460,6 +1465,49 @@ open class SmartInsulinPlugin @Inject constructor(
      * for dosing or a correction would be filed against a window it was never earned in.
      */
     /** The user's food fade time for this mode, see `DetermineBasalSmartInsulin.determine_basal`. Fasting has none. */
+    /**
+     * This cycle's dose from what the food really does, see [FoodMatch]. Null unless the setting is on, fat and protein have
+     * started, a pre-bolus does not fire now, and BG is at or above target and not falling.
+     */
+    private fun foodMatchTopUp(
+        mealMs: Long, still: StillToCome, glucoseStatus: GlucoseStatus, iobArray: Array<IobTotal>, carbRatio: Double,
+        insulinPeakMin: Double, insulinDiaMin: Double, isfMgdl: Double, targetMgdl: Double, now: Long
+    ): FoodMatch.TopUp? {
+        if (!sp.getBoolean(BooleanKey.ApsSmartInsulinFoodMatch.key, BooleanKey.ApsSmartInsulinFoodMatch.defaultValue)) return null
+        if (mealMs != foodMatchMealMs) {
+            foodMatchMealMs = mealMs
+            foodMatchSamples.clear()
+            val stored = sp.getString(StringNonKey.ApsSmartInsulinFoodMatchGiven.key, "").split(":")
+            foodMatchGivenU = if (stored.firstOrNull()?.toLongOrNull() == mealMs) stored.getOrNull(1)?.toDoubleOrNull() ?: 0.0 else 0.0
+        }
+        val activity = max(0.0, iobArray.firstOrNull()?.activity ?: 0.0)
+        foodMatchSamples.addLast(FoodMatch.Sample(now, glucoseStatus.delta + activity * isfMgdl * 5.0))
+        while (foodMatchSamples.isNotEmpty() && now - foodMatchSamples.first().timeMs > FoodMatch.LOOK_BACK_MS) foodMatchSamples.removeFirst()
+
+        val notFalling = glucoseStatus.delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && glucoseStatus.shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
+        if (carbRatio <= 0.0 || still.fatProteinMealG <= 0.0 || now < still.fatProteinFromMs) return null
+        if (glucoseStatus.glucose < targetMgdl || !notFalling || mealOverrideManager.preBolusThisCycleU > 0.0) return null
+        return FoodMatch.topUp(
+            samples = foodMatchSamples.toList(),
+            nowMs = now,
+            foodLeftG = still.carbsG + still.fatProteinG,
+            csfMgdlPerG = isfMgdl / carbRatio,
+            bgRising = glucoseStatus.delta > 0.0,
+            insulinAtLead = iobArray.getOrNull(FoodMatch.LEAD_MIN / 5)?.activity ?: 0.0,
+            unitAtLead = InsulinActivityCurve.activityFraction(FoodMatch.LEAD_MIN.toDouble(), insulinPeakMin, insulinDiaMin),
+            isfMgdl = isfMgdl,
+            bolusStep = activePlugin.activePump.pumpDescription.bolusStep,
+            roomU = FoodMatch.roomU(still.fatProteinMealG / carbRatio, mealOverrideManager.activePb2DoseU ?: 0.0, foodMatchGivenU)
+        )
+    }
+
+    /** Kept over a restart of the app, so the limit of a running meal still holds. */
+    private fun noteFoodMatchGiven(units: Double) {
+        if (units <= 0.0) return
+        foodMatchGivenU += units
+        sp.edit { putString(StringNonKey.ApsSmartInsulinFoodMatchGiven.key, "$foodMatchMealMs:$foodMatchGivenU") }
+    }
+
     private fun foodFadeMins(mode: MealMode): Int {
         val key = when (mode) {
             MealMode.BREAKFAST, MealMode.UAM_BREAKFAST  -> IntKey.ApsSmartInsulinFoodFadeBreakfastMins
@@ -2305,6 +2353,13 @@ open class SmartInsulinPlugin @Inject constructor(
         val hasFoodList = earlierStill.isNotEmpty() || mealWithList?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs) != null } == true
         val foodListG = if (hasFoodList) (earlierStill + listOfNotNull(runningStill)).sumOf { MealFoodForecast.foodLeftG(it, fatProteinShare) } else null
 
+        val foodMatchTopUp = mealWithList?.let { meal ->
+            runningStill?.let { still ->
+                val targetMgdl = if (isTempTarget) oapsProfile.target_bg else oapsProfile.target_bg + activityOffsetMmol(sp, activityMonitor) * 18.0
+                foodMatchTopUp(meal.triggerTimeMs, still, glucoseStatus, iobArray, profile.getIc(), profile.iCfg.peak.toDouble(), profile.iCfg.dia * 60.0, dosingIsfMgdl, targetMgdl, now)
+            }
+        }
+
         // determine_basal is the only path in invoke() that could throw and leave lastAPSResult
         // null with nothing said about it — every other early return sets a reason the user can
         // see. An exception here means no decision this cycle; surface that rather than looking
@@ -2357,7 +2412,8 @@ open class SmartInsulinPlugin @Inject constructor(
             earlierFood              = earlierFood,
             foodListG                = foodListG,
             carbRatio                = profile.getIc(),
-            preBolusThisCycleU       = mealOverrideManager.preBolusThisCycleU
+            preBolusThisCycleU       = mealOverrideManager.preBolusThisCycleU,
+            foodMatchTopUp           = foodMatchTopUp
             )
         } catch (e: Exception) {
             aapsLogger.error(LTag.APS, "SmartInsulin: determine_basal threw — no decision this cycle", e)
@@ -2368,6 +2424,7 @@ open class SmartInsulinPlugin @Inject constructor(
         }
 
         lastAPSResult = apsResult; lastAPSRun = now; lastRunError = null
+        foodMatchTopUp?.let { noteFoodMatchGiven(min(it.doseU, apsResult.smb)) }
 
         // Did the boost add insulin with this decision? Read by the meal learners next cycle,
         // when that insulin is on board.
@@ -2539,6 +2596,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     StringKey.ApsSmartInsulinMealAiModel,
                     IntKey.ApsSmartInsulinMealPlanCarbPct,
                     IntKey.ApsSmartInsulinMealPlanFatProteinPct,
+                    BooleanKey.ApsSmartInsulinFoodMatch,
                     IntKey.ApsSmartInsulinMealPlanPb3SharePct,
                     IntKey.ApsSmartInsulinMealPlanPb2DelayMins,
                     IntKey.ApsSmartInsulinMealPlanPb3DelayMins,

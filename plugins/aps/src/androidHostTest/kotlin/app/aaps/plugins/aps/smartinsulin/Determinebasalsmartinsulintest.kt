@@ -182,7 +182,8 @@ class DetermineBasalSmartInsulinTest {
         foodFadeMins:      Int                  = 60,
         foodToCome:        FoodToCome?          = null,
         foodListG:         Double?              = null,
-        preBolusThisCycleU: Double              = 0.0
+        preBolusThisCycleU: Double              = 0.0,
+        foodMatchTopUp:    FoodMatch.TopUp?     = null
     ): FakeAPSResult {
         sut.determine_basal(
             glucoseStatus         = glucoseStatus,
@@ -222,7 +223,8 @@ class DetermineBasalSmartInsulinTest {
             foodToCome            = foodToCome,
             foodListG             = foodListG,
             carbRatio             = 5.0,
-            preBolusThisCycleU    = preBolusThisCycleU
+            preBolusThisCycleU = preBolusThisCycleU,
+            foodMatchTopUp = foodMatchTopUp
         )
         return fakeResult
     }
@@ -666,6 +668,21 @@ class DetermineBasalSmartInsulinTest {
         val falling = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = steak)
         assertFalse(falling.reason.contains("all food"), falling.reason)
         assertEquals(0.0, falling.smb, 1e-9)
+    }
+
+    @Test fun `a food match top-up is given when the forecast asks for nothing, and only in normal dosing`() {
+        midDinner(bg = 110.0)
+        val iob = flatIobArray(iob = 4.0, activity = 0.03)
+        val topUp = FoodMatch.TopUp(doseU = 0.15, foodMgdl = 10.0, insulinMgdl = 5.0)
+        val without = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0)
+        assertEquals(0.0, without.smb, 1e-9)
+        val with = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodMatchTopUp = topUp)
+        assertEquals(if (with.reason.contains("NORMAL")) 0.15 else 0.0, with.smb, 1e-9)
+        assertTrue(with.reason.contains("food match=0.15U"), with.reason)
+        // Max IOB stays the limit.
+        midDinner(bg = 144.0)
+        val full = invoke(iobArray = flatIobArray(iob = 50.0, activity = 0.03), mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodMatchTopUp = topUp)
+        assertEquals(0.0, full.smb, 1e-9)
     }
 
     @Test fun `no extra insulin for carbs a pre-bolus just given already covers`() {

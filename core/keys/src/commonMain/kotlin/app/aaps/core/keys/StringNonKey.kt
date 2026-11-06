@@ -125,6 +125,7 @@ enum class StringNonKey(
 
     // ── SmartInsulin: learner state and per-mode DURA settings ──
     ApsSmartInsulinLearningDirtyUntil(key = "si_learning_dirty_until", defaultValue = "0"),
+    ApsSmartInsulinFoodMatchGiven(key = "si_food_match_given", defaultValue = ""),
     ApsSmartInsulinLastMealEndedMs(key = "si_last_meal_ended_ms", defaultValue = "0"),
     ApsSmartInsulinProfileFasting(key = "si_profile_fasting", defaultValue = ""),
     ApsSmartInsulinProfileLowCarb(key = "si_profile_low_carb", defaultValue = ""),

@@ -139,7 +139,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
          * A pre-bolus started to give this much insulin this cycle. It is not in [iobArray] yet, so this cycle gives no SMB
          * and no temp above basal: it would dose as if the pre-bolus were not there. Lowering basal still works.
          */
-        preBolusThisCycleU:       Double = 0.0
+        preBolusThisCycleU:       Double = 0.0,
+        /** This cycle's dose from what the food really does, see [FoodMatch]; null for none. Only given in normal dosing. */
+        foodMatchTopUp:           FoodMatch.TopUp? = null
     ): APSResult {
 
         val result = apsResultProvider()
@@ -422,6 +424,9 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
         if (sessionStatusText.isNotEmpty()) sb.append(" | $sessionStatusText")
         if (afterActivityText.isNotEmpty()) sb.append(" | $afterActivityText")
+        foodMatchTopUp?.let {
+            sb.append(" | food match=${"%.2f".format(Locale.US, it.doseU)}U food ${fmtIsf(it.foodMgdl, isMmol)} insulin ${fmtIsf(it.insulinMgdl, isMmol)}/5m in ${FoodMatch.LEAD_MIN}m")
+        }
         if (preBolusThisCycleU > 0.0) sb.append(" | pre-bolus ${"%.2f".format(Locale.US, preBolusThisCycleU)}U this cycle: no extra")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
             sb.append(" | activity=${activityLevel.label}(+${if (isMmol) "%.1f".format(activityTargetOffsetMmol) else "%.0f".format(activityOffsetMgdl)}${if (isMmol) "mmol" else "mg/dL"})")
@@ -501,7 +506,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     !preBolusNow &&
                     !highTempTargetActive &&
                     bgClearsGuard &&
-                    insulinReq > 0.0
+                    (insulinReq > 0.0 || foodMatchTopUp != null)
 
                 val correctionUnits = if (smbAllowed) {
                     // The plugin passes exactly the right fraction for this cycle —
@@ -511,7 +516,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val rawSmb         = if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0
+                val topUpU         = if (smbAllowed) (foodMatchTopUp?.doseU ?: 0.0) * cgmFraction else 0.0
+                val rawSmb         = max(if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0, topUpU)
                 val smbCap         = minOf(maxSmbU, iobHeadroom)
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
                 val constrainedSmb = if (clampedSmb >= bolusStep) clampedSmb else 0.0

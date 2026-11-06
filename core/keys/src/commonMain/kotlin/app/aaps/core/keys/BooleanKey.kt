@@ -393,6 +393,13 @@ enum class BooleanKey(
         title = KeysStrings.si_meal_ai_enabled_title,
         summary = KeysStrings.si_meal_ai_enabled_summary
     ),
+    ApsSmartInsulinFoodMatch(
+        key = "si_food_match",
+        defaultValue = false,
+        title = KeysStrings.si_food_match_title,
+        summary = KeysStrings.si_food_match_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinUamPfTakeover(
         key = "si_uam_pf_takeover",
         defaultValue = true,

@@ -24,6 +24,8 @@ import kotlin.math.min
  * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
+ * @param foodMatch        the loop gives part of the fat and protein insulin as the food comes in: pre-bolus 2 is
+ *                         [MealDosePlanner.FOOD_MATCH_PB2_SHARE] of the dose, and there is no pre-bolus 3
  * @param fatProteinPreBoluses false for a meal the user gives no pre-bolus 2 (a morning coffee): its fat and protein are
  *                         left to the loop, and they do not make the mode longer
  */
@@ -40,7 +42,8 @@ data class MealPlanSettings(
     val tailFactor: Double? = null,
     val pb2DelayMin: Int = MealDosePlanner.PB2_DELAY_MIN,
     val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN,
-    val fatProteinPreBoluses: Boolean = true
+    val fatProteinPreBoluses: Boolean = true,
+    val foodMatch: Boolean = false
 )
 
 /**
@@ -159,6 +162,8 @@ object MealDosePlanner {
     const val FPU_PB2 = 1.0
     /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
     const val FPU_HEAVY_MEAL = 3.0
+    /** With the loop matching insulin to the food, pre-bolus 2 gives this part of the fat and protein dose. */
+    const val FOOD_MATCH_PB2_SHARE = 0.5
 
     /**
      * @param balance BG, insulin and earlier food now, to cut pre-bolus 1 when the insulin on board already covers part of
@@ -327,6 +332,7 @@ object MealDosePlanner {
         val tailU = tailG * tail / ratio
         if (fpu < FPU_PB2) return Triple(waveU + tailU, 0.0, 0.0)
         val share = settings.fatProteinPct / 100.0
+        if (settings.foodMatch) return Triple(waveU + tailU, (waveU + tailU) * share * FOOD_MATCH_PB2_SHARE, 0.0)
         return Triple(waveU + tailU, waveU * share, tailU * share)
     }
 
