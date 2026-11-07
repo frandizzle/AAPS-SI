@@ -222,7 +222,10 @@ internal fun SmartMealFoodContent(
             },
             dismissButton = {
                 val (second, secondLow) = if (state.logTreatingLow) UiStrings.si_food_log_for_loop to false else UiStrings.si_food_log_treating_low to true
-                TextButton(onClick = { choosingLog = false; viewModel.updateLogTreatingLow(secondLow); viewModel.logOnly() }) { Text(stringResource(second)) }
+                Row {
+                    TextButton(onClick = { choosingLog = false; viewModel.updateLogCaloriesOnly(); viewModel.logOnly() }) { Text(stringResource(UiStrings.si_food_log_only)) }
+                    TextButton(onClick = { choosingLog = false; viewModel.updateLogTreatingLow(secondLow); viewModel.logOnly() }) { Text(stringResource(second)) }
+                }
             }
         )
 

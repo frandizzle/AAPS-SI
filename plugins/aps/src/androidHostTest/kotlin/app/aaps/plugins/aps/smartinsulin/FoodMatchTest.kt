@@ -1,6 +1,7 @@
 package app.aaps.plugins.aps.smartInsulin
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -60,6 +61,22 @@ class FoodMatchTest {
         val r = topUp(foodLeftG = 0.0, bgRising = true)
         assertNotNull(r)
         assertEquals(10.0, r!!.foodMgdl, 1e-9)
+    }
+
+    @Test fun `flat BG near target allows no top-up`() {
+        // 6 Nov: 5.7 with a 5.5 target, flat.
+        assertFalse(FoodMatch.bgAllows(bgMgdl = 103.0, targetMgdl = 99.0, deltaMgdl = 0.0))
+        assertFalse(FoodMatch.bgAllows(bgMgdl = 103.0, targetMgdl = 99.0, deltaMgdl = 0.5))
+    }
+
+    @Test fun `BG 1 mmol above target allows a top-up, also when flat`() {
+        assertTrue(FoodMatch.bgAllows(bgMgdl = 117.0, targetMgdl = 99.0, deltaMgdl = 0.0))
+        assertFalse(FoodMatch.bgAllows(bgMgdl = 116.0, targetMgdl = 99.0, deltaMgdl = 0.0))
+    }
+
+    @Test fun `a clear rise near target allows a top-up, but not under target`() {
+        assertTrue(FoodMatch.bgAllows(bgMgdl = 103.0, targetMgdl = 99.0, deltaMgdl = 1.8))
+        assertFalse(FoodMatch.bgAllows(bgMgdl = 95.0, targetMgdl = 99.0, deltaMgdl = 5.0))
     }
 
     @Test fun `top-ups stop at the limit for the meal`() {

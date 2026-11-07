@@ -38,6 +38,7 @@ import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.utils.DateUtil
 import app.aaps.core.interfaces.utils.DecimalFormatter
+import app.aaps.core.keys.BooleanKey
 import app.aaps.core.keys.DoubleKey
 import app.aaps.core.keys.DoubleNonKey
 import app.aaps.core.keys.IntKey
@@ -880,6 +881,37 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
+    fun `with food match pre-bolus 2 comes 30 min after pre-bolus 1 and follows the eat time`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        whenever(savedMealLearning.learned("Turkey wrap")).thenReturn(LearnedMeal(carbFactor = 1.0, waveFactor = 1.0, tailFactor = 1.0, meals = 3, fpHalfMin = 145))
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
+        whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(10.0)
+        whenever(preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)).thenReturn(true)
+        build()
+        sut.addFood(dessert(carbs = 20.0, protein = 25.0, fat = 5.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+        sut.saveMeal("Turkey wrap")
+        sut.clearFood()
+        sut.addSavedFood(sut.uiState.value.savedFoods.single())
+        sut.updateEatIn(15)
+
+        sut.fillInFromFood()
+        // The time the meal learned is not used: 15 min after the food is 30 min after pre-bolus 1.
+        assertThat(sut.uiState.value.pb2DelayMinutes).isEqualTo(15)
+        assertThat(sut.uiState.value.learnedTiming).isNull()
+
+        sut.updateEatIn(0)
+        assertThat(sut.uiState.value.pb2DelayMinutes).isEqualTo(30)
+
+        sut.updatePb2Delay(50.0)
+        sut.updateEatIn(10)
+        assertThat(sut.uiState.value.pb2DelayMinutes).isEqualTo(50)
+    }
+
+    @Test
     fun `a speed set for a food is used for it from then on`() {
         build()
         sut.addFood(dessert().copy(name = "Flat white", source = FoodSource.MANUAL))
@@ -1066,6 +1098,22 @@ internal class SmartMealDialogViewModelTest {
         assertThat(logged.firstValue.forLowG).isEqualTo(0.0)
         assertThat(logged.secondValue.mealSnack).isFalse()
         assertThat(logged.secondValue.forLowG).isWithin(1e-9).of(15.0)
+    }
+
+    @Test
+    fun `log only while a meal runs is for calories only, also just after a low`() {
+        whenever(dateUtil.now()).thenReturn(NOW)
+        dinnerRunning()
+        build()
+        sut.updateLogTreatingLow(true)
+        sut.addFood(dessert(carbs = 36.0, protein = 4.0, fat = 16.0).copy(name = "Rings", source = FoodSource.MANUAL))
+        sut.updateLogCaloriesOnly()
+        sut.logOnly()
+        val logged = argumentCaptor<FoodLogEntry>()
+        verify(foodLog).add(logged.capture())
+        verify(mealEstimateCalibration, never()).logFood(any(), any(), any(), any(), any(), any(), any(), any(), any())
+        assertThat(logged.firstValue.mealSnack).isFalse()
+        assertThat(logged.firstValue.forLowG).isEqualTo(0.0)
     }
 
     @Test

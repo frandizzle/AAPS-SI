@@ -204,7 +204,9 @@ data class SmartMealDialogUiState(
      * Log only is for carbs eaten to treat a low: they are logged for calories only. Otherwise food logged while a
      * meal mode runs counts as that meal's food in the loop's forecast. On when BG was low in the last half hour.
      */
-    val logTreatingLow: Boolean = false
+    val logTreatingLow: Boolean = false,
+    /** While a meal runs: the logged food counts for the calories only, the loop does not count it as food. */
+    val logCaloriesOnly: Boolean = false
 ) {
 
     /** What [sourceMeal] has learned, or null. */
@@ -396,7 +398,12 @@ class SmartMealDialogViewModel(
     fun updateEatIn(minutes: Int) {
         if (minutes !in EAT_IN_CHOICES) return
         preferences.put(IntNonKey.ApsSmartInsulinEatInMinutes, minutes)
-        _uiState.update { it.copy(eatInMinutes = minutes) }
+        val foodMatch = preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)
+        _uiState.update { s ->
+            // Pre-bolus 2 counts from pre-bolus 1 with food match, so it follows the eat time, unless the user moved it.
+            val planned = foodMatch && s.plan != null && s.pb2DelayMinutes == MealDosePlanner.foodMatchPb2DelayMin(s.eatInMinutes)
+            s.copy(eatInMinutes = minutes, pb2DelayMinutes = if (planned) MealDosePlanner.foodMatchPb2DelayMin(minutes) else s.pb2DelayMinutes)
+        }
     }
     fun updatePb1(v: Double) = _uiState.update { it.copy(pb1U = v.coerceIn(0.0, it.maxPreBolus)) }
     fun addPb1(increment: Double) = _uiState.update { it.copy(pb1U = (it.pb1U + increment).coerceAtMost(it.maxPreBolus)) }
@@ -562,8 +569,10 @@ class SmartMealDialogViewModel(
         }
         // Food eaten while a meal mode runs is food the loop should know is coming. A low treatment is not: the
         // loop would give insulin for it once BG is back up, and take the treatment away.
-        val running = mealOverrideManager.activeState?.takeIf { state.canAdd && !state.logTreatingLow }
-        foodLog.add(entry.copy(mealSnack = running != null, forLowG = if (state.logTreatingLow) entry.carbsG else 0.0))
+        // Calories only is the user's own choice: the loop then doses without this food, and it is no treatment either.
+        val treatingLow = state.logTreatingLow && !state.logCaloriesOnly
+        val running = mealOverrideManager.activeState?.takeIf { state.canAdd && !treatingLow && !state.logCaloriesOnly }
+        foodLog.add(entry.copy(mealSnack = running != null, forLowG = if (treatingLow) entry.carbsG else 0.0))
         if (running != null) {
             val t = state.foodTotals
             mealEstimateCalibration.logFood(
@@ -577,7 +586,9 @@ class SmartMealDialogViewModel(
 
     fun cancelLogCheck() = _uiState.update { it.copy(logCheckKcal = null) }
 
-    fun updateLogTreatingLow(v: Boolean) = _uiState.update { it.copy(logTreatingLow = v) }
+    fun updateLogTreatingLow(v: Boolean) = _uiState.update { it.copy(logTreatingLow = v, logCaloriesOnly = false) }
+
+    fun updateLogCaloriesOnly() = _uiState.update { it.copy(logCaloriesOnly = true) }
 
     /** BG was under the low guard in the last [LOW_RECENT_MS]. */
     private fun lowRecently(): Boolean {
@@ -724,8 +735,10 @@ class SmartMealDialogViewModel(
             // After exercise every part gets the same share less: food added to a running meal as that meal did.
             val cutPct = if (state.addMode) state.runningAfterActivityPct else state.afterActivityPct
             val share = 1.0 - cutPct / 100.0
-            // A saved meal that has learned when its fat and protein come in times pre-bolus 2 and 3 for it.
-            val timing = own?.let {
+            val foodMatch = preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)
+            // A saved meal that has learned when its fat and protein come in times pre-bolus 2 and 3 for it. Not with food
+            // match: pre-bolus 2 then has its own time, and there is no pre-bolus 3.
+            val timing = own?.takeUnless { foodMatch }?.let {
                 MealDosePlanner.learnedDelays(
                     it.fpQuarterMin, it.fpHalfMin, it.fpThreeQuarterMin, profile?.iCfg?.peak ?: DEFAULT_INSULIN_PEAK_MIN,
                     heavy = state.foodTotals.fpu >= MealDosePlanner.FPU_HEAVY_MEAL
@@ -741,11 +754,14 @@ class SmartMealDialogViewModel(
                 factor = factor * share,
                 waveFactor = learned?.waveFactor?.times(share),
                 tailFactor = learned?.tailFactor?.times(share),
-                pb2DelayMin = timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins),
+                pb2DelayMin = when {
+                    foodMatch -> MealDosePlanner.foodMatchPb2DelayMin(state.eatInMinutes)
+                    else      -> timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins)
+                },
                 pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
                 bolusStep = state.bolusStep,
                 fatProteinPreBoluses = state.addMode || !savedFoodStore.pb2Off(mealName(state)),
-                foodMatch = preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)
+                foodMatch = foodMatch
             )
             if (state.addMode) {
                 val running = mealOverrideManager.activeState ?: return@launch

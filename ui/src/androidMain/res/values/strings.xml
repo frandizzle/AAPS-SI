@@ -485,7 +485,7 @@
     <string name="si_food_how_it_works">How this works</string>
     <string name="si_food_hold_to_save">Hold a food to save it to My foods. Tap a food in the row at the top to add it again.</string>
     <string name="si_food_log_for_loop" comment="Button: the logged food counts for the loop, so it gives insulin as the food comes in">For the loop</string>
-    <string name="si_food_log_choice">A meal is running. Food for the loop counts as its food, so the loop gives insulin as it comes in. Carbs to treat a low are logged for calories only, so the loop does not give insulin for them.</string>
+    <string name="si_food_log_choice">A meal is running. Food for the loop counts as its food, so the loop gives insulin as it comes in. Carbs to treat a low are logged for calories only, so the loop does not give insulin for them. Log only just counts the calories: the loop ignores the food, so you dose it yourself.</string>
     <string name="si_food_log_was_low">BG was low in the last 30 minutes.</string>
     <string name="si_food_speed_hint">Fast, Normal or Slow on a food is how fast its carbs raise BG. It changes when the loop expects them, not how much insulin they get. Tap it to change.</string>
     <string name="si_food_fast_wait" comment="%1$d=minutes to wait. Example: Fast carbs: wait about 15 min after pre-bolus 1 before eating.">Fast carbs: wait about %1$d min after pre-bolus 1 before eating.</string>

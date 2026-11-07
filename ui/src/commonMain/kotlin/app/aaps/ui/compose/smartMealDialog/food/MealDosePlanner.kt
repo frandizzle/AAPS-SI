@@ -24,8 +24,8 @@ import kotlin.math.min
  * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
- * @param foodMatch        the loop gives part of the fat and protein insulin as the food comes in: pre-bolus 2 is
- *                         [MealDosePlanner.FOOD_MATCH_PB2_SHARE] of the dose, and there is no pre-bolus 3
+ * @param foodMatch        the loop gives the rest of the fat and protein insulin as the food comes in: pre-bolus 2
+ *                         keeps its size, and there is no pre-bolus 3
  * @param fatProteinPreBoluses false for a meal the user gives no pre-bolus 2 (a morning coffee): its fat and protein are
  *                         left to the loop, and they do not make the mode longer
  */
@@ -162,8 +162,13 @@ object MealDosePlanner {
     const val FPU_PB2 = 1.0
     /** From this many fat-protein units the meal is heavy, and pre-bolus 3 gives part of the fat and protein dose. */
     const val FPU_HEAVY_MEAL = 3.0
-    /** With the loop matching insulin to the food, pre-bolus 2 gives this part of the fat and protein dose. */
-    const val FOOD_MATCH_PB2_SHARE = 0.5
+    /**
+     * With the loop matching insulin to the food, pre-bolus 2 comes this long after pre-bolus 1. The highs of a meal come
+     * in its first 2 hours and the lows after 3 hours, so the insulin goes in earlier and the loop gives the rest.
+     */
+    const val FOOD_MATCH_PB2_AFTER_PB1_MIN = 30
+    /** Pre-bolus 2 never comes sooner than this after the food is eaten: the meal must really have started. */
+    const val FOOD_MATCH_PB2_AFTER_FOOD_MIN = 10
 
     /**
      * @param balance BG, insulin and earlier food now, to cut pre-bolus 1 when the insulin on board already covers part of
@@ -332,9 +337,17 @@ object MealDosePlanner {
         val tailU = tailG * tail / ratio
         if (fpu < FPU_PB2) return Triple(waveU + tailU, 0.0, 0.0)
         val share = settings.fatProteinPct / 100.0
-        if (settings.foodMatch) return Triple(waveU + tailU, (waveU + tailU) * share * FOOD_MATCH_PB2_SHARE, 0.0)
+        if (settings.foodMatch) return Triple(waveU + tailU, waveU * share, 0.0)
         return Triple(waveU + tailU, waveU * share, tailU * share)
     }
+
+    /**
+     * Pre-bolus 2 with food match, in minutes after the food is eaten, as the dialog counts it.
+     *
+     * @param eatInMin how long after pre-bolus 1 the food is eaten
+     */
+    fun foodMatchPb2DelayMin(eatInMin: Int): Int =
+        max(FOOD_MATCH_PB2_AFTER_FOOD_MIN, FOOD_MATCH_PB2_AFTER_PB1_MIN - eatInMin)
 
     /**
      * The carb equivalent of the fat and protein, in grams, that pre-bolus 2 and pre-bolus 3 cover. Only a heavy

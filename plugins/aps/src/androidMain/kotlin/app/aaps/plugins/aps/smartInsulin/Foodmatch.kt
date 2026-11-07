@@ -26,6 +26,10 @@ object FoodMatch {
     const val MAX_TOP_UP_U = 0.3
     /** Pre-bolus 2 and top-ups together stop at this many times the planned fat and protein insulin. */
     const val TOTAL_SHARE = 1.5
+    /** At least this far above target, in mg/dL, BG itself shows that more insulin is wanted. */
+    const val ABOVE_TARGET_MGDL = 18.0
+    /** Closer to target, only a rise of at least this much in 5 min, in mg/dL, allows a top-up. A flat BG reading wobbles by less. */
+    const val RISING_MGDL = 1.8
 
     private const val LEAD_STEPS = LEAD_MIN / 5
     private const val STEP_EPSILON = 1e-6
@@ -43,6 +47,14 @@ object FoodMatch {
     /** What is left of [plannedU] x [TOTAL_SHARE] after pre-bolus 2 and the top-ups so far. */
     fun roomU(plannedU: Double, preBolus2U: Double, givenU: Double): Double =
         max(0.0, plannedU * TOTAL_SHARE - preBolus2U - givenU)
+
+    /**
+     * Whether BG asks for a top-up at all. Near target and flat it does not: the logged fat and protein are only an estimate,
+     * and at 5.7 with a 5.5 target a flat BG once gave the largest top-up every 5 minutes for over half an hour (6 Nov).
+     * The same rule holds for all the food in the forecast, see `FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL`.
+     */
+    fun bgAllows(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double): Boolean =
+        bgMgdl >= targetMgdl + ABOVE_TARGET_MGDL || (bgMgdl >= targetMgdl && deltaMgdl >= RISING_MGDL)
 
     /**
      * The top-up for this cycle, or null when none is needed.
