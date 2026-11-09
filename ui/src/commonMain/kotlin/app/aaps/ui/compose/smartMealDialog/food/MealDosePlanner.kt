@@ -24,8 +24,8 @@ import kotlin.math.min
  * @param pb3DelayMin      pre-bolus 3, counted from when pre-bolus 2 fired
  * @param maxPreBolusU     the most one pre-bolus may be
  * @param maxTotalU        the most all pre-boluses together may be
- * @param foodMatch        the loop gives the rest of the fat and protein insulin as the food comes in: pre-bolus 2
- *                         keeps its size, and there is no pre-bolus 3
+ * @param foodMatch        the loop gives the rest of the fat and protein insulin as the food comes in. Pre-bolus 2 and 3
+ *                         keep their size; pre-bolus 2 comes sooner, see [MealDosePlanner.FOOD_MATCH_PB2_AFTER_PB1_MIN]
  * @param fatProteinPreBoluses false for a meal the user gives no pre-bolus 2 (a morning coffee): its fat and protein are
  *                         left to the loop, and they do not make the mode longer
  */
@@ -169,6 +169,12 @@ object MealDosePlanner {
     const val FOOD_MATCH_PB2_AFTER_PB1_MIN = 30
     /** Pre-bolus 2 never comes sooner than this after the food is eaten: the meal must really have started. */
     const val FOOD_MATCH_PB2_AFTER_FOOD_MIN = 10
+    /**
+     * With the loop matching insulin to the food, pre-bolus 3 comes this long after pre-bolus 2, so about 2.5 h after
+     * pre-bolus 1. On a heavy meal the fat and protein wave comes at 3 to 5 hours, and the top-ups alone could not cover
+     * it: 10 U up front was nearly a low at 2 h, then BG was 12.7 at 4 h with nothing planned for it (8 Nov).
+     */
+    const val FOOD_MATCH_PB3_AFTER_PB2_MIN = 120
 
     /**
      * @param balance BG, insulin and earlier food now, to cut pre-bolus 1 when the insulin on board already covers part of
@@ -337,7 +343,6 @@ object MealDosePlanner {
         val tailU = tailG * tail / ratio
         if (fpu < FPU_PB2) return Triple(waveU + tailU, 0.0, 0.0)
         val share = settings.fatProteinPct / 100.0
-        if (settings.foodMatch) return Triple(waveU + tailU, waveU * share, 0.0)
         return Triple(waveU + tailU, waveU * share, tailU * share)
     }
 

@@ -22,12 +22,20 @@ object FoodMatch {
     const val LEAD_MIN = 60
     /** The part of the gap given each cycle: the gap is seen again 5 minutes later. */
     const val GAIN = 0.15
-    /** The most one top-up may be. */
+    /** The most one top-up may be, up to [ABOVE_TARGET_MGDL] above target. */
     const val MAX_TOP_UP_U = 0.3
-    /** Pre-bolus 2 and top-ups together stop at this many times the planned fat and protein insulin. */
+    /**
+     * The most one top-up may be from [HIGH_ABOVE_TARGET_MGDL] above target. Between the two it grows in a straight line.
+     * At 0.3 U the loop can catch up by at most 3.6 U/h, and each top-up works an hour later: on 9 Nov twelve top-ups in
+     * a row were all at the cap while BG went from 8 to 11.8.
+     */
+    const val MAX_TOP_UP_HIGH_U = 0.6
+    /** Pre-bolus 2, pre-bolus 3 and top-ups together stop at this many times the planned fat and protein insulin. */
     const val TOTAL_SHARE = 1.5
     /** At least this far above target, in mg/dL, BG itself shows that more insulin is wanted. */
     const val ABOVE_TARGET_MGDL = 18.0
+    /** This far above target, in mg/dL (3 mmol/L), a top-up may be [MAX_TOP_UP_HIGH_U]. */
+    const val HIGH_ABOVE_TARGET_MGDL = 54.0
     /** Closer to target, only a rise of at least this much in 5 min, in mg/dL, allows a top-up. A flat BG reading wobbles by less. */
     const val RISING_MGDL = 1.8
 
@@ -44,9 +52,16 @@ object FoodMatch {
      */
     data class TopUp(val doseU: Double, val foodMgdl: Double, val insulinMgdl: Double)
 
-    /** What is left of [plannedU] x [TOTAL_SHARE] after pre-bolus 2 and the top-ups so far. */
-    fun roomU(plannedU: Double, preBolus2U: Double, givenU: Double): Double =
-        max(0.0, plannedU * TOTAL_SHARE - preBolus2U - givenU)
+    /** What is left of [plannedU] x [TOTAL_SHARE] after the pre-boluses for fat and protein and the top-ups so far. */
+    fun roomU(plannedU: Double, preBolusU: Double, givenU: Double): Double =
+        max(0.0, plannedU * TOTAL_SHARE - preBolusU - givenU)
+
+    /** The most one top-up may be at this BG: [MAX_TOP_UP_U] near target, [MAX_TOP_UP_HIGH_U] well above it. */
+    fun maxTopUpU(bgMgdl: Double, targetMgdl: Double): Double {
+        val above = bgMgdl - targetMgdl
+        val part = ((above - ABOVE_TARGET_MGDL) / (HIGH_ABOVE_TARGET_MGDL - ABOVE_TARGET_MGDL)).coerceIn(0.0, 1.0)
+        return MAX_TOP_UP_U + (MAX_TOP_UP_HIGH_U - MAX_TOP_UP_U) * part
+    }
 
     /**
      * Whether BG asks for a top-up at all. Near target and flat it does not: the logged fat and protein are only an estimate,
@@ -66,10 +81,12 @@ object FoodMatch {
      * @param insulinAtLead     insulin action [LEAD_MIN] from now, U/min, of all insulin on board
      * @param unitAtLead        action of one unit given now, [LEAD_MIN] from now, per min
      * @param roomU             see [roomU]
+     * @param maxTopUpU         the most this top-up may be, see [maxTopUpU]
      */
     fun topUp(
         samples: List<Sample>, nowMs: Long, foodLeftG: Double, csfMgdlPerG: Double, bgRising: Boolean,
-        insulinAtLead: Double, unitAtLead: Double, isfMgdl: Double, bolusStep: Double, roomU: Double
+        insulinAtLead: Double, unitAtLead: Double, isfMgdl: Double, bolusStep: Double, roomU: Double,
+        maxTopUpU: Double = MAX_TOP_UP_U
     ): TopUp? {
         val recent = samples.filter { nowMs - it.timeMs <= LOOK_BACK_MS }
         if (recent.size < MIN_SAMPLES || unitAtLead <= 0.0 || isfMgdl <= 0.0 || bolusStep <= 0.0) return null
@@ -82,7 +99,7 @@ object FoodMatch {
         val gap = food - insulin
         if (gap <= 0.0) return null
         val wanted = GAIN * gap / (unitAtLead * isfMgdl * 5.0)
-        val limit = min(min(wanted, MAX_TOP_UP_U), roomU)
+        val limit = min(min(wanted, maxTopUpU), roomU)
         val dose = min(floor(limit / bolusStep + STEP_EPSILON) * bolusStep, limit)
         return if (dose >= bolusStep) TopUp(dose, food, insulin) else null
     }

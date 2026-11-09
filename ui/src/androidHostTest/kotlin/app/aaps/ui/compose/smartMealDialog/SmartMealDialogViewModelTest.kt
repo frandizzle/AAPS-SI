@@ -881,6 +881,32 @@ internal class SmartMealDialogViewModelTest {
     }
 
     @Test
+    fun `with food match a heavy meal keeps pre-bolus 3, 2 hours after pre-bolus 2`() {
+        // 9 Nov dinner: 23 g carbs, 52 g protein, 14 g fat is 3.3 FPU, heavy. Food match once dropped pre-bolus 3 and left
+        // its 40 % of the fat and protein to the loop's top-ups, which came too late.
+        whenever(dateUtil.now()).thenReturn(NOW)
+        val profile: EffectiveProfile = mock()
+        whenever(profile.getIc()).thenReturn(5.0)
+        whenever { profileFunction.getProfile() }.thenReturn(profile)
+        whenever(mealEstimateCalibration.factor).thenReturn(1.0)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct)).thenReturn(70)
+        whenever(preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct)).thenReturn(40)
+        whenever(preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU)).thenReturn(15.0)
+        whenever(preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)).thenReturn(true)
+        build()
+        sut.addFood(dessert(carbs = 23.0, protein = 52.0, fat = 14.0).copy(name = "Wrap", source = FoodSource.MANUAL))
+
+        sut.fillInFromFood()
+        with(sut.uiState.value) {
+            assertThat(pb2DelayMinutes).isEqualTo(30)
+            assertThat(pb3Enabled).isTrue()
+            // 33.4 g x 40 % / 5 x 70 % = 1.87 U, rounded down to the pump step.
+            assertThat(pb3U).isWithin(1e-9).of(1.85)
+            assertThat(pb3DelayMinutes).isEqualTo(MealDosePlanner.FOOD_MATCH_PB3_AFTER_PB2_MIN)
+        }
+    }
+
+    @Test
     fun `with food match pre-bolus 2 comes 30 min after pre-bolus 1 and follows the eat time`() {
         whenever(dateUtil.now()).thenReturn(NOW)
         val profile: EffectiveProfile = mock()

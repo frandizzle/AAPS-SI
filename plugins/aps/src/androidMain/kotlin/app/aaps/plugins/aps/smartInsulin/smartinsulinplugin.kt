@@ -1497,7 +1497,10 @@ open class SmartInsulinPlugin @Inject constructor(
             unitAtLead = InsulinActivityCurve.activityFraction(FoodMatch.LEAD_MIN.toDouble(), insulinPeakMin, insulinDiaMin),
             isfMgdl = isfMgdl,
             bolusStep = activePlugin.activePump.pumpDescription.bolusStep,
-            roomU = FoodMatch.roomU(still.fatProteinMealG / carbRatio, mealOverrideManager.activePb2DoseU ?: 0.0, foodMatchGivenU)
+            roomU = FoodMatch.roomU(
+                still.fatProteinMealG / carbRatio, (mealOverrideManager.activePb2DoseU ?: 0.0) + (mealOverrideManager.activePb3DoseU ?: 0.0), foodMatchGivenU
+            ),
+            maxTopUpU = FoodMatch.maxTopUpU(glucoseStatus.glucose, targetMgdl)
         )
     }
 

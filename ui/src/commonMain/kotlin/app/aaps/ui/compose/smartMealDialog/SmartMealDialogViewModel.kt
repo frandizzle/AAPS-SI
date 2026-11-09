@@ -737,7 +737,7 @@ class SmartMealDialogViewModel(
             val share = 1.0 - cutPct / 100.0
             val foodMatch = preferences.get(BooleanKey.ApsSmartInsulinFoodMatch)
             // A saved meal that has learned when its fat and protein come in times pre-bolus 2 and 3 for it. Not with food
-            // match: pre-bolus 2 then has its own time, and there is no pre-bolus 3.
+            // match: pre-bolus 2 and 3 then have their own times.
             val timing = own?.takeUnless { foodMatch }?.let {
                 MealDosePlanner.learnedDelays(
                     it.fpQuarterMin, it.fpHalfMin, it.fpThreeQuarterMin, profile?.iCfg?.peak ?: DEFAULT_INSULIN_PEAK_MIN,
@@ -758,7 +758,10 @@ class SmartMealDialogViewModel(
                     foodMatch -> MealDosePlanner.foodMatchPb2DelayMin(state.eatInMinutes)
                     else      -> timing?.first ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb2DelayMins)
                 },
-                pb3DelayMin = timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins),
+                pb3DelayMin = when {
+                    foodMatch -> MealDosePlanner.FOOD_MATCH_PB3_AFTER_PB2_MIN
+                    else      -> timing?.second ?: preferences.get(IntKey.ApsSmartInsulinMealPlanPb3DelayMins)
+                },
                 bolusStep = state.bolusStep,
                 fatProteinPreBoluses = state.addMode || !savedFoodStore.pb2Off(mealName(state)),
                 foodMatch = foodMatch

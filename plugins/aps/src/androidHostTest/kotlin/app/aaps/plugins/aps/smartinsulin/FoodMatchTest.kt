@@ -16,8 +16,8 @@ class FoodMatchTest {
 
     private fun topUp(
         samples: List<FoodMatch.Sample> = samples(10.0), foodLeftG: Double = 30.0, bgRising: Boolean = true,
-        insulinAtLead: Double = 0.02, roomU: Double = 5.0
-    ) = FoodMatch.topUp(samples, now, foodLeftG, csfMgdlPerG = 9.0, bgRising, insulinAtLead, unitAtLead, isfMgdl = 45.0, bolusStep = 0.05, roomU)
+        insulinAtLead: Double = 0.02, roomU: Double = 5.0, maxTopUpU: Double = FoodMatch.MAX_TOP_UP_U
+    ) = FoodMatch.topUp(samples, now, foodLeftG, csfMgdlPerG = 9.0, bgRising, insulinAtLead, unitAtLead, isfMgdl = 45.0, bolusStep = 0.05, roomU, maxTopUpU)
 
     @Test fun `food coming in faster than the insulin later gets a small dose`() {
         val r = topUp()
@@ -46,6 +46,17 @@ class FoodMatchTest {
 
     @Test fun `one dose never passes the most for one top-up`() {
         assertEquals(FoodMatch.MAX_TOP_UP_U, topUp(samples = samples(200.0), foodLeftG = 500.0, insulinAtLead = 0.0)!!.doseU, 1e-9)
+        assertEquals(0.6, topUp(samples = samples(200.0), foodLeftG = 500.0, insulinAtLead = 0.0, maxTopUpU = 0.6)!!.doseU, 1e-9)
+    }
+
+    @Test fun `the most for one top-up grows with BG from 1 to 3 mmol above target`() {
+        // 9 Nov dinner: twelve top-ups in a row at 0.3 U while BG went from 8 to 11.8 with a 5.5 target.
+        val target = 99.0
+        assertEquals(0.3, FoodMatch.maxTopUpU(target, target), 1e-9)
+        assertEquals(0.3, FoodMatch.maxTopUpU(target + 18.0, target), 1e-9)
+        assertEquals(0.45, FoodMatch.maxTopUpU(target + 36.0, target), 1e-9)
+        assertEquals(0.6, FoodMatch.maxTopUpU(target + 54.0, target), 1e-9)
+        assertEquals(0.6, FoodMatch.maxTopUpU(target + 120.0, target), 1e-9)
     }
 
     @Test fun `the logged food limits what is expected once BG stops rising`() {
@@ -81,8 +92,8 @@ class FoodMatchTest {
 
     @Test fun `top-ups stop at the limit for the meal`() {
         // 6 U planned: pre-bolus 2 and top-ups stop at 9 U.
-        assertEquals(4.0, FoodMatch.roomU(plannedU = 6.0, preBolus2U = 3.0, givenU = 2.0), 1e-9)
-        assertEquals(0.0, FoodMatch.roomU(plannedU = 6.0, preBolus2U = 3.0, givenU = 7.0), 1e-9)
+        assertEquals(4.0, FoodMatch.roomU(plannedU = 6.0, preBolusU = 3.0, givenU = 2.0), 1e-9)
+        assertEquals(0.0, FoodMatch.roomU(plannedU = 6.0, preBolusU = 3.0, givenU = 7.0), 1e-9)
         assertNull(topUp(roomU = 0.0))
         assertEquals(0.1, topUp(samples = samples(200.0), foodLeftG = 500.0, insulinAtLead = 0.0, roomU = 0.1)!!.doseU, 1e-9)
     }
