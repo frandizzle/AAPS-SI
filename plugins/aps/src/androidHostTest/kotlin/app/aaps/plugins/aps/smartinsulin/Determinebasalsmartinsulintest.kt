@@ -580,13 +580,32 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `food still to come gives more insulin above target than the insulin alone would`() {
-        // Just above target: the insulin on board alone brings BG down to target, so it asks for nothing.
-        midDinner(bg = 115.0)
-        val iob = flatIobArray(iob = 1.0, activity = 0.01)
+        // Clearly above target: the insulin on board alone brings BG down to target, so it asks for nothing.
+        midDinner(bg = 120.0)
+        val iob = flatIobArray(iob = 1.5, activity = 0.015)
         val alone = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 5.0)
         assertEquals(0.0, alone.smb, 1e-9)
         val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 5.0, foodToCome = dinnerFood())
         assertTrue(withFood.smb > 0.0, withFood.reason)
+    }
+
+    @Test fun `just above target and flat, food still to come gives no extra insulin until BG rises`() {
+        // 9 Nov, 00:02: BG 6.2 flat with a 5.5 target, 1 U on board, a protein snack of 28 g (as carbs) still to
+        // come. The food in the forecast gave 3.2 U in 35 min before any of it showed.
+        midDinner(bg = 112.0)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 0.97, activity = 0.017)
+        val snack = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 28.0, fatProteinUntilMs = now + 4 * 60 * 60_000L, carbRatio = 4.0)
+        val flat = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
+        val flatReason = flat.reason
+        assertEquals(0.0, flat.smb, 1e-9)
+        assertTrue(flatReason.contains("low guard only"), flatReason)
+        // The food still keeps basal from being cut and stops a false suspend.
+        assertFalse(flatReason.contains("SUSPEND"), flatReason)
+        // Once BG rises, the food counts again.
+        midDinner(bg = 112.0, delta = 3.0)
+        val rising = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
+        assertFalse(rising.reason.contains("low guard only"), rising.reason)
     }
 
     @Test fun `extra insulin is for the food due in the next 2 hours, not for food hours away`() {
