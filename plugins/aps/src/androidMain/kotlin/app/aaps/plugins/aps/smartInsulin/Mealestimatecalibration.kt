@@ -246,6 +246,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
                     carbsFactor = factorOf(carbsBefore, it.carbsG),
                     fatProteinFactor = factorOf(fatProteinBefore, it.carbEquivG - it.carbsG)
                 )
+                // No food left: this is a meal without a food list again. Kept empty, it read as a meal whose food is all
+                // in, and the loop ignored every rise for the rest of the meal (7 Nov).
+                if (it.carbEquivG < EMPTY_MEAL_G) pending.remove(it)
             }
         }
         if (found == null) return null
@@ -501,6 +504,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
         /** One fat-protein unit (100 kcal from fat and protein) counts as this many grams of carbs, as in the meal planner. */
         const val FPU_CARB_G = 10.0
         private const val MAX_PENDING = 5
+        /** Under this much food a meal counts as having none: what is left is only rounding. */
+        private const val EMPTY_MEAL_G = 0.5
         private const val K_RATIOS = "ratios"
         private const val K_PENDING = "pending"
     }

@@ -200,6 +200,16 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `a meal with all its logged food deleted has no food list again`() {
+        cal.logFood(T0, T0 + 3 * HOUR, 19.9, 12.0, 4.0, 7.0, T0 + 14 * MIN, listOf(CarbPart(12.0, 120)), 0.0)
+        assertEquals(19.9, cal.foodStillToComeG(T0)!!, 1e-9)
+        val change = cal.changeLoggedFood(T0 + 14 * MIN, -12.0, -4.0, -7.0)
+        assertEquals(T0, change!!.modeStartMs)
+        assertNull(cal.foodStillToComeG(T0))
+        assertNull(cal.stillToCome(T0, T0 + 20 * MIN))
+    }
+
+    @Test
     fun `a smaller side of carbs leaves the fat and protein as they were`() {
         // Schnitzel and chips: 60 g carbs, and 20 g protein and 20 g fat, 2.6 fat-protein units = 26 g.
         cal.recordEstimate(T0, T0 + 3 * HOUR, 86.0, 60.0, 20.0, 20.0)
@@ -215,7 +225,7 @@ class MealEstimateCalibrationTest {
         assertNull(cal.changeLoggedFood(T0 + 4 * HOUR, -40.0, 0.0, 0.0))   // after the window
         assertEquals(40.0, cal.foodStillToComeG(T0)!!, 1e-9)
         cal.changeLoggedFood(T0, -40.0, 0.0, 0.0)
-        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertNull(cal.foodStillToComeG(T0))
     }
 
     @Test
