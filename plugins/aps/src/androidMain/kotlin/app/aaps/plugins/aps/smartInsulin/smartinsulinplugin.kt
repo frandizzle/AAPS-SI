@@ -215,6 +215,12 @@ open class SmartInsulinPlugin @Inject constructor(
     private val foodMatchSamples = ArrayDeque<FoodMatch.Sample>()
     private var foodMatchMealMs = 0L
     private var foodMatchGivenU = 0.0
+    /** A low started this cycle: how much of the meals' food goes to it is worked out once the meals are read. */
+    private var lowFoodPending = false
+    /** Snack carbs [moveFoodToLow] gave the low that started this cycle; they count against the meal food for it. */
+    private var lowFoodSnackG = 0.0
+    /** The meal food still to come that went to the last low: when it started and how many grams. Kept over a restart. */
+    private var lowFoodTaken: Pair<Long, Double>? = null
     /** Grams of food still coming from meals before the running one, from the last cycle; for the SI tab. */
     @Volatile private var lastEarlierFoodG = 0.0
     /** The meal mode start the after-activity cut was last decided for, so a UAM mode is cut once, not every cycle. */
@@ -1269,13 +1275,38 @@ open class SmartInsulinPlugin @Inject constructor(
      * did not come in as planned. Its carbs are taken out of the meal ([LowFoodAllocation]), so the loop gives no insulin
      * for them when BG comes back up. Its fat and protein stay in the meal: they come in hours later.
      */
-    private fun moveFoodToLow(lowStartMs: Long) {
+    private fun moveFoodToLow(lowStartMs: Long): Double {
+        var movedG = 0.0
         val entries = foodLog.entries(lowStartMs - LowFoodAllocation.WINDOW_MS, lowStartMs)
         LowFoodAllocation.carbsForLow(entries, lowStartMs).forEach { (entry, grams) ->
             if (mealEstimateCalibration.changeLoggedFood(entry.timeMs, -grams, 0.0, 0.0) == null) return@forEach
             foodLog.update(entry.copy(forLowG = grams))
+            movedG += grams
             aapsLogger.debug(LTag.APS, "SmartInsulin low: ${"%.0f".format(grams)} g carbs of ${entry.name} moved from the meal to the low")
         }
+        return movedG
+    }
+
+    /**
+     * [stills] without the food still to come that went to the last low, see [LowFoodAllocation.takeForLow]. Only meals
+     * that started before that low lose food: a meal started after it is a new meal. When a low started this cycle, the
+     * grams for it are worked out here from the food left now, once, and saved.
+     */
+    private fun withoutLowFood(stills: List<StillToCome>, fatProteinShare: Double): List<StillToCome> {
+        if (lowFoodPending) {
+            lowFoodPending = false
+            val lowStart = lowStartMs
+            val grams = LowFoodAllocation.mealFoodForLow(stills.filter { it.modeStartMs < lowStart }, lowFoodSnackG, fatProteinShare)
+            lowFoodTaken = lowStart to grams
+            sp.edit { putString(StringNonKey.ApsSmartInsulinLowFoodTaken.key, "$lowStart:$grams") }
+            if (grams > 0.0) aapsLogger.debug(LTag.APS, "SmartInsulin low: ${"%.0f".format(grams)} g of the meal food still to come go to the low")
+        }
+        val (lowStart, grams) = lowFoodTaken ?: sp.getString(StringNonKey.ApsSmartInsulinLowFoodTaken.key, "").split(":").let { parts ->
+            (parts.firstOrNull()?.toLongOrNull() ?: 0L) to (parts.getOrNull(1)?.toDoubleOrNull() ?: 0.0)
+        }.also { lowFoodTaken = it }
+        if (lowStart <= 0L || grams <= 0.0) return stills
+        val taken = LowFoodAllocation.takeForLow(stills.filter { it.modeStartMs < lowStart }, grams, fatProteinShare).iterator()
+        return stills.map { if (it.modeStartMs < lowStart) taken.next() else it }
     }
 
     private suspend fun foodSince(fromMs: Long, now: Long): Boolean {
@@ -2287,7 +2318,16 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val REBOUND_LOW_THRESHOLD_MGDL = spMgdl(UnitDoubleKey.ApsSmartInsulinLowGuard)
         if (bgBelowGuard(glucoseStatus.glucose, REBOUND_LOW_THRESHOLD_MGDL)) {
-            if (!bgWentLow) { lowStartMs = now; moveFoodToLow(now); iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0; if (mealMode.isUam) mealOverrideManager.cancelOverride() }
+            if (!bgWentLow) {
+                lowStartMs = now; lowFoodSnackG = moveFoodToLow(now); lowFoodPending = true
+                iobAtLowTime = iobArray.firstOrNull()?.iob ?: 0.0; shortAvgDeltaAtLow = glucoseStatus.shortAvgDelta / 18.0
+                if (mealMode.isUam) mealOverrideManager.cancelOverride()
+                // A low in a meal: the food left brings BG back up, so pre-bolus 3 is not wanted for it any more.
+                else if (mealOverrideManager.preBolus3Pending) {
+                    mealOverrideManager.cancelPreBolus3()
+                    aapsLogger.debug(LTag.APS, "SmartInsulin low: pre-bolus 3 cancelled")
+                }
+            }
             else if (reboundWindowStartMs > 0L) {
                 // BG had come back above the guard and the recovery window was running — now it's
                 // below again. A real rebound in between (a decent rise, or held a while) makes this
@@ -2320,7 +2360,16 @@ open class SmartInsulinPlugin @Inject constructor(
         // the meal, so they never see it.
         val fatProteinShare = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
         val mealWithList = mealOverrideManager.activeState?.takeIf { mealOverrideManager.activeMealMode != null && !it.mode.isUam }
-        val runningStill = mealWithList?.let { mealEstimateCalibration.stillToCome(it.triggerTimeMs, now) }
+        // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
+        // replaced or ended, but the food was not. Its pre-boluses no longer wait, so nothing is taken off for them.
+        // Read before the meals are closed below; with a meal with a list running, none are closed.
+        val earlierRead = mealWithList?.let { mealEstimateCalibration.earlierToCome(it.triggerTimeMs, now) }.orEmpty()
+        val runningRead = mealWithList?.let { mealEstimateCalibration.stillToCome(it.triggerTimeMs, now) }
+        // Food that went to a low brings BG back up: no insulin for it when BG comes back. Runs every cycle, also with no
+        // meal, so a low that starts in Fasting is settled at once.
+        val afterLow = withoutLowFood(earlierRead + listOfNotNull(runningRead), fatProteinShare)
+        val earlierStill = afterLow.take(earlierRead.size)
+        val runningStill = if (runningRead != null) afterLow.last() else null
         // Only the waiting pre-boluses that can still be given under max IOB are taken off: one that does not fit never
         // comes, and counting its food as covered made the loop suspend through a rise, waiting for insulin that could not
         // come. A pre-bolus that fired this cycle is not in IOB yet, so it is added.
@@ -2341,9 +2390,6 @@ open class SmartInsulinPlugin @Inject constructor(
         // does not count it again. A UAM mode keeps food logged while it runs, which has the UAM mode's start.
         if (mealMode == MealMode.FASTING) mealEstimateCalibration.closeMeals(beforeMs = now)
         else if (currentModeIsUam) mealOverrideManager.activeState?.let { mealEstimateCalibration.closeMeals(beforeMs = it.triggerTimeMs) }
-        // Food of a snack or a meal before this one, still coming in on its own timing: the meal it came with was
-        // replaced or ended, but the food was not. Its pre-boluses no longer wait, so nothing is taken off for them.
-        val earlierStill = mealWithList?.let { mealEstimateCalibration.earlierToCome(it.triggerTimeMs, now) }.orEmpty()
         val earlierFood = earlierStill.mapNotNull { still ->
             MealFoodForecast.foodToCome(still, now, restU = 0.0, pbU = 0.0, carbRatio = profile.getIc(), fatProteinShare = fatProteinShare)
         }
