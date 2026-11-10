@@ -571,11 +571,44 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(r.reason.contains("SUSPEND"), r.reason)
     }
 
-    @Test fun `under target the food only stops a false suspend, and gives no insulin`() {
-        midDinner(bg = 95.0)
+    @Test fun `under target and not rising, the food does not keep the low guard off`() {
+        // 10 Nov, 15:27: lunch tail, BG 5.4 and falling slowly with a 5.5 target, 0.9 U on board, 6 g of fat and
+        // protein still to come. The food lifted the forecast over the low guard and full basal ran for 30 min.
+        midDinner(bg = 97.0, delta = -1.8)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 0.92, activity = 0.012)
+        val tail = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 6.0, fatProteinUntilMs = now + 2 * 60 * 60_000L, carbRatio = 4.0)
+        val alone = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        val r = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = tail)
+        assertTrue(r.reason.contains("not used: carbs done, BG under target and not rising"), r.reason)
+        assertTrue(r.reason.contains("SUSPEND"), r.reason)
+        assertEquals(0.0, r.rate, 1e-9)
+        assertEquals(alone.predictionsAsGv.minOf { it.value }, r.predictionsAsGv.minOf { it.value }, 1e-9)
+        assertEquals(0.0, r.smb, 1e-9)
+    }
+
+    @Test fun `under target and flat at the start of a meal, the carbs still to come keep basal running`() {
+        // BG 5.4 flat just after pre-bolus 1, with the carbs still to come: the food is real and just eaten, and the
+        // pre-bolus counts on basal. Insulin alone would suspend.
+        midDinner(bg = 97.0)
+        val iob = flatIobArray(iob = 4.3, activity = 0.04)
+        val alone = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        assertTrue(alone.reason.contains("SUSPEND"), alone.reason)
+        val r = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
+        assertFalse(r.reason.contains("not used"), r.reason)
+        assertFalse(r.reason.contains("SUSPEND"), r.reason)
+        assertTrue(r.rate > 0.0, r.reason)
+        assertEquals(0.0, r.smb, 1e-9)
+    }
+
+    @Test fun `at the tail, under target and rising, the food counts for the low guard again`() {
+        midDinner(bg = 95.0, delta = 2.0)
+        val now = System.currentTimeMillis()
+        val tail = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 20.0, fatProteinUntilMs = now + 2 * 60 * 60_000L, carbRatio = 4.0)
         val r = invoke(iobArray = flatIobArray(iob = 1.0, activity = 0.01), mealMode = MealMode.DINNER,
-                       lowGuardMmol = 4.0, warnGuardMmol = 4.5, foodToCome = dinnerFood())
+                       lowGuardMmol = 4.0, warnGuardMmol = 4.5, foodToCome = tail)
         assertTrue(r.reason.contains("low guard only"), r.reason)
+        assertFalse(r.reason.contains("not used"), r.reason)
         assertEquals(0.0, r.smb, 1e-9)
     }
 

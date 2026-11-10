@@ -272,12 +272,21 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // the next [DOSING_AHEAD_MIN]: food further off is given for as it comes nearer, not all at once. That food is weighed against all the insulin on board,
         // like a bolus calculator weighs carbs on board against IOB: a pre-bolus given just now has done only
         // about two thirds of its work after 2 hours, and cutting it off there gave insulin again for food the
-        // pre-bolus already covers. Under target, or for lowering basal, all the food counts.
+        // pre-bolus already covers. For the low guard and for lowering basal, all the food counts.
+        //
+        // At the tail of a meal, once the carbs are done, not under target unless BG is rising: there the fat and protein
+        // left are only an estimate that BG does not show, and they kept the low guard off. At the end of a lunch, BG
+        // 5.4 to 5.0 and falling slowly, the insulin alone said 4.0 to 4.4, the last 6 g of fat and protein said it
+        // would go back up to 6.3, and full basal ran for 30 min (10 Nov). The tail is about landing on target: the
+        // loop waits for the insulin to run out and BG to turn up, and once BG rises the food counts again. While
+        // carbs are still to come the food is real and just eaten, and the pre-bolus counts on basal, so it still counts.
         val bgNotFalling = delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
-        val ciAheadMgdl = if (ci > 0.0) ci * fadeSum(fadeMins, bgiPerTick.size) else 0.0
         // The earlier meals' food first: it came first, so the rise BG shows is more likely theirs.
         val foods = earlierFood + listOfNotNull(foodToCome)
-        val foodSteps = foods.takeIf { it.isNotEmpty() && mealMode != MealMode.FASTING && bgNotFalling }
+        val carbsDone = foods.none { it.carbsG >= TAIL_CARBS_LEFT_G }
+        val underTargetNotRising = carbsDone && currentBg < targetBg && delta < FoodMatch.RISING_MGDL
+        val ciAheadMgdl = if (ci > 0.0) ci * fadeSum(fadeMins, bgiPerTick.size) else 0.0
+        val foodSteps = foods.takeIf { it.isNotEmpty() && mealMode != MealMode.FASTING && bgNotFalling && !underTargetNotRising }
             ?.let { MealFoodForecast.steps(it, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
         val foodForecast = foodSteps?.let { predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it) }
         val forecast = foodForecast ?: predictedBg
@@ -307,7 +316,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Post-peak min for DOSING — avoids suppressing SMBs on early descending curve
         val predictedMinDosing = postPeakMin(dosingForecast, insulinPeakTicks, currentBg)
         // For lowering basal under target: all the food still to come, so basal is not cut mid-meal for food
-        // that is further off than the dosing look-ahead.
+        // that is further off than the dosing look-ahead. With BG under target and not rising the forecast has no
+        // food (see `underTargetNotRising`), so basal is cut for the insulin alone.
         val predictedMinAllFood = postPeakMin(forecast, insulinPeakTicks, currentBg)
         // Fat and protein that have started coming in, with a lot still to come: the 2 hours of food are weighed
         // against all the insulin on board, and with a long insulin action much of that insulin works after the
@@ -388,6 +398,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (ci < ciSeen) sb.append(" (rise ${fmt(riseAheadMgdl, isMmol)}->${fmt(riseCapMgdl ?: 0.0, isMmol)}: food left)")
         }
         // The meal's food still to come, and whether the forecast used it.
+        val foodNotUsed = if (bgNotFalling && underTargetNotRising) " not used: carbs done, BG under target and not rising" else " not used: BG falling"
         foodToCome?.let { f ->
             sb.append(" | cob=${"%.0f".format(Locale.US, f.totalG)}g(carbs ${"%.0f".format(Locale.US, f.carbsG)}")
             if (f.carbsG >= 1.0 && f.carbsUntilMs > currentTime) sb.append(" over ${(f.carbsUntilMs - currentTime) / 60_000L}m")
@@ -397,7 +408,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(")")
             if (fatProteinAllFood) sb.append(" all food: fp coming")
             when {
-                foodForecast == null             -> sb.append(" not used: BG falling")
+                foodForecast == null             -> sb.append(foodNotUsed)
                 dosingForecast === predictedBg   -> sb.append(" low guard only: BG not clearly above target or rising")
             }
         }
@@ -405,7 +416,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (earlierFood.isNotEmpty()) {
             sb.append(" | earlier food=${"%.0f".format(Locale.US, earlierFood.sumOf { it.totalG })}g")
             if (foodToCome == null) when {
-                foodForecast == null             -> sb.append(" not used: BG falling")
+                foodForecast == null             -> sb.append(foodNotUsed)
                 dosingForecast === predictedBg   -> sb.append(" low guard only: BG not clearly above target or rising")
             }
         }
@@ -720,6 +731,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL = 1.0 * MMOL_TO_MGDL
         /** The rise the forecast expects may be at most this many times what the food list still has to come. */
         const val FOOD_RISE_SLACK                     = 1.5
+        /** Less than this many grams of carbs still to come is the tail of a meal: only fat and protein are left. */
+        const val TAIL_CARBS_LEFT_G                   = 1.0
 
     }
 }
