@@ -397,7 +397,7 @@
     <string name="si_prebolus2_delay">Delay after activation</string>
     <string name="si_prebolus3_delay">Delay after pre-bolus 2</string>
     <string name="si_prebolus_gate_hint">Fires only if BG is above target and IOB has headroom</string>
-    <string name="si_pb_spread_hint" comment="%1$d=number of small doses, %2$d=minutes between them. Example: Almost no carbs: pre-bolus 2 and 3 are given together as 6 small doses, 20 min apart, each only while BG is above target and not falling.">Almost no carbs: pre-bolus 2 and 3 are given together as %1$d small doses, %2$d min apart, each only while BG is above target and not falling.</string>
+    <string name="si_pb_spread_hint" comment="%1$d=number of small doses, %2$d=minutes between them. Example: Almost no carbs: pre-bolus 2 is given as 6 small doses, 20 min apart, each only while BG is above target and not falling.">Almost no carbs: pre-bolus 2 is given as %1$d small doses, %2$d min apart, each only while BG is above target and not falling.</string>
     <string name="si_pf_after_title">Then Protein/Fat</string>
     <string name="si_pf_after_hint">When this mode runs out, Protein/Fat (UAM) starts, so the loop does not drop to Fasting while fat and protein are still coming in. Not when BG is already at target.</string>
     <string name="si_confirm_pf_after">Then Protein/Fat</string>

@@ -72,15 +72,20 @@ class PreBolus2PiecesTest {
     }
 
     @Test
-    fun `pre-bolus 3 becomes part of the pieces`() {
+    fun `pre-bolus 3 stays its own dose, timed from when the pieces are done`() {
+        // 10 Nov: folded into the pieces, all of a turkey dinner's fat and protein insulin was in within 2 hours, and
+        // nothing was left for the wave 3 to 6 hours later.
         val m = dinner(minAgo = 5, pb2 = 1.95, pb3 = 1.25)
         m.spreadPreBoluses(6)
         val s = m.activeState!!
-        assertEquals(3.2, s.preBolus2U, 1e-9)
-        assertEquals(0.0, s.preBolus3U, 1e-9)
-        assertFalse(m.preBolus3Pending)
+        assertEquals(1.95, s.preBolus2U, 1e-9)
         assertEquals(6, s.preBolus2Pieces)
-        assertEquals(3.2, s.preBolus2WaitingU, 1e-9)
+        assertEquals(1.95, s.preBolus2WaitingU, 1e-9)
+        assertEquals(1.25, s.preBolus3U, 1e-9)
+        assertEquals(45 * 60_000L, s.preBolus3DelayMs)
+        assertTrue(m.preBolus3Pending)
+        // No time for it while pieces are still to come.
+        assertEquals(null, s.preBolus3FireAtMs)
     }
 
     @Test

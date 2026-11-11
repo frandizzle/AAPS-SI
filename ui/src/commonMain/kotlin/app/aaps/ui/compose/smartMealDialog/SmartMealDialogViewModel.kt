@@ -219,7 +219,7 @@ data class SmartMealDialogUiState(
      * How many pieces pre-bolus 2 and 3 are given as, 0 for the usual doses. Only for a meal from a food list with
      * almost no carbs: without a list nothing says what the pre-boluses are for.
      */
-    val spreadPieces: Int get() = if (foodItems.isEmpty() || pb2() <= 0.0) 0 else MealOverrideManager.spreadPieces(foodTotals.carbsG, pb2() + pb3())
+    val spreadPieces: Int get() = if (foodItems.isEmpty() || pb2() <= 0.0) 0 else MealOverrideManager.spreadPieces(foodTotals.carbsG, pb2())
 
     /** Pre-bolus 2 and 3 as they will be given: 0 when off, never above the max pre-bolus. */
     fun pb2(): Double = if (pb2Enabled && pb2U > 0.0) pb2U.coerceAtMost(maxPreBolus) else 0.0

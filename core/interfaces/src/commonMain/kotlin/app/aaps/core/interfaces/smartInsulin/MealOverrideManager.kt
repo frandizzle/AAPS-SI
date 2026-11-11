@@ -118,12 +118,12 @@ interface MealOverrideManager {
     fun setPreBolus1Rest(restU: Double)
 
     /**
-     * Gives pre-bolus 2 and 3 together as [pieces] smaller doses, [SPREAD_GAP_MIN] apart from the pre-bolus 2 time,
-     * each only through the safety gates. Together they are a budget for the fat and protein: the first piece comes
-     * sooner if BG shows the food coming in, and SMBs the loop gives in the meal come off the pieces, see
-     * [countLoopSmb]. Call it right after [activateOverride]. For a meal of fat and protein with
-     * almost no carbs: it raises BG slowly over hours, so one large dose can work before the food does. See
-     * [spreadPieces].
+     * Gives pre-bolus 2 as [pieces] smaller doses, [SPREAD_GAP_MIN] apart from the pre-bolus 2 time, each only through
+     * the safety gates. It is a budget for the first wave of fat and protein: the first piece comes sooner if BG shows
+     * the food coming in, and SMBs the loop gives in the meal come off the pieces, see [countLoopSmb]. Pre-bolus 3 stays
+     * its own dose, timed from when the pieces are done, for the fat and protein that come in hours later. Call it right
+     * after [activateOverride]. For a meal of fat and protein with almost no carbs: it raises BG slowly over hours, so
+     * one large dose can work before the food does. See [spreadPieces].
      */
     fun spreadPreBoluses(pieces: Int)
 
@@ -281,7 +281,7 @@ interface MealOverrideManager {
         const val PB1_REST_FROM_MIN  = 15
         const val PB1_REST_UNTIL_MIN = 45
 
-        /** A meal with fewer carbs than this gives pre-bolus 2 and 3 in pieces. */
+        /** A meal with fewer carbs than this gives pre-bolus 2 in pieces. */
         const val SPREAD_MAX_CARBS_G = 10.0
         /** At most this many pieces, and none smaller than [SPREAD_MIN_PIECE_U]. */
         const val SPREAD_PIECES      = 6
@@ -295,11 +295,11 @@ interface MealOverrideManager {
         const val SPREAD_STEP_U      = 0.05
 
         /**
-         * How many pieces pre-bolus 2 and 3 are given as, or 0 for the usual doses: only for a meal with almost no carbs,
-         * and only when the insulin is enough for 2 pieces of at least [SPREAD_MIN_PIECE_U].
+         * How many pieces pre-bolus 2 is given as, or 0 for the usual dose: only for a meal with almost no carbs, and only
+         * when the insulin is enough for 2 pieces of at least [SPREAD_MIN_PIECE_U].
          *
          * @param carbsG the meal's carbs, from its food list
-         * @param fatProteinU pre-bolus 2 and 3 together
+         * @param fatProteinU pre-bolus 2
          */
         fun spreadPieces(carbsG: Double, fatProteinU: Double): Int {
             if (carbsG >= SPREAD_MAX_CARBS_G) return 0

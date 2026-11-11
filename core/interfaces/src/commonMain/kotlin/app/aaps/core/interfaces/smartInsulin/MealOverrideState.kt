@@ -19,7 +19,7 @@ import kotlin.math.floor
  * [afterActivityPct] — how much less insulin this meal gets after exercise, in percent; 0 = none. The loop makes the
  *                      mode's ISF weaker by the same share, and the meal learners do not judge the meal.
  * [preBolus2Pieces]  — pre-bolus 2 is given as this many pieces, [MealOverrideManager.SPREAD_GAP_MIN] apart, each
- *                      only through the safety gates. 0 = one dose. Pre-bolus 3 is then part of pre-bolus 2.
+ *                      only through the safety gates. 0 = one dose. Pre-bolus 3 stays its own dose.
  * [preBolus2PiecesGiven], [preBolus2GivenU], [preBolus2LastPieceMs] — the pieces given so far, their insulin, and
  *                      when the last one was given.
  * [preBolus2LoopU]   — SMBs the loop gave in this meal, taken off the pieces still to come, see

@@ -490,8 +490,7 @@ class MealOverrideManagerImpl @Inject constructor(
         if (activeMealMode == null) return false
         val s = _state ?: return false
         // A pre-bolus that has fired or was cancelled is not brought back: the loop covers that part.
-        // In pieces, pre-bolus 3 is part of pre-bolus 2, so what is added to it goes there too.
-        val pb2Add = if (s.preBolus2Pending) preBolus2AddU.coerceAtLeast(0.0) + (if (s.preBolus2Spread) preBolus3AddU.coerceAtLeast(0.0) else 0.0) else 0.0
+        val pb2Add = if (s.preBolus2Pending) preBolus2AddU.coerceAtLeast(0.0) else 0.0
         val pb3Add = if (s.preBolus3Pending) preBolus3AddU.coerceAtLeast(0.0) else 0.0
         val duraNew = duraEnabled && !s.duraEnabled
         _state = s.copy(
@@ -553,11 +552,12 @@ class MealOverrideManagerImpl @Inject constructor(
     override fun spreadPreBoluses(pieces: Int) {
         val s = _state ?: return
         if (pieces < 2 || !s.preBolus2Pending) return
-        // Pre-bolus 3 becomes part of pre-bolus 2: one stream of pieces, each through the gates.
-        val pb3 = if (s.preBolus3Pending) s.preBolus3U else 0.0
-        _state = s.copy(preBolus2U = s.preBolus2U + pb3, preBolus3U = 0.0, preBolus3DelayMs = 0L, preBolus2Pieces = pieces)
+        // Only pre-bolus 2 is given in pieces. Pre-bolus 3 stays its own dose at its own time, for the fat and protein that
+        // come in 3 to 6 hours after the meal: folded into the pieces, it was all given within 2 hours of a turkey dinner
+        // with 4 g of carbs, and nothing was left for the wave that came later (10 Nov).
+        _state = s.copy(preBolus2Pieces = pieces)
         persistState()
-        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 2 ${s.preBolus2U + pb3}U in $pieces pieces")
+        aapsLogger.debug(LTag.APS, "SmartInsulin override: ${s.mode.label} pre-bolus 2 ${s.preBolus2U}U in $pieces pieces")
     }
 
     override fun countLoopSmb(smbU: Double) {
