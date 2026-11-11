@@ -1290,8 +1290,9 @@ open class SmartInsulinPlugin @Inject constructor(
 
     /**
      * [stills] without the food still to come that went to the last low, see [LowFoodAllocation.takeForLow]. Only meals
-     * that started before that low lose food: a meal started after it is a new meal. When a low started this cycle, the
-     * grams for it are worked out here from the food left now, once, and saved.
+     * that started before that low lose food: a meal started after it is a new meal. Food added to such a meal after the
+     * low started counts too, carbs first: it most likely treats the low. When a low started this cycle, the grams for it
+     * are worked out here from the food left now, once, and saved.
      */
     private fun withoutLowFood(stills: List<StillToCome>, fatProteinShare: Double): List<StillToCome> {
         if (lowFoodPending) {

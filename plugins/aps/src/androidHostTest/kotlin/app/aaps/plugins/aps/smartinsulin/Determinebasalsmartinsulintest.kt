@@ -64,6 +64,10 @@ class DetermineBasalSmartInsulinTest {
         override var oapsProfile: OapsProfile?           = null
         override var oapsProfileAutoIsf: OapsProfileAutoIsf? = null
         override var mealData: MealData?                 = null
+        /** The forecast with the food still to come, drawn as the COB line; null when it is not drawn. */
+        var cobLine: List<Int>?                          = null
+        /** The forecast with the fat and protein at the rate BG shows, drawn in the UAM slot (yellow); null when not drawn. */
+        var uamLine: List<Int>?                          = null
 
         // Mirrors the real DetermineBasalResult.with() (implementation/.../DetermineBasalResult.kt) —
         // the original version here was a no-op (`= this`), so rate/duration/smb/reason/predictions
@@ -80,6 +84,8 @@ class DetermineBasalSmartInsulinTest {
             // Simple 1:1 mirror of predBGs.IOB — ticks -> predictions, unlike the real class's
             // predictionsAsGv (which skips index 0); kept simple since these tests assert directly
             // on tick count and value.
+            cobLine = result.predBGs?.COB
+            uamLine = result.predBGs?.UAM
             predictionsAsGv.clear()
             result.predBGs?.IOB?.forEach { v ->
                 predictionsAsGv.add(
@@ -561,7 +567,9 @@ class DetermineBasalSmartInsulinTest {
         val withFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodToCome = dinnerFood())
         assertFalse(withFood.reason.contains("SUSPEND"), withFood.reason)
         // "over 60m", or 59 when a minute turns between building the food and reading it on a busy machine.
-        assertTrue(Regex("""cob=60g\(carbs 30 over (59|60)m fp 30\)""").containsMatchIn(withFood.reason), withFood.reason)
+        assertTrue(Regex("""food left=60g\(carbs 30 over (59|60)m fp 30\)""").containsMatchIn(withFood.reason), withFood.reason)
+        // With carbs still to come the forecast with the food is drawn.
+        assertTrue(withFood.cobLine != null, withFood.reason)
         assertTrue(withFood.reason.contains("NORMAL"), withFood.reason)
     }
 
@@ -644,14 +652,35 @@ class DetermineBasalSmartInsulinTest {
         // With only fat and protein left, the same rise near target still gives nothing: 11 Nov, the end of a lunch,
         // BG 5.7 to 6.1 rising, 1.25 U for 21 g still to come, and the food stopped 15 min later.
         val tail = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
-        assertTrue(tail.reason.contains("low guard only: carbs done, BG not 1 mmol above target"), tail.reason)
+        assertTrue(tail.reason.contains("low guard only: carbs done, BG leads"), tail.reason)
         // Only what the rise itself asks for, as with no food list at all.
         val noFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0)
         assertEquals(noFood.smb, tail.smb, 1e-9)
-        // 1 mmol above target, the food counts again.
-        midDinner(bg = 118.0, delta = 3.0)
-        val above = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
-        assertFalse(above.reason.contains("low guard only"), above.reason)
+    }
+
+    @Test fun `once the carbs are done, the food list gives no extra insulin, also well above target`() {
+        // 11 Nov, about 22:00: a dinner with 7 g of carbs, 5 hours in, just after a low. The list still had 44 g of fat
+        // and protein coming; from 6.5 the forecast would have dosed for the 17 g due in the next 2 hours.
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 0.7, activity = 0.016)
+        val tail = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 44.0, fatProteinUntilMs = now + 5 * 60 * 60_000L, carbRatio = 5.0)
+        for (bg in listOf(120.0, 160.0)) {
+            midDinner(bg = bg, delta = 2.0)
+            val r = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = tail)
+            assertTrue(r.reason.contains("low guard only: carbs done, BG leads"), r.reason)
+            assertFalse(r.reason.contains("all food"), r.reason)
+            // The estimate is not drawn as a rise the loop does not dose for: it climbed to 12 that evening.
+            assertEquals(null, r.cobLine)
+            assertTrue(r.reason.contains("food left=44g(carbs 0 fp 44)"), r.reason)
+            // What BG itself asks for, as with no food list.
+            val noFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0)
+            assertEquals(noFood.smb, r.smb, 1e-9)
+            assertEquals(noFood.rate, r.rate, 1e-9)
+        }
+        // With carbs still to come it is the meal itself, and the food counts.
+        midDinner(bg = 160.0, delta = 2.0)
+        val withCarbs = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = tail.copy(carbsG = 15.0, carbsUntilMs = now + 60 * 60_000L))
+        assertFalse(withCarbs.reason.contains("low guard only"), withCarbs.reason)
     }
 
     @Test fun `extra insulin is for the food due in the next 2 hours, not for food hours away`() {
@@ -686,6 +715,38 @@ class DetermineBasalSmartInsulinTest {
         val meal = invoke(iobArray = iob, mealMode = MealMode.BREAKFAST, maxSmbU = 4.0, foodListG = 60.0)
         assertFalse(meal.reason.contains("food left"), meal.reason)
         assertEquals(noListSmb, meal.smb, 1e-9)
+    }
+
+    @Test fun `the yellow line draws the fat and protein at the rate BG shows, never more than the list`() {
+        // 11 Nov, 22:32: a dinner 4 hours in, carbs done, 40 g of fat and protein on the list. The whole estimate climbed to
+        // 12 and over; the yellow line follows BG instead.
+        val now = System.currentTimeMillis()
+        // No insulin working, so a flat BG shows no food at all.
+        val iob = flatIobArray(iob = 0.3, activity = 0.0)
+        val tail = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 40.0, fatProteinUntilMs = now + 4 * 60 * 60_000L, carbRatio = 5.0)
+        // Flat: BG shows none of it, and the yellow line is the blue one.
+        midDinner(bg = 106.0, delta = 0.0)
+        val flat = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = tail)
+        assertTrue(flat.reason.contains("fp seen 0%"), flat.reason)
+        assertEquals(null, flat.cobLine)
+        assertEquals(flat.predictionsAsGv.map { it.value.toInt() }, flat.uamLine!!.take(flat.predictionsAsGv.size))
+        // Rising: the yellow line climbs above the blue one.
+        midDinner(bg = 106.0, delta = 2.0)
+        val rising = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = tail)
+        assertTrue(rising.uamLine!!.last() > rising.predictionsAsGv.last().value, rising.reason)
+        // Rising faster than the list says: no more than the list.
+        midDinner(bg = 106.0, delta = 15.0)
+        val steep = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = tail)
+        assertTrue(steep.reason.contains("fp seen 100%"), steep.reason)
+    }
+
+    @Test fun `mid-meal the orange line has the carbs and the yellow line adds the fat and protein`() {
+        midDinner(bg = 140.0, delta = 3.0)
+        val r = invoke(iobArray = flatIobArray(iob = 2.0, activity = 0.02), mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = dinnerFood())
+        val orange = r.cobLine!!
+        val yellow = r.uamLine!!
+        assertEquals(orange.size, yellow.size)
+        assertTrue(orange.indices.all { yellow[it] >= orange[it] }, "yellow $yellow, orange $orange")
     }
 
     @Test fun `all the food catches up slowly, and not in the first hour after a pre-bolus`() {
@@ -723,11 +784,12 @@ class DetermineBasalSmartInsulinTest {
     }
 
     @Test fun `a heavy steak dinner is dosed for the next 2 hours of it now, the rest later`() {
-        // 60 g of fat and protein (as carbs) over a 6 h meal: about 20 g is due in the next 2 hours.
+        // 60 g of fat and protein (as carbs) over a 6 h meal: about 20 g is due in the next 2 hours. Carbs still to come:
+        // the meal is still going, so the list counts (once the carbs are done BG leads instead).
         midDinner(bg = 130.0)
         val now = System.currentTimeMillis()
         val iob = flatIobArray(iob = 3.0, activity = 0.03)
-        val steak = FoodToCome(carbsG = 0.0, carbsUntilMs = now, fatProteinG = 60.0, fatProteinUntilMs = now + 6 * 60 * 60_000L, carbRatio = 5.0)
+        val steak = FoodToCome(carbsG = 5.0, carbsUntilMs = now + 30 * 60_000L, fatProteinG = 60.0, fatProteinUntilMs = now + 6 * 60 * 60_000L, carbRatio = 5.0)
         val forSteak = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = steak)
         val steakSmb = forSteak.smb
         assertTrue(steakSmb > 0.0, forSteak.reason)

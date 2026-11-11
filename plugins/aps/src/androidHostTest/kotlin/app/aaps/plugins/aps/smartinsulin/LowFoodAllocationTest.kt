@@ -84,6 +84,18 @@ class LowFoodAllocationTest {
     }
 
     @Test
+    fun `food added to the meal after the low gives its carbs to the low first`() {
+        // 11 Nov: 15 g went to a low at the tail of a dinner (49 g of fat and protein left, as the loop counts them). A
+        // yoghurt eaten 11 min later at 4.7 (7 g carbs, 6 g of fat and protein as carbs) joined the meal: its carbs went to
+        // the low, then 8 g of the fat and protein.
+        val dinner = still(carbsG = 0.0, fatProteinG = 49.0 / 0.9)
+        val withYoghurt = dinner.copy(carbsG = 7.0, fatProteinG = dinner.fatProteinG + 6.0)
+        val left = LowFoodAllocation.takeForLow(listOf(withYoghurt), 15.0, 0.9).single()
+        assertEquals(0.0, left.carbsG, 1e-9)
+        assertEquals(49.0 + 6.0 * 0.9 - 8.0, left.fatProteinG * 0.9, 1e-9)
+    }
+
+    @Test
     fun `the earlier meal loses food first, and nothing is taken past the grams`() {
         val earlier = still(carbsG = 4.0, fatProteinG = 0.0)
         val running = still(carbsG = 30.0, fatProteinG = 0.0)

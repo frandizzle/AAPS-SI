@@ -37,6 +37,10 @@ object LowFoodAllocation {
      * insulin for it when BG comes back above the low guard. Carbs first, they bring BG up first; then fat and protein,
      * which count at [fatProteinShare]. Each part of the carbs loses the same share. 10 Nov: the last 6 g of a lunch were
      * still counted after a low at its tail.
+     *
+     * The grams are fixed when the low starts, but they are taken every cycle from all the food of the meal still to come,
+     * also food logged after the low started: food eaten during or just after a low treats it. 11 Nov: a yoghurt eaten at
+     * 4.7, under the low guard, gave its 7 g of carbs to the low, and the loop gave no insulin for them.
      */
     fun takeForLow(stills: List<StillToCome>, grams: Double, fatProteinShare: Double): List<StillToCome> {
         var leftG = grams.coerceAtLeast(0.0)

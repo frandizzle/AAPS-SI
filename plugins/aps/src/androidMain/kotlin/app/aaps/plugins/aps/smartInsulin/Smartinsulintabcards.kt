@@ -405,15 +405,20 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                         tone = SiTone.GOOD)
         }
 
-        // The meal's food still to come, which the loop doses for as it comes in
+        // The meal's food still to come, which the loop doses for as it comes in. Once the carbs are done it is only an
+        // estimate of the fat and protein, and BG leads, see DetermineBasalSmartInsulin: said so, so a big number there
+        // does not look like insulin about to be given (11 Nov, 44 g shown just after a low).
         d.foodToCome?.let { f ->
-            addRow("Food still to come: ${"%.0f".format(f.totalG)} g",
+            val tail = f.carbsG < DetermineBasalSmartInsulin.TAIL_CARBS_LEFT_G
+            addRow(if (tail) "Food still to come: ${"%.0f".format(f.totalG)} g fat and protein (estimate — BG leads now)"
+                   else "Food still to come: ${"%.0f".format(f.totalG)} g",
                    "${"%.0f".format(f.carbsG)} g carbs, ${"%.0f".format(f.fatProteinG)} g fat and protein (as carbs)" +
                        (if (f.coveredG >= 1.0) ". ${"%.0f".format(f.coveredG)} g more is for the waiting pre-boluses." else ".") +
                        (if (d.carbsOverMin > 0 && f.carbsG >= 1.0) " The carbs are expected over the next ${d.carbsOverMin} min, from how fast the foods are." else "") +
                        (if (d.fatProteinStartsInMin > 0 && f.fatProteinG >= 1.0) " The fat and protein start to count in ${d.fatProteinStartsInMin} min." else "") +
-                       " The loop gives insulin for it as it comes in, while BG is not falling.",
-                   SiTone.INFO)
+                       (if (tail) " The carbs are done: the loop gives extra insulin only for what BG shows, and this estimate keeps basal running."
+                        else " The loop gives insulin for it as it comes in, while BG is not falling."),
+                   if (tail) SiTone.MUTED else SiTone.INFO)
         }
 
         // Food of a snack or meal before this one, still coming in
@@ -446,6 +451,9 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val pb2 = (if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${"%.2f".format(d.pb2PlannedU)}U)" else "Pre-bolus 2") +
                 (piece?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
             val pb2Primary = when {
+                // Cancelled, or stopped part way: say so, it will not fire.
+                d.pb2Status.contains("cancelled") -> "$pb2 — cancelled"
+                d.pb2Status.contains("stopped")   -> "$pb2 — ${d.pb2Status.substringAfter("PB2: ")}"
                 d.pb2Status.contains("due") -> "$pb2 — ready to deliver now"
                 Regex("""(\d+)min""").containsMatchIn(d.pb2Status) -> {
                     val mins = Regex("""(\d+)min""").find(d.pb2Status)?.groupValues?.get(1)
@@ -454,7 +462,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 gate != null -> "$pb2 — waiting for safety gates"
                 else         -> pb2
             }
-            addRow(pb2Primary, tone = if (isActive) SiTone.GOOD else SiTone.INFO)
+            val pb2Ended = d.pb2Status.contains("cancelled") || d.pb2Status.contains("stopped")
+            addRow(pb2Primary, tone = when {
+                pb2Ended -> SiTone.MUTED
+                isActive -> SiTone.GOOD
+                else     -> SiTone.INFO
+            })
 
             if (gate != null) addPreBolusGates(gate)
         }
@@ -471,7 +484,12 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val piece3 = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U""").find(d.pb3Status)?.groupValues
             val pb3 = (if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3") +
                 (piece3?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
+            val pb3Ended = d.pb3Status.contains("cancel") || d.pb3Status.contains("stopped")
             val pb3Primary = when {
+                // Cancelled, or stopped part way: say so, it will not fire. 11 Nov: a cancelled pre-bolus 3 looked active.
+                d.pb3Status.contains("will cancel")     -> "$pb3 — will cancel (PB2 cancelled)"
+                d.pb3Status.contains("cancelled")       -> "$pb3 — cancelled"
+                d.pb3Status.contains("stopped")         -> "$pb3 — ${d.pb3Status.substringAfter("PB3: ")}"
                 d.pb3Status.contains("waiting for PB2") -> "$pb3 — waiting for PB2 to fire"
                 d.pb3Status.contains("due")             -> "$pb3 — ready to deliver now"
                 Regex("""(\d+)min""").containsMatchIn(d.pb3Status) -> {
@@ -481,11 +499,18 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 gate3 != null -> "$pb3 — waiting for safety gates"
                 else          -> pb3
             }
-            val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
-                "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too. Then it comes in pieces led by BG."
-            else "Pieces 20 min apart, only while BG asks for them. A smaller piece leaves the rest out; the loop gives more if BG keeps rising."
+            val pb3Sub = when {
+                pb3Ended -> null
+                d.pb3Status.contains("waiting for PB2") ->
+                    "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too. Then it comes in pieces led by BG."
+                else -> "Pieces 20 min apart, only while BG asks for them. A smaller piece leaves the rest out; the loop gives more if BG keeps rising."
+            }
             addRow(pb3Primary, pb3Sub,
-                   tone = if (isActive3) SiTone.GOOD else SiTone.INFO)
+                   tone = when {
+                       pb3Ended  -> SiTone.MUTED
+                       isActive3 -> SiTone.GOOD
+                       else      -> SiTone.INFO
+                   })
 
             if (gate3 != null) addPreBolusGates(gate3)
         }
