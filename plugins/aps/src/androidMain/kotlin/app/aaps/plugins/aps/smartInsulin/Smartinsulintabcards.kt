@@ -461,13 +461,16 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
 
         // Pre-bolus 3 — show delivered amount once fired
         if (d.mealMode != "Fasting" && d.activePb3DoseU != null && d.activePb3DoseU > 0.0) {
-            addRow("Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U",
-                   "Third bolus delivered (late-meal cover).",
+            addRow("Pre-bolus 3 — delivered ${"%.2f".format(d.activePb3DoseU)}U of ${"%.2f".format(d.pb3PlannedU)}U",
+                   "Late-meal cover, given in pieces led by BG.",
                    SiTone.GOOD)
         } else if (d.pb3Status.isNotEmpty() || d.pb3GateData != null) {
             val gate3    = d.pb3GateData
             val isActive3 = d.pb3Status.contains("active")
-            val pb3 = if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3"
+            // In pieces led by BG, for example "Pre-bolus 3 (4.40U), piece 2 of 6 (0.70U)".
+            val piece3 = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U""").find(d.pb3Status)?.groupValues
+            val pb3 = (if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3") +
+                (piece3?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
             val pb3Primary = when {
                 d.pb3Status.contains("waiting for PB2") -> "$pb3 — waiting for PB2 to fire"
                 d.pb3Status.contains("due")             -> "$pb3 — ready to deliver now"
@@ -479,8 +482,8 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 else          -> pb3
             }
             val pb3Sub = if (d.pb3Status.contains("waiting for PB2"))
-                "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too."
-            else null
+                "Timer starts when PB2 delivers. If PB2 is cancelled, PB3 cancels too. Then it comes in pieces led by BG."
+            else "Pieces 20 min apart, only while BG asks for them. A smaller piece leaves the rest out; the loop gives more if BG keeps rising."
             addRow(pb3Primary, pb3Sub,
                    tone = if (isActive3) SiTone.GOOD else SiTone.INFO)
 
@@ -536,12 +539,24 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
         fun fmtDelta(mgdl: Double) = if (gate.isMmol) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)
         fun fmtIob(u: Double)      = "%.2fU".format(u)
 
-        // BG must be above profile target AND above the hard floor
+        // BG must be above profile target AND above the hard floor. A piece led by BG needs BG to ask for it.
         val effectiveMin = maxOf(MealOverrideManager.MIN_BG_FOR_PB2_MGDL, gate.profileTargetMgdl)
-        val bgOk   = gate.bgMgdl > effectiveMin
-        val bgDiff = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
-        else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
-        addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff", "Must be above profile target ${fmtBg(gate.profileTargetMgdl)}", bgOk)
+        if (gate.bgLed) {
+            val share = MealOverrideManager.bgLedShare(gate.bgMgdl, gate.profileTargetMgdl, gate.deltaMgdl)
+            val bgOk  = share != null && gate.bgMgdl > effectiveMin
+            val above = gate.bgMgdl - gate.profileTargetMgdl
+            val bgDiff = if (share != null) "(${fmtBg(above)} above target: ${"%.0f".format(share * 100)} % of the piece)"
+            else "(not 1 mmol above target or rising — waiting)"
+            addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff",
+                       "Led by BG: must be ${fmtBg(gate.profileTargetMgdl + MealOverrideManager.CLEARLY_ABOVE_TARGET_MGDL)} or more, " +
+                           "or above target and rising. Half the piece there, all of it from " +
+                           "${fmtBg(gate.profileTargetMgdl + MealOverrideManager.FULL_ABOVE_TARGET_MGDL)}.", bgOk)
+        } else {
+            val bgOk   = gate.bgMgdl > effectiveMin
+            val bgDiff = if (bgOk) "(+${fmtBg(gate.bgMgdl - effectiveMin)} above target)"
+            else "(${fmtBg(effectiveMin - gate.bgMgdl)} below target — waiting)"
+            addGateRow("BG: ${fmtBg(gate.bgMgdl)}  $bgDiff", "Must be above profile target ${fmtBg(gate.profileTargetMgdl)}", bgOk)
+        }
 
         val maxAllowedIob = gate.maxIobU * MealOverrideManager.MAX_IOB_HEADROOM_RATIO
         val iobOk     = gate.iobU < maxAllowedIob

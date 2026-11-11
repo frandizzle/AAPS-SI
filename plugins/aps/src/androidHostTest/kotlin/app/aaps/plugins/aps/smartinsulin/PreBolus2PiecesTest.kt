@@ -118,7 +118,8 @@ class PreBolus2PiecesTest {
             put("preBolus2GivenU", 2.5)
             put("preBolus2LastPieceMs", System.currentTimeMillis() - 25 * 60_000L)
         }
-        m.onLoopCycle(bg(130.0, 0.5), iob(2.0), 12.0)
+        // Past the first half the pieces are led by BG: 3 mmol above target the piece is given in full.
+        m.onLoopCycle(bg(165.0, 0.5), iob(2.0), 12.0)
         runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.699..0.701 }) }
         assertFalse(m.preBolus2Pending)
         assertEquals(3.2, m.activePb2DoseU!!, 1e-9)
@@ -197,9 +198,133 @@ class PreBolus2PiecesTest {
             put("preBolus2LoopU", 1.7)
         }
         assertEquals(0.5, m.activeState!!.preBolus2NextPieceU, 1e-9)
-        m.onLoopCycle(bg(120.0, 1.0), iob(1.0), 12.0)
+        m.onLoopCycle(bg(165.0, 1.0), iob(1.0), 12.0)
         runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.499..0.501 }) }
         assertFalse(m.preBolus2Pending)
+    }
+
+    // ── Led by BG: the second half of pre-bolus 2, and pre-bolus 3 ──────────
+    // The profile target in these tests is 108 mg/dL (6.0 mmol): no profile is passed.
+
+    /** Pre-bolus 2 with half of its 3.2 U given: the pieces after it are led by BG. */
+    private fun secondHalf() = dinner(minAgo = 120) {
+        put("preBolus2Pieces", 6)
+        put("preBolus2PiecesGiven", 3)
+        put("preBolus2GivenU", 1.6)
+        put("preBolus2LastPieceMs", System.currentTimeMillis() - 25 * 60_000L)
+    }
+
+    @Test
+    fun `the first half of pre-bolus 2 comes on time, just above target and flat`() {
+        val m = dinner(minAgo = 50) { put("preBolus2Pieces", 6) }
+        m.onLoopCycle(bg(112.0, 0.0), iob(1.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin == 0.5 }) }
+    }
+
+    @Test
+    fun `past the first half, a piece waits near target and flat`() {
+        // 11 Nov, 20:42: a 0.7 U piece at 5.8 with a 5.5 target, BG drifting down 4.5 hours into a dinner.
+        val m = secondHalf()
+        assertTrue(m.activeState!!.preBolus2BgLed)
+        m.onLoopCycle(bg(115.0, -1.8), iob(3.2), 12.0)
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+        assertTrue(m.preBolus2StatusText.contains("BG not 1 mmol above target or rising"), m.preBolus2StatusText)
+        assertTrue(m.preBolus2StatusText.contains("led by BG"), m.preBolus2StatusText)
+    }
+
+    @Test
+    fun `past the first half, a piece is half its size where BG first asks, and the rest is dropped`() {
+        val m = secondHalf()
+        // Above target and rising 0.1 mmol: half of the 0.5 U piece (1.6 U left over 3 pieces).
+        m.onLoopCycle(bg(115.0, 2.0), iob(2.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.249..0.251 }) }
+        val s = m.activeState!!
+        assertEquals(0.25, s.preBolus2DroppedU, 1e-9)
+        // What was left out is not carried on: 1.1 U left over 2 pieces is 0.55 U, not 0.65.
+        assertEquals(1.1, s.preBolus2LeftU, 1e-9)
+        assertEquals(0.55, s.preBolus2NextPieceU, 1e-9)
+        // The meal total counts only what was given.
+        assertEquals(0.1 + 3.2 - 0.25, s.plannedTotalU, 1e-9)
+    }
+
+    @Test
+    fun `a piece led by BG grows to its full size 3 mmol above target`() {
+        assertEquals(0.5, MealOverrideManager.bgLedShare(126.0, 108.0, 0.0)!!, 1e-9)
+        assertEquals(0.75, MealOverrideManager.bgLedShare(144.0, 108.0, 0.0)!!, 1e-9)
+        assertEquals(1.0, MealOverrideManager.bgLedShare(162.0, 108.0, 0.0)!!, 1e-9)
+        assertEquals(1.0, MealOverrideManager.bgLedShare(250.0, 108.0, 0.0)!!, 1e-9)
+        assertEquals(null, MealOverrideManager.bgLedShare(125.0, 108.0, 1.7))
+        assertEquals(null, MealOverrideManager.bgLedShare(105.0, 108.0, 5.0))
+        // 2 mmol above target: three quarters of the 0.5 U piece, rounded down to 0.35 U.
+        val m = secondHalf()
+        m.onLoopCycle(bg(144.0, 0.0), iob(2.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.349..0.351 }) }
+    }
+
+    /** A dinner whose pre-bolus 2 was done [pb2DoneMinAgo] minutes ago, with [pb3] U of pre-bolus 3 due 120 min after it. */
+    private fun withPb3(pb3: Double, pb2DoneMinAgo: Int, extra: JSONObject.() -> Unit = {}) = dinner(minAgo = 300, pb2 = 3.0, pb3 = pb3) {
+        put("preBolus2FiredMs", System.currentTimeMillis() - pb2DoneMinAgo * 60_000L)
+        put("preBolus3DelayMs", 120 * 60_000L)
+        put("modeExpiryMs", System.currentTimeMillis() + 3 * 60 * 60_000L)
+        extra()
+    }
+
+    @Test
+    fun `pre-bolus 3 comes in pieces led by BG, and waits near target and flat`() {
+        // 11 Nov: a 4.4 U pre-bolus 3 would have come in one dose at about 5.6 and flat.
+        val m = withPb3(pb3 = 4.4, pb2DoneMinAgo = 125)
+        assertEquals(6, m.activeState!!.preBolus3Pieces)
+        m.onLoopCycle(bg(112.0, 0.0), iob(2.0), 12.0)
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+        assertTrue(m.preBolus3StatusText.contains("piece 1 of 6"), m.preBolus3StatusText)
+        assertTrue(m.preBolus3StatusText.contains("BG not 1 mmol above target or rising"), m.preBolus3StatusText)
+        // 3 mmol above target: the full first piece, 4.4 U over 6 pieces rounded down.
+        m.onLoopCycle(bg(165.0, 0.0), iob(2.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.699..0.701 }) }
+        val s = m.activeState!!
+        assertEquals(1, s.preBolus3PiecesGiven)
+        assertTrue(m.preBolus3Pending)
+        // The next piece keeps the 20 min gap.
+        m.onLoopCycle(bg(170.0, 1.0), iob(2.7), 12.0)
+        runBlocking { verify(commandQueue, times(1)).bolus(any()) }
+    }
+
+    @Test
+    fun `pre-bolus 3 is not due before its time`() {
+        val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 60)
+        m.onLoopCycle(bg(170.0, 3.0), iob(1.0), 12.0)
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+    }
+
+    @Test
+    fun `the last piece of pre-bolus 3 ends it, and only what was given counts`() {
+        val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 230) {
+            put("preBolus3PiecesGiven", 5)
+            put("preBolus3GivenU", 1.4)
+            put("preBolus3DroppedU", 0.6)
+            put("preBolus3LastPieceMs", System.currentTimeMillis() - 25 * 60_000L)
+        }
+        // 0.4 U left, half of it at the gate.
+        m.onLoopCycle(bg(126.0, 0.0), iob(1.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.199..0.201 }) }
+        assertFalse(m.preBolus3Pending)
+        assertEquals(1.6, m.activePb3DoseU!!, 1e-9)
+        assertTrue(m.preBolus3StatusText.contains("gave 1.60 U of 2.40 U"), m.preBolus3StatusText)
+    }
+
+    @Test
+    fun `a restored meal keeps its pre-bolus 3 pieces`() {
+        val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 140) {
+            put("preBolus3PiecesGiven", 1)
+            put("preBolus3GivenU", 0.2)
+            put("preBolus3DroppedU", 0.2)
+            put("preBolus3LastPieceMs", System.currentTimeMillis() - 10 * 60_000L)
+        }
+        val s = m.activeState!!
+        assertEquals(2.0, s.preBolus3WaitingU, 1e-9)
+        assertEquals(0.4, s.preBolus3NextPieceU, 1e-9)
+        val secs = m.preBolus3SecondsRemaining!!
+        assertTrue(secs in 9 * 60..10 * 60, "$secs")
     }
 
     @Test

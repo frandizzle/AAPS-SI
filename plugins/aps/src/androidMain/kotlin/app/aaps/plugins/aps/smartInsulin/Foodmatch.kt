@@ -1,5 +1,6 @@
 package app.aaps.plugins.aps.smartInsulin
 
+import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
@@ -32,12 +33,12 @@ object FoodMatch {
     const val MAX_TOP_UP_HIGH_U = 0.6
     /** Pre-bolus 2, pre-bolus 3 and top-ups together stop at this many times the planned fat and protein insulin. */
     const val TOTAL_SHARE = 1.5
-    /** At least this far above target, in mg/dL, BG itself shows that more insulin is wanted. */
-    const val ABOVE_TARGET_MGDL = 18.0
+    /** At least this far above target, in mg/dL, BG itself shows that more insulin is wanted. The same as for pieces led by BG. */
+    const val ABOVE_TARGET_MGDL = MealOverrideManager.CLEARLY_ABOVE_TARGET_MGDL
     /** This far above target, in mg/dL (3 mmol/L), a top-up may be [MAX_TOP_UP_HIGH_U]. */
-    const val HIGH_ABOVE_TARGET_MGDL = 54.0
+    const val HIGH_ABOVE_TARGET_MGDL = MealOverrideManager.FULL_ABOVE_TARGET_MGDL
     /** Closer to target, only a rise of at least this much in 5 min, in mg/dL, allows a top-up. A flat BG reading wobbles by less. */
-    const val RISING_MGDL = 1.8
+    const val RISING_MGDL = MealOverrideManager.RISING_MGDL
 
     private const val LEAD_STEPS = LEAD_MIN / 5
     private const val STEP_EPSILON = 1e-6

@@ -1,7 +1,5 @@
 package app.aaps.core.interfaces.smartInsulin
 
-import kotlin.math.floor
-
 /**
  * Immutable snapshot of an active meal mode override.
  *
@@ -28,6 +26,10 @@ import kotlin.math.floor
  *                      [MealOverrideManager.extendWhileFoodComes].
  * [eatDelayMs]       — the meal is eaten this long after the start ("Eat in"): pre-bolus 1 is given at the start so it
  *                      has time to act. The rest of pre-bolus 1 counts its window from [eatAtMs]. 0 = eaten at the start.
+ * [preBolus2DroppedU], [preBolus3DroppedU] — what pieces led by BG left out ([MealOverrideManager.bgLedShare]). It is
+ *                      not carried on to later pieces: if the food really comes, BG rises and the loop gives the rest.
+ * [preBolus3PiecesGiven], [preBolus3GivenU], [preBolus3LastPieceMs] — the pieces of pre-bolus 3 given so far, their
+ *                      insulin, and when the last one was given. Pre-bolus 3 is always given in pieces led by BG.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -55,7 +57,12 @@ data class MealOverrideState(
     val preBolus2LastPieceMs: Long? = null,
     val preBolus2LoopU:   Double  = 0.0,
     val extendedMs:       Long    = 0L,
-    val eatDelayMs:       Long    = 0L
+    val eatDelayMs:       Long    = 0L,
+    val preBolus2DroppedU: Double = 0.0,
+    val preBolus3PiecesGiven: Int = 0,
+    val preBolus3GivenU:  Double  = 0.0,
+    val preBolus3LastPieceMs: Long? = null,
+    val preBolus3DroppedU: Double = 0.0
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
@@ -80,32 +87,58 @@ data class MealOverrideState(
     val preBolus2WaitingU: Double
         get() = if (preBolus2Pending) preBolus2LeftU else 0.0
 
-    /** What the pieces still have to give: pre-bolus 2 less the pieces given and the loop's SMBs taken off them. */
+    /**
+     * What the pieces still have to give: pre-bolus 2 less the pieces given, the loop's SMBs taken off them, and what
+     * pieces led by BG left out.
+     */
     val preBolus2LeftU: Double
-        get() = (preBolus2U - preBolus2GivenU - preBolus2LoopU).coerceAtLeast(0.0)
+        get() = (preBolus2U - preBolus2GivenU - preBolus2LoopU - preBolus2DroppedU).coerceAtLeast(0.0)
 
-    val preBolus3WaitingU: Double
-        get() = if (preBolus3Pending) preBolus3U else 0.0
+    /**
+     * The pieces of pre-bolus 2 are led by BG from here on, see [MealOverrideManager.bgLedShare]: the first
+     * [MealOverrideManager.ON_TIME_SHARE] of it is in.
+     */
+    val preBolus2BgLed: Boolean
+        get() = preBolus2Spread &&
+            preBolus2GivenU + preBolus2LoopU + preBolus2DroppedU >= preBolus2U * MealOverrideManager.ON_TIME_SHARE - ROUNDING_U
 
     /** When the next piece may be given: at the pre-bolus 2 time, then [MealOverrideManager.SPREAD_GAP_MIN] after the last one. */
     val preBolus2NextAtMs: Long
         get() = preBolus2LastPieceMs?.let { it + MealOverrideManager.SPREAD_GAP_MIN * 60_000L } ?: preBolus2FireAtMs
 
     /**
-     * The next piece: what is left shared over the pieces left, rounded down to [MealOverrideManager.SPREAD_STEP_U].
-     * The last piece is all that is left. A piece that waits for the gates stays the same size, so pieces never add up.
-     * When the loop has given part of it, fewer pieces share what is left, none smaller than
-     * [MealOverrideManager.SPREAD_MIN_PIECE_U].
+     * The next piece: what is left shared over the pieces left, see [MealOverrideManager.nextPieceU]. A piece that waits
+     * for the gates stays the same size, so pieces never add up. When the loop has given part of it, fewer pieces share
+     * what is left.
      */
     val preBolus2NextPieceU: Double
-        get() {
-            val left = preBolus2LeftU
-            val bigEnough = (left / MealOverrideManager.SPREAD_MIN_PIECE_U + ROUNDING_U).toInt().coerceAtLeast(1)
-            val piecesLeft = minOf(preBolus2Pieces - preBolus2PiecesGiven, bigEnough)
-            if (piecesLeft <= 1) return left
-            val step = MealOverrideManager.SPREAD_STEP_U
-            return (floor(left / piecesLeft / step + ROUNDING_U) * step).coerceAtLeast(step).coerceAtMost(left)
-        }
+        get() = MealOverrideManager.nextPieceU(preBolus2LeftU, preBolus2Pieces - preBolus2PiecesGiven)
+
+    /** Pre-bolus 3 is always given in pieces led by BG, as many as fit pieces of [MealOverrideManager.SPREAD_MIN_PIECE_U]. */
+    val preBolus3Pieces: Int
+        get() = (preBolus3U / MealOverrideManager.SPREAD_MIN_PIECE_U + ROUNDING_U).toInt().coerceIn(1, MealOverrideManager.SPREAD_PIECES)
+
+    /** What the pieces of pre-bolus 3 still have to give: less what was given and what pieces led by BG left out. */
+    val preBolus3LeftU: Double
+        get() = (preBolus3U - preBolus3GivenU - preBolus3DroppedU).coerceAtLeast(0.0)
+
+    val preBolus3WaitingU: Double
+        get() = if (preBolus3Pending) preBolus3LeftU else 0.0
+
+    /** The next piece of pre-bolus 3, see [MealOverrideManager.nextPieceU]. */
+    val preBolus3NextPieceU: Double
+        get() = MealOverrideManager.nextPieceU(preBolus3LeftU, preBolus3Pieces - preBolus3PiecesGiven)
+
+    /** When the next piece of pre-bolus 3 may be given: at its time, then [MealOverrideManager.SPREAD_GAP_MIN] after the last one. */
+    val preBolus3NextAtMs: Long?
+        get() = preBolus3LastPieceMs?.let { it + MealOverrideManager.SPREAD_GAP_MIN * 60_000L } ?: preBolus3FireAtMs
+
+    /**
+     * The fat and protein insulin pre-bolus 2 and 3 gave so far, for the limit on the loop's top-ups. Pre-bolus 2 once
+     * done counts as planned less what pieces led by BG left out, as before pieces could leave any out.
+     */
+    val fatProteinPreBolusGivenU: Double
+        get() = (if (preBolus2FiredSuccessfully) preBolus2U - preBolus2DroppedU else preBolus2GivenU) + preBolus3GivenU
 
     /**
      * The insulin of the waiting pre-boluses that can still be given with [iobU] on board: a pre-bolus never takes IOB
@@ -138,8 +171,8 @@ data class MealOverrideState(
     val plannedTotalU: Double
         get() = (doseU ?: 0.0) + addedU +
             (if (preBolus1RestFiredMs == null || preBolus1RestFiredMs > 0L) preBolus1RestU else 0.0) +
-            (if (preBolus2FiredMs != -1L) preBolus2U else preBolus2GivenU) +
-            (if (preBolus3FiredMs != -1L) preBolus3U else 0.0)
+            (if (preBolus2FiredMs != -1L) preBolus2U - preBolus2DroppedU else preBolus2GivenU) +
+            (if (preBolus3FiredMs != -1L) preBolus3U - preBolus3DroppedU else preBolus3GivenU)
 
     /** Fire time for PB3: preBolus3DelayMs relative to PB2 fire time.
      *  Returns null if PB2 hasn't fired yet (can't compute PB3 trigger). */

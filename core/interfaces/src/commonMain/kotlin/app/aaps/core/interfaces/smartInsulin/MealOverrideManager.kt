@@ -3,6 +3,7 @@ package app.aaps.core.interfaces.smartInsulin
 import app.aaps.core.interfaces.aps.GlucoseStatus
 import app.aaps.core.interfaces.aps.IobTotal
 import app.aaps.core.interfaces.profile.Profile
+import kotlin.math.floor
 
 /**
  * Interface for the meal override system.
@@ -243,7 +244,9 @@ interface MealOverrideManager {
         val shortAvgDeltaMgdl: Double,
         /** The pre-bolus waiting, so IOB after it can be shown against max IOB. */
         val doseU:             Double  = 0.0,
-        val loopRestraining:   Boolean = false
+        val loopRestraining:   Boolean = false,
+        /** The waiting piece is led by BG, see [bgLedShare]: BG must be clearly above target, or above it and rising. */
+        val bgLed:             Boolean = false
     )
 
     /** Last known safety-gate values for PB2; null if no active session or no gate check run yet */
@@ -310,5 +313,42 @@ interface MealOverrideManager {
         const val PB1_REST_RISE_MGDL = 2.0
         /** A smaller rest is left to the loop. */
         const val PB1_REST_MIN_U     = 0.5
+
+        // Pieces led by BG: the second half of pre-bolus 2 in pieces, and all of pre-bolus 3. See [bgLedShare].
+        /** Pre-bolus 2 in pieces gives this share on time; the pieces after it are led by BG. */
+        const val ON_TIME_SHARE           = 0.5
+        /** At least this far above target, in mg/dL (1 mmol/L), BG itself shows that more insulin is wanted. */
+        const val CLEARLY_ABOVE_TARGET_MGDL = 18.0
+        /** From this far above target, in mg/dL (3 mmol/L), a piece led by BG is given in full. */
+        const val FULL_ABOVE_TARGET_MGDL  = 54.0
+        /** Closer to target, a rise of at least this much in 5 min, in mg/dL (0.1 mmol/L), asks for a piece. */
+        const val RISING_MGDL             = 1.8
+        /** The share of a piece led by BG given where BG first asks for it. */
+        const val BG_LED_MIN_SHARE        = 0.5
+
+        /**
+         * The share of a piece led by BG to give now, or null when BG does not ask for it. At the tail of a meal the fat and
+         * protein are least sure: a light lunch stopped coming in early, a heavy dinner kept coming for hours. So BG leads:
+         * no piece near target and flat, [BG_LED_MIN_SHARE] of it from [CLEARLY_ABOVE_TARGET_MGDL] above target (or above
+         * target and rising), all of it from [FULL_ABOVE_TARGET_MGDL] above. 11 Nov: a 0.7 U piece at 5.8 with a 5.5 target
+         * and a 4.4 U pre-bolus 3 were waiting 4.5 hours into a dinner while BG drifted down.
+         */
+        fun bgLedShare(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double): Double? {
+            val above = bgMgdl - targetMgdl
+            if (above < CLEARLY_ABOVE_TARGET_MGDL && !(above > 0.0 && deltaMgdl >= RISING_MGDL)) return null
+            val part = ((above - CLEARLY_ABOVE_TARGET_MGDL) / (FULL_ABOVE_TARGET_MGDL - CLEARLY_ABOVE_TARGET_MGDL)).coerceIn(0.0, 1.0)
+            return BG_LED_MIN_SHARE + (1.0 - BG_LED_MIN_SHARE) * part
+        }
+
+        /**
+         * The next piece of [leftU] still to come over [piecesLeft] pieces: shared out, rounded down to [SPREAD_STEP_U], none
+         * smaller than [SPREAD_MIN_PIECE_U]. The last piece is all that is left.
+         */
+        fun nextPieceU(leftU: Double, piecesLeft: Int): Double {
+            val bigEnough = (leftU / SPREAD_MIN_PIECE_U + 1e-6).toInt().coerceAtLeast(1)
+            val pieces = minOf(piecesLeft, bigEnough)
+            if (pieces <= 1) return leftU
+            return (floor(leftU / pieces / SPREAD_STEP_U + 1e-6) * SPREAD_STEP_U).coerceAtLeast(SPREAD_STEP_U).coerceAtMost(leftU)
+        }
     }
 }

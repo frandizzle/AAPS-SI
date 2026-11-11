@@ -1531,7 +1531,7 @@ open class SmartInsulinPlugin @Inject constructor(
             isfMgdl = isfMgdl,
             bolusStep = activePlugin.activePump.pumpDescription.bolusStep,
             roomU = FoodMatch.roomU(
-                still.fatProteinMealG / carbRatio, (mealOverrideManager.activePb2DoseU ?: 0.0) + (mealOverrideManager.activePb3DoseU ?: 0.0), foodMatchGivenU
+                still.fatProteinMealG / carbRatio, mealOverrideManager.activeState?.fatProteinPreBolusGivenU ?: 0.0, foodMatchGivenU
             ),
             maxTopUpU = FoodMatch.maxTopUpU(glucoseStatus.glucose, targetMgdl)
         )
