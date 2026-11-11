@@ -304,7 +304,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // For extra insulin the food counts only when BG itself asks for more: clearly above target, or rising.
         // Just above target and flat it once gave 3.2 U in 35 min at 6.2 for a protein snack still to come, right
         // after BG falling had kept the same food out and basal off at 9 (9 Nov). The same rule as the top-ups.
-        val dosingForecast = if (foodSteps != null && FoodMatch.bgAllows(currentBg, targetBg, delta)) {
+        val dosingForecast = if (foodSteps != null && FoodMatch.bgAllows(currentBg, targetBg, delta, carbsDone)) {
             predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = foodSteps.take(DOSING_AHEAD_MIN / 5))
         } else predictedBg
 
@@ -419,6 +419,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (ci < ciSeen) sb.append(" (rise ${fmt(riseAheadMgdl, isMmol)}->${fmt(riseCapMgdl ?: 0.0, isMmol)}: food left)")
         }
         // The meal's food still to come, and whether the forecast used it.
+        val lowGuardOnly = if (carbsDone) " low guard only: carbs done, BG not 1 mmol above target"
+                           else " low guard only: BG not clearly above target or rising"
         val foodNotUsed = if (bgNotFalling && underTargetNotRising) " not used: carbs done, BG under target and not rising" else " not used: BG falling"
         foodToCome?.let { f ->
             sb.append(" | cob=${"%.0f".format(Locale.US, f.totalG)}g(carbs ${"%.0f".format(Locale.US, f.carbsG)}")
@@ -432,7 +434,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (allFoodAfterPreBolus && fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G) sb.append(" all food: not in the first hour after a pre-bolus")
             when {
                 foodForecast == null             -> sb.append(foodNotUsed)
-                dosingForecast === predictedBg   -> sb.append(" low guard only: BG not clearly above target or rising")
+                dosingForecast === predictedBg   -> sb.append(lowGuardOnly)
             }
         }
         // Food of an earlier meal or snack still coming in, counted next to this meal's.
@@ -440,7 +442,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
             sb.append(" | earlier food=${"%.0f".format(Locale.US, earlierFood.sumOf { it.totalG })}g")
             if (foodToCome == null) when {
                 foodForecast == null             -> sb.append(foodNotUsed)
-                dosingForecast === predictedBg   -> sb.append(" low guard only: BG not clearly above target or rising")
+                dosingForecast === predictedBg   -> sb.append(lowGuardOnly)
             }
         }
         sb.append(" | target=${fmt(targetBg, isMmol)}${if (isTempTarget) "(tmp)" else ""}")

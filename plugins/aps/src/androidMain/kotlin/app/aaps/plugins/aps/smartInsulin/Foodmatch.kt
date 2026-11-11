@@ -67,9 +67,14 @@ object FoodMatch {
      * Whether BG asks for a top-up at all. Near target and flat it does not: the logged fat and protein are only an estimate,
      * and at 5.7 with a 5.5 target a flat BG once gave the largest top-up every 5 minutes for over half an hour (6 Nov).
      * The same rule holds for all the food in the forecast, see `FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL`.
+     *
+     * "At target and rising" is for the start and the middle of a meal, when a rise is the food coming in. Once the carbs
+     * are done ([carbsDone]) only BG clearly above target counts: at the tail a small rise near target is the last of the
+     * fat and protein, and the food list is least sure then. At the end of a lunch, BG 5.7 to 6.1 rising 0.1 to 0.2, the
+     * loop gave 1.25 U for 21 g still to come, the food stopped 15 min later, and BG fell with 2 U on board (11 Nov).
      */
-    fun bgAllows(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double): Boolean =
-        bgMgdl >= targetMgdl + ABOVE_TARGET_MGDL || (bgMgdl >= targetMgdl && deltaMgdl >= RISING_MGDL)
+    fun bgAllows(bgMgdl: Double, targetMgdl: Double, deltaMgdl: Double, carbsDone: Boolean = false): Boolean =
+        bgMgdl >= targetMgdl + ABOVE_TARGET_MGDL || (!carbsDone && bgMgdl >= targetMgdl && deltaMgdl >= RISING_MGDL)
 
     /**
      * The top-up for this cycle, or null when none is needed.

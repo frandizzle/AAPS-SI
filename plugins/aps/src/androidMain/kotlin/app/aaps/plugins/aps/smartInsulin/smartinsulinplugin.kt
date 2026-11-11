@@ -1518,7 +1518,8 @@ open class SmartInsulinPlugin @Inject constructor(
 
         val notFalling = glucoseStatus.delta >= MealOverrideManager.DELTA_INSTANT_BLOCK_MGDL && glucoseStatus.shortAvgDelta >= MealOverrideManager.SHORT_AVG_DELTA_BLOCK_MGDL
         if (carbRatio <= 0.0 || still.fatProteinMealG <= 0.0 || now < still.fatProteinFromMs) return null
-        if (!FoodMatch.bgAllows(glucoseStatus.glucose, targetMgdl, glucoseStatus.delta) || !notFalling || mealOverrideManager.preBolusThisCycleU > 0.0) return null
+        val carbsDone = still.carbsG < DetermineBasalSmartInsulin.TAIL_CARBS_LEFT_G
+        if (!FoodMatch.bgAllows(glucoseStatus.glucose, targetMgdl, glucoseStatus.delta, carbsDone) || !notFalling || mealOverrideManager.preBolusThisCycleU > 0.0) return null
         return FoodMatch.topUp(
             samples = foodMatchSamples.toList(),
             nowMs = now,

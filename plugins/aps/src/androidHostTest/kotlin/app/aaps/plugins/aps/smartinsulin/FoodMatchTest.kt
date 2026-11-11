@@ -90,6 +90,13 @@ class FoodMatchTest {
         assertFalse(FoodMatch.bgAllows(bgMgdl = 95.0, targetMgdl = 99.0, deltaMgdl = 5.0))
     }
 
+    @Test fun `once the carbs are done only BG 1 mmol above target allows a top-up`() {
+        // 11 Nov: end of a lunch, 6.1 with a 5.5 target, rising 0.2.
+        assertFalse(FoodMatch.bgAllows(bgMgdl = 110.0, targetMgdl = 99.0, deltaMgdl = 3.6, carbsDone = true))
+        assertTrue(FoodMatch.bgAllows(bgMgdl = 110.0, targetMgdl = 99.0, deltaMgdl = 3.6, carbsDone = false))
+        assertTrue(FoodMatch.bgAllows(bgMgdl = 117.0, targetMgdl = 99.0, deltaMgdl = 0.0, carbsDone = true))
+    }
+
     @Test fun `top-ups stop at the limit for the meal`() {
         // 6 U planned: pre-bolus 2 and top-ups stop at 9 U.
         assertEquals(4.0, FoodMatch.roomU(plannedU = 6.0, preBolusU = 3.0, givenU = 2.0), 1e-9)

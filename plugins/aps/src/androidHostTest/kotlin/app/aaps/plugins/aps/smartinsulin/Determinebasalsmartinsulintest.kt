@@ -637,10 +637,21 @@ class DetermineBasalSmartInsulinTest {
         assertTrue(flatReason.contains("low guard only"), flatReason)
         // The food still keeps basal from being cut and stops a false suspend.
         assertFalse(flatReason.contains("SUSPEND"), flatReason)
-        // Once BG rises, the food counts again.
+        // With carbs still to come, a rise near target is the food coming in, and the food counts.
         midDinner(bg = 112.0, delta = 3.0)
-        val rising = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
-        assertFalse(rising.reason.contains("low guard only"), rising.reason)
+        val withCarbs = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack.copy(carbsG = 10.0, carbsUntilMs = now + 60 * 60_000L))
+        assertFalse(withCarbs.reason.contains("low guard only"), withCarbs.reason)
+        // With only fat and protein left, the same rise near target still gives nothing: 11 Nov, the end of a lunch,
+        // BG 5.7 to 6.1 rising, 1.25 U for 21 g still to come, and the food stopped 15 min later.
+        val tail = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
+        assertTrue(tail.reason.contains("low guard only: carbs done, BG not 1 mmol above target"), tail.reason)
+        // Only what the rise itself asks for, as with no food list at all.
+        val noFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0)
+        assertEquals(noFood.smb, tail.smb, 1e-9)
+        // 1 mmol above target, the food counts again.
+        midDinner(bg = 118.0, delta = 3.0)
+        val above = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = snack)
+        assertFalse(above.reason.contains("low guard only"), above.reason)
     }
 
     @Test fun `extra insulin is for the food due in the next 2 hours, not for food hours away`() {
