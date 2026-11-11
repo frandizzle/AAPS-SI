@@ -254,7 +254,16 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // that steepness on for the whole fade asked for insulin for food that was never eaten, and once the food
         // was in, BG fell with all that insulin on board. [FOOD_RISE_SLACK] leaves room for food counted a little
         // low. Only a rise is limited; a fall is never touched.
-        val riseCapMgdl = foodListG?.takeIf { carbRatio > 0.0 && mealMode != MealMode.FASTING }
+        //
+        // Not once the carbs are done and BG is clearly above target and rising slowly: then the food list has run short,
+        // not BG. The fat and protein of a turkey dinner kept coming 5 to 6 hours in, the list said nothing was left, the
+        // rise was cut to nothing, and the loop held insulin back from BG 8.6 to 9.3, rising 0.1 to 0.2 mmol per 5 min
+        // (10 Nov). The rise BG shows then counts as it would with no food list. A steep rise is still limited: that is
+        // the fast food this limit is for.
+        val listRanShort = (earlierFood + listOfNotNull(foodToCome)).none { it.carbsG >= TAIL_CARBS_LEFT_G } &&
+            currentBg >= targetBg + FoodMatch.ABOVE_TARGET_MGDL && delta >= FoodMatch.RISING_MGDL &&
+            max(delta, shortAvgDelta) <= SLOW_RISE_MAX_MGDL
+        val riseCapMgdl = foodListG?.takeIf { carbRatio > 0.0 && mealMode != MealMode.FASTING && !listRanShort }
             ?.let { it.coerceAtLeast(0.0) * FOOD_RISE_SLACK * dosingIsfMgdl / carbRatio }
         val riseAheadMgdl = ciSeen.coerceAtLeast(0.0) * fadeSum(fadeMins, bgiPerTick.size)
         val ci = if (riseCapMgdl != null && riseAheadMgdl > riseCapMgdl) ciSeen * riseCapMgdl / riseAheadMgdl else ciSeen
@@ -733,6 +742,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val FOOD_RISE_SLACK                     = 1.5
         /** Less than this many grams of carbs still to come is the tail of a meal: only fat and protein are left. */
         const val TAIL_CARBS_LEFT_G                   = 1.0
+        /** A rise of at most this much per 5 min, in mg/dL (0.3 mmol/L), is slow: fat and protein, not fast food. */
+        const val SLOW_RISE_MAX_MGDL                  = 0.3 * MMOL_TO_MGDL
 
     }
 }

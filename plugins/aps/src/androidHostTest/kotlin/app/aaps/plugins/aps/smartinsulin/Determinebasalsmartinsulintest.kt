@@ -675,6 +675,21 @@ class DetermineBasalSmartInsulinTest {
         assertEquals(noListSmb, meal.smb, 1e-9)
     }
 
+    @Test fun `a slow rise clearly above target is not cut when the food list has run out`() {
+        // 10 Nov, 23:27: turkey dinner 5 h 20 min in, BG 9.0 rising 0.1 mmol per 5 min, 1.7 U on board, the food list
+        // says nothing is left. The rise was cut to nothing and the loop suspended.
+        midDinner(bg = 162.0, delta = 2.0)
+        val iob = flatIobArray(iob = 1.68, activity = 0.0253)
+        val noList = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0)
+        val ranOut = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodListG = 0.0)
+        assertFalse(ranOut.reason.contains("food left"), ranOut.reason)
+        assertEquals(noList.predictionsAsGv.map { it.value }, ranOut.predictionsAsGv.map { it.value })
+        // Near target the list still limits the same slow rise.
+        midDinner(bg = 110.0, delta = 2.0)
+        val nearTarget = invoke(iobArray = iob, mealMode = MealMode.DINNER, lowGuardMmol = 4.8, warnGuardMmol = 5.0, foodListG = 0.0)
+        assertTrue(nearTarget.reason.contains("food left"), nearTarget.reason)
+    }
+
     @Test fun `a heavy steak dinner is dosed for the next 2 hours of it now, the rest later`() {
         // 60 g of fat and protein (as carbs) over a 6 h meal: about 20 g is due in the next 2 hours.
         midDinner(bg = 130.0)
