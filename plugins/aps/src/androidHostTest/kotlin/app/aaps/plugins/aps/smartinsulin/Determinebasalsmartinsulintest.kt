@@ -183,6 +183,7 @@ class DetermineBasalSmartInsulinTest {
         foodToCome:        FoodToCome?          = null,
         foodListG:         Double?              = null,
         preBolusThisCycleU: Double              = 0.0,
+        minsSincePreBolus: Int?                 = null,
         foodMatchTopUp:    FoodMatch.TopUp?     = null
     ): FakeAPSResult {
         sut.determine_basal(
@@ -224,6 +225,7 @@ class DetermineBasalSmartInsulinTest {
             foodListG             = foodListG,
             carbRatio             = 5.0,
             preBolusThisCycleU = preBolusThisCycleU,
+            minsSincePreBolus = minsSincePreBolus,
             foodMatchTopUp = foodMatchTopUp
         )
         return fakeResult
@@ -673,6 +675,25 @@ class DetermineBasalSmartInsulinTest {
         val meal = invoke(iobArray = iob, mealMode = MealMode.BREAKFAST, maxSmbU = 4.0, foodListG = 60.0)
         assertFalse(meal.reason.contains("food left"), meal.reason)
         assertEquals(noListSmb, meal.smb, 1e-9)
+    }
+
+    @Test fun `all the food catches up slowly, and not in the first hour after a pre-bolus`() {
+        // 11 Nov, 14:12: lunch, BG 7.8 rising, 7.5 U on board 15 min after a 4 U pre-bolus 2, 29 g of carbs and 31 g of
+        // fat and protein still to come. Weighing all of it gave 1.55 U, then 1.10 U, with high temps: 3.7 U in 15 min.
+        midDinner(bg = 140.0, delta = 3.6)
+        val now = System.currentTimeMillis()
+        val iob = flatIobArray(iob = 7.48, activity = 0.0487)
+        val lunch = FoodToCome(carbsG = 29.0, carbsUntilMs = now + 2 * 60 * 60_000L, fatProteinG = 31.0, fatProteinUntilMs = now + 5 * 60 * 60_000L,
+                               carbRatio = 5.0, fatProteinFromMs = now - 15 * 60_000L)
+        val soon = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = lunch, minsSincePreBolus = 15)
+        assertTrue(soon.reason.contains("not in the first hour after a pre-bolus"), soon.reason)
+        assertFalse(soon.reason.contains("all food: fp coming"), soon.reason)
+        // An hour on, all the food counts again, but adds at most a top-up's size each cycle.
+        val later = invoke(iobArray = iob, mealMode = MealMode.LUNCH, maxSmbU = 4.0, foodToCome = lunch, minsSincePreBolus = 75)
+        assertTrue(later.reason.contains("all food: fp coming"), later.reason)
+        val capU = FoodMatch.maxTopUpU(140.0, 100.0)
+        val extraU = later.smb + (later.rate - soon.rate).coerceAtLeast(0.0) * 0.5 - soon.smb
+        assertTrue(extraU <= capU + 0.05 + 1e-9, "all food added $extraU U, cap $capU U: ${later.reason}")
     }
 
     @Test fun `a slow rise clearly above target is not cut when the food list has run out`() {

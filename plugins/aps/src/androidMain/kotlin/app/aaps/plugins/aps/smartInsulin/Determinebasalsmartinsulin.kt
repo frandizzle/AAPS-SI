@@ -140,6 +140,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
          * and no temp above basal: it would dose as if the pre-bolus were not there. Lowering basal still works.
          */
         preBolusThisCycleU:       Double = 0.0,
+        /** Minutes since a pre-bolus of the running meal (or a piece of one) was given; null for none. */
+        minsSincePreBolus:        Int? = null,
         /** This cycle's dose from what the food really does, see [FoodMatch]; null for none. Only given in normal dosing. */
         foodMatchTopUp:           FoodMatch.TopUp? = null
     ): APSResult {
@@ -337,7 +339,13 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // at 5.8 with a 5.5 target it gave a run of SMBs at night for fat and protein that is only an estimate.
         val fatProteinComingG = if (foodSteps != null && currentBg >= targetBg + FAT_PROTEIN_ALL_FOOD_ABOVE_TARGET_MGDL)
             foods.filter { currentTime >= it.fatProteinFromMs }.sumOf { it.fatProteinG } else 0.0
-        val fatProteinAllFood = fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G
+        //
+        // It catches up slowly: not in the first hour after a pre-bolus, which is still building up and not in BG yet,
+        // and at most a top-up's size each cycle (`FoodMatch.maxTopUpU`). At full size it gave 3.7 U in the 15 min after a
+        // 4 U pre-bolus 2 for fat and protein due over the next 4 to 5 hours, and BG fell from 8.2 at 0.4 mmol per 5 min
+        // with 10 U on board (11 Nov). The steak case it is for needs hours of catching up, not one go.
+        val allFoodAfterPreBolus = minsSincePreBolus != null && minsSincePreBolus < ALL_FOOD_AFTER_PRE_BOLUS_MIN
+        val fatProteinAllFood = fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G && !allFoodAfterPreBolus
         val predictedMin = if (fatProteinAllFood) max(predictedMinDosing, predictedMinAllFood) else predictedMinDosing
 
         // The 30 min point decides "falling into a low", so it stays on the insulin alone.
@@ -383,8 +391,12 @@ class DetermineBasalSmartInsulin @Inject constructor(
         // Stock OpenAPS-style insulinReq: how much insulin is needed to bring
         // predictedMin to target. predictedMin already has existing IOB baked in,
         // so this naturally self-limits — no iobSufficient gate needed.
-        val predMinGapMgdl = (predictedMin - targetBg).coerceAtLeast(0.0)
-        val insulinReq     = predMinGapMgdl / safeIsfMgdl
+        // What all the food adds over the food due soon is at most a top-up's size this cycle, see `fatProteinAllFood`.
+        val dosingReq      = (predictedMinDosing - targetBg).coerceAtLeast(0.0) / safeIsfMgdl
+        val allFoodExtraU  = (predictedMin - targetBg).coerceAtLeast(0.0) / safeIsfMgdl - dosingReq
+        val allFoodCapU    = FoodMatch.maxTopUpU(currentBg, targetBg)
+        val allFoodCapped  = allFoodExtraU > allFoodCapU
+        val insulinReq     = dosingReq + allFoodExtraU.coerceAtMost(allFoodCapU)
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -416,6 +428,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
             if (currentTime < f.fatProteinFromMs && f.fatProteinG >= 1.0) sb.append(", fp in ${(f.fatProteinFromMs - currentTime) / 60_000L}m")
             sb.append(")")
             if (fatProteinAllFood) sb.append(" all food: fp coming")
+            if (fatProteinAllFood && allFoodCapped) sb.append(" (at most ${"%.2f".format(Locale.US, allFoodCapU)}U more)")
+            if (allFoodAfterPreBolus && fatProteinComingG >= FAT_PROTEIN_ALL_FOOD_MIN_G) sb.append(" all food: not in the first hour after a pre-bolus")
             when {
                 foodForecast == null             -> sb.append(foodNotUsed)
                 dosingForecast === predictedBg   -> sb.append(" low guard only: BG not clearly above target or rising")
@@ -744,6 +758,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val TAIL_CARBS_LEFT_G                   = 1.0
         /** A rise of at most this much per 5 min, in mg/dL (0.3 mmol/L), is slow: fat and protein, not fast food. */
         const val SLOW_RISE_MAX_MGDL                  = 0.3 * MMOL_TO_MGDL
+        /** In this many minutes after a pre-bolus, extra insulin does not weigh all the food, only what is due soon. */
+        const val ALL_FOOD_AFTER_PRE_BOLUS_MIN        = 60
 
     }
 }

@@ -70,6 +70,7 @@ import app.aaps.core.interfaces.profile.ProfileUtil
 import app.aaps.core.interfaces.smartInsulin.FoodLogEntry
 import app.aaps.core.interfaces.smartInsulin.MealMode
 import app.aaps.core.interfaces.smartInsulin.MealOverrideManager
+import app.aaps.core.interfaces.smartInsulin.MealOverrideState
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinSessions
@@ -1535,6 +1536,19 @@ open class SmartInsulinPlugin @Inject constructor(
         )
     }
 
+    /**
+     * When the last pre-bolus of [meal] was given: pre-bolus 1 at the start, the rest of it, pre-bolus 2 (its last piece),
+     * or pre-bolus 3. Null when none was given. A cancelled one has a time below 0 and does not count.
+     */
+    private fun lastPreBolusMs(meal: MealOverrideState): Long? =
+        listOfNotNull(
+            meal.triggerTimeMs.takeIf { (meal.doseU ?: 0.0) > 0.0 },
+            meal.preBolus1RestFiredMs,
+            meal.preBolus2LastPieceMs,
+            meal.preBolus2FiredMs,
+            meal.preBolus3FiredMs
+        ).filter { it > 0L }.maxOrNull()
+
     /** Kept over a restart of the app, so the limit of a running meal still holds. */
     private fun noteFoodMatchGiven(units: Double) {
         if (units <= 0.0) return
@@ -2462,6 +2476,7 @@ open class SmartInsulinPlugin @Inject constructor(
             foodListG                = foodListG,
             carbRatio                = profile.getIc(),
             preBolusThisCycleU       = mealOverrideManager.preBolusThisCycleU,
+            minsSincePreBolus        = mealWithList?.let { lastPreBolusMs(it) }?.let { ((now - it) / 60_000L).toInt() },
             foodMatchTopUp           = foodMatchTopUp
             )
         } catch (e: Exception) {
