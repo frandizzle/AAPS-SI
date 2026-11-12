@@ -312,6 +312,46 @@ class PreBolus2PiecesTest {
         assertTrue(m.preBolus3StatusText.contains("gave 1.60 U of 2.40 U"), m.preBolus3StatusText)
     }
 
+    /** A meal whose mode ends 50 ms from now, with pre-bolus 3 pieces still to come; returned once it has ended. */
+    private fun endedWithPb3(pb2DoneMinAgo: Int): MealOverrideManagerImpl {
+        val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = pb2DoneMinAgo) {
+            put("modeExpiryMs", System.currentTimeMillis() + 50L)
+            put("preBolus3PiecesGiven", 1)
+            put("preBolus3GivenU", 0.4)
+            put("preBolus3LastPieceMs", System.currentTimeMillis() - 19 * 60_000L)
+        }
+        Thread.sleep(100L)
+        return m
+    }
+
+    @Test
+    fun `when the meal mode ends, a pre-bolus 3 piece still minutes away is dropped and leaves the screen`() {
+        // 12 Nov: "PB3: in 40s" stayed on screen in Fasting after the meal mode had ended.
+        val m = endedWithPb3(pb2DoneMinAgo = 160)
+        // Off the screen at once, before the next loop cycle.
+        assertFalse(m.preBolus3Pending)
+        assertEquals("", m.preBolus3StatusText)
+        assertEquals(null, m.pb3GateData)
+        m.onLoopCycle(bg(165.0, 2.0), iob(1.0), 12.0)
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+        assertEquals(null, m.activeState)
+    }
+
+    @Test
+    fun `when the meal mode ends, a pre-bolus 3 piece due with the gates open is not given`() {
+        // Due (the last piece 25 min ago), BG high and rising: before, it would have fired after the meal.
+        val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 170) {
+            put("modeExpiryMs", System.currentTimeMillis() + 50L)
+            put("preBolus3PiecesGiven", 1)
+            put("preBolus3GivenU", 0.4)
+            put("preBolus3LastPieceMs", System.currentTimeMillis() - 25 * 60_000L)
+        }
+        Thread.sleep(100L)
+        m.onLoopCycle(bg(165.0, 2.0), iob(1.0), 12.0)
+        runBlocking { verify(commandQueue, never()).bolus(any()) }
+        assertEquals(null, m.activeState)
+    }
+
     @Test
     fun `a restored meal keeps its pre-bolus 3 pieces`() {
         val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 140) {

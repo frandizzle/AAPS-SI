@@ -454,6 +454,8 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
                 // Cancelled, or stopped part way: say so, it will not fire.
                 d.pb2Status.contains("cancelled") -> "$pb2 — cancelled"
                 d.pb2Status.contains("stopped")   -> "$pb2 — ${d.pb2Status.substringAfter("PB2: ")}"
+                // Before the countdown: "delivered 244min ago" once read as "delivers in 244m" (12 Nov).
+                d.pb2Status.contains("delivered") -> "$pb2 — ${d.pb2Status.substringAfter("PB2: ")}"
                 d.pb2Status.contains("due") -> "$pb2 — ready to deliver now"
                 Regex("""(\d+)min""").containsMatchIn(d.pb2Status) -> {
                     val mins = Regex("""(\d+)min""").find(d.pb2Status)?.groupValues?.get(1)
@@ -484,12 +486,14 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val piece3 = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U""").find(d.pb3Status)?.groupValues
             val pb3 = (if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3") +
                 (piece3?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
-            val pb3Ended = d.pb3Status.contains("cancel") || d.pb3Status.contains("stopped")
+            val pb3Ended = d.pb3Status.contains("cancel") || d.pb3Status.contains("stopped") || d.pb3Status.contains("done")
             val pb3Primary = when {
                 // Cancelled, or stopped part way: say so, it will not fire. 11 Nov: a cancelled pre-bolus 3 looked active.
                 d.pb3Status.contains("will cancel")     -> "$pb3 — will cancel (PB2 cancelled)"
                 d.pb3Status.contains("cancelled")       -> "$pb3 — cancelled"
                 d.pb3Status.contains("stopped")         -> "$pb3 — ${d.pb3Status.substringAfter("PB3: ")}"
+                // Before the countdown: "done 30min ago" must not read as "delivers in 30m".
+                d.pb3Status.contains("done")            -> "$pb3 — ${d.pb3Status.substringAfter("PB3: ")}"
                 d.pb3Status.contains("waiting for PB2") -> "$pb3 — waiting for PB2 to fire"
                 d.pb3Status.contains("due")             -> "$pb3 — ready to deliver now"
                 Regex("""(\d+)min""").containsMatchIn(d.pb3Status) -> {

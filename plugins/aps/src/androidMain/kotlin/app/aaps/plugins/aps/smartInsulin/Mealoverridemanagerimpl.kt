@@ -209,14 +209,21 @@ class MealOverrideManagerImpl @Inject constructor(
     override val preBolus1RestPending: Boolean
         get() = activeMealMode != null && _state?.preBolus1RestPending == true
 
+    /**
+     * The meal state while its mode runs; null once it has ended, also in the minutes before the next loop cycle drops it
+     * (see onLoopCycle). What the overview and the SI tab show reads this, so an ended meal does not stay on screen.
+     */
+    private val liveState: MealOverrideState?
+        get() = _state?.takeIf { System.currentTimeMillis() <= it.modeExpiryMs }
+
     override val preBolus2Pending: Boolean
-        get() = _state?.preBolus2Pending == true
+        get() = liveState?.preBolus2Pending == true
 
     override val preBolus3Pending: Boolean
-        get() = _state?.preBolus3Pending == true
+        get() = liveState?.preBolus3Pending == true
 
     override val preBolus2SecondsRemaining: Long? get() {
-        val s = _state?.takeIf { it.preBolus2Pending } ?: return null
+        val s = liveState?.takeIf { it.preBolus2Pending } ?: return null
         return (s.preBolus2NextAtMs - System.currentTimeMillis()) / 1000
     }
 
@@ -224,7 +231,7 @@ class MealOverrideManagerImpl @Inject constructor(
      *  Once PB2 has fired successfully, returns (fireAt - now), which may be negative if
      *  PB3 is overdue and waiting on safety gates. */
     override val preBolus3SecondsRemaining: Long? get() {
-        val s = _state?.takeIf { it.preBolus3Pending } ?: return null
+        val s = liveState?.takeIf { it.preBolus3Pending } ?: return null
         val fireAt = s.preBolus3NextAtMs ?: return null  // null when PB2 not fired yet; then the next piece's time
         return (fireAt - System.currentTimeMillis()) / 1000
     }
@@ -322,7 +329,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val pb2GateData: MealOverrideManager.Pb2GateData?
         get() {
-            val s = _state ?: return null
+            val s = liveState ?: return null
             // Only show PB2 gate data if PB2 was actually requested (dose > 0 and pending)
             if (s.preBolus2U <= 0.0 || !s.preBolus2Pending) return null
             if (lastMaxIob <= 0.0) return null
@@ -342,7 +349,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
     override val pb3GateData: MealOverrideManager.Pb2GateData?
         get() {
-            val s = _state ?: return null
+            val s = liveState ?: return null
             // Only show PB3 gate data if PB3 was actually requested (dose > 0 and pending)
             if (s.preBolus3U <= 0.0 || !s.preBolus3Pending) return null
             if (lastPb3MaxIob <= 0.0) return null
@@ -382,7 +389,7 @@ class MealOverrideManagerImpl @Inject constructor(
     }
 
     override val preBolus2StatusText: String get() {
-        val s   = _state ?: return ""
+        val s   = liveState ?: return ""
         if (s.preBolus2U <= 0.0) return ""  // PB2 never requested
         val now = System.currentTimeMillis()
         // What is still to come shows its dose, for example "PB2 (2.40 U): 32min 57s", or in pieces
@@ -421,7 +428,7 @@ class MealOverrideManagerImpl @Inject constructor(
     }
 
     override val preBolus3StatusText: String get() {
-        val s   = _state ?: return ""
+        val s   = liveState ?: return ""
         if (s.preBolus3U <= 0.0) return ""  // PB3 never requested
         val now = System.currentTimeMillis()
         // Waiting for pre-bolus 2 it shows the whole dose; once its time has come, the next piece, for example
@@ -721,6 +728,18 @@ class MealOverrideManagerImpl @Inject constructor(
         this.loopRestraining = loopRestraining
         preBolusThisCycleU = 0.0
         val s = _state ?: return
+        // A meal mode that has ended takes its waiting pre-boluses with it: what is left is dropped, never given after the
+        // meal. It was only dropped when a piece was due and blocked: a piece still minutes away kept the meal on screen,
+        // and one due with the gates open would have fired after the meal (12 Nov, pre-bolus 3 "in 40s" in Fasting).
+        if (System.currentTimeMillis() > s.modeExpiryMs) {
+            if (s.preBolus2Pending || s.preBolus3Pending)
+                aapsLogger.debug(LTag.APS, "SmartInsulin ${s.mode.label} ended: waiting pre-boluses dropped" +
+                    (if (s.preBolus2Pending) ", PB2 ${"%.2f".format(s.preBolus2WaitingU)}U left" else "") +
+                    (if (s.preBolus3Pending) ", PB3 ${"%.2f".format(s.preBolus3WaitingU)}U left" else ""))
+            _state = null
+            persistState()
+            return
+        }
         // The rest of pre-bolus 1 comes first. One bolus per cycle, so the loop sees it before anything else fires.
         if (s.preBolus1RestPending && processPreBolus1Rest(glucoseStatus, iobArray, maxIobU)) return
         // Skip entirely if neither PB2 nor PB3 is pending
@@ -859,13 +878,6 @@ class MealOverrideManagerImpl @Inject constructor(
 
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB2 BLOCKED: ${reasons.joinToString(", ")}")
-            // If mode has already expired, formally discard pending PB2 and clean up state entirely
-            if (now > s.modeExpiryMs) {
-                aapsLogger.debug(LTag.APS, "SmartInsulin PB2: mode expired, discarding pending PB2" +
-                    (if (s.preBolus3Pending) " and cascading cancel to PB3" else ""))
-                _state = null  // fully clean up — getter kept state alive for this formal discard
-                persistState()
-            }
             return
         }
 
@@ -1005,12 +1017,6 @@ class MealOverrideManagerImpl @Inject constructor(
 
         if (reasons.isNotEmpty()) {
             aapsLogger.debug(LTag.APS, "SmartInsulin PB3 BLOCKED: ${reasons.joinToString(", ")}")
-            // If mode has already expired, discard pending PB3 and clean up state entirely
-            if (now > s.modeExpiryMs) {
-                aapsLogger.debug(LTag.APS, "SmartInsulin PB3: mode expired, discarding pending PB3")
-                _state = null
-                persistState()
-            }
             return
         }
 
