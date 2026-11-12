@@ -301,11 +301,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val foodSteps = foods.takeIf { it.isNotEmpty() && mealMode != MealMode.FASTING && bgNotFalling && !underTargetNotRising }
             ?.let { MealFoodForecast.steps(it, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
 
-        // ── The carbs line and the fat and protein line: drawn, and the second one is the low guard's at the tail ──
-        // Orange (COB): the insulin and the carbs still to come, for the graph only. Yellow (the UAM slot): the same, and the
-        // fat and protein, but at most at the rate BG shows them now; at the tail the low guard uses it, see `forecast`. The whole estimate of the fat and protein drawn as one line climbed to
-        // 12 from 44 g that BG had not shown for hours (11 Nov); a heavy dinner that really kept coming rose 0.1 to 0.2 mmol
-        // per 5 min (10 Nov), and then this line rises with it.
+        // ── The carbs line (orange, COB): the insulin and the carbs still to come, for the graph only ──
         val carbFoods = foods.map { it.copy(fatProteinG = 0.0) }
         val fatProteinFoods = foods.map { it.copy(carbsG = 0.0, carbParts = emptyList()) }
         val carbForecast = foodSteps?.takeUnless { carbsDone }?.let {
@@ -316,11 +312,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val carbsNowMgdl = MealFoodForecast.steps(carbFoods, currentTime, dosingIsfMgdl, 0.0, 1).firstOrNull() ?: 0.0
         val fatProteinNowMgdl = MealFoodForecast.steps(fatProteinFoods, currentTime, dosingIsfMgdl, 0.0, 1).firstOrNull() ?: 0.0
         val fatProteinSeenShare = if (fatProteinNowMgdl > 0.0) ((ciSeen - carbsNowMgdl).coerceAtLeast(0.0) / fatProteinNowMgdl).coerceIn(0.0, 1.0) else 0.0
-        val fatProteinForecast = foodSteps?.takeIf { fatProteinNowMgdl > 0.0 }?.let {
-            val seenFoods = foods.map { f -> f.copy(fatProteinG = f.fatProteinG * fatProteinSeenShare) }
-            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins,
-                           food = MealFoodForecast.steps(seenFoods, currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size))
-        }
 
         // ── The blend: the estimate of the fat and protein hands over to BG as the carbs come in ──
         // The share of the meal's carbs still to come: 1 at the start, 0 once they are in. Early in a meal the estimate is
@@ -334,19 +325,27 @@ class DetermineBasalSmartInsulin @Inject constructor(
         }
         fun withFatProteinShare(share: Double) = foods.map { it.copy(fatProteinG = it.fatProteinG * share) }
 
-        // The forecast of the low guard and of lowering basal: the estimate's fat and protein by the share of carbs still to
-        // come, and for the rest what BG shows (the yellow line). At the tail it is the yellow line: a flat BG then has basal
-        // cut for the insulin alone, where the whole estimate kept basal running for food BG had not shown for hours.
-        val lowGuardFatProteinShare = carbsLeftShare + (1.0 - carbsLeftShare) * fatProteinSeenShare
-        val forecast = foodSteps?.let {
-            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins,
-                           food = MealFoodForecast.steps(withFatProteinShare(lowGuardFatProteinShare), currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size))
-        } ?: predictedBg
         // For extra insulin, the estimate's fat and protein by the share of carbs still to come, and nothing for what BG
         // shows: a short rise (a snack, the bounce after a low) would read as hours of food. At 6.6 rising 0.3 after a low and
         // a yoghurt it read as all of the estimate, and gave 1.45 U and a 3.7 U/h temp (11 Nov). What BG really shows is dosed
         // by the correction for the rise, the food match top-ups and the pieces of pre-bolus 3.
         val dosingFoodSteps = foodSteps?.let { MealFoodForecast.steps(withFatProteinShare(carbsLeftShare), currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size) }
+
+        // The food of the low guard and of lowering basal, drawn as the yellow line (the UAM slot: AAPS has no slot for fat
+        // and protein). The estimate's fat and protein by the share of carbs still to come, and for the rest what BG shows,
+        // but what BG shows only for the next [SEEN_AHEAD_MIN]: a rise now says little about hours from now. Counted to the
+        // end of the list, two bowls of popcorn after a dinner (each a rise of half an hour) read as 45 g of fat and
+        // protein still coming for 4 hours, the low guard saw no low with 4.4 U on board, the food match top-ups ran
+        // (5.65 U), and BG fell to 3.1 in the night (12 Nov). After the first hours only the estimate's share counts.
+        val lowGuardFatProteinShare = carbsLeftShare + (1.0 - carbsLeftShare) * fatProteinSeenShare
+        val lowGuardFoodSteps = foodSteps?.let {
+            val blend = MealFoodForecast.steps(withFatProteinShare(lowGuardFatProteinShare), currentTime, dosingIsfMgdl, ciAheadMgdl, bgiPerTick.size)
+            List(blend.size) { i -> if (i < SEEN_AHEAD_MIN / 5) blend[i] else dosingFoodSteps!![i] }
+        }
+        val forecast = lowGuardFoodSteps?.let {
+            predictBgCurve(startBg = currentBg, ci = ci, bgiPerTick = bgiPerTick, fadeMins = fadeMins, food = it)
+        } ?: predictedBg
+        val fatProteinForecast = forecast.takeIf { lowGuardFoodSteps != null && fatProteinNowMgdl > 0.0 }
         // For extra insulin the food counts only when BG itself asks for more: clearly above target, or rising.
         // Just above target and flat it once gave 3.2 U in 35 min at 6.2 for a protein snack still to come, right
         // after BG falling had kept the same food out and basal off at 9 (9 Nov). The same rule as the top-ups.
@@ -416,8 +415,8 @@ class DetermineBasalSmartInsulin @Inject constructor(
         rT.predBGs = app.aaps.core.interfaces.aps.Predictions()
         rT.predBGs?.IOB = rawPrediction
         // The carbs still to come drawn as the COB line (orange), as stock AAPS draws carbs; gone once the carbs are done. The
-        // fat and protein at the rate BG shows in the UAM slot (yellow): AAPS has no slot of its own for them, so the graph,
-        // Nightscout and the watch call it "UAM". See `fatProteinForecast`.
+        // low guard's forecast, with the fat and protein as it counts them, in the UAM slot (yellow): AAPS has no slot of its
+        // own for them, so the graph, Nightscout and the watch call it "UAM". See `lowGuardFoodSteps`.
         rT.predBGs?.COB = carbForecast?.take(rawPrediction.size)?.map { it.coerceIn(39.0, 401.0).toInt() }
         rT.predBGs?.UAM = fatProteinForecast?.take(rawPrediction.size)?.map { it.coerceIn(39.0, 401.0).toInt() }
 
@@ -456,6 +455,20 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val allFoodCapU    = FoodMatch.maxTopUpU(currentBg, targetBg)
         val allFoodCapped  = allFoodExtraU > allFoodCapU
         val insulinReq     = dosingReq + allFoodExtraU.coerceAtMost(allFoodCapU)
+
+        // The food match top-up compares the food coming in now with the insulin working 60 min from now. With a long
+        // insulin action 4 U on board is little at any one moment, so food at 0.5 mmol per 5 min always looked ahead of it,
+        // also when the insulin on board was far more than the food still coming: 5.65 U of top-ups at 6.4 to 7.8 after a
+        // dinner, and BG fell to 3.1 in the night (12 Nov). So no top-up while the insulin on board covers BG above target,
+        // the rise BG shows now carried on (as the forecast carries it), and the food still to come as extra insulin counts
+        // it: the carbs, and the estimate's fat and protein by the share of carbs still to come. Not the fat and protein "BG
+        // shows": that night popcorn carbs coming in faster than planned read as fat and protein at the list's full rate,
+        // 29 g in 2 hours, and the check would have let the top-ups run. A real wave still gets them: at the tail of a heavy
+        // dinner at 9 and rising, less was on board than this (10 Nov).
+        val topUpNeededU   = (currentBg - targetBg + ciAheadMgdl + (dosingFoodSteps?.take(SEEN_AHEAD_MIN / 5)?.sum() ?: 0.0))
+            .coerceAtLeast(0.0) / safeIsfMgdl
+        val topUpCovered   = foodMatchTopUp != null && currentIob >= topUpNeededU
+        val topUp          = foodMatchTopUp.takeUnless { topUpCovered }
 
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
@@ -530,6 +543,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (afterActivityText.isNotEmpty()) sb.append(" | $afterActivityText")
         foodMatchTopUp?.let {
             sb.append(" | food match=${"%.2f".format(Locale.US, it.doseU)}U food ${fmtIsf(it.foodMgdl, isMmol)} insulin ${fmtIsf(it.insulinMgdl, isMmol)}/5m in ${FoodMatch.LEAD_MIN}m")
+            if (topUpCovered) sb.append(" covered: IOB ${"%.2f".format(Locale.US, currentIob)}U, need ${"%.2f".format(Locale.US, topUpNeededU)}U")
         }
         if (preBolusThisCycleU > 0.0) sb.append(" | pre-bolus ${"%.2f".format(Locale.US, preBolusThisCycleU)}U this cycle: no extra")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
@@ -610,7 +624,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     !preBolusNow &&
                     !highTempTargetActive &&
                     bgClearsGuard &&
-                    (insulinReq > 0.0 || foodMatchTopUp != null)
+                    (insulinReq > 0.0 || topUp != null)
 
                 val correctionUnits = if (smbAllowed) {
                     // The plugin passes exactly the right fraction for this cycle —
@@ -620,7 +634,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val topUpU         = if (smbAllowed) (foodMatchTopUp?.doseU ?: 0.0) * cgmFraction else 0.0
+                val topUpU         = if (smbAllowed) (topUp?.doseU ?: 0.0) * cgmFraction else 0.0
                 val rawSmb         = max(if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0, topUpU)
                 val smbCap         = minOf(maxSmbU, iobHeadroom)
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)
@@ -827,6 +841,11 @@ class DetermineBasalSmartInsulin @Inject constructor(
         const val SLOW_RISE_MAX_MGDL                  = 0.3 * MMOL_TO_MGDL
         /** In this many minutes after a pre-bolus, extra insulin does not weigh all the food, only what is due soon. */
         const val ALL_FOOD_AFTER_PRE_BOLUS_MIN        = 60
+        /**
+         * What BG shows of the fat and protein counts this many minutes ahead, for the low guard and for the food match
+         * top-ups. The same window as the food extra insulin weighs, [DOSING_AHEAD_MIN].
+         */
+        const val SEEN_AHEAD_MIN                      = DOSING_AHEAD_MIN
 
     }
 }

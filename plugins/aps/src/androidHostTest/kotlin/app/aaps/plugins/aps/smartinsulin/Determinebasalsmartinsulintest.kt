@@ -793,6 +793,53 @@ class DetermineBasalSmartInsulinTest {
         assertEquals(noFoodSmb, rising.smb, 1e-9)
     }
 
+    /** A dinner late in its tail, as on 12 Nov: [carbsG] of 55 g of carbs still to come (popcorn), 49 g of fat and protein. */
+    private fun lateDinner(carbsG: Double): FoodToCome {
+        val now = System.currentTimeMillis()
+        val until = now + 80 * 60_000L
+        return FoodToCome(carbsG = carbsG, carbsUntilMs = until, fatProteinG = 49.0, fatProteinUntilMs = now + 3 * 60 * 60_000L + 24 * 60_000L,
+                          carbRatio = 5.0, carbParts = listOf(CarbsPart(leftG = carbsG, mealG = 55.0, untilMs = until, minutes = 115)))
+    }
+
+    @Test fun `no food match top-up while the insulin on board covers what the food still asks for`() {
+        // 12 Nov, the night after a dinner and two bowls of popcorn: 0.30 to 0.40 U top-ups every 5 min at 6.4 to 7.8 with
+        // more than 4 U on board, 5.65 U in all, and BG fell to 3.1.
+        val topUp = FoodMatch.TopUp(doseU = 0.40, foodMgdl = 10.8, insulinMgdl = 4.0)
+        for ((bg, delta, iobU) in listOf(Triple(122.0, -1.8, 4.41), Triple(130.0, 3.6, 4.24))) {
+            midDinner(bg = bg, delta = delta)
+            val iob = flatIobArray(iob = iobU, activity = 0.04)
+            val withTopUp = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(4.0), foodMatchTopUp = topUp)
+            val withTopUpSmb = withTopUp.smb
+            val reason = withTopUp.reason
+            assertTrue(reason.contains("covered: IOB"), reason)
+            // Only what BG itself asks for, as with no top-up at all.
+            val without = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(4.0))
+            assertEquals(without.smb, withTopUpSmb, 1e-9)
+        }
+    }
+
+    @Test fun `a real wave still gets its food match top-ups`() {
+        // 10 Nov, 23:42: a heavy dinner 5.5 hours in, BG 9.3 and rising 0.2 with 1.6 U on board: less than the rise asks.
+        midDinner(bg = 167.0, delta = 3.6)
+        val iob = flatIobArray(iob = 1.63, activity = 0.025)
+        val r = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(0.0),
+                       foodMatchTopUp = FoodMatch.TopUp(doseU = 0.45, foodMgdl = 8.0, insulinMgdl = 2.7))
+        assertFalse(r.reason.contains("covered"), r.reason)
+        assertTrue(r.smb >= 0.45 - 1e-9, r.reason)
+    }
+
+    @Test fun `the yellow line counts what BG shows for 2 hours only, not to the end of the list`() {
+        // 12 Nov: popcorn rising read as the dinner's fat and protein at the list's full rate, for 4 hours.
+        midDinner(bg = 120.0, delta = 15.0)
+        val r = invoke(iobArray = flatIobArray(iob = 0.0, activity = 0.0), mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(0.0))
+        val reason = r.reason
+        assertTrue(reason.contains("seen 100%"), reason)
+        val yellow = r.uamLine!!
+        // Rising in the first 2 hours; with no insulin and nothing but what BG showed, flat after them.
+        assertTrue(yellow[DetermineBasalSmartInsulin.SEEN_AHEAD_MIN / 5] > yellow[1], "$yellow")
+        assertEquals(yellow[DetermineBasalSmartInsulin.SEEN_AHEAD_MIN / 5 + 1], yellow.last(), "$yellow")
+    }
+
     @Test fun `with half the carbs still to come, extra insulin counts half the estimate of the fat and protein`() {
         // The blend: the estimate of the fat and protein hands over to BG as the carbs come in, with no step at the end.
         midDinner(bg = 160.0, delta = 2.0)
