@@ -173,9 +173,15 @@ class MealFoodForecastTest {
     fun `fat and protein take longer the more there is`() {
         assertEquals(180, MealEstimateCalibration.fatProteinMinutes(0.5))
         assertEquals(180, MealEstimateCalibration.fatProteinMinutes(1.0))
-        assertEquals(240, MealEstimateCalibration.fatProteinMinutes(2.0))
-        assertEquals(300, MealEstimateCalibration.fatProteinMinutes(3.0))
-        assertEquals(480, MealEstimateCalibration.fatProteinMinutes(10.0))
+        assertEquals(210, MealEstimateCalibration.fatProteinMinutes(2.0))
+        assertEquals(240, MealEstimateCalibration.fatProteinMinutes(3.0))
+        // 13 Nov lunch, about 6 units: 5 h, not 8 h.
+        assertEquals(300, MealEstimateCalibration.fatProteinMinutes(6.0))
+        assertEquals(300, MealEstimateCalibration.fatProteinMinutes(10.0))
+        // The user's "Fat and protein time" makes all of it shorter or longer.
+        assertEquals(240, MealEstimateCalibration.fatProteinMinutes(6.0, timePct = 80))
+        assertEquals(360, MealEstimateCalibration.fatProteinMinutes(6.0, timePct = 120))
+        assertEquals(90, MealEstimateCalibration.fatProteinMinutes(1.0, timePct = 50))
     }
 
     @Test

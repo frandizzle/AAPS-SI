@@ -313,6 +313,57 @@ class PreBolus2PiecesTest {
     }
 
     @Test
+    fun `with all the fat and protein still to come, the waiting pre-boluses do not fade`() {
+        val m = dinner(minAgo = 60, pb2 = 3.2, pb3 = 1.95) { put("preBolus2Pieces", 6) }
+        m.fadeWaitingPreBoluses(1.0)
+        val s = m.activeState!!
+        assertEquals(0.0, s.preBolus2DroppedU, 1e-9)
+        assertEquals(0.0, s.preBolus3DroppedU, 1e-9)
+    }
+
+    @Test
+    fun `the waiting pre-boluses fade with the fat and protein, pre-bolus 3 first`() {
+        // Half the fat and protein left: of 5.15 U planned, at most 2.575 U may still wait. Pre-bolus 3 (1.95 U) goes
+        // first, then 0.625 U of the pieces of pre-bolus 2.
+        val m = dinner(minAgo = 60, pb2 = 3.2, pb3 = 1.95) { put("preBolus2Pieces", 6) }
+        m.fadeWaitingPreBoluses(0.5)
+        val s = m.activeState!!
+        assertEquals(1.95, s.preBolus3DroppedU, 1e-9)
+        assertFalse(s.preBolus3Pending)
+        assertEquals(0.625, s.preBolus2DroppedU, 1e-9)
+        assertEquals(2.575, s.preBolus2LeftU, 1e-9)
+        assertTrue(s.preBolus2Pending)
+        // The same share again changes nothing; none left drops the rest and ends pre-bolus 2.
+        m.fadeWaitingPreBoluses(0.5)
+        assertEquals(0.625, m.activeState!!.preBolus2DroppedU, 1e-9)
+        m.fadeWaitingPreBoluses(0.0)
+        assertFalse(m.activeState!!.preBolus2Pending)
+        assertEquals(3.2, m.activeState!!.preBolus2DroppedU, 1e-9)
+    }
+
+    @Test
+    fun `pieces already given are not taken back when the fat and protein fades`() {
+        // 2 of 3.2 U given: 1.2 U waits. With 30 % left, 0.96 U of the 3.2 U plan may wait, so 0.24 U is dropped.
+        val m = dinner(minAgo = 120, pb2 = 3.2) {
+            put("preBolus2Pieces", 6); put("preBolus2PiecesGiven", 4); put("preBolus2GivenU", 2.0)
+            put("preBolus2LastPieceMs", System.currentTimeMillis() - 5 * 60_000L)
+        }
+        m.fadeWaitingPreBoluses(0.3)
+        val s = m.activeState!!
+        assertEquals(2.0, s.preBolus2GivenU, 1e-9)
+        assertEquals(0.24, s.preBolus2DroppedU, 1e-9)
+        assertEquals(0.96, s.preBolus2LeftU, 1e-9)
+    }
+
+    @Test
+    fun `one dose of pre-bolus 2 does not fade`() {
+        val m = dinner(minAgo = 30, pb2 = 0.5)
+        m.fadeWaitingPreBoluses(0.2)
+        assertEquals(0.0, m.activeState!!.preBolus2DroppedU, 1e-9)
+        assertTrue(m.activeState!!.preBolus2Pending)
+    }
+
+    @Test
     fun `pre-bolus 3 is not due before its time`() {
         val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 60)
         m.onLoopCycle(bg(170.0, 3.0), iob(1.0), 12.0)

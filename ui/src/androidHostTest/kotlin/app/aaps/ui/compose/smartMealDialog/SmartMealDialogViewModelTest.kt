@@ -149,6 +149,7 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(DoubleKey.ApsSmartInsulinMaxPreBolus)).thenReturn(4.0)
         whenever(preferences.get(DoubleKey.ApsSmartInsulinPreBolus2DefaultU)).thenReturn(2.0)
         whenever(preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins)).thenReturn(30)
+        whenever(preferences.get(IntKey.ApsSmartInsulinFatProteinTimePct)).thenReturn(100)
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinLunchDuraStrength)).thenReturn(1.0)
         whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")
@@ -1036,7 +1037,7 @@ internal class SmartMealDialogViewModelTest {
         with(sut.uiState.value) {
             assertThat(duraEnabled).isFalse()
             assertThat(pfAfter).isFalse()
-            assertThat(durationMinutes).isEqualTo(MealDosePlanner.MAX_MODE_MIN)
+            assertThat(durationMinutes).isEqualTo(345)  // 6 FPU: 45 min + 5 h
         }
     }
 

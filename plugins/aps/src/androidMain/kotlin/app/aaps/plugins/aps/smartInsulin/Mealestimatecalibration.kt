@@ -5,6 +5,7 @@ import app.aaps.core.interfaces.logging.LTag
 import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.MealEstimateCalibration
+import app.aaps.core.keys.IntKey
 import app.aaps.core.keys.StringNonKey
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -111,6 +112,11 @@ class MealEstimateCalibrationImpl @Inject constructor(
          */
         val slots: MutableList<CarbSlot> = mutableListOf(),
         /**
+         * The fat and protein by when they were eaten, as carbs: their grams only share out the meal's fat and protein. Each
+         * fades on its own time, see [fatProteinDueG]. Empty for a meal saved before these existed: all of it is then one.
+         */
+        val fatProteinSlots: MutableList<FatProteinSlot> = mutableListOf(),
+        /**
          * The meal's mode has ended and the loop went back to Fasting or a UAM mode: the loop is done with its food. It is
          * no longer counted as food from before in a later meal. It is still judged for learning when its window ends.
          */
@@ -119,6 +125,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
 
     /** Carbs of one speed eaten at one time: [grams] due by [untilMs], [minutes] after they were eaten. */
     private class CarbSlot(val grams: Double, val untilMs: Long, val minutes: Int)
+
+    /** Fat and protein of [grams] (as carbs) that start to come in at [fromMs]. */
+    private class FatProteinSlot(var grams: Double, val fromMs: Long)
 
     /** [parts] eaten at [eatenMs]; no parts: all [carbsG] at normal speed. */
     private fun slotsOf(parts: List<CarbPart>, carbsG: Double, eatenMs: Long): List<CarbSlot> =
@@ -159,12 +168,13 @@ class MealEstimateCalibrationImpl @Inject constructor(
             pending.removeAll { it.modeStartMs == modeStartMs }
             // An earlier meal with food still to come: the tracker cannot tell its tail from this meal, so
             // neither is compared with its estimate.
-            val earlier = pending.filter { it.modeStartMs < modeStartMs && modeStartMs <= it.windowEndMs && stillToCome(it).let { c -> c.carbsG + c.fatProteinG } >= MealFoodForecast.MIN_FOOD_G }
+            val earlier = pending.filter { it.modeStartMs < modeStartMs && modeStartMs <= it.windowEndMs && stillToCome(it, modeStartMs).let { c -> c.carbsG + c.fatProteinG } >= MealFoodForecast.MIN_FOOD_G }
             earlier.forEach { it.learn = false }
             pending.add(Pending(modeStartMs, windowEndMs, carbEquivG, carbsG, proteinG, fatG, learn = learn && earlier.isEmpty(),
                                 carbsUntilMs = eatenMs + longestMin(carbParts) * 60_000L, carbsMin = averageMin(carbParts),
                                 fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L,
-                                slots = slotsOf(carbParts, carbsG, eatenMs).toMutableList(), estimatedG = estimatedG.coerceIn(0.0, carbEquivG)))
+                                slots = slotsOf(carbParts, carbsG, eatenMs).toMutableList(), estimatedG = estimatedG.coerceIn(0.0, carbEquivG),
+                                fatProteinSlots = fatProteinSlotsOf(carbEquivG - carbsG, eatenMs)))
             while (pending.size > MAX_PENDING) pending.removeAt(0)
         }
         save()
@@ -223,6 +233,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
             p.slots.addAll(slotsOf(carbParts, carbsG, eatenMs))
             p.carbsUntilMs = maxOf(p.carbsUntilMs, eatenMs + longestMin(carbParts) * 60_000L)
         }
+        // Each food's fat and protein fades on its own time, from when it was eaten. A meal saved before this keeps its fat
+        // and protein as one.
+        if (carbEquivG > carbsG) {
+            if (p.fatProteinSlots.isEmpty() && p.carbEquivG > p.carbsG) p.fatProteinSlots.add(FatProteinSlot(p.carbEquivG - p.carbsG, p.fatProteinFromMs))
+            p.fatProteinSlots.addAll(fatProteinSlotsOf(carbEquivG - carbsG, eatenMs))
+        }
         // Fat and protein already on their way keep their start; the first fat and protein start when eaten.
         if (carbEquivG > carbsG && p.carbEquivG <= p.carbsG)
             p.fatProteinFromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
@@ -256,6 +272,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
                     carbsFactor = factorOf(carbsBefore, it.carbsG),
                     fatProteinFactor = factorOf(fatProteinBefore, it.carbEquivG - it.carbsG)
                 )
+                // The fat and protein of every food changes alike: the change cannot tell which food it was.
+                val fatProteinFactor = factorOf(fatProteinBefore, it.carbEquivG - it.carbsG)
+                it.fatProteinSlots.forEach { s -> s.grams *= fatProteinFactor }
                 // No food left: this is a meal without a food list again. Kept empty, it read as a meal whose food is all
                 // in, and the loop ignored every rise for the rest of the meal (7 Nov).
                 if (it.carbEquivG < EMPTY_MEAL_G) pending.remove(it)
@@ -285,13 +304,13 @@ class MealEstimateCalibrationImpl @Inject constructor(
         if (found != null) save()
     }
 
-    override fun foodStillToComeG(modeStartMs: Long): Double? {
+    override fun foodStillToComeG(modeStartMs: Long, nowMs: Long): Double? {
         val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs } } ?: return null
-        return stillToCome(p).let { it.carbsG + it.fatProteinG }
+        return stillToCome(p, nowMs).let { it.carbsG + it.fatProteinG }
     }
 
     override fun openMealsStillToComeG(nowMs: Long): Double =
-        synchronized(this) { pending.filter { !it.closed && nowMs <= it.windowEndMs } }.sumOf { stillToCome(it).let { c -> c.carbsG + c.fatProteinG } }
+        synchronized(this) { pending.filter { !it.closed && nowMs <= it.windowEndMs } }.sumOf { stillToCome(it, nowMs).let { c -> c.carbsG + c.fatProteinG } }
 
     /**
      * The food still to come of the meals started before the one at [modeStartMs] whose window is still open at [nowMs]:
@@ -299,7 +318,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
      * it next to this meal's. A meal that is [closed] is not counted.
      */
     fun earlierToCome(modeStartMs: Long, nowMs: Long): List<StillToCome> =
-        synchronized(this) { pending.filter { !it.closed && it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it) }
+        synchronized(this) { pending.filter { !it.closed && it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it, nowMs) }
 
     /**
      * The food still to come of the estimated meal started at [modeStartMs], for the loop's forecast; null when it has
@@ -307,7 +326,7 @@ class MealEstimateCalibrationImpl @Inject constructor(
      */
     fun stillToCome(modeStartMs: Long, nowMs: Long): StillToCome? {
         val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs && nowMs <= it.windowEndMs } } ?: return null
-        return stillToCome(p)
+        return stillToCome(p, nowMs)
     }
 
     /**
@@ -315,8 +334,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
      * For the running episode the
      * larger of its two counts is used: the BG rise it saw, or the food the insulin and BG account for. The second
      * keeps food that BG never showed (a flat BG with insulin working) from being counted as still to come.
+     *
+     * The fat and protein also fade with time: never more than [fatProteinDueG] at [nowMs], so all of it is gone by the
+     * end of its time, seen or not. Before 13 Nov it only went down as far as BG showed it, and a dinner whose fat and
+     * protein BG never clearly showed kept 37 g on the list for hours, keeping the low guard and the meal mode on it.
      */
-    private fun stillToCome(p: Pending): StillToCome {
+    private fun stillToCome(p: Pending, nowMs: Long): StillToCome {
         val f = factorFor(p)
         val seen = seenLeftG(p)
         val carbs = p.carbsG * f
@@ -333,12 +356,12 @@ class MealEstimateCalibrationImpl @Inject constructor(
             modeStartMs = p.modeStartMs,
             windowEndMs = p.windowEndMs,
             carbsG = (carbs - seen).coerceAtLeast(0.0),
-            fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceAtLeast(0.0),
+            fatProteinG = (fatProtein - (seen - carbs).coerceAtLeast(0.0)).coerceIn(0.0, fatProteinDueG(p, nowMs)),
             mealG = p.carbEquivG * f,
             carbsUntilMs = p.carbsUntilMs,
             fatProteinFromMs = p.fatProteinFromMs,
             fatProteinMealG = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f,
-            fatProteinMin = MealEstimateCalibration.fatProteinMinutes((p.carbEquivG - p.carbsG).coerceAtLeast(0.0) / FPU_CARB_G),
+            fatProteinMin = fatProteinMinutes((p.carbEquivG - p.carbsG).coerceAtLeast(0.0) / FPU_CARB_G),
             carbParts = parts
         )
     }
@@ -356,6 +379,27 @@ class MealEstimateCalibrationImpl @Inject constructor(
      */
     private fun seenG(p: Pending): Double =
         p.trackerG + (live?.takeIf { owner(it.startMs) === p }?.let { maxOf(it.estimatedGramsSoFar, it.balanceGramsSoFar) } ?: 0.0) - p.seenBeforeAddG
+
+    /**
+     * The fat and protein of [p] that its time still has to come at [nowMs], as carbs: each food's fat and protein comes in
+     * evenly over [MealEstimateCalibration.fatProteinMinutes] from 45 min after it was eaten. All of it before that, none after.
+     */
+    private fun fatProteinDueG(p: Pending, nowMs: Long): Double {
+        val f = factorFor(p)
+        val slots = p.fatProteinSlots.ifEmpty { listOf(FatProteinSlot((p.carbEquivG - p.carbsG).coerceAtLeast(0.0), p.fatProteinFromMs)) }
+        return slots.sumOf { s ->
+            val minutesMs = fatProteinMinutes(s.grams / FPU_CARB_G) * 60_000.0
+            s.grams * f * ((s.fromMs + minutesMs - nowMs) / minutesMs).coerceIn(0.0, 1.0)
+        }
+    }
+
+    /** [MealEstimateCalibration.fatProteinMinutes] at the user's "Fat and protein time" setting. */
+    private fun fatProteinMinutes(fpu: Double): Int =
+        MealEstimateCalibration.fatProteinMinutes(fpu, sp.getInt(IntKey.ApsSmartInsulinFatProteinTimePct.key, IntKey.ApsSmartInsulinFatProteinTimePct.defaultValue))
+
+    /** One slot of [grams] of fat and protein (as carbs) eaten at [eatenMs], or none when there is none. */
+    private fun fatProteinSlotsOf(grams: Double, eatenMs: Long): MutableList<FatProteinSlot> =
+        if (grams > 0.0) mutableListOf(FatProteinSlot(grams, eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L)) else mutableListOf()
 
     /** What the tracker has seen of [p] that is not yet set aside as fat and protein ([Pending.seenFatProteinG]). */
     private fun seenLeftG(p: Pending): Double = (seenG(p) - p.seenFatProteinG).coerceAtLeast(0.0)
@@ -462,7 +506,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                 .put("t", it.trackerG).put("n", it.episodes).put("cu", it.carbsUntilMs).put("l", it.learn)
                                 .put("fs", it.fatProteinFromMs).put("x", it.exercised).put("cm", it.carbsMin).put("sb", it.seenBeforeAddG).put("sf", it.seenFatProteinG).put("eg", it.estimatedG)
                                 .put("cl", it.closed)
-                                .put("cp", JSONArray().apply { it.slots.forEach { s -> put(JSONArray().put(s.grams).put(s.untilMs).put(s.minutes)) } }))
+                                .put("cp", JSONArray().apply { it.slots.forEach { s -> put(JSONArray().put(s.grams).put(s.untilMs).put(s.minutes)) } })
+                                .put("fpp", JSONArray().apply { it.fatProteinSlots.forEach { s -> put(JSONArray().put(s.grams).put(s.fromMs)) } }))
                     }
                 })
         }
@@ -487,6 +532,9 @@ class MealEstimateCalibrationImpl @Inject constructor(
                                         o.optDouble("sb", 0.0), o.optDouble("sf", 0.0), o.optDouble("eg", o.getDouble("ce")),
                                         slots = o.optJSONArray("cp")?.let { cp ->
                                             (0 until cp.length()).map { j -> cp.getJSONArray(j).let { s -> CarbSlot(s.getDouble(0), s.getLong(1), s.getInt(2)) } }
+                                        }.orEmpty().toMutableList(),
+                                        fatProteinSlots = o.optJSONArray("fpp")?.let { a ->
+                                            (0 until a.length()).map { j -> a.getJSONArray(j).let { s -> FatProteinSlot(s.getDouble(0), s.getLong(1)) } }
                                         }.orEmpty().toMutableList(),
                                         closed = o.optBoolean("cl", false)))
                 }

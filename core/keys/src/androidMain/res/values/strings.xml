@@ -463,6 +463,8 @@
     <string name="si_food_match_title">Match insulin to the food coming in</string>
     <string name="si_food_match_summary">Pre-bolus 2 comes about 30 minutes after pre-bolus 1, and pre-bolus 3 about 2 hours later, both at their normal size. The loop gives the rest in small doses while it sees the food coming in, only when BG is not falling and is at least 1 mmol/L (18 mg/dL) above target, or at target and rising. Each dose is at most 0.3 U near target, up to 0.6 U from 3 mmol/L (54 mg/dL) above it. It stops at 1.5 times the planned fat and protein insulin.</string>
     <string name="si_meal_plan_fat_protein_title">Planned meal: fat and protein (%)</string>
+    <string name="si_fat_protein_time_title">Fat and protein time (%)</string>
+    <string name="si_fat_protein_time_summary">How long the fat and protein of a meal take to come in. At 100 they start 45 min after eating and take 3 h for a small amount, up to 5 h for a big meal. The insulin the loop gives for them, and the pre-bolus 2 and 3 still waiting, fade over this time. Lower it if BG goes low late in meals, raise it if BG stays high 4 to 6 h after them.</string>
     <string name="si_meal_plan_fat_protein_summary">How much of the insulin for fat and protein pre-bolus 2 and 3 give, later in the meal. The usual count for fat and protein is often too high, so most people use less than 100. Pre-bolus 2 and 3 only fire if BG is above target and not falling.</string>
     <string name="si_food_goal_kcal_title">Daily calorie goal (kcal)</string>
     <string name="si_food_goal_carbs_title">Daily carbs goal (g)</string>

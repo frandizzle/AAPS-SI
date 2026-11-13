@@ -747,6 +747,7 @@ class SmartMealDialogViewModel(
             val settings = MealPlanSettings(
                 carbPct = preferences.get(IntKey.ApsSmartInsulinMealPlanCarbPct),
                 fatProteinPct = preferences.get(IntKey.ApsSmartInsulinMealPlanFatProteinPct),
+                fatProteinTimePct = preferences.get(IntKey.ApsSmartInsulinFatProteinTimePct),
                 pb3SharePct = preferences.get(IntKey.ApsSmartInsulinMealPlanPb3SharePct),
                 maxPreBolusU = state.maxPreBolus,
                 maxTotalU = preferences.get(DoubleKey.ApsSmartInsulinMealPlanMaxTotalU),
@@ -772,7 +773,7 @@ class SmartMealDialogViewModel(
                 val waitingU = running.preBolus2WaitingU + running.preBolus3WaitingU +
                     (if (running.preBolus1RestPending) running.preBolus1RestU else 0.0)
                 // Without the running meal's food, or BG, there is nothing to weigh the insulin on board against.
-                val balance = mealEstimateCalibration.foodStillToComeG(running.triggerTimeMs)?.let { food ->
+                val balance = mealEstimateCalibration.foodStillToComeG(running.triggerTimeMs, dateUtil.now())?.let { food ->
                     now.bgMgdl?.let { bg ->
                         profile?.let { p ->
                             InsulinBalance(

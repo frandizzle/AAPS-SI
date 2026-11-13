@@ -80,9 +80,10 @@ interface MealEstimateCalibration {
     /**
      * The food of the meal started at [modeStartMs] that has not come in yet, as carb equivalent in grams: its
      * estimate, scaled by [factor], less what the meal tracker has seen so far. Like the carbs on board of a
-     * bolus calculator. Null when that meal has no estimate, so nothing is known about it.
+     * bolus calculator. Its fat and protein also fade with time, so all of it is gone by the end of its time at
+     * [nowMs]. Null when that meal has no estimate, so nothing is known about it.
      */
-    fun foodStillToComeG(modeStartMs: Long): Double?
+    fun foodStillToComeG(modeStartMs: Long, nowMs: Long): Double?
 
     /**
      * The food of all meals whose window is still open at [nowMs] that has not come in yet, as carb equivalent in
@@ -100,17 +101,24 @@ interface MealEstimateCalibration {
         const val FAT_PROTEIN_START_MIN = 45
         /** Fat and protein of one fat-protein unit (100 kcal) take this long to come in, from when they start... */
         const val FAT_PROTEIN_MIN_PER_FPU1 = 180
-        /** ...one more hour for each unit more... */
-        const val FAT_PROTEIN_MIN_PER_FPU = 60
-        /** ...and at most this long, as for the largest meals of the usual fat and protein rule. */
-        const val FAT_PROTEIN_MAX_MIN = 480
+        /** ...half an hour more for each unit more... */
+        const val FAT_PROTEIN_MIN_PER_FPU = 30
+        /** ...and at most this long. */
+        const val FAT_PROTEIN_MAX_MIN = 300
 
         /**
          * Minutes a meal's fat and protein take to come in, from when they start: 3 h for one fat-protein unit (100 kcal),
-         * an hour more for each unit more, at most 8 h. Close to the usual fat and protein rule (Warsaw method), without its
-         * jumps. The loop's forecast and the length of a meal mode both use it.
+         * half an hour more for each unit more, at most 5 h. The loop's forecast and the length of a meal mode both use it.
+         *
+         * The usual fat and protein rule (Warsaw method) gives an hour more per unit, up to 8 h, and was used until 13 Nov.
+         * For this user it was far too long: a lunch of 6 units (wrap and yoghurt) was over about 4.5 h after eating while
+         * the list still had it coming until 8.75 h, and a dinner of 4.5 units was mostly in by 3.5 h. A meal that runs
+         * longer still gets insulin: at the tail BG leads.
+         *
+         * @param timePct the user's setting "Fat and protein time": all of it is this share longer or shorter, 100 = as above
          */
-        fun fatProteinMinutes(fpu: Double): Int =
-            (FAT_PROTEIN_MIN_PER_FPU1 + FAT_PROTEIN_MIN_PER_FPU * (fpu - 1.0).coerceAtLeast(0.0)).coerceAtMost(FAT_PROTEIN_MAX_MIN.toDouble()).toInt()
+        fun fatProteinMinutes(fpu: Double, timePct: Int = 100): Int =
+            ((FAT_PROTEIN_MIN_PER_FPU1 + FAT_PROTEIN_MIN_PER_FPU * (fpu - 1.0).coerceAtLeast(0.0)).coerceAtMost(FAT_PROTEIN_MAX_MIN.toDouble()) *
+                timePct.coerceAtLeast(1) / 100.0).toInt()
     }
 }

@@ -67,8 +67,8 @@ class MealDosePlannerTest {
         assertEquals(2.9, p.pb2U, 1e-9)
         assertEquals(0.0, p.pb3U, 1e-9)
         assertEquals(MealDosePlanner.PB2_DELAY_MIN, p.pb2DelayMin)
-        // The fat and protein start at 45 min and take 3 h 6 min: 4 h 51, up to 5 h.
-        assertEquals(300, p.durationMin)
+        // The fat and protein start at 45 min and take 3 h 33 min: 4 h 18, up to 4 h 30.
+        assertEquals(270, p.durationMin)
     }
 
     @Test
@@ -82,7 +82,7 @@ class MealDosePlannerTest {
         assertEquals(4.55, p.pb2U, 1e-9)    // 60 % of 7.63 U, down to the bolus step
         assertEquals(3.05, p.pb3U, 1e-9)    // 40 % of 7.63 U
         assertEquals(MealDosePlanner.PB3_DELAY_MIN, p.pb3DelayMin)
-        assertEquals(MealDosePlanner.MAX_MODE_MIN, p.durationMin)
+        assertEquals(345, p.durationMin)  // 45 min + the longest fat and protein time, 5 h
     }
 
     @Test
@@ -276,12 +276,14 @@ class MealDosePlannerTest {
     fun `the mode lasts as long as its food takes to come in`() {
         // Coffee with 200 mL of milk: 10 g of fast milk sugar, under 1 fat-protein unit: 75 min x 1.5, up to 2 h.
         assertEquals(120, MealDosePlanner.durationFor(meal(10.0, protein = 6.8, fat = 6.8), listOf(CarbPart(10.0, 75))))
-        // Lunch: 50 g normal and 2 units, pre-bolus 2 at 1 h: the fat and protein, 45 min + 4 h.
-        assertEquals(285, MealDosePlanner.durationFor(meal(50.0, protein = 25.0, fat = 11.1), listOf(CarbPart(50.0, 120)), lastPreBolusMin = 60))
-        // Slow pizza with 3 units: 45 min + 5 h.
-        assertEquals(345, MealDosePlanner.durationFor(meal(60.0, protein = 30.0, fat = 20.0), listOf(CarbPart(60.0, 180))))
-        // A huge meal stops at 7 h.
-        assertEquals(MealDosePlanner.MAX_MODE_MIN, MealDosePlanner.durationFor(meal(100.0, protein = 80.0, fat = 40.0), emptyList()))
+        // Lunch: 50 g normal and 2 units, pre-bolus 2 at 1 h: the fat and protein, 45 min + 3 h 30.
+        assertEquals(255, MealDosePlanner.durationFor(meal(50.0, protein = 25.0, fat = 11.1), listOf(CarbPart(50.0, 120)), lastPreBolusMin = 60))
+        // The same lunch with "Fat and protein time" at 120 %: 45 min + 4 h 12, rounded up to 15 min.
+        assertEquals(300, MealDosePlanner.durationFor(meal(50.0, protein = 25.0, fat = 11.1), listOf(CarbPart(50.0, 120)), lastPreBolusMin = 60, fatProteinTimePct = 120))
+        // Slow pizza with 3 units: 45 min + 4 h.
+        assertEquals(285, MealDosePlanner.durationFor(meal(60.0, protein = 30.0, fat = 20.0), listOf(CarbPart(60.0, 180))))
+        // A huge meal: its fat and protein take at most 5 h, so 45 min + 5 h.
+        assertEquals(345, MealDosePlanner.durationFor(meal(100.0, protein = 80.0, fat = 40.0), emptyList()))
         // Slow carbs alone: 3 h x 1.5.
         assertEquals(270, MealDosePlanner.durationFor(meal(40.0), listOf(CarbPart(40.0, 180))))
         // A late pre-bolus keeps it on an hour past it; no food at all is the shortest mode.
@@ -324,7 +326,7 @@ class MealDosePlannerTest {
         val a = MealDosePlanner.planAddition(meal(20.0, protein = 20.0, fat = 15.0), settings.copy(maxTotalU = 20.0), fired)
         assertEquals(0.0, a.pb2AddU, 1e-9)
         assertEquals(0.0, a.pb3AddU, 1e-9)
-        assertEquals(300, a.minutesLeft)
+        assertEquals(270, a.minutesLeft)
     }
 
     @Test

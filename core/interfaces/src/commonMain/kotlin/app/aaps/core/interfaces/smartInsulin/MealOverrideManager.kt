@@ -145,6 +145,15 @@ interface MealOverrideManager {
     fun countLoopSmbForPreBolus3(smbU: Double)
 
     /**
+     * The pre-bolus 2 and 3 insulin still waiting fades with the meal's fat and protein: never more than
+     * [fatProteinLeftShare] of their plan, the share of the fat and protein still on the food list. What is above it is
+     * dropped, pre-bolus 3 first (the tail), then the pieces of pre-bolus 2. Early in a meal the list is full and nothing
+     * changes; late in it, pieces that waited for BG are not given for fat and protein that has faded. Two dinners in a
+     * row (12 and 13 Nov) went low with the pieces and the loop still dosing for fat and protein that never came.
+     */
+    fun fadeWaitingPreBoluses(fatProteinLeftShare: Double)
+
+    /**
      * Keeps the running meal mode going while its food still comes in. When the mode ends within [EXTEND_CHECK_MIN]
      * minutes and BG still rises, or its food list still has food to come, it ends [EXTEND_STEP_MIN] minutes from now.
      * At most [EXTEND_MAX_MIN] minutes more in all, and never longer than [MAX_MODE_MIN] from the start. Without this the

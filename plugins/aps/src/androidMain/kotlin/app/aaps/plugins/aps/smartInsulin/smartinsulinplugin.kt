@@ -1526,7 +1526,6 @@ open class SmartInsulinPlugin @Inject constructor(
             nowMs = now,
             foodLeftG = still.carbsG + still.fatProteinG,
             csfMgdlPerG = isfMgdl / carbRatio,
-            bgRising = glucoseStatus.delta > 0.0,
             insulinAtLead = iobArray.getOrNull(FoodMatch.LEAD_MIN / 5)?.activity ?: 0.0,
             unitAtLead = InsulinActivityCurve.activityFraction(FoodMatch.LEAD_MIN.toDouble(), insulinPeakMin, insulinDiaMin),
             isfMgdl = isfMgdl,
@@ -1666,7 +1665,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // A meal mode does not end while its own food still raises BG: else UAM starts a new meal on that late rise, with
         // its own ISF and a large first SMB. Done before the mode is read, so this cycle already runs in the longer mode.
         val mealExtension = mealOverrideManager.activeState?.let { s ->
-            mealOverrideManager.extendWhileFoodComes(now, glucoseStatus.shortAvgDelta, mealEstimateCalibration.foodStillToComeG(s.triggerTimeMs))
+            mealOverrideManager.extendWhileFoodComes(now, glucoseStatus.shortAvgDelta, mealEstimateCalibration.foodStillToComeG(s.triggerTimeMs, now))
         }
         var mealMode = MealModeDetector.detect(mealOverrideManager)
 
@@ -1925,6 +1924,12 @@ open class SmartInsulinPlugin @Inject constructor(
                 aapsLogger.error(LTag.APS, "SmartInsulin PB3: SMB read failed: ${e.message}"); null
             }
             smbU?.let { mealOverrideManager.countLoopSmbForPreBolus3(it) }
+        }
+        // The pieces still waiting fade with the fat and protein on the food list, see fadeWaitingPreBoluses.
+        mealOverrideManager.activeState?.takeIf { !it.mode.isUam && (it.preBolus2Pending || it.preBolus3Pending) }?.let { s ->
+            mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.takeIf { it.fatProteinMealG > 0.0 }?.let { still ->
+                mealOverrideManager.fadeWaitingPreBoluses(still.fatProteinG / still.fatProteinMealG)
+            }
         }
         mealOverrideManager.onLoopCycle(
             glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
@@ -2424,7 +2429,7 @@ open class SmartInsulinPlugin @Inject constructor(
         // meals themselves, not from the forecast's share of them: a meal of almost only protein drops out of the forecast
         // once its few carbs are in, while all its protein, covered by pre-bolus 2, is still to come. A meal whose food is
         // all in counts as 0, so a rise then is not carried on. Null without a food list: UAM modes and Fasting are not limited.
-        val hasFoodList = earlierStill.isNotEmpty() || mealWithList?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs) != null } == true
+        val hasFoodList = earlierStill.isNotEmpty() || mealWithList?.let { mealEstimateCalibration.foodStillToComeG(it.triggerTimeMs, now) != null } == true
         val foodListG = if (hasFoodList) (earlierStill + listOfNotNull(runningStill)).sumOf { MealFoodForecast.foodLeftG(it, fatProteinShare) } else null
 
         val foodMatchTopUp = mealWithList?.let { meal ->
@@ -2671,6 +2676,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     StringKey.ApsSmartInsulinMealAiModel,
                     IntKey.ApsSmartInsulinMealPlanCarbPct,
                     IntKey.ApsSmartInsulinMealPlanFatProteinPct,
+                    IntKey.ApsSmartInsulinFatProteinTimePct,
                     BooleanKey.ApsSmartInsulinFoodMatch,
                     IntKey.ApsSmartInsulinMealPlanPb3SharePct,
                     IntKey.ApsSmartInsulinMealPlanPb2DelayMins,

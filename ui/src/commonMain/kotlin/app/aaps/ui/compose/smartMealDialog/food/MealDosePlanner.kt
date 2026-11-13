@@ -28,6 +28,7 @@ import kotlin.math.min
  *                         keep their size; pre-bolus 2 comes sooner, see [MealDosePlanner.FOOD_MATCH_PB2_AFTER_PB1_MIN]
  * @param fatProteinPreBoluses false for a meal the user gives no pre-bolus 2 (a morning coffee): its fat and protein are
  *                         left to the loop, and they do not make the mode longer
+ * @param fatProteinTimePct the user's "Fat and protein time" setting, see [MealEstimateCalibration.fatProteinMinutes]
  */
 data class MealPlanSettings(
     val carbPct: Int,
@@ -43,7 +44,8 @@ data class MealPlanSettings(
     val pb2DelayMin: Int = MealDosePlanner.PB2_DELAY_MIN,
     val pb3DelayMin: Int = MealDosePlanner.PB3_DELAY_MIN,
     val fatProteinPreBoluses: Boolean = true,
-    val foodMatch: Boolean = false
+    val foodMatch: Boolean = false,
+    val fatProteinTimePct: Int = 100
 )
 
 /**
@@ -235,7 +237,7 @@ object MealDosePlanner {
             pb3U = pb3,
             pb3DelayMin = settings.pb3DelayMin,
             durationMin = durationFor(
-                totals, carbParts, withFatProtein = settings.fatProteinPreBoluses,
+                totals, carbParts, withFatProtein = settings.fatProteinPreBoluses, fatProteinTimePct = settings.fatProteinTimePct,
                 lastPreBolusMin = when {
                     pb3 > 0.0 -> settings.pb2DelayMin + settings.pb3DelayMin
                     pb2 > 0.0 -> settings.pb2DelayMin
@@ -262,7 +264,7 @@ object MealDosePlanner {
      * @param carbParts the added carbs by speed; empty: all at normal speed
      */
     fun planAddition(totals: MealTotals, settings: MealPlanSettings, running: RunningMeal, carbParts: List<CarbPart> = emptyList()): MealAddition {
-        val minutesLeft = max(running.minutesLeft, durationFor(totals, carbParts))
+        val minutesLeft = max(running.minutesLeft, durationFor(totals, carbParts, fatProteinTimePct = settings.fatProteinTimePct))
         val ratio = settings.carbRatio.takeIf { it > 0.0 }
             ?: return MealAddition(0.0, 0.0, 0.0, minutesLeft, 0.0, 0.0, false, false, false)
         val carbsU = totals.carbsG * settings.factor / ratio
@@ -444,11 +446,12 @@ object MealDosePlanner {
      *
      * @param carbParts the carbs by speed; empty: all of [MealTotals.carbsG] at normal speed
      * @param lastPreBolusMin when the last pre-bolus fires, minutes from the start; 0 for none
+     * @param fatProteinTimePct the user's "Fat and protein time" setting
      */
-    fun durationFor(totals: MealTotals, carbParts: List<CarbPart>, lastPreBolusMin: Int = 0, withFatProtein: Boolean = true): Int {
+    fun durationFor(totals: MealTotals, carbParts: List<CarbPart>, lastPreBolusMin: Int = 0, withFatProtein: Boolean = true, fatProteinTimePct: Int = 100): Int {
         val parts = carbParts.ifEmpty { listOf(CarbPart(totals.carbsG, MealEstimateCalibration.DEFAULT_CARBS_MIN)) }.filter { it.carbsG > 0.0 }
         val carbsMin = parts.maxOfOrNull { ceil(it.minutes * MealEstimateCalibration.CARBS_STRETCH).toInt() } ?: 0
-        val fatProteinMin = if (withFatProtein && totals.fpu >= FPU_PB2) MealEstimateCalibration.FAT_PROTEIN_START_MIN + MealEstimateCalibration.fatProteinMinutes(totals.fpu) else 0
+        val fatProteinMin = if (withFatProtein && totals.fpu >= FPU_PB2) MealEstimateCalibration.FAT_PROTEIN_START_MIN + MealEstimateCalibration.fatProteinMinutes(totals.fpu, fatProteinTimePct) else 0
         val preBolusMin = if (lastPreBolusMin > 0) lastPreBolusMin + AFTER_LAST_PRE_BOLUS_MIN else 0
         val min = maxOf(MIN_MODE_MIN, carbsMin, fatProteinMin, preBolusMin)
         return ((min + 14) / 15 * 15).coerceAtMost(MAX_MODE_MIN)

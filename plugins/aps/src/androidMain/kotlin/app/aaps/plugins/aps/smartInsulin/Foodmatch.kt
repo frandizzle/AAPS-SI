@@ -81,16 +81,18 @@ object FoodMatch {
      * The top-up for this cycle, or null when none is needed.
      *
      * @param samples           the food seen, oldest first
-     * @param foodLeftG         the logged food still to come, in grams of carb equivalent
+     * @param foodLeftG         the logged food still to come, in grams of carb equivalent. It limits what is expected also
+     *                          while BG rises: the fat and protein on the list fade with time, so late in a meal the top-ups
+     *                          fade with them. Until 13 Nov a rise counted food past the list, and top-ups stayed as large as
+     *                          at the height of the meal until its end: two dinners in a row went low after it.
      * @param csfMgdlPerG       what one gram raises BG
-     * @param bgRising          BG goes up now: food seen past the logged amount still counts, the count was too low
      * @param insulinAtLead     insulin action [LEAD_MIN] from now, U/min, of all insulin on board
      * @param unitAtLead        action of one unit given now, [LEAD_MIN] from now, per min
      * @param roomU             see [roomU]
      * @param maxTopUpU         the most this top-up may be, see [maxTopUpU]
      */
     fun topUp(
-        samples: List<Sample>, nowMs: Long, foodLeftG: Double, csfMgdlPerG: Double, bgRising: Boolean,
+        samples: List<Sample>, nowMs: Long, foodLeftG: Double, csfMgdlPerG: Double,
         insulinAtLead: Double, unitAtLead: Double, isfMgdl: Double, bolusStep: Double, roomU: Double,
         maxTopUpU: Double = MAX_TOP_UP_U
     ): TopUp? {
@@ -98,8 +100,7 @@ object FoodMatch {
         if (recent.size < MIN_SAMPLES || unitAtLead <= 0.0 || isfMgdl <= 0.0 || bolusStep <= 0.0) return null
         val rate = max(0.0, recent.sumOf { it.foodMgdl } / recent.size)
         if (rate <= 0.0) return null
-        val logged = max(0.0, foodLeftG) * csfMgdlPerG
-        val left = if (bgRising) max(logged, rate * 2 * LEAD_STEPS) else logged
+        val left = max(0.0, foodLeftG) * csfMgdlPerG
         val food = min(rate, left / (2 * LEAD_STEPS))
         val insulin = max(0.0, insulinAtLead) * isfMgdl * 5.0
         val gap = food - insulin

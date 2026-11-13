@@ -467,6 +467,15 @@ enum class IntKey(
         summary = KeysStrings.si_meal_plan_fat_protein_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinFatProteinTimePct(
+        key = "si_fat_protein_time_pct",
+        defaultValue = 100,
+        min = 50,
+        max = 200,
+        title = KeysStrings.si_fat_protein_time_title,
+        summary = KeysStrings.si_fat_protein_time_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinMealPlanPb3SharePct(
         key = "si_meal_plan_pb3_share_pct",
         defaultValue = 40,

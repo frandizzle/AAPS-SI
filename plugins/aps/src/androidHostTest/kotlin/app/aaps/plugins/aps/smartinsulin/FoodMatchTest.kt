@@ -15,9 +15,9 @@ class FoodMatchTest {
     private fun samples(foodMgdl: Double, count: Int = 6) = (0 until count).map { FoodMatch.Sample(now - it * 300_000L, foodMgdl) }.reversed()
 
     private fun topUp(
-        samples: List<FoodMatch.Sample> = samples(10.0), foodLeftG: Double = 30.0, bgRising: Boolean = true,
+        samples: List<FoodMatch.Sample> = samples(10.0), foodLeftG: Double = 30.0,
         insulinAtLead: Double = 0.02, roomU: Double = 5.0, maxTopUpU: Double = FoodMatch.MAX_TOP_UP_U
-    ) = FoodMatch.topUp(samples, now, foodLeftG, csfMgdlPerG = 9.0, bgRising, insulinAtLead, unitAtLead, isfMgdl = 45.0, bolusStep = 0.05, roomU, maxTopUpU)
+    ) = FoodMatch.topUp(samples, now, foodLeftG, csfMgdlPerG = 9.0, insulinAtLead, unitAtLead, isfMgdl = 45.0, bolusStep = 0.05, roomU, maxTopUpU)
 
     @Test fun `food coming in faster than the insulin later gets a small dose`() {
         val r = topUp()
@@ -59,19 +59,14 @@ class FoodMatchTest {
         assertEquals(0.6, FoodMatch.maxTopUpU(target + 120.0, target), 1e-9)
     }
 
-    @Test fun `the logged food limits what is expected once BG stops rising`() {
-        // 2 g left is 18 mg/dL, spread over 2 hours.
-        val flat = topUp(foodLeftG = 2.0, bgRising = false, insulinAtLead = 0.0)
-        assertNotNull(flat)
-        assertEquals(0.75, flat!!.foodMgdl, 1e-9)
-        assertNull(topUp(foodLeftG = 0.0, bgRising = false, insulinAtLead = 0.0))
-    }
-
-    @Test fun `food past the logged amount still counts while BG rises`() {
-        // The count was too low: all the logged food is in, but BG goes on rising.
-        val r = topUp(foodLeftG = 0.0, bgRising = true)
+    @Test fun `the logged food limits what is expected, also while BG rises`() {
+        // 2 g left is 18 mg/dL, spread over 2 hours: the food seen comes in at 10 mg/dL per 5 min, but only 0.75 counts.
+        val r = topUp(foodLeftG = 2.0, insulinAtLead = 0.0)
         assertNotNull(r)
-        assertEquals(10.0, r!!.foodMgdl, 1e-9)
+        assertEquals(0.75, r!!.foodMgdl, 1e-9)
+        // All the logged food is in: no top-up, however fast BG rises. The loop's own correction is left for that.
+        assertNull(topUp(foodLeftG = 0.0, insulinAtLead = 0.0))
+        assertNull(topUp(samples = samples(30.0), foodLeftG = 0.0, insulinAtLead = 0.0))
     }
 
     @Test fun `flat BG near target allows no top-up`() {

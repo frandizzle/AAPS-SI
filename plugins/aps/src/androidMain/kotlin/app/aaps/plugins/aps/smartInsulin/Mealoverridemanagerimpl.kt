@@ -629,6 +629,33 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin PB3: loop gave ${"%.2f".format(loopU)}U of it" + if (done) ", pre-bolus 3 done" else "")
     }
 
+    override fun fadeWaitingPreBoluses(fatProteinLeftShare: Double) {
+        val s = _state ?: return
+        val step = MealOverrideManager.SPREAD_STEP_U
+        // One dose of pre-bolus 2 cannot be given in part, so only its pieces fade.
+        val pb2U = if (s.preBolus2Spread) s.preBolus2WaitingU else 0.0
+        val pb3U = s.preBolus3WaitingU
+        val allowedU = (s.preBolus2U + s.preBolus3U) * fatProteinLeftShare.coerceIn(0.0, 1.0)
+        var excessU = pb2U + pb3U - allowedU
+        if (excessU < step) return
+        val drop3U = minOf(excessU, pb3U).also { excessU -= it }
+        val drop2U = minOf(excessU, pb2U)
+        val now = System.currentTimeMillis()
+        val pb3Done = s.preBolus3Pending && pb3U - drop3U < step
+        val pb2Done = s.preBolus2Pending && s.preBolus2Spread && pb2U - drop2U < step
+        _state = s.copy(
+            preBolus2DroppedU = s.preBolus2DroppedU + drop2U,
+            preBolus2FiredMs = if (pb2Done) now else s.preBolus2FiredMs,
+            preBolus3DroppedU = s.preBolus3DroppedU + drop3U,
+            preBolus3FiredMs = if (pb3Done) now else s.preBolus3FiredMs
+        )
+        persistState()
+        aapsLogger.debug(
+            LTag.APS, "SmartInsulin: fat and protein ${"%.0f".format(fatProteinLeftShare * 100)} % left, waiting pre-boluses " +
+                "faded: pb2 -${"%.2f".format(drop2U)}U, pb3 -${"%.2f".format(drop3U)}U"
+        )
+    }
+
     override fun extendWhileFoodComes(nowMs: Long, shortAvgDeltaMgdl: Double, foodLeftG: Double?): MealOverrideManager.Extension? {
         val s = _state ?: return null
         if (s.mode.isUam) return null

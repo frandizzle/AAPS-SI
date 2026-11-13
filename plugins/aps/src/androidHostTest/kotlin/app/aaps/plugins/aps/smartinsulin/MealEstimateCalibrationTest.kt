@@ -3,8 +3,11 @@ package app.aaps.plugins.aps.smartInsulin
 import app.aaps.core.interfaces.logging.AAPSLogger
 import app.aaps.core.interfaces.smartInsulin.CarbPart
 import app.aaps.core.interfaces.smartInsulin.MealMode
+import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.plugins.aps.smartInsulin.testutil.FakePreferences
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -33,14 +36,14 @@ class MealEstimateCalibrationTest {
     @Test
     fun `food still to come is the estimate less what the tracker has seen`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 80.0, 60.0, 30.0, 10.0)
-        assertEquals(80.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(80.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         cal.onCycle(T0 + HOUR, InProgressEpisode(MealMode.DINNER, T0, 30.0))
-        assertEquals(50.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(50.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         // The episode ends, then a Protein/Fat one starts inside the same window.
         cal.onEpisode(episode(T0, 60.0))
         cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.UAM_PROTEIN_FAT, T0 + 2 * HOUR, 30.0))
-        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)    // never below zero
-        assertEquals(null, cal.foodStillToComeG(T0 + DAY))    // a meal without an estimate
+        assertEquals(0.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)    // never below zero
+        assertEquals(null, cal.foodStillToComeG(T0 + DAY, T0 + DAY))    // a meal without an estimate
     }
 
     @Test
@@ -59,7 +62,7 @@ class MealEstimateCalibrationTest {
     fun `food the insulin accounts for counts as seen when it is more than the rise`() {
         cal.recordEstimate(T0, T0 + 4 * HOUR, 80.0, 60.0, 30.0, 10.0)
         cal.onCycle(T0 + 2 * HOUR, InProgressEpisode(MealMode.DINNER, T0, estimatedGramsSoFar = 10.0, balanceGramsSoFar = 55.0))
-        assertEquals(25.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(25.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
     }
 
     @Test
@@ -73,7 +76,7 @@ class MealEstimateCalibrationTest {
     fun `a meal not for learning still counts as food, but is not judged`() {
         repeat(3) {
             cal.recordEstimate(T0 + it * DAY, T0 + it * DAY + 3 * HOUR, 100.0, 100.0, 0.0, 0.0, learn = false)
-            assertEquals(100.0, cal.foodStillToComeG(T0 + it * DAY)!!, 1e-9)
+            assertEquals(100.0, cal.foodStillToComeG(T0 + it * DAY, T0 + it * DAY)!!, 1e-9)
             cal.onEpisode(episode(T0 + it * DAY, 150.0))
             cal.onCycle(T0 + it * DAY + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         }
@@ -202,10 +205,10 @@ class MealEstimateCalibrationTest {
     @Test
     fun `a meal with all its logged food deleted has no food list again`() {
         cal.logFood(T0, T0 + 3 * HOUR, 19.9, 12.0, 4.0, 7.0, T0 + 14 * MIN, listOf(CarbPart(12.0, 120)), 0.0)
-        assertEquals(19.9, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(19.9, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         val change = cal.changeLoggedFood(T0 + 14 * MIN, -12.0, -4.0, -7.0)
         assertEquals(T0, change!!.modeStartMs)
-        assertNull(cal.foodStillToComeG(T0))
+        assertNull(cal.foodStillToComeG(T0, T0))
         assertNull(cal.stillToCome(T0, T0 + 20 * MIN))
     }
 
@@ -223,9 +226,9 @@ class MealEstimateCalibrationTest {
     fun `a removed food leaves nothing, and food from another time changes no meal`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
         assertNull(cal.changeLoggedFood(T0 + 4 * HOUR, -40.0, 0.0, 0.0))   // after the window
-        assertEquals(40.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(40.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         cal.changeLoggedFood(T0, -40.0, 0.0, 0.0)
-        assertNull(cal.foodStillToComeG(T0))
+        assertNull(cal.foodStillToComeG(T0, T0))
     }
 
     @Test
@@ -235,7 +238,7 @@ class MealEstimateCalibrationTest {
         cal.noteExercise(T0 + 4 * HOUR)                  // after its window: not this one
         cal.noteExercise(T0 + HOUR)
         cal = MealEstimateCalibrationImpl(sp, csv, log)
-        assertEquals(100.0, cal.foodStillToComeG(T0)!!, 1e-9)   // still food for the forecast
+        assertEquals(100.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)   // still food for the forecast
         cal.onEpisode(episode(T0, 60.0))
         cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(0, cal.mealsUsed)
@@ -286,7 +289,7 @@ class MealEstimateCalibrationTest {
     fun `food logged in an estimated meal adds to it, and the meal is not learned from`() {
         cal.recordEstimate(T0, T0 + 3 * HOUR, 40.0, 40.0, 0.0, 0.0)
         cal.logFood(T0, T0 + 3 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR)
-        assertEquals(60.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(60.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         cal.onEpisode(episode(T0, 60.0))
         cal.onCycle(T0 + 3 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(0, cal.mealsUsed)
@@ -302,7 +305,7 @@ class MealEstimateCalibrationTest {
         assertEquals(0, cal.earlierToCome(T0 + 5 * HOUR, T0 + 5 * HOUR).size)
         assertEquals(20.0, cal.openMealsStillToComeG(T0 + 5 * HOUR), 1e-9)
         // The snack's own food still counts, and a meal started later is not closed.
-        assertEquals(20.0, cal.foodStillToComeG(T0 + 5 * HOUR)!!, 1e-9)
+        assertEquals(20.0, cal.foodStillToComeG(T0 + 5 * HOUR, T0 + 5 * HOUR)!!, 1e-9)
         cal.closeMeals(beforeMs = T0 + 5 * HOUR)
         assertEquals(20.0, cal.openMealsStillToComeG(T0 + 5 * HOUR), 1e-9)
     }
@@ -335,7 +338,7 @@ class MealEstimateCalibrationTest {
         assertEquals(0, cal.earlierToCome(T0 + HOUR, T0 + 3 * HOUR).size)   // the snack's window is over
         // The dinner's episode belongs to the dinner, not to the snack whose window it falls in.
         cal.onEpisode(episode(T0 + HOUR, 70.0))
-        assertEquals(0.0, cal.foodStillToComeG(T0 + HOUR)!!, 1e-9)
+        assertEquals(0.0, cal.foodStillToComeG(T0 + HOUR, T0 + HOUR)!!, 1e-9)
         cal.onCycle(T0 + 4 * HOUR + MealEstimateCalibrationImpl.GRACE_MS + 1)
         assertEquals(0, cal.mealsUsed)
     }
@@ -355,15 +358,15 @@ class MealEstimateCalibrationTest {
         // Dinner of 40 g whose BG showed 70 g: 30 g came from food nobody counted.
         cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0)
         cal.onEpisode(episode(T0, 70.0))
-        assertEquals(0.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(0.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         // A yoghurt later: its 22 g are all still to come, not cancelled by the 30 g seen before it.
         cal.addToEstimate(T0, T0 + 4 * HOUR, 22.0, 22.0, 0.0, 0.0, eatenMs = T0 + 2 * HOUR)
         assertEquals(22.0, cal.stillToCome(T0, T0 + 2 * HOUR)!!.carbsG, 1e-9)
         cal = MealEstimateCalibrationImpl(sp, csv, log)
-        assertEquals(22.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(22.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
         // What the tracker sees after it counts against it as usual.
         cal.onEpisode(episode(T0 + 2 * HOUR, 10.0))
-        assertEquals(12.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(12.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
     }
 
     @Test
@@ -371,7 +374,7 @@ class MealEstimateCalibrationTest {
         cal.recordEstimate(T0, T0 + 4 * HOUR, 40.0, 40.0, 0.0, 0.0)
         cal.onEpisode(episode(T0, 30.0))
         cal.addToEstimate(T0, T0 + 4 * HOUR, 20.0, 20.0, 0.0, 0.0, eatenMs = T0 + HOUR)
-        assertEquals(30.0, cal.foodStillToComeG(T0)!!, 1e-9)
+        assertEquals(30.0, cal.foodStillToComeG(T0, T0)!!, 1e-9)
     }
 
     @Test
@@ -397,15 +400,71 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `fat and protein fade with time even when BG never shows them`() {
+        // 13 Nov dinner: 23 g carbs and 57 g fat and protein (5.7 units: 5 h from 45 min after eating). BG showed none of it.
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        assertEquals(57.0, cal.stillToCome(T0, T0 + 45 * MIN)!!.fatProteinG, 1e-9)
+        assertEquals(28.5, cal.stillToCome(T0, T0 + 45 * MIN + 150 * MIN)!!.fatProteinG, 1e-9)    // half its time, half of it
+        assertEquals(0.0, cal.stillToCome(T0, T0 + 45 * MIN + 300 * MIN)!!.fatProteinG, 1e-9)      // its time over: none
+        assertEquals(23.0, cal.foodStillToComeG(T0, T0 + 6 * HOUR)!!, 1e-9)                         // the carbs are not faded
+    }
+
+    @Test
+    fun `the fat and protein time setting makes the fade faster or slower`() {
+        // 80 %: the dinner's 5 h become 4 h, so half of it is left 2 h after it started.
+        sp.edit { putInt(IntKey.ApsSmartInsulinFatProteinTimePct.key, 80) }
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        assertEquals(28.5, cal.stillToCome(T0, T0 + 45 * MIN + 120 * MIN)!!.fatProteinG, 1e-9)
+        assertEquals(0.0, cal.stillToCome(T0, T0 + 45 * MIN + 240 * MIN)!!.fatProteinG, 1e-9)
+        // 120 %: 6 h.
+        sp.edit { putInt(IntKey.ApsSmartInsulinFatProteinTimePct.key, 120) }
+        assertEquals(28.5, cal.stillToCome(T0, T0 + 45 * MIN + 180 * MIN)!!.fatProteinG, 1e-9)
+    }
+
+    @Test
+    fun `fat and protein BG shows still come off sooner than the fade`() {
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        cal.onEpisode(episode(T0, 40.0))    // all 23 g carbs and 17 g of the fat and protein
+        // Early on the fade allows 48.45 g, but only 40 g are left.
+        assertEquals(40.0, cal.stillToCome(T0, T0 + 90 * MIN)!!.fatProteinG, 1e-9)
+        // Later the fade is lower than what is left.
+        assertEquals(28.5, cal.stillToCome(T0, T0 + 195 * MIN)!!.fatProteinG, 1e-9)
+    }
+
+    @Test
+    fun `food added later fades on its own time, also after a restart`() {
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        // A dessert 4 h in, 10 g of fat and protein: it starts at 4 h 45 and takes 3 h.
+        cal.addToEstimate(T0, T0 + 8 * HOUR, 10.0, 0.0, 10.0, 6.67, eatenMs = T0 + 4 * HOUR)
+        // At 4 h 45: the dinner's fat and protein is 20 % to come (11.4 g), the dessert's all of it (10 g).
+        assertEquals(21.4, cal.stillToCome(T0, T0 + 4 * HOUR + 45 * MIN)!!.fatProteinG, 0.01)
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(21.4, cal.stillToCome(T0, T0 + 4 * HOUR + 45 * MIN)!!.fatProteinG, 0.01)
+        // At 6 h 15: the dinner's is over, the dessert's half of it.
+        assertEquals(5.0, cal.stillToCome(T0, T0 + 6 * HOUR + 15 * MIN)!!.fatProteinG, 0.01)
+    }
+
+    @Test
+    fun `a meal saved before the fade keeps all its fat and protein as one`() {
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        // As saved by an older build: no fat and protein slots.
+        val raw = sp.getString(StringNonKey.ApsSmartInsulinMealEstimateCalibration.key, "")
+        sp.edit { putString(StringNonKey.ApsSmartInsulinMealEstimateCalibration.key, raw.replace(Regex(",\"fpp\":\\[[^\\]]*\\]\\]"), "")) }
+        assertFalse(sp.getString(StringNonKey.ApsSmartInsulinMealEstimateCalibration.key, "").contains("fpp"))
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        assertEquals(28.5, cal.stillToCome(T0, T0 + 45 * MIN + 150 * MIN)!!.fatProteinG, 1e-9)
+    }
+
+    @Test
     fun `the factor scales only the estimated part, and only all-estimated meals teach it`() {
         repeat(3) { meal(T0 + it * DAY, 100.0, 70.0) }
         assertEquals(0.7, cal.factor, 1e-9)
         // A scanned yoghurt: exact, so counted as it is.
         cal.recordEstimate(T0 + 10 * DAY, T0 + 10 * DAY + 3 * HOUR, 22.0, 22.0, 0.0, 0.0, estimatedG = 0.0)
-        assertEquals(22.0, cal.foodStillToComeG(T0 + 10 * DAY)!!, 1e-9)
+        assertEquals(22.0, cal.foodStillToComeG(T0 + 10 * DAY, T0 + 10 * DAY)!!, 1e-9)
         // Half estimated: 50 g as it is, 50 g at 0.7.
         cal.recordEstimate(T0 + 11 * DAY, T0 + 11 * DAY + 3 * HOUR, 100.0, 100.0, 0.0, 0.0, estimatedG = 50.0)
-        assertEquals(85.0, cal.foodStillToComeG(T0 + 11 * DAY)!!, 1e-9)
+        assertEquals(85.0, cal.foodStillToComeG(T0 + 11 * DAY, T0 + 11 * DAY)!!, 1e-9)
         // Neither teaches the factor.
         cal.onEpisode(episode(T0 + 10 * DAY, 40.0))
         cal.onEpisode(episode(T0 + 11 * DAY, 200.0))
@@ -420,7 +479,7 @@ class MealEstimateCalibrationTest {
         cal.resetFactor()
         assertEquals(1.0, cal.factor, 1e-9)
         assertEquals(0, cal.mealsUsed)
-        assertEquals(50.0, cal.foodStillToComeG(T0 + 10 * DAY)!!, 1e-9)
+        assertEquals(50.0, cal.foodStillToComeG(T0 + 10 * DAY, T0 + 10 * DAY)!!, 1e-9)
     }
 
     private companion object {
