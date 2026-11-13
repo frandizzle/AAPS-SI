@@ -123,8 +123,8 @@ interface MealOverrideManager {
      * the safety gates. It is a budget for the first wave of fat and protein: the first piece comes sooner if BG shows
      * the food coming in, and SMBs the loop gives in the meal come off the pieces, see [countLoopSmb]. Pre-bolus 3 stays
      * its own dose, timed from when the pieces are done, for the fat and protein that come in hours later. Call it right
-     * after [activateOverride]. For a meal of fat and protein with almost no carbs: it raises BG slowly over hours, so
-     * one large dose can work before the food does. See [spreadPieces].
+     * after [activateOverride]. Fat and protein raise BG slowly over hours, so one large dose can work before the food
+     * does. See [spreadPieces].
      */
     fun spreadPreBoluses(pieces: Int)
 
@@ -284,8 +284,6 @@ interface MealOverrideManager {
         const val PB1_REST_FROM_MIN  = 15
         const val PB1_REST_UNTIL_MIN = 45
 
-        /** A meal with fewer carbs than this gives pre-bolus 2 in pieces. */
-        const val SPREAD_MAX_CARBS_G = 10.0
         /** At most this many pieces, and none smaller than [SPREAD_MIN_PIECE_U]. */
         const val SPREAD_PIECES      = 6
         const val SPREAD_MIN_PIECE_U = 0.3
@@ -298,14 +296,14 @@ interface MealOverrideManager {
         const val SPREAD_STEP_U      = 0.05
 
         /**
-         * How many pieces pre-bolus 2 is given as, or 0 for the usual dose: only for a meal with almost no carbs, and only
-         * when the insulin is enough for 2 pieces of at least [SPREAD_MIN_PIECE_U].
+         * How many pieces pre-bolus 2 is given as, or 0 for the usual dose: when the insulin is enough for 2 pieces of at
+         * least [SPREAD_MIN_PIECE_U]. Pre-bolus 2 is all fat and protein, also in a meal with carbs (pre-bolus 1 has the
+         * carbs), so it comes in pieces whatever the carbs. Until 13 Nov only a meal under 10 g carbs had pieces: a lunch
+         * with 23 g carbs and 70 g protein would have had 5.65 U at once 30 min in, and the user stopped it at 1.8 U.
          *
-         * @param carbsG the meal's carbs, from its food list
          * @param fatProteinU pre-bolus 2
          */
-        fun spreadPieces(carbsG: Double, fatProteinU: Double): Int {
-            if (carbsG >= SPREAD_MAX_CARBS_G) return 0
+        fun spreadPieces(fatProteinU: Double): Int {
             val pieces = minOf(SPREAD_PIECES, (fatProteinU / SPREAD_MIN_PIECE_U + 1e-9).toInt())
             return if (pieces >= 2) pieces else 0
         }

@@ -216,10 +216,10 @@ data class SmartMealDialogUiState(
     val foodTotals: MealTotals get() = foodItems.totals()
 
     /**
-     * How many pieces pre-bolus 2 and 3 are given as, 0 for the usual doses. Only for a meal from a food list with
-     * almost no carbs: without a list nothing says what the pre-boluses are for.
+     * How many pieces pre-bolus 2 is given as, 0 for the usual dose. Only for a meal from a food list: without a list
+     * nothing says what the pre-boluses are for.
      */
-    val spreadPieces: Int get() = if (foodItems.isEmpty() || pb2() <= 0.0) 0 else MealOverrideManager.spreadPieces(foodTotals.carbsG, pb2())
+    val spreadPieces: Int get() = if (foodItems.isEmpty() || pb2() <= 0.0) 0 else MealOverrideManager.spreadPieces(pb2())
 
     /** Pre-bolus 2 and 3 as they will be given: 0 when off, never above the max pre-bolus. */
     fun pb2(): Double = if (pb2Enabled && pb2U > 0.0) pb2U.coerceAtMost(maxPreBolus) else 0.0
@@ -1170,7 +1170,7 @@ class SmartMealDialogViewModel(
             )
             if (state.pfAfter) mealOverrideManager.followWithProteinFat()
             if (state.pb1Rest() > 0.0) mealOverrideManager.setPreBolus1Rest(state.pb1Rest())
-            // Fat and protein with almost no carbs: pre-bolus 2 and 3 as small pieces, each through the gates.
+            // Pre-bolus 2 (fat and protein) as smaller pieces, each through the gates.
             state.spreadPieces.takeIf { it > 0 }?.let { mealOverrideManager.spreadPreBoluses(it) }
             // A meal cut after exercise says nothing about how much insulin the food needs, so it is not learned from.
             if (state.afterActivityPct > 0) mealOverrideManager.setAfterActivityCut(state.afterActivityPct)

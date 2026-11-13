@@ -503,11 +503,11 @@ fun SmartMealDialogScreen(
                     unitLabel = CoreUiStrings.insulin_unit_shortname
                 )
                 Hint(modifier = Modifier.padding(top = 4.dp), text = stringResource(UiStrings.si_prebolus_gate_hint))
-                // Fat and protein with almost no carbs: given in pieces, see MealOverrideManager.spreadPieces.
+                // Pre-bolus 2 (fat and protein) is given in pieces, see MealOverrideManager.spreadPieces.
                 if (state.spreadPieces > 0)
                     Hint(
                         modifier = Modifier.padding(top = 4.dp),
-                        text = stringResource(UiStrings.si_pb_spread_hint, state.spreadPieces, MealOverrideManager.SPREAD_GAP_MIN)
+                        text = stringResource(UiStrings.si_pb2_pieces_hint, state.spreadPieces, MealOverrideManager.SPREAD_GAP_MIN)
                     )
             }
 

@@ -24,7 +24,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
-/** Pre-bolus 2 and 3 of a meal with almost no carbs, given as small pieces that each go through the gates. */
+/** Pre-bolus 2 and 3 of a meal, given as smaller pieces that each go through the gates. */
 class PreBolus2PiecesTest {
 
     private val sp = FakePreferences()
@@ -63,12 +63,13 @@ class PreBolus2PiecesTest {
     private fun iob(u: Double): Array<IobTotal> = arrayOf(IobTotal(0L).apply { iob = u })
 
     @Test
-    fun `only a meal with almost no carbs is spread, in pieces of at least 0_3 U`() {
-        assertEquals(0, MealOverrideManager.spreadPieces(carbsG = 23.0, fatProteinU = 3.2))
-        assertEquals(6, MealOverrideManager.spreadPieces(carbsG = 2.0, fatProteinU = 3.2))
-        assertEquals(3, MealOverrideManager.spreadPieces(carbsG = 0.0, fatProteinU = 0.9))
+    fun `pre-bolus 2 is spread whatever the carbs, in pieces of at least 0_3 U`() {
+        // 13 Nov lunch, 23 g carbs and 70 g protein: 5.65 U of pre-bolus 2 as 6 pieces of about 0.94 U, not at once.
+        assertEquals(6, MealOverrideManager.spreadPieces(fatProteinU = 5.65))
+        assertEquals(6, MealOverrideManager.spreadPieces(fatProteinU = 3.2))
+        assertEquals(3, MealOverrideManager.spreadPieces(fatProteinU = 0.9))
         // Too little for 2 pieces: one dose, as before.
-        assertEquals(0, MealOverrideManager.spreadPieces(carbsG = 0.0, fatProteinU = 0.5))
+        assertEquals(0, MealOverrideManager.spreadPieces(fatProteinU = 0.5))
     }
 
     @Test
