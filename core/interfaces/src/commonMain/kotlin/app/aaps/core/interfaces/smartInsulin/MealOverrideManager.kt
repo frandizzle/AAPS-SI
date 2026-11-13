@@ -137,6 +137,14 @@ interface MealOverrideManager {
     fun countLoopSmb(smbU: Double)
 
     /**
+     * [smbU] is all the SMBs the loop gave from the pre-bolus 3 time on. They come off the pieces of pre-bolus 3 still to
+     * come, as [countLoopSmb] does for pre-bolus 2: both answer the same rise, and given on top of each other they were too
+     * much. A lunch on 13 Nov had pieces of 1.85 U and the loop's SMBs on the same wave, and BG fell from 8.6 to 5.0 in 75
+     * min with 2.4 U still on board.
+     */
+    fun countLoopSmbForPreBolus3(smbU: Double)
+
+    /**
      * Keeps the running meal mode going while its food still comes in. When the mode ends within [EXTEND_CHECK_MIN]
      * minutes and BG still rises, or its food list still has food to come, it ends [EXTEND_STEP_MIN] minutes from now.
      * At most [EXTEND_MAX_MIN] minutes more in all, and never longer than [MAX_MODE_MIN] from the start. Without this the

@@ -291,6 +291,28 @@ class PreBolus2PiecesTest {
     }
 
     @Test
+    fun `the loop's SMBs come off the pieces of pre-bolus 3, and a piece given is never taken back`() {
+        // 13 Nov lunch: pre-bolus 3 of 3.05 U in pieces, and the loop's SMBs on the same wave on top of them.
+        val m = withPb3(pb3 = 3.0, pb2DoneMinAgo = 130)
+        m.countLoopSmbForPreBolus3(1.2)
+        val s = m.activeState!!
+        assertEquals(1.2, s.preBolus3LoopU, 1e-9)
+        assertEquals(1.8, s.preBolus3LeftU, 1e-9)
+        assertTrue(m.preBolus3StatusText.contains("loop gave 1.20 U"), m.preBolus3StatusText)
+        // 3 mmol above target: the full piece, of what is left: 1.8 U over 6 pieces, 0.3 U.
+        m.onLoopCycle(bg(165.0, 0.0), iob(2.0), 12.0)
+        runBlocking { verify(commandQueue).bolus(argThat { insulin in 0.299..0.301 }) }
+        // The loop then gives more than is left: pre-bolus 3 is done, and the piece stays given.
+        m.countLoopSmbForPreBolus3(5.0)
+        val after = m.activeState!!
+        assertEquals(0.3, after.preBolus3GivenU, 1e-9)
+        assertEquals(2.7, after.preBolus3LoopU, 1e-9)
+        assertFalse(m.preBolus3Pending)
+        // Saved with the meal.
+        assertTrue(sp.getString(StringNonKey.ApsSmartInsulinOverrideState.key, "").contains("\"preBolus3LoopU\":2.7"))
+    }
+
+    @Test
     fun `pre-bolus 3 is not due before its time`() {
         val m = withPb3(pb3 = 2.4, pb2DoneMinAgo = 60)
         m.onLoopCycle(bg(170.0, 3.0), iob(1.0), 12.0)

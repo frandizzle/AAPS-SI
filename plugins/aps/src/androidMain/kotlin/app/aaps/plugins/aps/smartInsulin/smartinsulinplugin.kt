@@ -1917,6 +1917,15 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             smbU?.let { mealOverrideManager.countLoopSmb(it) }
         }
+        // The same for pre-bolus 3, from its time on: its pieces and the loop's SMBs answer the same rise.
+        mealOverrideManager.activeState?.takeIf { it.preBolus3Pending }?.preBolus3FireAtMs?.takeIf { now >= it }?.let { fromMs ->
+            val smbU = try {
+                persistenceLayer.getBolusesFromTimeToTime(fromMs, now, true).filter { it.type == BS.Type.SMB }.sumOf { it.amount }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SmartInsulin PB3: SMB read failed: ${e.message}"); null
+            }
+            smbU?.let { mealOverrideManager.countLoopSmbForPreBolus3(it) }
+        }
         mealOverrideManager.onLoopCycle(
             glucoseStatus, iobArray, constraintsChecker.getMaxIOBAllowed().value(), profile,
             // Rebound state and the previous decision are both carried over from the last cycle —

@@ -89,6 +89,7 @@ class MealOverrideManagerImpl @Inject constructor(
             put("preBolus3GivenU",  s.preBolus3GivenU)
             if (s.preBolus3LastPieceMs != null) put("preBolus3LastPieceMs", s.preBolus3LastPieceMs)
             put("preBolus3DroppedU", s.preBolus3DroppedU)
+            put("preBolus3LoopU",   s.preBolus3LoopU)
         }
         sp.edit { putString(StringNonKey.ApsSmartInsulinOverrideState.key, json.toString()) }
         aapsLogger.debug(LTag.APS, "SmartInsulin: override state persisted mode=${s.mode.label}")
@@ -138,7 +139,8 @@ class MealOverrideManagerImpl @Inject constructor(
                 preBolus3PiecesGiven = json.optInt("preBolus3PiecesGiven", 0),
                 preBolus3GivenU  = json.optDouble("preBolus3GivenU", 0.0),
                 preBolus3LastPieceMs = if (json.has("preBolus3LastPieceMs")) json.getLong("preBolus3LastPieceMs") else null,
-                preBolus3DroppedU = json.optDouble("preBolus3DroppedU", 0.0)
+                preBolus3DroppedU = json.optDouble("preBolus3DroppedU", 0.0),
+                preBolus3LoopU   = json.optDouble("preBolus3LoopU", 0.0)
             )
             val remainingMins = (modeExpiryMs - now) / 60_000
             aapsLogger.debug(LTag.APS, "SmartInsulin: override restored mode=${mode.label} ${remainingMins}min remaining" +
@@ -434,7 +436,8 @@ class MealOverrideManagerImpl @Inject constructor(
         // Waiting for pre-bolus 2 it shows the whole dose; once its time has come, the next piece, for example
         // "PB3 piece 2 of 6 (0.70 U, led by BG)".
         val pb3 = if (s.preBolus2FiredSuccessfully)
-            "PB3 piece ${s.preBolus3PiecesGiven + 1} of ${s.preBolus3Pieces} (${"%.2f".format(s.preBolus3NextPieceU)} U, led by BG)"
+            "PB3 piece ${s.preBolus3PiecesGiven + 1} of ${s.preBolus3Pieces} (${"%.2f".format(s.preBolus3NextPieceU)} U" +
+                (if (s.preBolus3LoopU > 0.0) ", loop gave ${"%.2f".format(s.preBolus3LoopU)} U" else "") + ", led by BG)"
         else "PB3 (${"%.2f".format(s.preBolus3U)} U)"
         return when {
             // Discarded (-1L)
@@ -614,6 +617,18 @@ class MealOverrideManagerImpl @Inject constructor(
         aapsLogger.debug(LTag.APS, "SmartInsulin PB2: loop gave ${"%.2f".format(loopU)}U of it" + if (done) ", pre-bolus 2 done" else "")
     }
 
+    override fun countLoopSmbForPreBolus3(smbU: Double) {
+        val s = _state ?: return
+        if (!s.preBolus3Pending) return
+        // Never more than the pieces had left, so a piece already given is never taken back.
+        val loopU = smbU.coerceIn(0.0, (s.preBolus3U - s.preBolus3GivenU - s.preBolus3DroppedU).coerceAtLeast(0.0))
+        if (abs(loopU - s.preBolus3LoopU) < ROUNDING_U) return
+        val done = s.preBolus3U - s.preBolus3GivenU - s.preBolus3DroppedU - loopU < MealOverrideManager.SPREAD_STEP_U
+        _state = s.copy(preBolus3LoopU = loopU, preBolus3FiredMs = if (done) System.currentTimeMillis() else null)
+        persistState()
+        aapsLogger.debug(LTag.APS, "SmartInsulin PB3: loop gave ${"%.2f".format(loopU)}U of it" + if (done) ", pre-bolus 3 done" else "")
+    }
+
     override fun extendWhileFoodComes(nowMs: Long, shortAvgDeltaMgdl: Double, foodLeftG: Double?): MealOverrideManager.Extension? {
         val s = _state ?: return null
         if (s.mode.isUam) return null
@@ -649,7 +664,7 @@ class MealOverrideManagerImpl @Inject constructor(
         val doneU = s.preBolus2GivenU + s.preBolus2LoopU + s.preBolus2DroppedU
         val pb2U = if (s.preBolus2Pending) doneU + scaled(s.preBolus2LeftU, fatProteinFactor) else s.preBolus2U
         val pb2Done = s.preBolus2Spread && s.preBolus2Pending && pb2U - doneU < MealOverrideManager.SPREAD_STEP_U
-        val done3U = s.preBolus3GivenU + s.preBolus3DroppedU
+        val done3U = s.preBolus3GivenU + s.preBolus3LoopU + s.preBolus3DroppedU
         val pb3U = if (s.preBolus3Pending) done3U + scaled(s.preBolus3LeftU, fatProteinFactor) else s.preBolus3U
         val pb3Done = s.preBolus3Pending && s.preBolus3PiecesGiven > 0 && pb3U - done3U < MealOverrideManager.SPREAD_STEP_U
         if (abs(restU - s.preBolus1RestU) < ROUNDING_U && abs(pb2U - s.preBolus2U) < ROUNDING_U && abs(pb3U - s.preBolus3U) < ROUNDING_U) return

@@ -30,6 +30,8 @@ package app.aaps.core.interfaces.smartInsulin
  *                      not carried on to later pieces: if the food really comes, BG rises and the loop gives the rest.
  * [preBolus3PiecesGiven], [preBolus3GivenU], [preBolus3LastPieceMs] — the pieces of pre-bolus 3 given so far, their
  *                      insulin, and when the last one was given. Pre-bolus 3 is always given in pieces led by BG.
+ * [preBolus3LoopU]   — SMBs the loop gave from the pre-bolus 3 time on, taken off its pieces still to come, see
+ *                      [MealOverrideManager.countLoopSmbForPreBolus3]. Never more than the pieces had left.
  */
 data class MealOverrideState(
     val mode:             MealMode,
@@ -62,7 +64,8 @@ data class MealOverrideState(
     val preBolus3PiecesGiven: Int = 0,
     val preBolus3GivenU:  Double  = 0.0,
     val preBolus3LastPieceMs: Long? = null,
-    val preBolus3DroppedU: Double = 0.0
+    val preBolus3DroppedU: Double = 0.0,
+    val preBolus3LoopU:   Double  = 0.0
 ) {
     /**
      * Pre-bolus 1 was stopped well short of the plan: at least [CUT_SHORT_MIN_U], or [CUT_SHORT_SHARE] of it, was
@@ -118,9 +121,12 @@ data class MealOverrideState(
     val preBolus3Pieces: Int
         get() = (preBolus3U / MealOverrideManager.SPREAD_MIN_PIECE_U + ROUNDING_U).toInt().coerceIn(1, MealOverrideManager.SPREAD_PIECES)
 
-    /** What the pieces of pre-bolus 3 still have to give: less what was given and what pieces led by BG left out. */
+    /**
+     * What the pieces of pre-bolus 3 still have to give: less what was given, the loop's SMBs taken off them, and what
+     * pieces led by BG left out.
+     */
     val preBolus3LeftU: Double
-        get() = (preBolus3U - preBolus3GivenU - preBolus3DroppedU).coerceAtLeast(0.0)
+        get() = (preBolus3U - preBolus3GivenU - preBolus3LoopU - preBolus3DroppedU).coerceAtLeast(0.0)
 
     val preBolus3WaitingU: Double
         get() = if (preBolus3Pending) preBolus3LeftU else 0.0
