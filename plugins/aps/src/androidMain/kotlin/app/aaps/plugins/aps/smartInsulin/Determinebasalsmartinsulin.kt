@@ -456,20 +456,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         val allFoodCapped  = allFoodExtraU > allFoodCapU
         val insulinReq     = dosingReq + allFoodExtraU.coerceAtMost(allFoodCapU)
 
-        // The food match top-up compares the food coming in now with the insulin working 60 min from now. With a long
-        // insulin action 4 U on board is little at any one moment, so food at 0.5 mmol per 5 min always looked ahead of it,
-        // also when the insulin on board was far more than the food still coming: 5.65 U of top-ups at 6.4 to 7.8 after a
-        // dinner, and BG fell to 3.1 in the night (12 Nov). So no top-up while the insulin on board covers BG above target,
-        // the rise BG shows now carried on (as the forecast carries it), and the food still to come as extra insulin counts
-        // it: the carbs, and the estimate's fat and protein by the share of carbs still to come. Not the fat and protein "BG
-        // shows": that night popcorn carbs coming in faster than planned read as fat and protein at the list's full rate,
-        // 29 g in 2 hours, and the check would have let the top-ups run. A real wave still gets them: at the tail of a heavy
-        // dinner at 9 and rising, less was on board than this (10 Nov).
-        val topUpNeededU   = (currentBg - targetBg + ciAheadMgdl + (dosingFoodSteps?.take(SEEN_AHEAD_MIN / 5)?.sum() ?: 0.0))
-            .coerceAtLeast(0.0) / safeIsfMgdl
-        val topUpCovered   = foodMatchTopUp != null && currentIob >= topUpNeededU
-        val topUp          = foodMatchTopUp.takeUnless { topUpCovered }
-
         // ── Reason string header ──────────────────────────────────────────────
         val sb = StringBuilder()
         // Pipe-separated compact format — each key piece separated by " | "
@@ -543,7 +529,6 @@ class DetermineBasalSmartInsulin @Inject constructor(
         if (afterActivityText.isNotEmpty()) sb.append(" | $afterActivityText")
         foodMatchTopUp?.let {
             sb.append(" | food match=${"%.2f".format(Locale.US, it.doseU)}U food ${fmtIsf(it.foodMgdl, isMmol)} insulin ${fmtIsf(it.insulinMgdl, isMmol)}/5m in ${FoodMatch.LEAD_MIN}m")
-            if (topUpCovered) sb.append(" covered: IOB ${"%.2f".format(Locale.US, currentIob)}U, need ${"%.2f".format(Locale.US, topUpNeededU)}U")
         }
         if (preBolusThisCycleU > 0.0) sb.append(" | pre-bolus ${"%.2f".format(Locale.US, preBolusThisCycleU)}U this cycle: no extra")
         if (activityLevel != ActivityMonitor.ActivityLevel.SEDENTARY)
@@ -624,7 +609,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                     !preBolusNow &&
                     !highTempTargetActive &&
                     bgClearsGuard &&
-                    (insulinReq > 0.0 || topUp != null)
+                    (insulinReq > 0.0 || foodMatchTopUp != null)
 
                 val correctionUnits = if (smbAllowed) {
                     // The plugin passes exactly the right fraction for this cycle —
@@ -634,7 +619,7 @@ class DetermineBasalSmartInsulin @Inject constructor(
                 } else 0.0
 
                 val bolusStep      = oapsProfile.bolus_increment.takeIf { it > 0.0 } ?: 0.05
-                val topUpU         = if (smbAllowed) (topUp?.doseU ?: 0.0) * cgmFraction else 0.0
+                val topUpU         = if (smbAllowed) (foodMatchTopUp?.doseU ?: 0.0) * cgmFraction else 0.0
                 val rawSmb         = max(if (correctionUnits > 0.0) (Math.ceil(correctionUnits / bolusStep) * bolusStep) else 0.0, topUpU)
                 val smbCap         = minOf(maxSmbU, iobHeadroom)
                 val clampedSmb     = rawSmb.coerceAtMost(smbCap)

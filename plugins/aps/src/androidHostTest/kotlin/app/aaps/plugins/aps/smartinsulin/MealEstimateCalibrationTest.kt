@@ -375,6 +375,28 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `carbs added after the fat and protein started coming in are still to come, and the seen fat and protein stays seen`() {
+        // 12 Nov: a dinner of 23 g carbs and 57 g fat and protein as carbs. BG has shown 60 g: all the carbs and 37 g of the
+        // fat and protein, so 20 g of it is left.
+        cal.recordEstimate(T0, T0 + 6 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        cal.onEpisode(episode(T0, 60.0))
+        cal.stillToCome(T0, T0 + 3 * HOUR)!!.let { assertEquals(0.0, it.carbsG, 1e-9); assertEquals(20.0, it.fatProteinG, 1e-9) }
+        // Popcorn: 16 g carbs, 6.2 g fat and protein. Its carbs are all still to come; the dinner's 37 g stay seen. (Before,
+        // the 60 g seen covered all 39 g of carbs, and 42 g of fat and protein was on the list.)
+        cal.addToEstimate(T0, T0 + 6 * HOUR, 22.2, 16.0, 2.0, 6.0, eatenMs = T0 + 3 * HOUR)
+        cal.stillToCome(T0, T0 + 3 * HOUR)!!.let { assertEquals(16.0, it.carbsG, 1e-9); assertEquals(26.2, it.fatProteinG, 1e-9) }
+        // The same after a restart.
+        cal = MealEstimateCalibrationImpl(sp, csv, log)
+        cal.stillToCome(T0, T0 + 3 * HOUR)!!.let { assertEquals(16.0, it.carbsG, 1e-9); assertEquals(26.2, it.fatProteinG, 1e-9) }
+        // What BG shows after it counts against the popcorn's carbs first, then the fat and protein.
+        cal.onEpisode(episode(T0 + 3 * HOUR, 20.0))
+        cal.stillToCome(T0, T0 + 4 * HOUR)!!.let { assertEquals(0.0, it.carbsG, 1e-9); assertEquals(22.2, it.fatProteinG, 1e-9) }
+        // A second bowl does the same.
+        cal.addToEstimate(T0, T0 + 6 * HOUR, 22.2, 16.0, 2.0, 6.0, eatenMs = T0 + 4 * HOUR)
+        cal.stillToCome(T0, T0 + 4 * HOUR)!!.let { assertEquals(16.0, it.carbsG, 1e-9); assertEquals(28.4, it.fatProteinG, 1e-9) }
+    }
+
+    @Test
     fun `the factor scales only the estimated part, and only all-estimated meals teach it`() {
         repeat(3) { meal(T0 + it * DAY, 100.0, 70.0) }
         assertEquals(0.7, cal.factor, 1e-9)
