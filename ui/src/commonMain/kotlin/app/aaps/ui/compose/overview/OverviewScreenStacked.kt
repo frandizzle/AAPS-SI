@@ -29,6 +29,7 @@ import app.aaps.core.ui.compose.preference.PreferenceSubScreenDef
 import app.aaps.ui.compose.main.TempTargetChipState
 import app.aaps.ui.compose.manageSheet.ManageViewModel
 import app.aaps.ui.compose.overview.aapsClient.AapsClientStatusCard
+import app.aaps.ui.compose.overview.chips.ActiveMealCard
 import app.aaps.ui.compose.overview.chips.ChipsViewModel
 import app.aaps.ui.compose.overview.chips.SmartInsulinChipsRow
 import app.aaps.ui.compose.overview.graphs.GraphViewModel
@@ -91,6 +92,7 @@ fun OverviewScreenStacked(
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(false) }
+    var mealExpanded by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -147,6 +149,9 @@ fun OverviewScreenStacked(
                 smartInsulinState = smartInsulinState,
                 basalRateText = basalRateText,
                 showIobRow = !siLayout,
+                mealExpanded = mealExpanded,
+                onMealToggle = { mealExpanded = !mealExpanded },
+                showMealCardHere = false,
                 onNavigate = onNavigate,
                 onTbrChipClick = onTbrChipClick,
                 onIobChipClick = onIobChipClick,
@@ -156,6 +161,9 @@ fun OverviewScreenStacked(
                     .padding(start = 8.dp)
             )
         }
+
+        // The open "Active meal" card, full width under the BG row: the chips column beside the BG is too narrow for it.
+        if (mealExpanded) smartInsulinState?.activeMeal?.let { ActiveMealCard(it) }
 
         if (siLayout)
             SmartInsulinChipsRow(

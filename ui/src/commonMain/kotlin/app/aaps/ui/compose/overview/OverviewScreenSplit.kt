@@ -92,6 +92,7 @@ fun OverviewScreenSplit(
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
+    var mealExpanded by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -171,6 +172,8 @@ fun OverviewScreenSplit(
                             sensitivityUiState = sensitivityUiState,
                             smartInsulinState = smartInsulinState,
                             basalRateText = basalRateText,
+                            mealExpanded = mealExpanded,
+                            onMealToggle = { mealExpanded = !mealExpanded },
                             onNavigate = onNavigate,
                             onTbrChipClick = onTbrChipClick,
                             onIobChipClick = onIobChipClick,

@@ -20,6 +20,7 @@ import app.aaps.core.ui.compose.LocalClientRole
 import app.aaps.core.ui.compose.navigation.NavigationRequest
 import app.aaps.core.ui.compose.stringResource
 import app.aaps.ui.compose.main.TempTargetChipState
+import app.aaps.ui.compose.overview.chips.ActiveMealCard
 import app.aaps.ui.compose.overview.chips.CobUiState
 import app.aaps.ui.compose.overview.chips.SmartInsulinChipsRow
 import app.aaps.ui.compose.overview.chips.SmartInsulinStatusBlock
@@ -57,6 +58,12 @@ fun OverviewChipsColumn(
     basalRateText: String = "",
     /** False when the screen draws the IOB row and sensitivity itself (the SmartInsulin phone layout). */
     showIobRow: Boolean = true,
+    /** The "Active meal" card is open; see SmartInsulinStatusBlock. */
+    mealExpanded: Boolean = false,
+    /** Opens or closes the "Active meal" card; null for no arrow on the meal line. */
+    onMealToggle: (() -> Unit)? = null,
+    /** Draw the open "Active meal" card in this column. False when the screen draws it itself, full width (phone). */
+    showMealCardHere: Boolean = true,
     onNavigate: (NavigationRequest) -> Unit,
     onTbrChipClick: () -> Unit,
     onIobChipClick: () -> Unit,
@@ -91,7 +98,8 @@ fun OverviewChipsColumn(
             commandsAllowed = commandsAllowed,
             siLayout = smartInsulinState != null
         )
-        smartInsulinState?.let { SmartInsulinStatusBlock(it) }
+        smartInsulinState?.let { SmartInsulinStatusBlock(it, mealExpanded = mealExpanded, onMealToggle = onMealToggle) }
+        if (showMealCardHere && mealExpanded) smartInsulinState?.activeMeal?.let { ActiveMealCard(it) }
         if (showIobRow) {
             if (smartInsulinState != null)
                 SmartInsulinChipsRow(

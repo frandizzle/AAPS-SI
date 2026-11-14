@@ -99,6 +99,7 @@ fun OverviewScreenTablet(
     val statusState by statusViewModel.uiState.collectAsStateWithLifecycle()
 
     var statusExpanded by rememberSaveable { mutableStateOf(true) }
+    var mealExpanded by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -176,6 +177,8 @@ fun OverviewScreenTablet(
                             sensitivityUiState = sensitivityUiState,
                             smartInsulinState = smartInsulinState,
                             basalRateText = basalRateText,
+                            mealExpanded = mealExpanded,
+                            onMealToggle = { mealExpanded = !mealExpanded },
                             onNavigate = onNavigate,
                             onTbrChipClick = onTbrChipClick,
                             onIobChipClick = onIobChipClick,

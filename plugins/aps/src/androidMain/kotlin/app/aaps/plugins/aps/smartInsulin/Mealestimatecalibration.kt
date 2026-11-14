@@ -49,6 +49,23 @@ data class StillToCome(
 data class LoggedFoodChange(val modeStartMs: Long, val carbsFactor: Double, val fatProteinFactor: Double)
 
 /**
+ * A running meal for the "Active meal" card, see `MealEstimateCalibrationImpl.mealView`. Carbs in grams; the fat and protein
+ * in grams of carb equivalent, scaled by the learned factor like the rest of the list, before the share that gets insulin.
+ */
+data class MealView(
+    val eatenCarbsG: Double,
+    val eatenProteinG: Double,
+    val eatenFatG: Double,
+    val carbsTotalG: Double,
+    val carbsLeftG: Double,
+    val carbsDoneMs: Long?,
+    val fatProteinTotalG: Double,
+    val fatProteinLeftG: Double,
+    val fatProteinFromMs: Long?,
+    val fatProteinEndMs: Long?
+)
+
+/**
  * The carbs of a meal that come in at one speed.
  *
  * @param leftG   still to come
@@ -319,6 +336,32 @@ class MealEstimateCalibrationImpl @Inject constructor(
      */
     fun earlierToCome(modeStartMs: Long, nowMs: Long): List<StillToCome> =
         synchronized(this) { pending.filter { !it.closed && it.modeStartMs < modeStartMs && nowMs <= it.windowEndMs } }.map { stillToCome(it, nowMs) }
+
+    /**
+     * The meal started at [modeStartMs] as the "Active meal" card shows it, at [nowMs]: what was eaten, what is left, and
+     * when it should be in. Null when the meal has no estimate or its window is over.
+     */
+    fun mealView(modeStartMs: Long, nowMs: Long): MealView? {
+        val p = synchronized(this) { pending.firstOrNull { it.modeStartMs == modeStartMs && nowMs <= it.windowEndMs } } ?: return null
+        val still = stillToCome(p, nowMs)
+        val f = factorFor(p)
+        val slots = p.fatProteinSlots.ifEmpty { listOf(FatProteinSlot((p.carbEquivG - p.carbsG).coerceAtLeast(0.0), p.fatProteinFromMs)) }
+            .filter { it.grams > 0.0 }
+        return MealView(
+            eatenCarbsG = p.carbsG, eatenProteinG = p.proteinG, eatenFatG = p.fatG,
+            carbsTotalG = p.carbsG * f, carbsLeftG = still.carbsG,
+            carbsDoneMs = still.parts.filter { it.leftG > 0.0 }.maxOfOrNull { MealFoodForecast.carbsUntil(it, nowMs) },
+            fatProteinTotalG = still.fatProteinMealG, fatProteinLeftG = still.fatProteinG,
+            fatProteinFromMs = slots.minOfOrNull { it.fromMs },
+            fatProteinEndMs = slots.maxOfOrNull { it.fromMs + fatProteinMinutes(it.grams / FPU_CARB_G) * 60_000L }
+        )
+    }
+
+    /** When fat and protein of [grams] (as carbs) eaten at [eatenMs] start to count and have faded out, at the user's setting. */
+    fun fatProteinWindow(grams: Double, eatenMs: Long): Pair<Long, Long> {
+        val fromMs = eatenMs + MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
+        return fromMs to fromMs + fatProteinMinutes(grams / FPU_CARB_G) * 60_000L
+    }
 
     /**
      * The food still to come of the estimated meal started at [modeStartMs], for the loop's forecast; null when it has

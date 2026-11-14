@@ -213,6 +213,8 @@ open class SmartInsulinPlugin @Inject constructor(
     private var lastModeStartSeenMs  = 0L
     /** The running meal's food still to come as the last cycle saw it, for the SI tab. */
     @Volatile private var lastFoodToCome: FoodToCome? = null
+    /** The loop's SMBs since the running meal started, for the overview's "Active meal" card. Read once per loop cycle. */
+    @Volatile private var mealLoopSmbU = 0.0
     private val foodMatchSamples = ArrayDeque<FoodMatch.Sample>()
     private var foodMatchMealMs = 0L
     private var foodMatchGivenU = 0.0
@@ -316,6 +318,8 @@ open class SmartInsulinPlugin @Inject constructor(
     val inReboundWindow: Boolean get() = reboundWindowStartMs > 0L && bgWentLow && msSinceLastSuspend < reboundGuardMs
 
     companion object {
+        /** Food logged up to this long before a meal mode started belongs to it, for the overview's "Active meal" card. */
+        const val MEAL_FOOD_BEFORE_MS = 15 * 60_000L
         /** How long after a meal starts its pre-bolus 1 record is read again, for a bolus stopped part way. */
         const val PB1_CHECK_MS = 30 * 60_000L
         private const val PB1_CHECK_EARLY_MS = 2 * 60_000L
@@ -966,7 +970,52 @@ open class SmartInsulinPlugin @Inject constructor(
             modeLine = liveModeLine,
             pb2Line = livePb2Line,
             pb3Line = livePb3Line,
-            learningState = liveLearningState
+            learningState = liveLearningState,
+            activeMeal = activeMealView(now)
+        )
+    }
+
+    /**
+     * The running meal with a food list, for the card under the meal line on the overview; null without one. The fat and
+     * protein are at the share that gets insulin, as in the loop's "food left", so the two read the same.
+     */
+    private fun activeMealView(now: Long): SmartInsulinOverview.ActiveMeal? {
+        val mode = mealOverrideManager.activeMealMode?.takeIf { !it.isUam } ?: return null
+        val s = mealOverrideManager.activeState ?: return null
+        val view = mealEstimateCalibration.mealView(s.triggerTimeMs, now) ?: return null
+        val share = sp.getInt(IntKey.ApsSmartInsulinMealPlanFatProteinPct.key, IntKey.ApsSmartInsulinMealPlanFatProteinPct.defaultValue) / 100.0
+        val fatProteinTotalG = view.fatProteinTotalG * share
+        val foods = foodLog.entries(s.triggerTimeMs - MEAL_FOOD_BEFORE_MS, now + 1).map { e ->
+            val fatProteinG = (e.fatG * 9.0 + e.proteinG * 4.0) / 100.0 * MealEstimateCalibrationImpl.FPU_CARB_G
+            val window = if (fatProteinG >= 1.0) mealEstimateCalibration.fatProteinWindow(fatProteinG, e.timeMs) else null
+            SmartInsulinOverview.ActiveMealFood(e.name, e.timeMs, e.carbsG, e.proteinG, e.fatG, window?.first, window?.second)
+        }
+        // Pre-bolus 2 in one dose counts once it fired; in pieces, the pieces given. The loop's SMBs are counted on their own.
+        val pb2GivenU = when {
+            s.preBolus2Spread              -> s.preBolus2GivenU
+            s.preBolus2FiredSuccessfully   -> s.preBolus2U - s.preBolus2DroppedU
+            else                           -> 0.0
+        }
+        val restGivenU = if ((s.preBolus1RestFiredMs ?: 0L) > 0L) s.preBolus1RestU else 0.0
+        return SmartInsulinOverview.ActiveMeal(
+            mealLabel = overviewMealLabel(mode),
+            startMs = s.triggerTimeMs,
+            endMs = s.modeExpiryMs,
+            eatenCarbsG = view.eatenCarbsG, eatenProteinG = view.eatenProteinG, eatenFatG = view.eatenFatG,
+            carbsTotalG = view.carbsTotalG,
+            carbsInG = (view.carbsTotalG - view.carbsLeftG).coerceAtLeast(0.0),
+            carbsDoneMs = view.carbsDoneMs,
+            fatProteinTotalG = fatProteinTotalG,
+            fatProteinInG = (fatProteinTotalG - view.fatProteinLeftG * share).coerceAtLeast(0.0),
+            fatProteinFromMs = view.fatProteinFromMs,
+            fatProteinEndMs = view.fatProteinEndMs,
+            coveredG = lastFoodToCome?.coveredG ?: 0.0,
+            givenU = (s.doseU ?: 0.0) + s.addedU + restGivenU + pb2GivenU + s.preBolus3GivenU + mealLoopSmbU,
+            loopSmbU = mealLoopSmbU,
+            waitingU = s.preBolus2WaitingU + s.preBolus3WaitingU + (if (s.preBolus1RestPending) s.preBolus1RestU else 0.0),
+            plannedU = s.plannedTotalU,
+            carbsComing = view.carbsLeftG >= DetermineBasalSmartInsulin.TAIL_CARBS_LEFT_G,
+            foods = foods
         )
     }
 
@@ -1930,6 +1979,14 @@ open class SmartInsulinPlugin @Inject constructor(
             }
             smbU?.let { mealOverrideManager.countLoopSmbForPreBolus3(it) }
         }
+        // For the overview's "Active meal" card: the loop's SMBs since the meal started. A failed read keeps the last count.
+        mealLoopSmbU = mealOverrideManager.activeState?.let { s ->
+            try {
+                persistenceLayer.getBolusesFromTimeToTime(s.triggerTimeMs, now, true).filter { it.type == BS.Type.SMB }.sumOf { it.amount }
+            } catch (e: Exception) {
+                aapsLogger.error(LTag.APS, "SmartInsulin meal card: SMB read failed: ${e.message}"); mealLoopSmbU
+            }
+        } ?: 0.0
         // The pieces still waiting fade with the fat and protein on the food list, see fadeWaitingPreBoluses.
         mealOverrideManager.activeState?.takeIf { !it.mode.isUam && (it.preBolus2Pending || it.preBolus3Pending) }?.let { s ->
             mealEstimateCalibration.stillToCome(s.triggerTimeMs, now)?.takeIf { it.fatProteinMealG > 0.0 }?.let { still ->

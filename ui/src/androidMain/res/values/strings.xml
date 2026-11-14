@@ -596,4 +596,28 @@
     <string name="si_start_mode_units">Start %1$s · %2$s U</string>
     <string name="si_prebolus_note">SmartMeal %1$s pre-bolus 1</string>
 
+    <!-- SmartInsulin: the "Active meal" card under the meal line on the overview -->
+    <string name="si_active_meal_show">Show the meal</string>
+    <string name="si_active_meal_hide">Hide the meal</string>
+    <string name="si_active_meal_title" comment="%1$s=meal name, %2$s=start time, %3$s=time the meal mode ends. Example: Dinner · 6:21 pm to 10:45 pm">%1$s · %2$s to %3$s</string>
+    <string name="si_active_meal_left_hm" comment="Time the meal mode still runs. %1$d=hours, %2$d=minutes. Example: 2 h 30 min left">%1$d h %2$d min left</string>
+    <string name="si_active_meal_left_m" comment="Time the meal mode still runs. %1$d=minutes. Example: 25 min left">%1$d min left</string>
+    <string name="si_active_meal_eaten" comment="Grams eaten in this meal. %1$.0f=carbs, %2$.0f=protein, %3$.0f=fat. Example: Eaten: 30 g carbs · 72 g protein · 54 g fat">Eaten: %1$.0f g carbs · %2$.0f g protein · %3$.0f g fat</string>
+    <string name="si_active_meal_carbs">Carbs</string>
+    <string name="si_active_meal_fat_protein">Fat and protein (as carbs)</string>
+    <string name="si_active_meal_in" comment="Grams come in so far, of all of them. %1$.0f=grams in, %2$.0f=all grams. Example: 18 of 30 g in">%1$.0f of %2$.0f g in</string>
+    <string name="si_active_meal_in_or_faded" comment="Fat and protein: grams come in or faded out with time so far, of all of them. %1$.0f=grams, %2$.0f=all grams. Example: 24 of 69 g in or faded">%1$.0f of %2$.0f g in or faded</string>
+    <string name="si_active_meal_carbs_done_by" comment="%1$s=time. Example: all in by about 9:20 pm">all in by about %1$s</string>
+    <string name="si_active_meal_all_in">all in</string>
+    <string name="si_active_meal_fat_protein_window" comment="%1$s=time the fat and protein started to count, %2$s=time the last of it has faded out. Example: from 7:06 pm, gone by about 11:40 pm">from %1$s, gone by about %2$s</string>
+    <string name="si_active_meal_covered" comment="%1$.0f=grams. Example: 30 g of what is left is covered by pre-boluses still waiting">%1$.0f g of what is left is covered by pre-boluses still waiting</string>
+    <string name="si_active_meal_foods">Foods</string>
+    <string name="si_active_meal_food" comment="One food of the meal. %1$s=time eaten, %2$s=name. Example: 6:21 pm · Roast pork">%1$s · %2$s</string>
+    <string name="si_active_meal_food_grams" comment="%1$.0f=carbs, %2$.0f=protein, %3$.0f=fat, in grams. Example: 25 g carbs · 58 g protein · 38 g fat">%1$.0f g carbs · %2$.0f g protein · %3$.0f g fat</string>
+    <string name="si_active_meal_food_fat_protein" comment="When this food's fat and protein count. %1$s=start time, %2$s=end time. Example: fat and protein 7:06 pm to 11:10 pm">fat and protein %1$s to %2$s</string>
+    <string name="si_active_meal_insulin">Insulin for this meal</string>
+    <string name="si_active_meal_insulin_given" comment="%1$.2f=all insulin given for the meal in units, %2$.2f=the part of it the loop gave as SMBs. Example: Given: 9.20 U, 1.65 U of it by the loop">Given: %1$.2f U, %2$.2f U of it by the loop</string>
+    <string name="si_active_meal_insulin_waiting" comment="%1$.2f=units still waiting in the pre-boluses, %2$.2f=all the pre-boluses as planned. Example: Still waiting in pre-boluses: 2.30 U (planned in all: 9.80 U)">Still waiting in pre-boluses: %1$.2f U (planned in all: %2$.2f U)</string>
+    <string name="si_active_meal_loop_carbs">Carbs still coming in: the loop doses for the food list.</string>
+    <string name="si_active_meal_loop_tail">Carbs are in: BG leads, and the food list only limits top-ups.</string>
 </resources>

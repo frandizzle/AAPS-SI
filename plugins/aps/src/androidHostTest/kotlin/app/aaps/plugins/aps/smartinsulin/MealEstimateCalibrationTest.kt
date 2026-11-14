@@ -422,6 +422,24 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `the meal view shows what was eaten, what is in, and when the rest should be in`() {
+        // A dinner of 23 g carbs and 57 g fat and protein as carbs (5.7 units: 5 h from 45 min after eating), 40 g seen.
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0, carbParts = listOf(CarbPart(23.0, 120)), eatenMs = T0)
+        cal.onEpisode(episode(T0, 40.0))
+        val v = cal.mealView(T0, T0 + 90 * MIN)!!
+        assertEquals(23.0, v.eatenCarbsG, 1e-9)
+        assertEquals(83.0, v.eatenProteinG, 1e-9)
+        assertEquals(27.0, v.eatenFatG, 1e-9)
+        assertEquals(23.0, v.carbsTotalG, 1e-9)
+        assertEquals(0.0, v.carbsLeftG, 1e-9)                       // the 40 g seen cover all the carbs first
+        assertEquals(57.0, v.fatProteinTotalG, 1e-9)
+        assertEquals(40.0, v.fatProteinLeftG, 1e-9)                  // 17 g of it seen
+        assertEquals(T0 + 45 * MIN, v.fatProteinFromMs)
+        assertEquals(T0 + 45 * MIN + 300 * MIN, v.fatProteinEndMs)
+        assertNull(cal.mealView(T0, T0 + 9 * HOUR))                    // after the window
+    }
+
+    @Test
     fun `fat and protein BG shows still come off sooner than the fade`() {
         cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
         cal.onEpisode(episode(T0, 40.0))    // all 23 g carbs and 17 g of the fat and protein

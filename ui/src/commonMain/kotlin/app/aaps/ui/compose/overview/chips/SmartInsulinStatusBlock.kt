@@ -1,10 +1,18 @@
 package app.aaps.ui.compose.overview.chips
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -14,6 +22,9 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.aaps.core.interfaces.smartInsulin.SmartInsulinOverview
+import app.aaps.core.ui.compose.AapsSpacing
+import app.aaps.core.ui.compose.stringResource
+import app.aaps.ui.UiStrings
 
 private val SiGreen = Color(0xFF43A047)
 private val SiAmber = Color(0xFFFB8C00)
@@ -24,9 +35,17 @@ private val SiBlue = Color(0xFF64B5F6)
 /**
  * SmartInsulin's meal mode, pending pre-boluses and learning state, shown under the running-mode /
  * profile / temp-target chips. Same layout and colours as the earlier 4.0 SmartInsulin build.
+ *
+ * With a meal with a food list running ([SmartInsulinOverview.OverviewState.activeMeal]) and [onMealToggle] given, the meal
+ * line has an arrow: a tap opens or closes the [ActiveMealCard], which the caller shows.
  */
 @Composable
-fun SmartInsulinStatusBlock(state: SmartInsulinOverview.OverviewState, modifier: Modifier = Modifier) {
+fun SmartInsulinStatusBlock(
+    state: SmartInsulinOverview.OverviewState,
+    modifier: Modifier = Modifier,
+    mealExpanded: Boolean = false,
+    onMealToggle: (() -> Unit)? = null
+) {
     val labelColor = MaterialTheme.colorScheme.onSurface
     val isFasting = state.modeLine.contains("Fasting", ignoreCase = true)
     val mealValueColor = when {
@@ -39,14 +58,27 @@ fun SmartInsulinStatusBlock(state: SmartInsulinOverview.OverviewState, modifier:
     val (learningValue, learningColor) = learningDisplay(state.learningState)
 
     Column(modifier = modifier.padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        Text(
-            buildAnnotatedString {
-                withStyle(SpanStyle(color = if (isFasting) MaterialTheme.colorScheme.onSurfaceVariant else labelColor)) { append("Meal: ") }
-                withStyle(SpanStyle(color = mealValueColor)) { append(state.modeLine.removePrefix("Meal:").trim()) }
-            },
-            fontSize = 13.sp,
-            maxLines = 1
-        )
+        val canOpen = state.activeMeal != null && onMealToggle != null
+        Row(
+            modifier = if (canOpen) Modifier.clickable { onMealToggle() } else Modifier,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = if (isFasting) MaterialTheme.colorScheme.onSurfaceVariant else labelColor)) { append("Meal: ") }
+                    withStyle(SpanStyle(color = mealValueColor)) { append(state.modeLine.removePrefix("Meal:").trim()) }
+                },
+                fontSize = 13.sp,
+                maxLines = 1
+            )
+            if (canOpen)
+                Icon(
+                    imageVector = if (mealExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = stringResource(if (mealExpanded) UiStrings.si_active_meal_hide else UiStrings.si_active_meal_show),
+                    tint = mealValueColor,
+                    modifier = Modifier.padding(start = AapsSpacing.extraSmall).size(AapsSpacing.extraLarge)
+                )
+        }
         state.pb2Line?.let { Text(it, fontSize = 13.sp, color = SiBlue, maxLines = 1) }
         state.pb3Line?.let { Text(it, fontSize = 13.sp, color = SiBlue, maxLines = 1) }
         Text(
