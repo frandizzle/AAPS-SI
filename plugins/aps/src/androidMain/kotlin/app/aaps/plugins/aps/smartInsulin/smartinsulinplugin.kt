@@ -1765,7 +1765,8 @@ open class SmartInsulinPlugin @Inject constructor(
         // faster than insulin explains - the drop a sprint keeps causing once you have sat down.
         activityTail.onCycle(now, activityMonitor.level, unexplainedDropTracker.stillDropping(now))
         recentActivity.onCycle(
-            now, RecentActivityImpl.levelWithSession(activityMonitor.level, activitySessionManager.active != null, activityMonitor.lastSteps5min)
+            now, RecentActivityImpl.levelWithSession(activityMonitor.level, activitySessionManager.active != null, activityMonitor.lastSteps5min),
+            sessionWalking = activitySessionManager.active != null && activityMonitor.lastSteps5min >= RecentActivityImpl.SESSION_MIN_STEPS_5MIN
         )
         val activityPausesLearning = activityMonitor.suppressLearning || activityTail.paused
 

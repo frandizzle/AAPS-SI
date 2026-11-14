@@ -397,11 +397,12 @@
     <string name="si_prebolus2_delay">Delay after activation</string>
     <string name="si_prebolus3_delay">Delay after pre-bolus 2</string>
     <string name="si_prebolus_gate_hint">Fires only if BG is above target and IOB has headroom</string>
-    <string name="si_pb2_pieces_hint" comment="%1$d=number of smaller doses, %2$d=minutes between them. Example: Pre-bolus 2 is given as 6 smaller doses, 20 min apart: the first half on time, the rest only while BG asks for them.">Pre-bolus 2 is given as %1$d smaller doses, %2$d min apart: the first half on time, the rest only while BG asks for them.</string>
+    <string name="si_pb2_pieces_hint" comment="%1$d=number of smaller doses, %2$d=minutes between them. Example: Pre-bolus 2 is given as 6 smaller doses, 20 min apart: the first three quarters on time, the rest only while BG asks for them.">Pre-bolus 2 is given as %1$d smaller doses, %2$d min apart: the first three quarters on time, the rest only while BG asks for them.</string>
     <string name="si_pf_after_title">Then Protein/Fat</string>
     <string name="si_pf_after_hint">When this mode runs out, Protein/Fat (UAM) starts, so the loop does not drop to Fasting while fat and protein are still coming in. Not when BG is already at target.</string>
     <string name="si_confirm_pf_after">Then Protein/Fat</string>
     <string name="si_after_activity_title">After activity</string>
+    <string name="si_after_activity_session_hint" comment="%1$d=minutes of walking in the session, %2$d=hours the cut is in full, %3$d=hours after which it is gone. Example: 120 min of walking in a Golf or Gym session today. … full for 4 h after it, then smaller until 12 h after.">%1$d min of walking in a Golf or Gym session today. The body uses insulin better for many hours after it: the cut is in full for %2$d h after the session, then gets smaller until %3$d h after. On: the pre-boluses get less, and the loop gives less while the mode runs. This meal is not learned from.</string>
     <string name="si_after_activity_on" comment="%1$d=percent. Example: 15 % less insulin">%1$d %% less insulin</string>
     <string name="si_after_activity_off" comment="%1$d=minutes of exercise, %2$d=percent. Example: 55 min of exercise lately. Turn on for 15 % less insulin">%1$d min of exercise lately. Turn on for %2$d %% less insulin</string>
     <string name="si_after_activity_hint" comment="%1$d=minutes of exercise, %2$d=hours looked back. Example: 55 min of walking or harder exercise in the last 4 h.">%1$d min of walking or harder exercise in the last %2$d h. The body uses insulin better for some hours after it. On: the pre-boluses get less, and the loop gives less while the mode runs. This meal is not learned from.</string>

@@ -329,9 +329,14 @@ interface MealOverrideManager {
         /** A smaller rest is left to the loop. */
         const val PB1_REST_MIN_U     = 0.5
 
-        // Pieces led by BG: the second half of pre-bolus 2 in pieces, and all of pre-bolus 3. See [bgLedShare].
-        /** Pre-bolus 2 in pieces gives this share on time; the pieces after it are led by BG. */
-        const val ON_TIME_SHARE           = 0.5
+        // Pieces led by BG: the last quarter of pre-bolus 2 in pieces, and all of pre-bolus 3. See [bgLedShare].
+        /**
+         * Pre-bolus 2 in pieces gives this share on time; the pieces after it are led by BG. Three quarters, used with the
+         * fat and protein insulin at 60 %, gives the same insulin on time as half at 90 % did, and about half of the part led
+         * by BG: the first hours of the user's meals were held well, and hours 4 to 6 got too much (14 Nov, a dinner with
+         * 7.5 U still planned for its tail while BG drifted to 4.8).
+         */
+        const val ON_TIME_SHARE           = 0.75
         /** At least this far above target, in mg/dL (1 mmol/L), BG itself shows that more insulin is wanted. */
         const val CLEARLY_ABOVE_TARGET_MGDL = 18.0
         /** From this far above target, in mg/dL (3 mmol/L), a piece led by BG is given in full. */

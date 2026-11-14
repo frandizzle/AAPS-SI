@@ -908,7 +908,7 @@ class MealOverrideManagerImpl @Inject constructor(
 
         // ── Safety checks ─────────────────────────────────────────────────────
 
-        // In pieces only the next piece is given now; the gates are checked again before each one. Once the first half is
+        // In pieces only the next piece is given now; the gates are checked again before each one. Once the on-time share is
         // in, BG leads: the piece needs BG to ask for it, and is cut by how far above target BG is.
         val pieceU = if (s.preBolus2Spread) s.preBolus2NextPieceU else s.preBolus2U
         val bgLed = s.preBolus2BgLed

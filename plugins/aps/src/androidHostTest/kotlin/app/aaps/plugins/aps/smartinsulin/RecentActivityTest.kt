@@ -48,6 +48,41 @@ class RecentActivityTest {
         assertEquals(AfterActivity(100, 20), recent.afterActivity(t))
     }
 
+    /** 14 Nov: a Golf session from 8:30 (T0) to 12:30, walking every other 5 min. Returns the time after it. */
+    private fun golfRound(): Long {
+        var t = T0
+        repeat(48) { i ->
+            val walking = i % 2 == 0
+            recent.onCycle(
+                t, RecentActivityImpl.levelWithSession(ActivityLevel.SEDENTARY, sessionActive = true, steps5min = if (walking) 400 else 20),
+                sessionWalking = walking
+            )
+            t += 5 * MIN
+        }
+        return t
+    }
+
+    @Test
+    fun `after a Golf session the cut lasts into the evening, smaller with time, and is gone 12 hours after`() {
+        golfRound()
+        // 120 min of walking, the last at 12:20. Dinner at 6:21 pm, 6 h after it: 20 % x (12 h - 6 h 1 min) / 8 h = 15 %.
+        val dinner = T0 + 9 * HOUR + 51 * MIN
+        assertEquals(AfterActivity(120, 15, afterSession = true), recent.afterActivity(dinner))
+        // Still in full 4 h after the session.
+        assertEquals(AfterActivity(120, 20, afterSession = true), recent.afterActivity(T0 + 230 * MIN + 4 * HOUR))
+        // Gone 12 h after it.
+        assertNull(recent.afterActivity(T0 + 230 * MIN + 12 * HOUR))
+        // The meal learners leave the evening meal out too.
+        assertTrue(recent.exercised(dinner))
+    }
+
+    @Test
+    fun `the cut after a session is kept over a restart of the app`() {
+        golfRound()
+        val restarted = RecentActivityImpl(sp)
+        assertEquals(AfterActivity(120, 15, afterSession = true), restarted.afterActivity(T0 + 9 * HOUR + 51 * MIN))
+    }
+
     @Test
     fun `an hour of brisk walking gives 15 percent`() {
         val end = walk(T0, 60, ActivityLevel.MODERATE)

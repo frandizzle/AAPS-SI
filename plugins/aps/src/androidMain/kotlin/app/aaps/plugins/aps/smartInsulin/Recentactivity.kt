@@ -4,6 +4,7 @@ import app.aaps.core.interfaces.sharedPreferences.KeyValueStore
 import app.aaps.core.interfaces.smartInsulin.AfterActivity
 import app.aaps.core.interfaces.smartInsulin.RecentActivity
 import app.aaps.core.keys.IntKey
+import app.aaps.core.keys.StringNonKey
 import app.aaps.plugins.aps.smartInsulin.ActivityMonitor.ActivityLevel
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -23,20 +24,63 @@ class RecentActivityImpl @Inject constructor(private val sp: KeyValueStore) : Re
 
     private val samples = ArrayDeque<Pair<Long, ActivityLevel>>()
 
-    /** Call once per loop cycle. A second call within [MIN_GAP_MS] is ignored, so an extra loop run does not count twice. */
-    fun onCycle(nowMs: Long, level: ActivityLevel) = synchronized(this) {
+    /**
+     * The cycles of a Golf or Gym session with walking in them, over the last [SESSION_TAIL_MS]. Kept over a restart: the
+     * cut they give lasts into the evening, and an app update in between should not lose it.
+     */
+    private val sessionSamples = ArrayDeque<Long>().apply {
+        sp.getString(StringNonKey.ApsSmartInsulinSessionExercise.key, "").split(',').mapNotNullTo(this) { it.toLongOrNull() }
+    }
+
+    /**
+     * Call once per loop cycle. A second call within [MIN_GAP_MS] is ignored, so an extra loop run does not count twice.
+     *
+     * @param sessionWalking a Golf or Gym session runs and the steps show walking, see [levelWithSession]
+     */
+    fun onCycle(nowMs: Long, level: ActivityLevel, sessionWalking: Boolean = false) = synchronized(this) {
         val last = samples.lastOrNull()
         if (last != null && nowMs - last.first < MIN_GAP_MS) return@synchronized
         samples.addLast(nowMs to level)
         while (samples.first().first < nowMs - LOOKBACK_MS) samples.removeFirst()
+        val before = sessionSamples.size
+        if (sessionWalking) sessionSamples.addLast(nowMs)
+        while (sessionSamples.isNotEmpty() && sessionSamples.first() < nowMs - SESSION_TAIL_MS) sessionSamples.removeFirst()
+        if (sessionWalking || sessionSamples.size != before)
+            sp.edit { putString(StringNonKey.ApsSmartInsulinSessionExercise.key, sessionSamples.joinToString(",")) }
     }
 
+    /**
+     * The larger of two cuts: exercise in the last [RecentActivity.LOOKBACK_HOURS] hours, and a Golf or Gym session earlier
+     * today, see [sessionTail].
+     */
     override fun afterActivity(nowMs: Long): AfterActivity? {
         val maxPct = sp.getInt(IntKey.ApsSmartInsulinAfterActivityMaxPct.key, IntKey.ApsSmartInsulinAfterActivityMaxPct.defaultValue)
         if (maxPct <= 0) return null
         val minutes = exerciseMin(nowMs)
         val cut = cutFor(minutes).coerceAtMost(maxPct)
-        return if (cut > 0) AfterActivity(minutes.roundToInt(), cut) else null
+        val session = sessionTail(nowMs, maxPct)
+        return when {
+            session != null && session.cutPct > cut -> session
+            cut > 0                                  -> AfterActivity(minutes.roundToInt(), cut)
+            else                                     -> session
+        }
+    }
+
+    /**
+     * The cut from a Golf or Gym session in the last [RecentActivity.SESSION_TAIL_HOURS] hours: the usual cut for its minutes
+     * of walking, in full until [RecentActivity.LOOKBACK_HOURS] hours after the last of them, then less and less until it is
+     * gone [RecentActivity.SESSION_TAIL_HOURS] hours after. The body uses insulin better for many hours after a long round:
+     * on 14 Nov, after golf from 8:30 to 12:30, the dinner at 6:21 pm went down to 4.8 on 60 % of its plan, and the 4 h
+     * look back no longer saw the round.
+     */
+    private fun sessionTail(nowMs: Long, maxPct: Int): AfterActivity? {
+        val walked = synchronized(this) { sessionSamples.filter { it in (nowMs - SESSION_TAIL_MS)..nowMs } }
+        val lastMs = walked.maxOrNull() ?: return null
+        val minutes = walked.size * CYCLE_MIN
+        val sinceMs = (nowMs - lastMs).toDouble()
+        val share = if (sinceMs <= LOOKBACK_MS) 1.0 else ((SESSION_TAIL_MS - sinceMs) / (SESSION_TAIL_MS - LOOKBACK_MS)).coerceIn(0.0, 1.0)
+        val cut = (cutFor(minutes).coerceAtMost(maxPct) * share).roundToInt()
+        return if (cut > 0) AfterActivity(minutes.roundToInt(), cut, afterSession = true) else null
     }
 
     /** Minutes of real exercise in the last [RecentActivity.LOOKBACK_HOURS] hours; a heavy minute counts as 1.5. */
@@ -47,7 +91,7 @@ class RecentActivityImpl @Inject constructor(private val sp: KeyValueStore) : Re
      * True when the last [RecentActivity.LOOKBACK_HOURS] hours had at least [MIN_EXERCISE_MIN] minutes of real
      * exercise. A meal low then may be the exercise, not the dose, so the meal learners do not take it at full weight.
      */
-    fun exercised(nowMs: Long): Boolean = exerciseMin(nowMs) >= MIN_EXERCISE_MIN
+    fun exercised(nowMs: Long): Boolean = exerciseMin(nowMs) >= MIN_EXERCISE_MIN || sessionTail(nowMs, Int.MAX_VALUE) != null
 
     companion object {
 
@@ -70,6 +114,7 @@ class RecentActivityImpl @Inject constructor(private val sp: KeyValueStore) : Re
         /** Less exercise than this (a run up the stairs) does not change how a meal is learned. */
         const val MIN_EXERCISE_MIN = 10.0
         const val LOOKBACK_MS = RecentActivity.LOOKBACK_HOURS * 60 * 60_000L
+        const val SESSION_TAIL_MS = RecentActivity.SESSION_TAIL_HOURS * 60 * 60_000L
         const val MIN_GAP_MS = 4 * 60_000L
         const val CYCLE_MIN = 5.0
 

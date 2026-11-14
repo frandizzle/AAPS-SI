@@ -801,6 +801,17 @@ class DetermineBasalSmartInsulinTest {
                           carbRatio = 5.0, carbParts = listOf(CarbsPart(leftG = carbsG, mealG = 55.0, untilMs = until, minutes = 115)))
     }
 
+    @Test fun `with the share known per food, extra insulin counts only the fat and protein of food whose carbs still come`() {
+        // 11 of 55 g carbs still to come: as one share for the meal, 20 % of all the fat and protein counted. Known per food,
+        // only the late food's own part counts: here 10 %.
+        midDinner(bg = 120.0, delta = 2.0)
+        val iob = flatIobArray(iob = 1.0, activity = 0.01)
+        val meal = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(11.0)).reason
+        assertTrue(meal.contains("fp estimate 20%"), meal)
+        val perFood = invoke(iobArray = iob, mealMode = MealMode.DINNER, maxSmbU = 4.0, foodToCome = lateDinner(11.0).copy(fatProteinCarbsShare = 0.1)).reason
+        assertTrue(perFood.contains("fp estimate 10%"), perFood)
+    }
+
     @Test fun `the yellow line counts what BG shows for 2 hours only, not to the end of the list`() {
         // 12 Nov: popcorn rising read as the dinner's fat and protein at the list's full rate, for 4 hours.
         midDinner(bg = 120.0, delta = 15.0)

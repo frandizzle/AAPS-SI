@@ -15,6 +15,8 @@ import kotlin.math.min
  * @param coveredG          food the waiting pre-boluses will cover, already taken off; for the reason string
  * @param fatProteinFromMs  the fat and protein start to come in at this time; before it, the forecast leaves them out
  * @param carbParts         [carbsG] by speed, each with its own time; empty: all of them by [carbsUntilMs]
+ * @param fatProteinCarbsShare the share of [fatProteinG] whose own food's carbs are still coming, see [StillToCome]; null:
+ *                          not known per food, the share of the meal's carbs still to come is used
  */
 data class FoodToCome(
     val carbsG: Double,
@@ -24,7 +26,8 @@ data class FoodToCome(
     val carbRatio: Double,
     val coveredG: Double = 0.0,
     val fatProteinFromMs: Long = 0L,
-    val carbParts: List<CarbsPart> = emptyList()
+    val carbParts: List<CarbsPart> = emptyList(),
+    val fatProteinCarbsShare: Double? = null
 ) {
 
     val totalG: Double get() = carbsG + fatProteinG
@@ -102,7 +105,10 @@ object MealFoodForecast {
         // What the pre-boluses cover and the fade take off every part alike; each part keeps its own time.
         val carbShare = if (still.carbsG > 0.0) carbs / still.carbsG else 0.0
         val parts = still.parts.map { it.copy(leftG = it.leftG * carbShare, untilMs = carbsUntil(it, nowMs)) }
-        return FoodToCome(carbs, parts.maxOfOrNull { it.untilMs } ?: still.carbsUntilMs, fatProtein, fatProteinUntil(still, share, fatProtein, nowMs), carbRatio, c1 + f1 + f2 + c2, still.fatProteinFromMs, parts)
+        return FoodToCome(
+            carbs, parts.maxOfOrNull { it.untilMs } ?: still.carbsUntilMs, fatProtein, fatProteinUntil(still, share, fatProtein, nowMs), carbRatio,
+            c1 + f1 + f2 + c2, still.fatProteinFromMs, parts, still.fatProteinCarbsShare
+        )
     }
 
     /**

@@ -440,6 +440,29 @@ class MealEstimateCalibrationTest {
     }
 
     @Test
+    fun `a food added late brings back only its own fat and protein, not the meal's`() {
+        // 14 Nov: a dinner of 23 g carbs and 57 g fat and protein, its carbs all in (23 g seen); a yoghurt 3.5 h later,
+        // 14 g carbs and 30 g protein (12 g as carbs), eaten at 3 h 30.
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        cal.onEpisode(episode(T0, 23.0))
+        assertEquals(0.0, cal.stillToCome(T0, T0 + 3 * HOUR)!!.fatProteinCarbsShare!!, 1e-9)    // the dinner's carbs are in
+        cal.addToEstimate(T0, T0 + 8 * HOUR, 26.0, 14.0, 30.0, 0.0, eatenMs = T0 + 3 * HOUR + 30 * MIN)
+        // 10 min later: the dinner's fat and protein has 125 of its 300 min left, 23.75 g; the yoghurt's 12 g have not started.
+        // Only the yoghurt's own carbs are coming, so only its 12 g count: 12 of 35.75 g. As one share for the whole meal it was
+        // 14 of 37 g carbs, so 37.8 % of all of it: 13.5 g, most of it the dinner's.
+        val s = cal.stillToCome(T0, T0 + 3 * HOUR + 40 * MIN)!!
+        assertEquals(12.0 / 35.75, s.fatProteinCarbsShare!!, 1e-9)
+        assertEquals(35.75, s.fatProteinG, 1e-9)
+    }
+
+    @Test
+    fun `a single meal counts its fat and protein by its carbs still to come, as before`() {
+        cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
+        cal.onEpisode(episode(T0, 11.5))    // half the carbs seen
+        assertEquals(0.5, cal.stillToCome(T0, T0 + HOUR)!!.fatProteinCarbsShare!!, 1e-9)
+    }
+
+    @Test
     fun `fat and protein BG shows still come off sooner than the fade`() {
         cal.recordEstimate(T0, T0 + 8 * HOUR, 80.0, 23.0, 83.0, 27.0)
         cal.onEpisode(episode(T0, 40.0))    // all 23 g carbs and 17 g of the fat and protein

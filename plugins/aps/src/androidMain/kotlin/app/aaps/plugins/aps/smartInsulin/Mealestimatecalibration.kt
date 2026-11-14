@@ -12,6 +12,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.abs
 
 /**
  * A meal's food that has not come in yet, in grams of carb equivalent, scaled by the learned factor.
@@ -22,6 +23,8 @@ import org.json.JSONObject
  * @param fatProteinMealG  all the meal's fat and protein, scaled the same way, for the rate it comes in at
  * @param fatProteinMin    minutes all of it takes to come in from [fatProteinFromMs], see `MealEstimateCalibration.fatProteinMinutes`
  * @param carbParts        the carbs still to come by speed, the soonest due first; [carbsG] is all of them
+ * @param fatProteinCarbsShare the share of the fat and protein still to come whose own food's carbs are still coming, see
+ *                         `MealEstimateCalibrationImpl.fatProteinCarbsShare`; null for a meal saved before it was kept per food
  */
 data class StillToCome(
     val modeStartMs: Long,
@@ -33,7 +36,8 @@ data class StillToCome(
     val fatProteinFromMs: Long = 0L,
     val fatProteinMealG: Double = 0.0,
     val fatProteinMin: Int = 0,
-    val carbParts: List<CarbsPart> = emptyList()
+    val carbParts: List<CarbsPart> = emptyList(),
+    val fatProteinCarbsShare: Double? = null
 ) {
 
     /** The carbs by speed, or for a meal without parts, all of them as one part with no known rate. */
@@ -405,8 +409,34 @@ class MealEstimateCalibrationImpl @Inject constructor(
             fatProteinFromMs = p.fatProteinFromMs,
             fatProteinMealG = (p.carbEquivG - p.carbsG).coerceAtLeast(0.0) * f,
             fatProteinMin = fatProteinMinutes((p.carbEquivG - p.carbsG).coerceAtLeast(0.0) / FPU_CARB_G),
-            carbParts = parts
+            carbParts = parts,
+            fatProteinCarbsShare = fatProteinCarbsShare(p, parts, nowMs)
         )
+    }
+
+    /**
+     * The share of [p]'s fat and protein still to come whose own food's carbs are still coming: each food's fat and protein,
+     * as its time has it, times the share of that food's carbs still to come, over all of them. The loop counts the
+     * estimate of the fat and protein for extra insulin by this share while carbs come in. It was one share for the whole
+     * meal: a yoghurt added 3.5 hours into a dinner made a quarter of the meal's carbs "still to come" again, so a quarter
+     * of the dinner's remaining fat and protein counted again, and the loop ran a high temp at 5.6 (14 Nov). Now only the
+     * yoghurt's own protein counts. Null for a meal saved before fat and protein were kept per food.
+     */
+    private fun fatProteinCarbsShare(p: Pending, parts: List<CarbsPart>, nowMs: Long): Double? {
+        if (p.fatProteinSlots.isEmpty()) return null
+        val f = factorFor(p)
+        var dueG = 0.0
+        var withCarbsG = 0.0
+        p.fatProteinSlots.forEach { s ->
+            val due = slotDueG(s, f, nowMs)
+            val eatenMs = s.fromMs - MealFoodForecast.FAT_PROTEIN_START_MIN * 60_000L
+            val own = parts.filter { it.fromMs > 0L && abs(it.fromMs - eatenMs) <= SAME_FOOD_MS }
+            val ownMealG = own.sumOf { it.mealG }
+            val share = if (ownMealG > 0.0) (own.sumOf { it.leftG } / ownMealG).coerceIn(0.0, 1.0) else 0.0
+            dueG += due
+            withCarbsG += due * share
+        }
+        return if (dueG > 0.0) withCarbsG / dueG else 0.0
     }
 
     /**
@@ -430,10 +460,13 @@ class MealEstimateCalibrationImpl @Inject constructor(
     private fun fatProteinDueG(p: Pending, nowMs: Long): Double {
         val f = factorFor(p)
         val slots = p.fatProteinSlots.ifEmpty { listOf(FatProteinSlot((p.carbEquivG - p.carbsG).coerceAtLeast(0.0), p.fatProteinFromMs)) }
-        return slots.sumOf { s ->
-            val minutesMs = fatProteinMinutes(s.grams / FPU_CARB_G) * 60_000.0
-            s.grams * f * ((s.fromMs + minutesMs - nowMs) / minutesMs).coerceIn(0.0, 1.0)
-        }
+        return slots.sumOf { s -> slotDueG(s, f, nowMs) }
+    }
+
+    /** What the time of fat and protein slot [s] still has to come at [nowMs], scaled by the learned factor [f]. */
+    private fun slotDueG(s: FatProteinSlot, f: Double, nowMs: Long): Double {
+        val minutesMs = fatProteinMinutes(s.grams / FPU_CARB_G) * 60_000.0
+        return s.grams * f * ((s.fromMs + minutesMs - nowMs) / minutesMs).coerceIn(0.0, 1.0)
     }
 
     /** [MealEstimateCalibration.fatProteinMinutes] at the user's "Fat and protein time" setting. */
@@ -614,6 +647,8 @@ class MealEstimateCalibrationImpl @Inject constructor(
         const val MATCH_EARLY_MS = 60_000L
         /** One fat-protein unit (100 kcal from fat and protein) counts as this many grams of carbs, as in the meal planner. */
         const val FPU_CARB_G = 10.0
+        /** Carbs and fat and protein eaten this close together are one food, for [fatProteinCarbsShare]. */
+        const val SAME_FOOD_MS = 2 * 60_000L
         private const val MAX_PENDING = 5
         /** Under this much food a meal counts as having none: what is left is only rounding. */
         private const val EMPTY_MEAL_G = 0.5

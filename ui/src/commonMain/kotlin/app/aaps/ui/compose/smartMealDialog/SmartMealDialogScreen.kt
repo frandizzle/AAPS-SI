@@ -317,7 +317,11 @@ fun SmartMealDialogScreen(
                     checked = state.afterActivityOn,
                     onCheckedChange = viewModel::updateAfterActivity
                 ) {
-                    Hint(text = stringResource(UiStrings.si_after_activity_hint, a.activeMin, RecentActivity.LOOKBACK_HOURS))
+                    Hint(
+                        text = if (a.afterSession)
+                            stringResource(UiStrings.si_after_activity_session_hint, a.activeMin, RecentActivity.LOOKBACK_HOURS, RecentActivity.SESSION_TAIL_HOURS)
+                        else stringResource(UiStrings.si_after_activity_hint, a.activeMin, RecentActivity.LOOKBACK_HOURS)
+                    )
                 }
             }
 
