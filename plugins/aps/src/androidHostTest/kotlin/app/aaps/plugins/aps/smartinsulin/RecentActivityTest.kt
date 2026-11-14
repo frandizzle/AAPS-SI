@@ -24,6 +24,31 @@ class RecentActivityTest {
     }
 
     @Test
+    fun `a Golf or Gym session counts as moderate only while the steps show walking`() {
+        val steps = RecentActivityImpl.SESSION_MIN_STEPS_5MIN
+        assertEquals(ActivityLevel.MODERATE, RecentActivityImpl.levelWithSession(ActivityLevel.SEDENTARY, sessionActive = true, steps5min = steps))
+        assertEquals(ActivityLevel.SEDENTARY, RecentActivityImpl.levelWithSession(ActivityLevel.SEDENTARY, sessionActive = true, steps5min = steps - 1))
+        assertEquals(ActivityLevel.LIGHT, RecentActivityImpl.levelWithSession(ActivityLevel.LIGHT, sessionActive = false, steps5min = 500))
+        assertEquals(ActivityLevel.HEAVY, RecentActivityImpl.levelWithSession(ActivityLevel.HEAVY, sessionActive = true, steps5min = 500))
+    }
+
+    @Test
+    fun `a round of golf with a session gives the full cut at the lunch after it`() {
+        // 14 Nov: Golf session 8:30 to 12:30 (T0 is 8:30), walking every other 5 min (400 steps), waiting in between (20).
+        // The watch counted none of it: heart rate is off (resting set to 110) and stop-and-go steps are only light.
+        var t = T0
+        repeat(48) { i ->
+            val steps = if (i % 2 == 0) 400 else 20
+            val watch = if (i % 2 == 0) ActivityLevel.LIGHT else ActivityLevel.SEDENTARY
+            recent.onCycle(t, RecentActivityImpl.levelWithSession(watch, sessionActive = true, steps5min = steps))
+            t += 5 * MIN
+        }
+        // Lunch at 13:10: from 9:10 on, 20 walking stretches of 5 min are in the last 4 hours.
+        t = walk(t, 40, ActivityLevel.SEDENTARY)
+        assertEquals(AfterActivity(100, 20), recent.afterActivity(t))
+    }
+
+    @Test
     fun `an hour of brisk walking gives 15 percent`() {
         val end = walk(T0, 60, ActivityLevel.MODERATE)
         assertEquals(AfterActivity(60, 15), recent.afterActivity(end))

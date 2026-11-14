@@ -448,7 +448,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val isActive = d.pb2Status.contains("active")
             // The dose still to come, for example "Pre-bolus 2 (2.40U)", or in pieces "Pre-bolus 2 (3.20U), piece 2 of 6 (0.55U)".
             val piece = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U\)""").find(d.pb2Status)?.groupValues
-            val pb2 = (if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${"%.2f".format(d.pb2PlannedU)}U)" else "Pre-bolus 2") +
+            val pb2 = (if (d.pb2PlannedU > 0.0) "Pre-bolus 2 (${plannedText(d.pb2LeftU, d.pb2PlannedU)})" else "Pre-bolus 2") +
                 (piece?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
             val pb2Primary = when {
                 // Cancelled, or stopped part way: say so, it will not fire.
@@ -484,7 +484,7 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
             val isActive3 = d.pb3Status.contains("active")
             // In pieces led by BG, for example "Pre-bolus 3 (4.40U), piece 2 of 6 (0.70U)".
             val piece3 = Regex("""piece (\d+) of (\d+) \(([\d.,]+) U""").find(d.pb3Status)?.groupValues
-            val pb3 = (if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${"%.2f".format(d.pb3PlannedU)}U)" else "Pre-bolus 3") +
+            val pb3 = (if (d.pb3PlannedU > 0.0) "Pre-bolus 3 (${plannedText(d.pb3LeftU, d.pb3PlannedU)})" else "Pre-bolus 3") +
                 (piece3?.let { ", piece ${it[1]} of ${it[2]} (${it[3]}U)" } ?: "")
             val pb3Ended = d.pb3Status.contains("cancel") || d.pb3Status.contains("stopped") || d.pb3Status.contains("done")
             val pb3Primary = when {
@@ -563,6 +563,14 @@ class SmartInsulinTabCards(private val plugin: SmartInsulinPlugin) {
     }
 
     /** The safety gates a waiting pre-bolus 2 or 3 fires through, each with whether it passes now. */
+    /**
+     * The pre-bolus as planned, or what it still has to give of it once less is left than planned, for example
+     * "2.30U left of 4.95U": the fade, the loop's SMBs and pieces led by BG take from it as the meal goes on.
+     */
+    private fun plannedText(leftU: Double, plannedU: Double): String =
+        if (leftU > 0.0 && leftU < plannedU - MealOverrideManager.SPREAD_STEP_U) "${"%.2f".format(leftU)}U left of ${"%.2f".format(plannedU)}U"
+        else "${"%.2f".format(plannedU)}U"
+
     private fun SiCardBuilder.addPreBolusGates(gate: MealOverrideManager.Pb2GateData) {
         fun fmtBg(mgdl: Double)    = if (gate.isMmol) "%.1f mmol".format(mgdl / 18.0) else "%.0f mg/dL".format(mgdl)
         fun fmtDelta(mgdl: Double) = if (gate.isMmol) "%+.2f mmol".format(mgdl / 18.0) else "%+.1f mg/dL".format(mgdl)

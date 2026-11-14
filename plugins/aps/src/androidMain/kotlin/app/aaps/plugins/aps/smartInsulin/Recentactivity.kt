@@ -51,6 +51,22 @@ class RecentActivityImpl @Inject constructor(private val sp: KeyValueStore) : Re
 
     companion object {
 
+        /**
+         * Steps in 5 min that make a cycle of a Golf or Gym session count as exercise, see [levelWithSession]. Walking
+         * between shots gives 300 to 500; waiting and putting close to 0.
+         */
+        const val SESSION_MIN_STEPS_5MIN = 100
+
+        /**
+         * The level to count for a cycle: [level], but at least moderate while a Golf or Gym session the user started
+         * runs ([sessionActive]) and the steps show movement. A watch that reads heart rate badly makes the user set the
+         * resting heart rate high, and stop-and-go walking never reaches the moderate step count by itself: on 14 Nov a
+         * 4 h round of golf counted as no exercise at all, and the lunch after it got its full dose and went low.
+         */
+        fun levelWithSession(level: ActivityLevel, sessionActive: Boolean, steps5min: Int): ActivityLevel =
+            if (sessionActive && steps5min >= SESSION_MIN_STEPS_5MIN && level.ordinal < ActivityLevel.MODERATE.ordinal) ActivityLevel.MODERATE
+            else level
+
         /** Less exercise than this (a run up the stairs) does not change how a meal is learned. */
         const val MIN_EXERCISE_MIN = 10.0
         const val LOOKBACK_MS = RecentActivity.LOOKBACK_HOURS * 60 * 60_000L

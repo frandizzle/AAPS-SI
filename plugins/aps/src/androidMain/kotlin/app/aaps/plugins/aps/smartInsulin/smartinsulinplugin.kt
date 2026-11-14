@@ -590,6 +590,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val activePb2DoseU: Double?, val activePb3DoseU: Double?, val activeAddedU: Double, val pb2Status: String, val pb3Status: String,
         /** What pre-bolus 2 and 3 are set to give, 0 when there is none. */
         val pb2PlannedU: Double, val pb3PlannedU: Double,
+        /** What pre-bolus 2 and 3 still have to give: less what was given, the loop's SMBs and what faded or BG left out. */
+        val pb2LeftU: Double = 0.0, val pb3LeftU: Double = 0.0,
         /** Status of the rest of pre-bolus 1, "" when there is none. */
         val pb1RestStatus: String,
         /** The running meal's food still to come, or null when there is none. */
@@ -849,6 +851,7 @@ open class SmartInsulinPlugin @Inject constructor(
             activePb3DoseU = mealOverrideManager.activePb3DoseU, activeAddedU = mealOverrideManager.activeState?.addedU ?: 0.0,
             pb2Status = mealOverrideManager.preBolus2StatusText, pb3Status = mealOverrideManager.preBolus3StatusText,
             pb2PlannedU = mealOverrideManager.activeState?.preBolus2U ?: 0.0, pb3PlannedU = mealOverrideManager.activeState?.preBolus3U ?: 0.0,
+            pb2LeftU = mealOverrideManager.activeState?.preBolus2WaitingU ?: 0.0, pb3LeftU = mealOverrideManager.activeState?.preBolus3WaitingU ?: 0.0,
             pb1RestStatus = mealOverrideManager.preBolus1RestStatusText,
             foodToCome = lastFoodToCome?.takeIf { mealOverrideManager.activeMealMode != null },
             fatProteinStartsInMin = lastFoodToCome?.let { ((it.fatProteinFromMs - dateUtil.now()) / 60_000L).coerceAtLeast(0L) } ?: 0L,
@@ -1710,7 +1713,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // Learning pauses during activity, and stays paused after it while BG is still falling
         // faster than insulin explains - the drop a sprint keeps causing once you have sat down.
         activityTail.onCycle(now, activityMonitor.level, unexplainedDropTracker.stillDropping(now))
-        recentActivity.onCycle(now, activityMonitor.level)
+        recentActivity.onCycle(
+            now, RecentActivityImpl.levelWithSession(activityMonitor.level, activitySessionManager.active != null, activityMonitor.lastSteps5min)
+        )
         val activityPausesLearning = activityMonitor.suppressLearning || activityTail.paused
 
         // -- New pod boost -----------------------------------------------------------------
