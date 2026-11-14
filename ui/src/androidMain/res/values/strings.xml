@@ -494,6 +494,9 @@
     <string name="si_food_meal_timing_pb3" comment="%1$d=minutes after the start, %2$d=minutes after pre-bolus 2. Example: Pre-bolus 2 at 75 min and pre-bolus 3 90 min after it, learned from when this meal\'s fat and protein come in.">Pre-bolus 2 at %1$d min and pre-bolus 3 %2$d min after it, learned from when this meal\'s fat and protein come in.</string>
     <string name="si_food_learned_short" comment="%1$s=factor for carbs, %2$s=factor for the fat and protein wave, %3$s=factor for the tail, %4$d=number of meals. Example: Learned: carbs ×1.12, fat and protein ×0.95, tail ×1.00 (4 meals)">Learned: carbs ×%1$s, fat and protein ×%2$s, tail ×%3$s (%4$d meals)</string>
     <string name="si_food_learning_reset">Forget what this meal learned</string>
+    <string name="si_food_learning_reset_title" comment="%1$s=name of a saved food or meal. Example: Forget what Greek yoghurt learned?">Forget what %1$s learned?</string>
+    <string name="si_food_learning_reset_text">Its insulin goes back to the plan for all meals, and it starts to learn again from the next time you eat it. This cannot be undone.</string>
+    <string name="si_food_learning_reset_confirm">Forget</string>
     <string name="si_food_log_only">Log only</string>
     <string name="si_food_log_only_hint">Log only counts the food for today\'s calories, without a meal mode or insulin.</string>
     <string name="si_food_logged" comment="%1$s=calories of what was logged, without unit. Example: Logged: 450 kcal">Logged: %1$s kcal</string>

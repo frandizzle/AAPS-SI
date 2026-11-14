@@ -141,6 +141,15 @@ enum class UnitDoubleKey(
         summary = KeysStrings.si_isf_summary,
         defaultedBySM = true
     ),
+    ApsSmartInsulinAfternoonIsf(
+        key = "si_afternoon_isf2",
+        defaultValue = 0.0,
+        minMgdl = 0,
+        maxMgdl = 360,
+        title = KeysStrings.si_afternoon_isf_title,
+        summary = KeysStrings.si_isf_summary,
+        defaultedBySM = true
+    ),
     ApsSmartInsulinDinnerIsf(
         key = "si_dinner_isf2",
         defaultValue = 0.0,

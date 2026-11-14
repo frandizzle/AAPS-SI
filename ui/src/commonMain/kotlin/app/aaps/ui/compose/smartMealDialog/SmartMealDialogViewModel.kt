@@ -289,7 +289,7 @@ class SmartMealDialogViewModel(
     private val _sideEffect = MutableSharedFlow<SideEffect>(replay = 0, extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val sideEffect: SharedFlow<SideEffect> = _sideEffect.asSharedFlow()
 
-    val modes: List<MealMode> = listOf(MealMode.BREAKFAST, MealMode.LUNCH, MealMode.DINNER, MealMode.LOW_CARB, MealMode.EXTENDED)
+    val modes: List<MealMode> = listOf(MealMode.BREAKFAST, MealMode.LUNCH, MealMode.AFTERNOON, MealMode.DINNER, MealMode.LOW_CARB, MealMode.EXTENDED)
 
     init {
         val defaultPb2 = preferences.get(DoubleKey.ApsSmartInsulinPreBolus2DefaultU)
@@ -313,7 +313,7 @@ class SmartMealDialogViewModel(
                 logTreatingLow = lowRecently()
             )
         }
-        loadMode(MealMode.LUNCH)
+        loadMode(modeForTime(dateUtil.now()))
         refreshActive()
         // A meal is running: the most likely wish is to add to it, not to replace it.
         if (uiState.value.canAdd) updateAddMode(true)
@@ -345,9 +345,31 @@ class SmartMealDialogViewModel(
 
     // ── Per-mode settings ────────────────────────────────────────────────────
 
+    /** The meal type for the clock time at [nowMs], from the UAM meal windows the user set, see [mealModeAt]. */
+    private fun modeForTime(nowMs: Long): MealMode {
+        fun at(hour: IntKey, minute: IntKey?) = preferences.get(hour) * 60 + (minute?.let { preferences.get(it) } ?: 0)
+        val minuteOfDay = (nowMs / 60_000L + dateUtil.getTimeZoneOffsetMinutes(nowMs)).mod(MINUTES_PER_DAY.toLong()).toInt()
+        return mealModeAt(
+            minuteOfDay, listOf(
+                MealWindow(MealMode.BREAKFAST, at(IntKey.ApsSmartInsulinUamBreakfastStartHour, null), at(IntKey.ApsSmartInsulinUamBreakfastEndHour, null)),
+                MealWindow(MealMode.LUNCH, at(IntKey.ApsSmartInsulinUamLunchStartHour, null), at(IntKey.ApsSmartInsulinUamLunchEndHour, null)),
+                MealWindow(
+                    MealMode.DINNER, at(IntKey.ApsSmartInsulinUamDinnerStartHour, IntKey.ApsSmartInsulinUamDinnerStartMinute),
+                    at(IntKey.ApsSmartInsulinUamDinnerEndHour, IntKey.ApsSmartInsulinUamDinnerEndMinute)
+                ),
+                MealWindow(MealMode.EXTENDED, at(IntKey.ApsSmartInsulinUamSnackStartHour, null), at(IntKey.ApsSmartInsulinUamSnackEndHour, null)),
+                MealWindow(
+                    MealMode.AFTERNOON, at(IntKey.ApsSmartInsulinUamAfternoonStartHour, IntKey.ApsSmartInsulinUamAfternoonStartMinute),
+                    at(IntKey.ApsSmartInsulinUamAfternoonEndHour, IntKey.ApsSmartInsulinUamAfternoonEndMinute)
+                )
+            )
+        )
+    }
+
     private fun isfKeyFor(mode: MealMode): UnitDoubleKey? = when (mode) {
         MealMode.BREAKFAST -> UnitDoubleKey.ApsSmartInsulinBreakfastIsf
         MealMode.LUNCH     -> UnitDoubleKey.ApsSmartInsulinLunchIsf
+        MealMode.AFTERNOON -> UnitDoubleKey.ApsSmartInsulinAfternoonIsf
         MealMode.DINNER    -> UnitDoubleKey.ApsSmartInsulinDinnerIsf
         MealMode.LOW_CARB  -> UnitDoubleKey.ApsSmartInsulinLowCarbIsf
         MealMode.EXTENDED  -> UnitDoubleKey.ApsSmartInsulinExtendedIsf
@@ -357,6 +379,7 @@ class SmartMealDialogViewModel(
     private fun duraFloorKeyFor(mode: MealMode): DoubleNonKey? = when (mode) {
         MealMode.BREAKFAST -> DoubleNonKey.ApsSmartInsulinBreakfastDuraFloor
         MealMode.LUNCH     -> DoubleNonKey.ApsSmartInsulinLunchDuraFloor
+        MealMode.AFTERNOON -> DoubleNonKey.ApsSmartInsulinAfternoonDuraFloor
         MealMode.DINNER    -> DoubleNonKey.ApsSmartInsulinDinnerDuraFloor
         MealMode.LOW_CARB  -> DoubleNonKey.ApsSmartInsulinLowCarbDuraFloor
         MealMode.EXTENDED  -> DoubleNonKey.ApsSmartInsulinExtendedDuraFloor
@@ -366,6 +389,7 @@ class SmartMealDialogViewModel(
     private fun duraStrengthKeyFor(mode: MealMode): DoubleNonKey? = when (mode) {
         MealMode.BREAKFAST -> DoubleNonKey.ApsSmartInsulinBreakfastDuraStrength
         MealMode.LUNCH     -> DoubleNonKey.ApsSmartInsulinLunchDuraStrength
+        MealMode.AFTERNOON -> DoubleNonKey.ApsSmartInsulinAfternoonDuraStrength
         MealMode.DINNER    -> DoubleNonKey.ApsSmartInsulinDinnerDuraStrength
         MealMode.LOW_CARB  -> DoubleNonKey.ApsSmartInsulinLowCarbDuraStrength
         MealMode.EXTENDED  -> DoubleNonKey.ApsSmartInsulinExtendedDuraStrength
@@ -1213,6 +1237,21 @@ class SmartMealDialogViewModel(
     }
 
     companion object {
+
+        const val MINUTES_PER_DAY = 24 * 60
+
+        /** A meal type and the minutes of the day it covers, from [startMin] up to [endMin]; it may run past midnight. */
+        data class MealWindow(val mode: MealMode, val startMin: Int, val endMin: Int)
+
+        /**
+         * The meal type Smart Meal opens with at [minuteOfDay]: the first of [windows] it falls in, in the order the UAM modes
+         * use them, so both read the clock the same way; outside every window, Snack. The user can still pick another.
+         * It opened on Lunch at every time of day before, and a dinner or a snack was easily filed as lunch.
+         */
+        fun mealModeAt(minuteOfDay: Int, windows: List<MealWindow>): MealMode =
+            windows.firstOrNull { w ->
+                if (w.startMin <= w.endMin) minuteOfDay in w.startMin until w.endMin else minuteOfDay >= w.startMin || minuteOfDay < w.endMin
+            }?.mode ?: MealMode.EXTENDED
 
         const val QUANTITY_STEP = 0.25
         /** The "Eat in" choices, in minutes after pre-bolus 1. With NovoRapid: about 10 min when BG is in range, 15 to 20 min when it is high. */

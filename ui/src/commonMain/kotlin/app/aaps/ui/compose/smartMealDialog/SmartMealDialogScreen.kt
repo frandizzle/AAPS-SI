@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.DinnerDining
 import androidx.compose.material.icons.filled.Eco
 import androidx.compose.material.icons.filled.FreeBreakfast
 import androidx.compose.material.icons.filled.HourglassBottom
+import androidx.compose.material.icons.filled.LocalCafe
 import androidx.compose.material.icons.filled.LunchDining
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Schedule
@@ -625,6 +626,7 @@ private fun SwitchRow(text: String, checked: Boolean, onCheckedChange: (Boolean)
 private fun modeIcon(mode: MealMode): ImageVector = when (mode) {
     MealMode.BREAKFAST, MealMode.UAM_BREAKFAST -> Icons.Filled.FreeBreakfast
     MealMode.LUNCH, MealMode.UAM_LUNCH         -> Icons.Filled.LunchDining
+    MealMode.AFTERNOON, MealMode.UAM_AFTERNOON -> Icons.Filled.LocalCafe
     MealMode.DINNER, MealMode.UAM_DINNER       -> Icons.Filled.DinnerDining
     MealMode.LOW_CARB                          -> Icons.Filled.Eco
     MealMode.EXTENDED                          -> Icons.Filled.Cookie

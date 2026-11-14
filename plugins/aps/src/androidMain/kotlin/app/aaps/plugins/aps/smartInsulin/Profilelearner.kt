@@ -209,6 +209,7 @@ class ProfileLearner @Inject constructor(
             MealMode.LOW_CARB      -> StringNonKey.ApsSmartInsulinProfileLowCarb
             MealMode.BREAKFAST     -> StringNonKey.ApsSmartInsulinProfileBreakfast
             MealMode.LUNCH         -> StringNonKey.ApsSmartInsulinProfileLunch
+            MealMode.AFTERNOON     -> StringNonKey.ApsSmartInsulinProfileAfternoon
             MealMode.DINNER        -> StringNonKey.ApsSmartInsulinProfileDinner
             MealMode.EXTENDED      -> StringNonKey.ApsSmartInsulinProfileExtended
             MealMode.UAM_BREAKFAST -> StringNonKey.ApsSmartInsulinProfileUamBreakfast

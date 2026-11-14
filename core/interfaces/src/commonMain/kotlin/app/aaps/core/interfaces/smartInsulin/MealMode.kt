@@ -26,6 +26,12 @@ enum class MealMode(
         diaLearningEnabled = true,
         learningWeight     = 0.5
     ),
+    // A meal between lunch and dinner, so it is learned apart from both. Saved by name, so adding it moves nothing saved.
+    AFTERNOON(
+        label              = "Afternoon",
+        diaLearningEnabled = true,
+        learningWeight     = 0.5
+    ),
     DINNER(
         label              = "Dinner",
         diaLearningEnabled = true,

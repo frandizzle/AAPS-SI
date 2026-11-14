@@ -150,6 +150,8 @@ internal class SmartMealDialogViewModelTest {
         whenever(preferences.get(DoubleKey.ApsSmartInsulinPreBolus2DefaultU)).thenReturn(2.0)
         whenever(preferences.get(IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins)).thenReturn(30)
         whenever(preferences.get(IntKey.ApsSmartInsulinFatProteinTimePct)).thenReturn(100)
+        // The dialog opens on the meal of the clock time: a lunch window over the whole day keeps these tests on Lunch.
+        whenever(preferences.get(IntKey.ApsSmartInsulinUamLunchEndHour)).thenReturn(24)
         whenever(preferences.get(DoubleNonKey.ApsSmartInsulinLunchDuraStrength)).thenReturn(1.0)
         whenever(preferences.get(StringNonKey.ApsSmartInsulinSavedFoods)).thenReturn("")
         whenever(preferences.get(StringNonKey.ApsSmartInsulinRecentFoods)).thenReturn("")

@@ -160,6 +160,8 @@ internal fun MyFoodsDialog(
     var query by remember { mutableStateOf("") }
     var renaming by remember { mutableStateOf<SavedFood?>(null) }
     var deleting by remember { mutableStateOf<SavedFood?>(null) }
+    // What it learned is only undone after a "Forget", not on the first tap: a tap by mistake lost a meal's learning (14 Nov).
+    var forgetting by remember { mutableStateOf<SavedFood?>(null) }
     var savingRecent by remember { mutableStateOf<FoodItem?>(null) }
     // What is ticked, in the order it was tapped. Saved entries by name.
     var pickedSaved by remember { mutableStateOf(listOf<String>()) }
@@ -195,7 +197,7 @@ internal fun MyFoodsDialog(
                             onClick = { pickedSaved = if (food.name in pickedSaved) pickedSaved - food.name else pickedSaved + food.name }
                         ) {
                             if (l != null)
-                                IconButton(onClick = { onForgetLearning(food.name) }) { Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(UiStrings.si_food_learning_reset)) }
+                                IconButton(onClick = { forgetting = food }) { Icon(Icons.Filled.RestartAlt, contentDescription = stringResource(UiStrings.si_food_learning_reset)) }
                             IconButton(onClick = { onEdit(food) }) { Icon(Icons.Filled.Edit, contentDescription = stringResource(UiStrings.si_food_edit)) }
                             IconButton(onClick = { renaming = food }) { Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = stringResource(UiStrings.si_food_rename)) }
                             IconButton(onClick = { deleting = food }) { Icon(Icons.Filled.Delete, contentDescription = stringResource(CoreUiStrings.delete)) }
@@ -247,6 +249,15 @@ internal fun MyFoodsDialog(
             initialName = item.name,
             onSave = { onSaveRecent(item, it); savingRecent = null },
             onDismiss = { savingRecent = null }
+        )
+    }
+    forgetting?.let { food ->
+        AlertDialog(
+            onDismissRequest = { forgetting = null },
+            title = { Text(stringResource(UiStrings.si_food_learning_reset_title, food.name)) },
+            text = { Text(stringResource(UiStrings.si_food_learning_reset_text)) },
+            confirmButton = { TextButton(onClick = { onForgetLearning(food.name); forgetting = null }) { Text(stringResource(UiStrings.si_food_learning_reset_confirm)) } },
+            dismissButton = { TextButton(onClick = { forgetting = null }) { Text(stringResource(CoreUiStrings.cancel)) } }
         )
     }
     deleting?.let { food ->

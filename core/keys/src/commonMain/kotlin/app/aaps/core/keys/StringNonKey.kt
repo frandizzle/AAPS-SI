@@ -133,6 +133,7 @@ enum class StringNonKey(
     ApsSmartInsulinProfileLowCarb(key = "si_profile_low_carb", defaultValue = ""),
     ApsSmartInsulinProfileBreakfast(key = "si_profile_breakfast", defaultValue = ""),
     ApsSmartInsulinProfileLunch(key = "si_profile_lunch", defaultValue = ""),
+    ApsSmartInsulinProfileAfternoon(key = "si_profile_afternoon", defaultValue = ""),
     ApsSmartInsulinProfileDinner(key = "si_profile_dinner", defaultValue = ""),
     ApsSmartInsulinProfileExtended(key = "si_profile_extended", defaultValue = ""),
     ApsSmartInsulinOverrideState(key = "si_override_state", defaultValue = ""),

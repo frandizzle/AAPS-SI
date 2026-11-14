@@ -1613,7 +1613,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val key = when (mode) {
             MealMode.BREAKFAST, MealMode.UAM_BREAKFAST  -> IntKey.ApsSmartInsulinFoodFadeBreakfastMins
             MealMode.LUNCH, MealMode.UAM_LUNCH          -> IntKey.ApsSmartInsulinFoodFadeLunchMins
-            MealMode.UAM_AFTERNOON, MealMode.UAM_SNACK  -> IntKey.ApsSmartInsulinFoodFadeAfternoonMins
+            MealMode.AFTERNOON, MealMode.UAM_AFTERNOON,
+            MealMode.UAM_SNACK                          -> IntKey.ApsSmartInsulinFoodFadeAfternoonMins
             MealMode.DINNER, MealMode.UAM_DINNER        -> IntKey.ApsSmartInsulinFoodFadeDinnerMins
             MealMode.UAM_PROTEIN_FAT                    -> IntKey.ApsSmartInsulinFoodFadeProteinFatMins
             MealMode.EXTENDED, MealMode.LOW_CARB        -> IntKey.ApsSmartInsulinFoodFadeOtherMins
@@ -1628,6 +1629,7 @@ open class SmartInsulinPlugin @Inject constructor(
     private fun modeIsfMgdl(mode: MealMode, hour: Int): Double = when (mode) {
         MealMode.BREAKFAST -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinBreakfastIsf.key, UnitDoubleKey.ApsSmartInsulinBreakfastIsf.defaultValue)
         MealMode.LUNCH -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLunchIsf.key, UnitDoubleKey.ApsSmartInsulinLunchIsf.defaultValue)
+        MealMode.AFTERNOON -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinAfternoonIsf.key, UnitDoubleKey.ApsSmartInsulinAfternoonIsf.defaultValue)
         MealMode.DINNER -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinDinnerIsf.key, UnitDoubleKey.ApsSmartInsulinDinnerIsf.defaultValue)
         MealMode.LOW_CARB -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinLowCarbIsf.key, UnitDoubleKey.ApsSmartInsulinLowCarbIsf.defaultValue)
         MealMode.EXTENDED -> sp.getDouble(UnitDoubleKey.ApsSmartInsulinExtendedIsf.key, UnitDoubleKey.ApsSmartInsulinExtendedIsf.defaultValue)
@@ -2060,7 +2062,9 @@ open class SmartInsulinPlugin @Inject constructor(
         // -- Learned per-mode ISF (episode-outcome learning) --------------------
         // Applied to the mode's base ISF before DURA — DURA is the within-episode rescue,
         // this is the across-episodes correction learned from how past activations ended.
-        if (mealMode != MealMode.FASTING) {
+        // UAM modes only: a meal set up in Smart Meal gets most of its insulin from the carb ratio
+        // through its pre-boluses, so its ISF is not learned or changed (14 Nov, the user's choice).
+        if (mealMode.isUam) {
             val learnedModeMult = modeIsfLearner.multiplier(mealMode, pfWindowForMode(mealMode, currentHour))
             if (learnedModeMult != 1.0) {
                 dosingIsfMgdl *= learnedModeMult
@@ -2250,7 +2254,8 @@ open class SmartInsulinPlugin @Inject constructor(
         val savedMealWatched = savedMealLearning.watching(now)
 
         modeIsfLearner.onCycle(
-            activeModeNow  = mealOverrideManager.activeMealMode,
+            // UAM modes only, see "Learned per-mode ISF" above: a meal mode counts as no mode here.
+            activeModeNow  = mealOverrideManager.activeMealMode?.takeIf { it.isUam },
             modeStartMs    = mealOverrideManager.modeStartMs,
             bgMgdl         = glucoseStatus.glucose,
             targetMgdl     = targetBg,
@@ -2261,7 +2266,7 @@ open class SmartInsulinPlugin @Inject constructor(
             fastingIsfMgdl = trueIsfMgdl,
             carbRatio      = profile.getIc(),
             nowMs          = now,
-            baseSignature  = mealOverrideManager.activeMealMode?.let { modeIsfOverrideSignature(it, currentHour) } ?: 0.0,
+            baseSignature  = mealOverrideManager.activeMealMode?.takeIf { it.isUam }?.let { modeIsfOverrideSignature(it, currentHour) } ?: 0.0,
             exerciseSuspected = exerciseSuspected,
             undershootActive  = undershootNow,
             // Whether the shape knob still has travel. Asked of the entry-fraction learner rather
@@ -2730,6 +2735,7 @@ open class SmartInsulinPlugin @Inject constructor(
                     IntKey.ApsSmartInsulinPreBolus2DefaultDelayMins,
                     UnitDoubleKey.ApsSmartInsulinBreakfastIsf,
                     UnitDoubleKey.ApsSmartInsulinLunchIsf,
+                    UnitDoubleKey.ApsSmartInsulinAfternoonIsf,
                     UnitDoubleKey.ApsSmartInsulinDinnerIsf,
                     UnitDoubleKey.ApsSmartInsulinLowCarbIsf,
                     UnitDoubleKey.ApsSmartInsulinExtendedIsf,
